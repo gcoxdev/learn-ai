@@ -1,4 +1,4 @@
-import { progressSchema, type Progress } from "./model";
+import { emptyProgress, progressSchema, type Progress } from "./model";
 import { mergeProgress } from "./engine";
 
 const DATABASE = "learn-ai";
@@ -79,5 +79,32 @@ export async function writeProgress(
           "Progress was not saved. You can export the current session.",
         ),
       );
+  });
+}
+
+/** Commit a clean record and a reset boundary atomically, including across tabs. */
+export async function resetProgress(db: IDBDatabase): Promise<Progress> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("learner", "readwrite");
+    const store = tx.objectStore("learner");
+    const request = store.get("progress");
+    let cleared: Progress;
+    request.onsuccess = () => {
+      try {
+        const previous = progressSchema.safeParse(request.result);
+        const resetAt = Math.max(
+          Date.now(),
+          (previous.success ? previous.data.resetAt : 0) + 1,
+        );
+        cleared = { ...emptyProgress(), resetAt, updatedAt: resetAt };
+        store.put(cleared, "progress");
+      } catch (error) {
+        tx.abort();
+        reject(error);
+      }
+    };
+    tx.oncomplete = () => resolve(cleared);
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(new Error("Saved progress could not be reset."));
   });
 }

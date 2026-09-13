@@ -16,6 +16,9 @@
   let filename = $state("");
   let error = $state("");
   let reading = $state(false);
+  let resetError = $state("");
+  let resetDialog: HTMLDialogElement;
+  let cancelResetButton: HTMLButtonElement;
   const added = $derived(
     incoming?.attempts.filter(
       (a) => !learner.data.attempts.some((b) => b.id === a.id),
@@ -60,6 +63,22 @@
         cause instanceof Error
           ? cause.message
           : "Import failed. Current progress was kept.";
+    }
+  }
+  function openReset() {
+    resetError = "";
+    resetDialog.showModal();
+    cancelResetButton.focus();
+  }
+  async function confirmReset() {
+    resetError = "";
+    if (await learner.resetProgress()) {
+      incoming = null;
+      filename = "";
+      error = "";
+      resetDialog.close();
+    } else {
+      resetError = learner.notice;
     }
   }
 </script>
@@ -150,7 +169,7 @@
       </p>
       <button
         class="button primary"
-        disabled={!learner.hydrated}
+        disabled={!learner.hydrated || learner.resetting}
         onclick={() => learner.exportProgress()}
         ><Icon name="download" size={17} />Export progress</button
       >
@@ -174,7 +193,7 @@
             type="file"
             accept="application/json,.json"
             aria-label="Choose backup file"
-            disabled={!learner.hydrated || reading}
+            disabled={!learner.hydrated || reading || learner.resetting}
             onchange={inspect}
           /></label
         >
@@ -195,8 +214,10 @@
               Compatible objectives retain their recorded versions.
             </p>
             <div class="button-row">
-              <button class="button primary" onclick={confirmImport}
-                >Merge this backup</button
+              <button
+                class="button primary"
+                disabled={learner.resetting}
+                onclick={confirmImport}>Merge this backup</button
               ><button
                 class="button secondary"
                 onclick={() => (incoming = null)}>Cancel</button
@@ -209,6 +230,92 @@
         curriculum version is supported; incompatible files are rejected without
         replacing your progress.
       </p>
+      <section class="reset-section" aria-labelledby="reset-progress-heading">
+        <h3 id="reset-progress-heading">Start over</h3>
+        <p>
+          Clear your learning record across all paths in this browser, including
+          quiz answers, lesson positions, and saved lessons.
+        </p>
+        <button
+          class="button secondary"
+          disabled={!learner.hydrated || reading || learner.resetting}
+          onclick={openReset}
+          ><Icon name="reset" size={17} />Reset all progress</button
+        >
+      </section>
     </section>
   </div>
 </div>
+
+<dialog
+  bind:this={resetDialog}
+  aria-labelledby="reset-dialog-title"
+  aria-describedby="reset-description"
+  oncancel={(event) => {
+    if (learner.resetting) event.preventDefault();
+  }}
+>
+  <h2 id="reset-dialog-title">Reset all progress?</h2>
+  <p id="reset-description">
+    This clears all quiz answers and results, hints seen, saved lessons, reading
+    positions, activity settings, and your selected path. It applies to Learn AI
+    in this browser, including other open tabs.
+  </p>
+  <p>
+    You can restore progress only from a backup you have kept. Downloaded
+    backups are not deleted.
+  </p>
+  <button
+    class="inline-link"
+    disabled={learner.resetting}
+    onclick={() => learner.exportProgress()}>Export a backup first</button
+  >
+  {#if resetError}<p class="error-message" role="alert">{resetError}</p>{/if}
+  <div class="button-row reset-actions">
+    <button
+      bind:this={cancelResetButton}
+      class="button secondary"
+      disabled={learner.resetting}
+      onclick={() => resetDialog.close()}>Cancel</button
+    >
+    <button
+      class="button confirm-reset"
+      disabled={learner.resetting}
+      onclick={confirmReset}
+      >{learner.resetting ? "Resetting…" : "Yes, reset all progress"}</button
+    >
+  </div>
+</dialog>
+
+<style>
+  .reset-section {
+    border-top: 1px solid var(--line);
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+  }
+  dialog {
+    width: min(32rem, calc(100vw - 2rem));
+    padding: 1.5rem;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    color: var(--ink);
+    background: var(--paper);
+  }
+  dialog::backdrop {
+    background: #14251ab3;
+  }
+  dialog h2 {
+    margin-top: 0;
+  }
+  dialog p {
+    font-size: 0.9rem;
+    line-height: 1.65;
+  }
+  .reset-actions {
+    margin-top: 1.5rem;
+  }
+  .confirm-reset {
+    background: #973727;
+    color: white;
+  }
+</style>

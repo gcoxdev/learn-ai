@@ -10,7 +10,12 @@ import {
   type LessonOrigin,
 } from "./model";
 import { backupDue, grade, mastered, mergeProgress } from "./engine";
-import { openProgressDB, readProgress, writeProgress } from "./storage";
+import {
+  openProgressDB,
+  readProgress,
+  writeProgress,
+  resetProgress,
+} from "./storage";
 
 export class Learner {
   data = $state.raw<Progress>(emptyProgress());
@@ -20,6 +25,7 @@ export class Learner {
   );
   notice = $state("");
   backupPrompt = $state(false);
+  resetting = $state(false);
   #db: IDBDatabase | null = null;
   #queue = Promise.resolve();
   #channel: BroadcastChannel | null = null;
@@ -30,19 +36,7 @@ export class Learner {
       const stored = await readProgress(this.#db);
       if (stored) this.data = mergeProgress(stored, this.data, false);
       this.saveStatus = "saved";
-      if ("BroadcastChannel" in window) {
-        this.#channel = new BroadcastChannel("learn-ai-progress");
-        this.#channel.onmessage = async () => {
-          if (!this.#db) return;
-          try {
-            const latest = await readProgress(this.#db);
-            if (latest) this.data = mergeProgress(this.data, latest, false);
-          } catch {
-            this.notice =
-              "Another tab could not be synchronized. Export your progress before closing.";
-          }
-        };
-      }
+      this.#listenForChanges();
     } catch (error) {
       this.saveStatus = "unavailable";
       this.notice =
@@ -54,11 +48,27 @@ export class Learner {
       this.backupPrompt = backupDue(this.data);
     }
   }
+  #listenForChanges() {
+    if (this.#channel || !("BroadcastChannel" in window)) return;
+    this.#channel = new BroadcastChannel("learn-ai-progress");
+    this.#channel.onmessage = async () => {
+      if (!this.#db) return;
+      try {
+        const latest = await readProgress(this.#db);
+        if (latest) this.data = mergeProgress(this.data, latest, false);
+        this.backupPrompt = backupDue(this.data);
+      } catch {
+        this.notice =
+          "Another tab could not be synchronized. Export your progress before closing.";
+      }
+    };
+  }
   dispose() {
     this.#channel?.close();
     this.#db?.close();
   }
   update(change: (p: Progress) => Progress) {
+    if (this.resetting) return;
     this.data = {
       ...change(this.data),
       updatedAt: Math.max(Date.now(), this.data.updatedAt + 1),
@@ -82,6 +92,32 @@ export class Learner {
           "Progress is not being saved. Keep studying in this session and export a backup.";
       }
     });
+  }
+  async resetProgress(): Promise<boolean> {
+    if (!this.hydrated || this.resetting) return false;
+    this.resetting = true;
+    this.notice = "";
+    try {
+      // Finish already queued saves before committing the reset boundary.
+      await this.#queue;
+      this.#db ??= await openProgressDB();
+      this.#listenForChanges();
+      const cleared = await resetProgress(this.#db);
+      this.data = mergeProgress(this.data, cleared, false);
+      this.backupPrompt = false;
+      this.saveStatus = "saved";
+      this.notice =
+        "All progress in this browser has been reset. You can start a new learning path.";
+      this.#channel?.postMessage("changed");
+      return true;
+    } catch {
+      this.saveStatus = "unavailable";
+      this.notice =
+        "Saved progress could not be reset. Your current session has been kept. Try again when browser storage is available.";
+      return false;
+    } finally {
+      this.resetting = false;
+    }
   }
   choosePath(id: "language" | "images") {
     this.update((p) => ({ ...p, selectedPath: id, detours: [] }));
@@ -149,6 +185,7 @@ export class Learner {
       objective.scope === "mathematics" || objective.lesson === "experts";
     const independent =
       !preview &&
+      !question.retired &&
       mode !== "practice" &&
       !hinted &&
       !this.data.exposures.includes(question.id);
@@ -188,10 +225,14 @@ export class Learner {
         : [...p.bookmarks, id],
     }));
   }
-  pushDetour(lesson: string, scene: string) {
+  pushDetour(
+    lesson: string,
+    scene: string,
+    control: "bridge" | "vocabulary" = "bridge",
+  ) {
     this.update((p) => ({
       ...p,
-      detours: [...p.detours.slice(-19), { lesson, scene }],
+      detours: [...p.detours.slice(-19), { lesson, scene, control }],
     }));
   }
   popDetour() {

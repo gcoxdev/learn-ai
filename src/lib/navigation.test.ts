@@ -84,7 +84,7 @@ describe("lesson return context", () => {
   it("offers the next authored curriculum lesson and ends safely at the last one", () => {
     const first = curriculum.lessons.find((l) => l.id === "ai-systems")!;
     expect(nextLesson(curriculum, first, origins[0], emptyProgress())?.id).toBe(
-      "models-and-products",
+      "inputs-and-outputs",
     );
     const last = curriculum.lessons.find(
       (l) => l.id === "comparing-alternative-neural-models",

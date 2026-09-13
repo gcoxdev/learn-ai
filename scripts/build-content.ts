@@ -6,11 +6,13 @@ import {
   curriculumSchema,
   lessonSchema,
   objectiveSchema,
+  vocabularySchema,
   type Question,
   type Scene,
 } from "../src/lib/model";
 import { validateGraph, planPath } from "../src/lib/engine";
 import { auditContent, coverageReport } from "./content-audit";
+import { editorialMetrics, editorialReport } from "./editorial-report";
 
 function readYaml(text: string) {
   const doc = parseDocument(text, { uniqueKeys: true });
@@ -88,6 +90,7 @@ for (const filename of (await readdir("content/lessons"))
         feedback: variant.feedback,
         hint: family.hint,
         remediation: family.remediation_scene,
+        ...(variant.retired ? { retired: true } : {}),
       });
     }
   }
@@ -161,6 +164,7 @@ for (const filename of (await readdir("content/lessons"))
       type: s.type,
       depth: s.depth,
       html: html(s.markdown),
+      ...(s.takeaway ? { takeaway: html(s.takeaway) } : {}),
       bridges:
         s.bridges ??
         (s.bridge_refs ?? []).map((b: string) => bridgeMap[b]).filter(Boolean),
@@ -199,16 +203,49 @@ for (const filename of (await readdir("content/lessons"))
     feedback: q.feedback,
     hint: "Read the operation one step at a time; the matching math bridge can help.",
   }));
+  const teachingWords = source.scenes
+    .filter((s: any) => core.includes(s.id) && s.type !== "assessment")
+    .reduce((n: number, s: any) => n + s.markdown.split(/\s+/).length, 0);
+  const archetype =
+    source.lesson.archetype ??
+    (source.lesson.slot.startsWith("M36")
+      ? "project"
+      : source.lesson.slot.startsWith("M35")
+        ? "comparison"
+        : source.lesson.slot.startsWith("M00") ||
+            source.lesson.slot.startsWith("B")
+          ? "foundation"
+          : /^M(01|29)\./.test(source.lesson.slot)
+            ? "perspective"
+            : "mechanism");
   const lesson = lessonSchema.parse({
     ...source.lesson,
     id,
     summary: source.lesson.summary,
-    minutes: source.lesson.minutes,
+    minutes:
+      archetype === "project"
+        ? source.lesson.minutes
+        : Math.max(
+            5,
+            Math.round(
+              teachingWords / 120 +
+                source.assessment_families.filter((f: any) =>
+                  f.variants.some((q: any) => !q.retired),
+                ).length *
+                  2 +
+                scenes.filter((s) => core.includes(s.id) && s.simulation)
+                  .length *
+                  3,
+            ),
+          ),
+    archetype,
+    teachingWords,
     objectives: source.objectives.map((o: any) => o.id),
     scenes,
     questions,
     entryChecks,
     routes: { core, mathematics: math },
+    sceneAliases: source.navigation.scene_aliases ?? {},
   });
   // Store source-only specimen contracts separately for inspection without exposing internal planning files.
   lessons.push(lesson);
@@ -225,6 +262,18 @@ curriculum.lessons.sort((a, b) => {
   );
 });
 await mkdir("src/lib/generated", { recursive: true });
+const vocabulary = vocabularySchema.parse(
+  readYaml(await readFile("content/glossary.yaml", "utf8")),
+);
+if (new Set(vocabulary.map((t) => t.id)).size !== vocabulary.length)
+  throw new Error("Duplicate vocabulary ID");
+for (const term of vocabulary)
+  if (!curriculum.lessons.some((l) => l.id === term.lesson))
+    throw new Error(`Missing vocabulary lesson: ${term.id}`);
+await writeFile(
+  "src/lib/generated/vocabulary.json",
+  JSON.stringify(vocabulary),
+);
 await writeFile(
   "src/lib/generated/curriculum.json",
   JSON.stringify(curriculum),
@@ -253,3 +302,13 @@ for (const route of closure)
     `${route.recipe}: ${route.assetCount} assets / ${route.objectiveCount} objectives (initial draft course).`,
   );
 await writeFile("content/COVERAGE.md", coverageReport(curriculum));
+await writeFile("content/EDITORIAL_REVIEW.md", editorialReport(curriculum));
+const quality = editorialMetrics(curriculum);
+if (
+  quality.longest / quality.choices > 0.5 ||
+  quality.absoluteDistractors / quality.choices > 0.25 ||
+  quality.binary / quality.choices > 0.1
+)
+  console.warn(
+    "Editorial review needed: answer-shape patterns remain in later draft banks. See content/EDITORIAL_REVIEW.md.",
+  );

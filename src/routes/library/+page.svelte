@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from "$app/state";
   import { curriculum } from "$lib/content";
+  import { vocabulary } from "$lib/vocabulary";
   import { getLearner } from "$lib/learner.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { lessonHref } from "$lib/navigation";
@@ -29,88 +30,7 @@
       `${m.id} ${m.title} ${m.lessons.join(" ")}`.toLowerCase().includes(query),
     ),
   );
-  const terms = [
-    [
-      "Artificial intelligence",
-      "Methods for building systems that perform tasks involving perception, reasoning, prediction, or action.",
-      "ai-systems",
-    ],
-    [
-      "Model",
-      "A learned or specified mapping from inputs to outputs. An AI product also needs data handling, interfaces, and other software.",
-      "models-and-products",
-    ],
-    [
-      "Training",
-      "The process of adjusting a model using data and a learning objective.",
-      "ways-to-learn",
-    ],
-    [
-      "Inference",
-      "Using a model to compute an output. Ordinary inference does not update its learned weights.",
-      "inside-a-system",
-    ],
-    [
-      "Loss",
-      "A numerical measure of how an output differs from a training target or objective. Lower training loss alone does not establish real-world usefulness.",
-      "learning-update",
-    ],
-    [
-      "Weight",
-      "A parameter that changes how inputs contribute to a model’s calculation.",
-      "neurons",
-    ],
-    [
-      "Gradient",
-      "The collection of partial derivatives describing how a scalar function changes with each input or parameter.",
-      "derivatives",
-    ],
-    [
-      "Learning rate",
-      "A multiplier controlling the size of a gradient-based parameter update.",
-      "learning-update",
-    ],
-    [
-      "Backpropagation",
-      "An efficient application of the chain rule that computes gradients through a computational graph.",
-      "backpropagation",
-    ],
-    [
-      "Nonlinearity",
-      "A relationship that cannot be represented by a single affine mapping. Nonlinear activations let neural networks express more complex functions.",
-      "nonlinearity",
-    ],
-    [
-      "Token",
-      "A unit in a model’s input or output sequence. A text token may be a word, part of a word, punctuation, or another encoded unit.",
-      "next-token",
-    ],
-    [
-      "Diffusion",
-      "A family of generative methods trained using a corruption process and learned reverse steps; sampling constructs data through a related iterative process.",
-      "denoising",
-    ],
-    [
-      "Mixture of experts",
-      "An architecture that routes computation through expert subnetworks. Sparse versions select only some experts for each input.",
-      "experts",
-    ],
-    [
-      "Generalization",
-      "How well a learned system performs on examples beyond those used to fit its parameters.",
-      "data",
-    ],
-    [
-      "Derivative",
-      "The local rate of change of a function with respect to a variable.",
-      "derivatives",
-    ],
-    [
-      "Chain rule",
-      "The rule for differentiating a composition: multiply local rates along a chain, adding contributions when paths branch.",
-      "chain-rule",
-    ],
-  ];
+  const terms = vocabulary.map((t) => [t.term, t.definition, t.lesson]);
   const glossary = $derived(
     terms.filter((t) => `${t[0]} ${t[1]}`.toLowerCase().includes(query)),
   );

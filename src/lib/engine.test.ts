@@ -22,7 +22,7 @@ function evidence(id: string, c: Curriculum = curriculum): Attempt[] {
   return objective.families.map((family, i) => {
     const q = c.lessons
       .flatMap((l) => l.questions)
-      .find((q) => q.objective === id && q.family === family)!;
+      .find((q) => !q.retired && q.objective === id && q.family === family)!;
     return {
       id: `${id}-${i}`,
       objective: id,
@@ -78,6 +78,12 @@ describe("objective evidence", () => {
     expect(retake.items).toHaveLength(2);
     expect(retake.items.every((q) => !p.exposures.includes(q.id))).toBe(true);
     p.exposures.push(...retake.items.map((q) => q.id));
+    // Revised foundations provide four variants per family.
+    for (let round = 0; round < 2; round++) {
+      const more = questionsRemaining(lesson, curriculum, p, "core");
+      expect(more.items).toHaveLength(2);
+      p.exposures.push(...more.items.map((q) => q.id));
+    }
     const exhausted = questionsRemaining(lesson, curriculum, p, "core");
     expect(exhausted.items).toHaveLength(0);
     expect(exhausted.exhausted).toHaveLength(2);
@@ -121,15 +127,15 @@ describe("objective evidence", () => {
 });
 
 describe("dependency planning", () => {
-  it("closes the full draft paths with ninety-two shared lessons", () => {
+  it("closes the full draft paths with 108 shared lessons", () => {
     const plans = curriculum.recipes.map((r) => planPath(curriculum, r, []));
-    expect(plans.map((p) => p.lessons.length)).toEqual([169, 121]);
-    expect(plans.map((p) => p.required.length)).toEqual([170, 122]);
+    expect(plans.map((p) => p.lessons.length)).toEqual([184, 143]);
+    expect(plans.map((p) => p.required.length)).toEqual([185, 144]);
     expect(
       plans[0].lessons.filter((l) =>
         plans[1].lessons.some((other) => other.id === l.id),
       ),
-    ).toHaveLength(92);
+    ).toHaveLength(108);
     for (const plan of plans)
       for (const id of plan.remaining) {
         const obj = curriculum.objectives.find((o) => o.id === id)!;
@@ -217,7 +223,11 @@ describe("dependency planning", () => {
   );
   it("rejects missing assessment variants", () => {
     const c = structuredClone(curriculum);
-    c.lessons.find((l) => l.id === lesson.id)!.questions.shift();
+    const target = c.lessons.find((l) => l.id === lesson.id)!;
+    const first = target.questions.find((q) => !q.retired)!;
+    target.questions = target.questions.filter(
+      (q) => q.retired || q.family !== first.family || q.id === first.id,
+    );
     expect(() => validateGraph(c)).toThrow("Missing retake variant");
   });
 });
@@ -333,18 +343,124 @@ it("reminds after seven distinct study days rather than seven idle calendar days
   expect(backupDue(p)).toBe(false);
 });
 
-it("all lesson routes put the final thought after the assessment", () => {
+it("all lesson routes end in a combined check and takeaway", () => {
   for (const lesson of curriculum.lessons)
     for (const route of Object.values(lesson.routes)) {
       if (!route.length) continue;
-      expect(lesson.scenes.find((s) => s.id === route.at(-1))?.type).toBe(
-        "recap",
-      );
-      expect(lesson.scenes.find((s) => s.id === route.at(-2))?.type).toBe(
-        "assessment",
-      );
+      const ending = lesson.scenes.find((s) => s.id === route.at(-1))!;
+      expect(ending.type).toBe("assessment");
+      expect(ending.takeaway).toBeTruthy();
+      expect(
+        route.some(
+          (id) => lesson.scenes.find((s) => s.id === id)?.type === "recap",
+        ),
+      ).toBe(false);
     }
   const invalid = structuredClone(curriculum);
   invalid.lessons[0].routes.core.reverse();
-  expect(() => validateGraph(invalid)).toThrow("end in a recap");
+  expect(() => validateGraph(invalid)).toThrow(
+    "end in one combined assessment",
+  );
+});
+
+it("preserves historical answers and recap positions without granting revised credit", () => {
+  const p = emptyProgress();
+  const oldQuestion = lesson.questions.find((q) => q.retired)!;
+  p.positions[lesson.id] = emptyPosition("ai-systems.recap");
+  p.attempts = [
+    {
+      ...evidence(objective.id)[0],
+      version: "1-draft",
+      family: oldQuestion.family,
+      variant: oldQuestion.id,
+      responses: Object.fromEntries(
+        Object.entries(oldQuestion.answers).map(([k, v]) => [k, String(v)]),
+      ),
+    },
+  ];
+  const restored = parseBackup(JSON.stringify(p), curriculum);
+  expect(restored.attempts[0]).toEqual(p.attempts[0]);
+  expect(lesson.sceneAliases[restored.positions[lesson.id].scene]).toBe(
+    "ai-systems.check",
+  );
+  expect(mastered(objective, restored.attempts)).toBe(false);
+  expect(
+    questionsRemaining(lesson, curriculum, restored, "core").items.every(
+      (q) => !q.retired,
+    ),
+  ).toBe(true);
+  p.attempts[0].version = objective.version;
+  expect(() => parseBackup(JSON.stringify(p), curriculum)).toThrow(
+    "Practice evidence",
+  );
+});
+
+it("requires intermediate calculations in the revised prediction and neuron checks", () => {
+  const prediction = curriculum.lessons
+    .find((l) => l.id === "prediction")!
+    .questions.find((q) => q.id === "prediction.base.v2.1")!;
+  const response = {
+    prediction: "13",
+    residual: "3",
+    loss: "9",
+    choice: "rule",
+  };
+  expect(grade(prediction, response)).toBe(true);
+  expect(grade(prediction, { ...response, residual: "-3" })).toBe(false);
+  expect(grade(prediction, { loss: "9", choice: "rule" })).toBe(false);
+  const neuron = curriculum.lessons
+    .find((l) => l.id === "neurons")!
+    .questions.find((q) => q.id === "neurons.base.v2.1")!;
+  const trace = {
+    weighted_sum: "6",
+    pre_activation: "-2",
+    output: "0",
+    choice: "rule",
+  };
+  expect(grade(neuron, trace)).toBe(true);
+  expect(grade(neuron, { ...trace, pre_activation: "-3" })).toBe(false);
+  expect(grade(neuron, { output: "0", choice: "rule" })).toBe(false);
+});
+
+it("accepts backups from before the reset feature", () => {
+  const original = emptyProgress();
+  const { resetAt: _resetAt, ...legacy } = original;
+  expect(parseBackup(JSON.stringify(legacy), curriculum)).toEqual(original);
+});
+
+it("keeps reset records intact when stale tabs save or synchronize", () => {
+  const stale = {
+    ...emptyProgress(),
+    updatedAt: 999,
+    attempts: evidence(objective.id),
+    exposures: [lesson.questions[0].id],
+    positions: { [lesson.id]: emptyPosition(lesson.routes.core[1]) },
+    bookmarks: [lesson.id],
+    selectedPath: "language" as const,
+    lastLesson: lesson.id,
+    studyDays: ["2026-09-13"],
+  };
+  const cleared = { ...emptyProgress(), resetAt: 10, updatedAt: 10 };
+  expect(mergeProgress(stale, cleared, false)).toEqual(cleared);
+  expect(mergeProgress(cleared, stale, false)).toEqual(cleared);
+  const studiedAgain = { ...cleared, updatedAt: 11, bookmarks: ["data"] };
+  expect(mergeProgress(studiedAgain, stale, false)).toEqual(studiedAgain);
+});
+
+it("restores an explicitly imported backup without adopting its reset boundary", () => {
+  const current = { ...emptyProgress(), resetAt: 10, updatedAt: 10 };
+  for (const backupReset of [0, 100]) {
+    const backup = {
+      ...emptyProgress(),
+      resetAt: backupReset,
+      updatedAt: 100,
+      attempts: evidence(objective.id),
+      bookmarks: [lesson.id],
+    };
+    const restored = mergeProgress(current, backup);
+    expect(restored.resetAt).toBe(10);
+    expect(restored.attempts).toEqual(backup.attempts);
+    expect(restored.bookmarks).toEqual(backup.bookmarks);
+    expect(mergeProgress(current, restored, false)).toEqual(restored);
+  }
 });

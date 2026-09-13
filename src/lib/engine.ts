@@ -55,7 +55,10 @@ export function questionsRemaining(
     for (const family of objective.families) {
       if (familyPassed(objective, family, progress.attempts)) continue;
       const next = lesson.questions.find(
-        (q) => q.family === family && !progress.exposures.includes(q.id),
+        (q) =>
+          !q.retired &&
+          q.family === family &&
+          !progress.exposures.includes(q.id),
       );
       if (next) items.push(next);
       else exhausted.push(family);
@@ -95,7 +98,7 @@ export function validateGraph(curriculum: Curriculum): void {
     }
     for (const family of objective.families) {
       const variants = lesson.questions.filter(
-        (q) => q.objective === id && q.family === family,
+        (q) => !q.retired && q.objective === id && q.family === family,
       );
       if (variants.length < 2)
         throw new Error(`Missing retake variant: ${family}`);
@@ -122,15 +125,24 @@ export function validateGraph(curriculum: Curriculum): void {
         throw new Error(`Invalid scene route: ${lesson.id}`);
       if (
         route.length &&
-        (lesson.scenes.find((s) => s.id === route.at(-1))?.type !== "recap" ||
+        (lesson.scenes.find((s) => s.id === route.at(-1))?.type !==
+          "assessment" ||
           route.filter(
             (id) =>
               lesson.scenes.find((s) => s.id === id)?.type === "assessment",
           ).length !== 1)
       )
         throw new Error(
-          `Lesson route must end in a recap after one assessment: ${lesson.id}`,
+          `Lesson route must end in one combined assessment page: ${lesson.id}`,
         );
+    }
+    for (const [old, target] of Object.entries(lesson.sceneAliases)) {
+      if (
+        !ids.has(old) ||
+        !ids.has(target) ||
+        !lesson.routes.core.includes(target)
+      )
+        throw new Error(`Invalid saved scene alias: ${lesson.id}/${old}`);
     }
     for (const scene of lesson.scenes) {
       for (const bridge of scene.bridges)
@@ -141,7 +153,11 @@ export function validateGraph(curriculum: Curriculum): void {
       throw new Error(`Duplicate question: ${lesson.id}`);
     for (const q of lesson.questions) {
       const obj = objectives.get(q.objective);
-      if (!obj || obj.lesson !== lesson.id || !obj.families.includes(q.family))
+      if (
+        !obj ||
+        obj.lesson !== lesson.id ||
+        (!q.retired && !obj.families.includes(q.family))
+      )
         throw new Error(`Unknown evidence mapping: ${q.id}`);
       if (allQuestionIds.has(q.id))
         throw new Error(`Duplicate global question: ${q.id}`);
@@ -289,6 +305,7 @@ export function parseBackup(text: string, curriculum: Curriculum): Progress {
     if (
       attempt.independent &&
       (attempt.mode === "practice" ||
+        (q.retired && attempt.version === objective.version) ||
         objective.scope === "mathematics" ||
         objective.lesson === "experts")
     )
@@ -304,6 +321,10 @@ export function mergeProgress(
   incoming: Progress,
   importing = true,
 ): Progress {
+  // Ordinary saves from before a reset must never restore deleted records.
+  // An explicitly confirmed backup import can restore them into this reset period.
+  if (!importing && current.resetAt !== incoming.resetAt)
+    return current.resetAt > incoming.resetAt ? current : incoming;
   const attempts = new Map(current.attempts.map((a) => [a.id, a]));
   for (const a of incoming.attempts) {
     const old = attempts.get(a.id);
@@ -319,6 +340,7 @@ export function mergeProgress(
   const recent = incoming.updatedAt > current.updatedAt ? incoming : current;
   return {
     ...recent,
+    resetAt: current.resetAt,
     attempts: [...attempts.values()].sort(
       (a, b) => a.at - b.at || a.id.localeCompare(b.id),
     ),

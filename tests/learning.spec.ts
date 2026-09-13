@@ -9,6 +9,8 @@ const data = JSON.parse(
     "utf8",
   ),
 ) as Curriculum;
+for (const lesson of data.lessons)
+  lesson.questions = lesson.questions.filter((q) => !q.retired);
 
 async function ready(page: Page, url: string) {
   await page.goto(url);
@@ -40,7 +42,9 @@ async function firstLessonMastery(page: Page, openLesson = true) {
     .click();
   await page.getByRole("button", { name: "Begin knowledge check" }).click();
   const lesson = data.lessons.find((l) => l.id === "ai-systems")!;
-  const questions = [lesson.questions[0], lesson.questions[2]];
+  const questions = [...new Set(lesson.questions.map((q) => q.family))].map(
+    (family) => lesson.questions.find((q) => q.family === family)!,
+  );
   for (const q of questions) {
     const option = q.options.find((o) => o.id === q.answers.choice)!;
     await page.getByRole("radio", { name: option.text, exact: true }).check();
@@ -301,7 +305,7 @@ test("unavailable browser storage keeps the session usable and exportable", asyn
   expect(backup.bookmarks).toContain("ai-systems");
 });
 
-test("quiz completion leads through the final thought before returning to its curriculum module", async ({
+test("quiz, takeaway, and curriculum return share one closing page", async ({
   page,
 }) => {
   await ready(page, "/paths/language/");
@@ -312,11 +316,17 @@ test("quiz completion leads through the final thought before returning to its cu
   await expect(page.locator(".assessment-panel").getByRole("link")).toHaveCount(
     0,
   );
-  await page
-    .getByRole("button", { name: "Continue to the final thought", exact: true })
-    .click();
+  await expect(
+    page.getByRole("button", {
+      name: "Continue to the final thought",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Lesson takeaway" }),
+  ).toBeVisible();
   await expect(page.locator("#lesson-stage h2")).toHaveText(
-    "One idea to take with you",
+    "Review and check your understanding",
   );
   const ending = page.getByRole("region", { name: "Lesson completion" });
   await expect(
@@ -325,7 +335,7 @@ test("quiz completion leads through the final thought before returning to its cu
   await expect(
     ending.getByRole("link", { name: /^Next lesson:/ }),
   ).toContainText(
-    data.lessons.find((l) => l.id === "models-and-products")!.title,
+    data.lessons.find((l) => l.id === "inputs-and-outputs")!.title,
   );
   await expect(
     page
@@ -334,12 +344,17 @@ test("quiz completion leads through the final thought before returning to its cu
   ).toHaveCount(0);
   await page.reload();
   await expect(page.locator("#lesson-stage h2")).toHaveText(
-    "One idea to take with you",
+    "Review and check your understanding",
   );
   await page.screenshot({
     path: "/tmp/learn-ai-final-thought.png",
     fullPage: true,
   });
+  const a11y = await new AxeBuilder({ page })
+    .include("main")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(a11y.violations).toEqual([]);
   await ending.getByRole("link", { name: "Back to the curriculum" }).click();
   await expect(page).toHaveURL(/library\/\?view=curriculum#M00$/);
   await expect(page.locator("#M00")).toHaveAttribute("open", "");
@@ -431,12 +446,14 @@ test("new attention controls survive a math detour and stay usable on mobile", a
   });
 });
 
-test("the complete catalog exposes 304 lessons and opens a late case study", async ({
+test("the complete catalog exposes every lesson and opens a late case study", async ({
   page,
 }) => {
   await ready(page, "/library/?view=curriculum#M35");
   await expect(page.locator(".curriculum-module")).toHaveCount(38);
-  await expect(page.locator(".curriculum-module li a")).toHaveCount(304);
+  await expect(page.locator(".curriculum-module li a")).toHaveCount(
+    data.catalog.reduce((n, m) => n + m.lessons.length, 0),
+  );
   await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(0);
   await page.locator('#M35 a[href*="/learn/deepseek-r1-case-study/"]').click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(
@@ -457,7 +474,7 @@ test("the complete catalog exposes 304 lessons and opens a late case study", asy
   await expect(page.locator("#M35")).toHaveAttribute("open", "");
 });
 
-test("new project and final module drafts render and preserve the final thought on mobile", async ({
+test("new project and final module drafts render and preserve the closing page on mobile", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -478,7 +495,9 @@ test("new project and final module drafts render and preserve the final thought 
     .locator('#M37 a[href*="/learn/comparing-alternative-neural-models/"]')
     .click();
   await page
-    .getByRole("button", { name: /Scene \d+: One idea to take with you/ })
+    .getByRole("button", {
+      name: /Scene \d+: Review and check your understanding/,
+    })
     .click();
   const ending = page.getByRole("region", { name: "Lesson completion" });
   await expect(ending.getByRole("link", { name: /^Next lesson:/ })).toHaveCount(
@@ -489,7 +508,7 @@ test("new project and final module drafts render and preserve the final thought 
   ).toHaveAttribute("href", "/library/?view=curriculum#M37");
   await page.reload();
   await expect(page.locator("#lesson-stage h2")).toHaveText(
-    "One idea to take with you",
+    "Review and check your understanding",
   );
   expect(
     await page.evaluate(
@@ -497,4 +516,365 @@ test("new project and final module drafts render and preserve the final thought 
     ),
   ).toBe(true);
   expect(errors).toEqual([]);
+});
+
+test("beginner weight controls and vocabulary detours explain roles and restore place", async ({
+  page,
+}) => {
+  await ready(page, "/learn/weights-and-predictions/");
+  await page
+    .getByRole("button", { name: /Scene \d+: Change the dial while/ })
+    .click();
+  await expect(page.getByTestId("weight-result")).toHaveText(
+    "3 × 2 = 6 crackers",
+  );
+  await page.getByRole("slider", { name: "Number of guests" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await page.getByRole("slider", { name: "Crackers per guest" }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByTestId("weight-result")).toHaveText(
+    "4 × 3 = 12 crackers",
+  );
+  await page.screenshot({
+    path: "/tmp/learn-ai-beginner-weights.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: /Scene \d+: Name the dial/ }).click();
+  await page.locator(".lesson-vocabulary summary").click();
+  const modelTitle = data.lessons.find(
+    (l) => l.id === "models-and-products",
+  )!.title;
+  const definitionLink = page.getByRole("button", {
+    name: `Read lesson: ${modelTitle}`,
+    exact: true,
+  });
+  await definitionLink.click();
+  await expect(page).toHaveURL(/learn\/models-and-products\/$/);
+  await page.reload();
+  await page.getByRole("button", { name: /^Return to / }).click();
+  await expect(page.locator("#lesson-stage h2")).toHaveText("Name the dial");
+  await expect(definitionLink).toBeFocused();
+  const a11y = await new AxeBuilder({ page })
+    .include("main")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(a11y.violations).toEqual([]);
+  await ready(page, "/learn/attention/");
+  await page
+    .getByRole("button", { name: /Scene \d+: Rehearse the three roles/ })
+    .click();
+  await page.locator(".lesson-vocabulary summary").click();
+  const vectorsLink = page.getByRole("button", {
+    name: "Read lesson: Vectors: lists that work together",
+    exact: true,
+  });
+  await vectorsLink.click();
+  await page.getByRole("button", { name: /^Return to / }).click();
+  await expect(vectorsLink).toBeFocused();
+});
+
+test("numeric foundation checks persist in reading mode on the combined closing page", async ({
+  page,
+}) => {
+  await ready(page, "/learn/arithmetic/");
+  await page.getByRole("button", { name: "Read as a page" }).click();
+  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await page.getByLabel("Your answer", { exact: true }).fill("12");
+  await page.getByRole("button", { name: "Check answer", exact: true }).click();
+  await expect(
+    page.getByText("Four groups of three contain twelve."),
+  ).toBeVisible();
+  await expect
+    .poll(async () => (await database(page))?.attempts.length)
+    .toBe(1);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Read as a page" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("button", { name: "Next check" }).click();
+  await page.getByLabel("Your answer", { exact: true }).fill("9");
+  await page.getByRole("button", { name: "Check answer", exact: true }).click();
+  await page.getByRole("button", { name: "See my result" }).click();
+  await expect(page.getByText("One more connection made.")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Lesson takeaway" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Lesson completion" }),
+  ).toBeVisible();
+});
+
+test("an old final-slide position and unfinished retired quiz resume safely", async ({
+  page,
+}) => {
+  await ready(page, "/learn/ai-systems/");
+  await page
+    .getByRole("button", { name: "Check my knowledge", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await database(page))?.positions["ai-systems"]?.scene)
+    .toBe("ai-systems.check");
+  const all = JSON.parse(
+    readFileSync(
+      new URL("../src/lib/generated/curriculum.json", import.meta.url),
+      "utf8",
+    ),
+  ) as Curriculum;
+  const retired = all.lessons
+    .find((l) => l.id === "ai-systems")!
+    .questions.find((q) => q.retired)!;
+  await page.evaluate(async (questionId) => {
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const request = indexedDB.open("learn-ai", 1);
+      request.onsuccess = () => resolve(request.result);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("learner", "readwrite");
+      const store = tx.objectStore("learner");
+      const request = store.get("progress");
+      request.onsuccess = () => {
+        const progress = request.result;
+        progress.positions["ai-systems"].scene = "ai-systems.recap";
+        progress.positions["ai-systems"].activeQuestion = questionId;
+        store.put(progress, "progress");
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, retired.id);
+  await page.reload();
+  await expect(page.locator("#lesson-stage h2")).toHaveText(
+    "Review and check your understanding",
+  );
+  await expect(
+    page.getByText(/This saved question belongs to an earlier lesson version/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/This advanced view is a practice preview/),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Start the revised checks" }).click();
+  await expect(page.locator(".question-prompt")).toHaveText(
+    data.lessons.find((l) => l.id === "ai-systems")!.questions[0].prompt,
+  );
+  expect((await database(page)).attempts).toEqual([]);
+});
+
+test("prediction checks grade the intermediate residual as well as the final loss", async ({
+  page,
+}) => {
+  await ready(page, "/learn/prediction/");
+  await page
+    .getByRole("button", { name: "Check my knowledge", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await page.getByLabel("Prediction", { exact: true }).fill("13");
+  await page.getByLabel("Prediction minus target", { exact: true }).fill("-3");
+  await page.getByLabel("Squared-error loss", { exact: true }).fill("9");
+  await page
+    .getByRole("radio", {
+      name: "Square the signed difference between prediction and target.",
+      exact: true,
+    })
+    .check();
+  await page.getByRole("button", { name: "Check answer", exact: true }).click();
+  await expect(page.getByText("Let’s connect the idea again.")).toBeVisible();
+  await expect(
+    page.getByText("Prediction is 13, residual is 13−10=3, and loss is 3²=9."),
+  ).toBeVisible();
+  await expect
+    .poll(async () => (await database(page))?.attempts[0]?.correct)
+    .toBe(false);
+  await page.getByRole("button", { name: "Next check" }).click();
+  await page.getByLabel("Prediction", { exact: true }).fill("13");
+  await page.getByLabel("Prediction minus target", { exact: true }).fill("-2");
+  await page.getByLabel("Squared-error loss", { exact: true }).fill("4");
+  await page
+    .getByRole("radio", {
+      name: "Square the signed difference between prediction and target.",
+      exact: true,
+    })
+    .check();
+  await page.getByRole("button", { name: "Check answer", exact: true }).click();
+  await expect(page.getByText("You’ve got this part.")).toBeVisible();
+  const a11y = await new AxeBuilder({ page })
+    .include("main")
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(a11y.violations).toEqual([]);
+});
+
+test("reset progress confirms, clears the complete record, and permits backup restoration", async ({
+  page,
+}) => {
+  await firstLessonMastery(page);
+  await page.getByRole("button", { name: "Save lesson", exact: true }).click();
+  await ready(page, "/paths/language/");
+  await page
+    .getByRole("button", { name: "Continue my path", exact: true })
+    .click();
+  await ready(page, "/learn/weights-and-predictions/");
+  await page.getByRole("button", { name: /Scene \d+: Name the dial/ }).click();
+  await page.locator(".bridge-links button").click();
+  await expect(page).toHaveURL(/learn\/arithmetic/);
+  await expect.poll(async () => (await database(page))?.detours.length).toBe(1);
+  await ready(page, "/progress/");
+  const before = await database(page);
+  expect(before.attempts).toHaveLength(2);
+  expect(before.bookmarks).toContain("ai-systems");
+  expect(before.selectedPath).toBe("language");
+  await page
+    .getByRole("button", { name: "Reset all progress", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Reset all progress?" });
+  await expect(
+    dialog.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  expect(await database(page)).toEqual(before);
+  await page
+    .getByRole("button", { name: "Reset all progress", exact: true })
+    .click();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(await database(page)).toEqual(before);
+  await page
+    .getByRole("button", { name: "Reset all progress", exact: true })
+    .click();
+  const accessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+  const download = page.waitForEvent("download");
+  await dialog.getByRole("button", { name: "Export a backup first" }).click();
+  const backup = await readFile((await (await download).path())!);
+  await dialog
+    .getByRole("button", { name: "Yes, reset all progress", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  await expect(
+    page.getByText(
+      "All progress in this browser has been reset. You can start a new learning path.",
+    ),
+  ).toBeVisible();
+  const cleared = await database(page);
+  expect(cleared.resetAt).toBeGreaterThan(0);
+  for (const field of [
+    "attempts",
+    "exposures",
+    "bookmarks",
+    "detours",
+    "studyDays",
+  ])
+    expect(cleared[field]).toEqual([]);
+  expect(cleared.positions).toEqual({});
+  expect(cleared.selectedPath).toBeNull();
+  expect(cleared.lastLesson).toBeNull();
+  expect(cleared.lastExportAt).toBe(0);
+  expect(cleared.backupDismissedAt).toBe(0);
+  await page.reload();
+  await expect(page.locator(".progress-stats strong")).toHaveText([
+    "0",
+    "0",
+    "0",
+  ]);
+  await page.getByLabel("Choose backup file").setInputFiles({
+    name: "before-reset.json",
+    mimeType: "application/json",
+    buffer: backup,
+  });
+  await page
+    .getByRole("button", { name: "Merge this backup", exact: true })
+    .click();
+  await expect
+    .poll(async () => (await database(page))?.attempts.length)
+    .toBe(2);
+  const restored = await database(page);
+  expect(restored.resetAt).toBe(cleared.resetAt);
+  expect(restored.bookmarks).toEqual(before.bookmarks);
+  expect(restored.positions).toEqual(before.positions);
+});
+
+test("reset reaches open tabs and stale writes cannot restore cleared progress", async ({
+  page,
+}) => {
+  await firstLessonMastery(page);
+  const live = await page.context().newPage();
+  await ready(live, "/progress/");
+  await expect(live.locator(".progress-stats strong")).toHaveText([
+    "1",
+    "2",
+    "0",
+  ]);
+  const stale = await page.context().newPage();
+  await stale.addInitScript(() => {
+    Reflect.deleteProperty(window, "BroadcastChannel");
+  });
+  await ready(stale, "/learn/ai-systems/");
+  await expect(stale.getByText("One more connection made.")).toBeVisible();
+  await ready(page, "/progress/");
+  await page
+    .getByRole("button", { name: "Reset all progress", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Yes, reset all progress", exact: true })
+    .click();
+  await expect(live.locator(".progress-stats strong")).toHaveText([
+    "0",
+    "0",
+    "0",
+  ]);
+  const resetAt = (await database(page)).resetAt;
+  // This tab missed the reset message and still holds the old attempts in memory.
+  await stale.getByRole("button", { name: "Save lesson", exact: true }).click();
+  await expect(
+    stale.getByRole("button", { name: "Save lesson", exact: true }),
+  ).toBeVisible();
+  await expect(stale.getByText("One more connection made.")).toHaveCount(0);
+  expect((await database(page)).attempts).toEqual([]);
+  expect((await database(page)).bookmarks).toEqual([]);
+  // New work in the current reset period can be saved normally.
+  await stale.getByRole("button", { name: "Save lesson", exact: true }).click();
+  await expect
+    .poll(async () => (await database(page))?.bookmarks)
+    .toEqual(["ai-systems"]);
+  expect((await database(page)).resetAt).toBe(resetAt);
+  await live.close();
+  await stale.close();
+});
+
+test("a failed reset keeps progress and displays a retryable error", async ({
+  page,
+}) => {
+  await firstLessonMastery(page);
+  await ready(page, "/progress/");
+  const before = await database(page);
+  await page.evaluate(() => {
+    const original = IDBDatabase.prototype.transaction;
+    IDBDatabase.prototype.transaction = function (
+      ...args: Parameters<typeof original>
+    ) {
+      if (args[1] === "readwrite")
+        throw new DOMException("Blocked test write", "QuotaExceededError");
+      return original.apply(this, args);
+    };
+  });
+  await page
+    .getByRole("button", { name: "Reset all progress", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Yes, reset all progress", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", { name: "Reset all progress?" });
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Saved progress could not be reset.",
+  );
+  expect(await database(page)).toEqual(before);
+  await expect(page.locator(".progress-stats strong")).toHaveText([
+    "1",
+    "2",
+    "0",
+  ]);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
 });

@@ -17,6 +17,7 @@ export const questionSchema = z.object({
   feedback: z.string().min(5),
   hint: z.string().min(3),
   remediation: z.string().optional(),
+  retired: z.boolean().optional(),
 });
 export type Question = z.infer<typeof questionSchema>;
 export type Responses = Record<string, string>;
@@ -50,7 +51,15 @@ export const sceneSchema = z.object({
     })
     .optional(),
   simulation: z
-    .enum(["gradient", "moe", "tokens", "denoising", "loss-curve", "attention"])
+    .enum([
+      "gradient",
+      "moe",
+      "tokens",
+      "denoising",
+      "loss-curve",
+      "attention",
+      "weighted-rule",
+    ])
     .optional(),
   activity: questionSchema.optional(),
   note: z.string().optional(),
@@ -85,6 +94,11 @@ export const lessonSchema = z.object({
   }),
   questions: z.array(questionSchema).min(4),
   entryChecks: z.array(questionSchema).default([]),
+  sceneAliases: z.record(z.string(), z.string()).default({}),
+  archetype: z
+    .enum(["foundation", "mechanism", "comparison", "project", "perspective"])
+    .default("mechanism"),
+  teachingWords: z.number().int().nonnegative().default(0),
   sources: z
     .array(z.object({ title: z.string(), url: z.string().url() }))
     .min(1),
@@ -102,6 +116,17 @@ export const recipeSchema = z.object({
   color: z.enum(["sage", "peach"]),
 });
 export type Recipe = z.infer<typeof recipeSchema>;
+export const vocabularySchema = z.array(
+  z.object({
+    id: z.string().min(1),
+    term: z.string().min(1),
+    definition: z.string().min(12),
+    lesson: z.string(),
+    aliases: z.array(z.string().min(1)),
+    matchPhrases: z.array(z.string().min(1)).min(1).optional(),
+  }),
+);
+export type VocabularyTerm = z.infer<typeof vocabularySchema>[number];
 export const curriculumSchema = z.object({
   version: z.literal("prototype-1"),
   lessons: z.array(lessonSchema),
@@ -189,6 +214,7 @@ export const progressSchema = z
     version: z.literal(1),
     curriculum: z.literal("prototype-1"),
     updatedAt: timestampSchema,
+    resetAt: timestampSchema.default(0),
     selectedPath: z.enum(["language", "images"]).nullable(),
     attempts: z.array(attemptSchema).max(20000),
     exposures: z.array(z.string().max(180)).max(20000),
@@ -197,7 +223,11 @@ export const progressSchema = z
     detours: z
       .array(
         z
-          .object({ lesson: z.string().max(100), scene: z.string().max(150) })
+          .object({
+            lesson: z.string().max(100),
+            scene: z.string().max(150),
+            control: z.enum(["bridge", "vocabulary"]).optional(),
+          })
           .strict(),
       )
       .max(20),
@@ -214,6 +244,7 @@ export function emptyProgress(): Progress {
     version: 1,
     curriculum: "prototype-1",
     updatedAt: 0,
+    resetAt: 0,
     selectedPath: null,
     attempts: [],
     exposures: [],

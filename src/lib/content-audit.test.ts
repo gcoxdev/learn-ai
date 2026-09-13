@@ -5,10 +5,10 @@ import { auditContent } from "../../scripts/content-audit";
 describe("initial draft coverage", () => {
   it("fills every catalog slot and side lesson", () => {
     expect(auditContent(curriculum)).toEqual({
-      main: 304,
+      main: 308,
       bridges: 23,
       previews: 1,
-      total: 328,
+      total: 332,
     });
   });
   it("rejects a missing final-module lesson", () => {
@@ -24,9 +24,9 @@ describe("initial draft coverage", () => {
   it("rejects a quiz placed before remaining teaching material", () => {
     const c = structuredClone(curriculum);
     const route = c.lessons[0].routes.core;
-    [route[1], route[route.length - 2]] = [route[route.length - 2], route[1]];
+    [route[1], route[route.length - 1]] = [route[route.length - 1], route[1]];
     expect(() => auditContent(c)).toThrow(
-      "Assessment must immediately precede final thought",
+      "Lesson needs a combined check and takeaway",
     );
   });
   it("rejects unfinished prose and duplicated retake prompts", () => {
@@ -34,8 +34,8 @@ describe("initial draft coverage", () => {
     unfinished.lessons[0].scenes[0].html = "<p>TODO: write this.</p>";
     expect(() => auditContent(unfinished)).toThrow("Unfilled scene");
     const repeated = structuredClone(curriculum);
-    repeated.lessons[0].questions[1].prompt =
-      repeated.lessons[0].questions[0].prompt;
+    const active = repeated.lessons[0].questions.filter((q) => !q.retired);
+    active[1].prompt = active[0].prompt;
     expect(() => auditContent(repeated)).toThrow("Repeated assessment prompt");
   });
 });

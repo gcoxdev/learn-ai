@@ -18,6 +18,8 @@
   import MechanismLab from "./MechanismLab.svelte";
   import Assessment from "./Assessment.svelte";
   import AttentionLab from "./AttentionLab.svelte";
+  import WeightLab from "./WeightLab.svelte";
+  import { termsInText } from "$lib/vocabulary";
   let { lesson }: { lesson: Lesson } = $props();
   const learner = getLearner();
   const position = $derived(learner.position(lesson.id, lesson.routes.core[0]));
@@ -29,7 +31,12 @@
   const scenes = $derived(
     route.map((id) => lesson.scenes.find((s) => s.id === id)!),
   );
-  const index = $derived(Math.max(0, route.indexOf(position.scene)));
+  const index = $derived(
+    Math.max(
+      0,
+      route.indexOf(lesson.sceneAliases[position.scene] ?? position.scene),
+    ),
+  );
   const current = $derived(scenes[index]);
   const origin = $derived(position.origin ?? defaultOrigin);
   const destination = $derived(returnDestination(origin));
@@ -45,9 +52,7 @@
   const done = $derived(
     scopeObjectives.every((o) => mastered(o, learner.data.attempts)),
   );
-  const returnTarget = $derived(
-    lesson.category === "bridge" ? learner.data.detours.at(-1) : undefined,
-  );
+  const returnTarget = $derived(learner.data.detours.at(-1));
   const prep = $derived(
     [
       ...new Set(
@@ -80,9 +85,13 @@
       .getElementById(position.mode === "text" ? `scene-${id}` : "lesson-stage")
       ?.focus();
   }
-  async function bridge(id: string, scene: Scene) {
+  async function bridge(
+    id: string,
+    scene: Scene,
+    control: "bridge" | "vocabulary" = "bridge",
+  ) {
     patch({ scene: scene.id });
-    learner.pushDetour(lesson.id, scene.id);
+    learner.pushDetour(lesson.id, scene.id, control);
     await goto(`/learn/${id}/`);
   }
   async function returnFromBridge() {
@@ -91,10 +100,17 @@
     if (target) {
       await goto(`/learn/${target.lesson}/`);
       await tick();
-      (
-        document.getElementById(`bridge-${target.scene}-${childId}`) ??
-        document.getElementById("lesson-stage")
-      )?.focus();
+      const control =
+        (target.control === "vocabulary"
+          ? document.querySelector<HTMLButtonElement>(
+              `[data-vocabulary-scene="${target.scene}"][data-vocabulary-lesson="${childId}"]`,
+            )
+          : document.getElementById(`bridge-${target.scene}-${childId}`)) ??
+        document.getElementById("lesson-stage") ??
+        document.getElementById(`scene-${target.scene}`);
+      const disclosure = control?.closest("details");
+      if (disclosure) disclosure.open = true;
+      control?.focus();
     }
   }
   function checkKnowledge() {
@@ -247,7 +263,7 @@
               class="button primary"
               disabled={!learner.hydrated}
               onclick={() => goTo(scenes[index + 1].id)}
-              >{current.type === "assessment" ? "Final thought" : "Continue"}
+              >Continue
               <Icon name="arrow" size={17} /></button
             >{/if}
         </div>
@@ -297,7 +313,8 @@
       {#if prep.length && !done}<details class="preparation">
           <summary>Suggested preparation</summary>
           <p>
-            You can explore freely or place out through the knowledge check.
+            Explore now, or answer the questions to show what you already
+            understand.
           </p>
           {#each prep as id (id)}<a href={lessonHref(id, origin)}
               >{getLesson(id)?.title}<Icon name="chevron" size={13} /></a
@@ -308,12 +325,47 @@
 </div>
 
 {#snippet sceneContent(scene: Scene)}
+  {@const vocabulary = termsInText(
+    scene.html +
+      " " +
+      (scene.takeaway ?? "") +
+      " " +
+      (scene.type === "assessment"
+        ? lesson.questions
+            .filter((q) => !q.retired)
+            .map((q) => q.prompt + " " + q.options.map((o) => o.text).join(" "))
+            .join(" ")
+        : ""),
+  )}
+  {#if vocabulary.length}<details class="lesson-vocabulary">
+      <summary>Need a word explained? ({vocabulary.length})</summary>
+      <dl>
+        {#each vocabulary as term (term.id)}<dt>{term.term}</dt>
+          <dd>
+            {term.definition}
+            {#if term.lesson !== lesson.id}<button
+                class="inline-link"
+                data-vocabulary-scene={scene.id}
+                data-vocabulary-lesson={term.lesson}
+                disabled={!learner.hydrated}
+                onclick={() => bridge(term.lesson, scene, "vocabulary")}
+                >Read lesson: {getLesson(term.lesson)?.title}</button
+              >{/if}
+          </dd>{/each}
+      </dl>
+    </details>{/if}
   {#if scene.type === "assessment"}
+    {#if scene.takeaway}<section
+        class="lesson-takeaway"
+        aria-label="Lesson takeaway"
+      >
+        <h3>The idea to keep</h3>
+        <div class="prose">{@html scene.takeaway}</div>
+      </section>{/if}
     <Assessment
       {lesson}
       depth={position.depth}
       onreview={(id) => goTo(id && route.includes(id) ? id : route[0])}
-      onfinish={() => goTo(finalScene.id)}
     />
   {:else}
     {#if scene.activity}
@@ -423,7 +475,8 @@
         </table>
       </div>{/if}
     {#if scene.simulation && (!scene.activity || position.reveals.includes(scene.activity.id))}
-      {#if scene.simulation === "gradient" || scene.simulation === "loss-curve"}<GradientLab
+      {#if scene.simulation === "weighted-rule"}<WeightLab />
+      {:else if scene.simulation === "gradient" || scene.simulation === "loss-curve"}<GradientLab
           rate={position.simulation?.rate ?? 0.1}
           initialWeight={position.simulation?.initialWeight ?? 0}
           steps={position.simulation?.steps ?? 0}
@@ -443,58 +496,39 @@
             >{getLesson(id)?.title}<Icon name="arrow" size={15} /></button
           >{/each}
       </div>{/if}
-    {#if scene.type === "recap"}<div class="recap-card">
-        <Icon name={done ? "check" : "book"} size={24} />
-        <div>
-          <strong
-            >{done
-              ? "This understanding carries forward."
-              : "Reading and mastery are different steps."}</strong
-          >
-          <p>
-            {done
-              ? "Your compatible core evidence will be reused on other paths."
-              : "Use the knowledge check to demonstrate the scoped objectives. Exploring the slides alone does not award mastery."}
-          </p>
-        </div>
-      </div>{/if}
-    {#if scene.id === finalScene.id}<section
-        class="lesson-finish"
-        aria-label="Lesson completion"
-      >
-        <span class="eyebrow">END OF LESSON</span>
-        <h3>Take this idea with you.</h3>
-        <p>
-          {returnTarget
-            ? "Your original lesson is waiting at the point where you opened this side lesson."
-            : "You’ve reached the final thought. Return to where you started, or follow the next connection."}
-        </p>
-        <div class="button-row">
-          {#if returnTarget}<button
-              class="button primary"
-              onclick={returnFromBridge}
-              >Return to {getLesson(returnTarget.lesson)?.title}<Icon
-                name="arrow"
-                size={17}
-              /></button
-            >
-          {:else}<a class="button primary" href={destination.href}
-              >{destination.label}<Icon name="arrow" size={17} /></a
-            >{/if}
-          {#if following && !returnTarget && (origin.kind !== "path" || done)}<a
-              class="button secondary"
-              href={lessonHref(
-                following.id,
-                origin.kind === "library"
-                  ? { ...origin, module: following.slot.split(".")[0] }
-                  : origin,
-              )}
-              >Next lesson: {following.title}<Icon name="arrow" size={17} /></a
-            >{/if}
-        </div>
-        {#if !done}<button class="text-button" onclick={checkKnowledge}
-            >Revisit the knowledge check</button
-          >{/if}
-      </section>{/if}
   {/if}
+  {#if scene.id === finalScene.id}<section
+      class="lesson-finish"
+      aria-label="Lesson completion"
+    >
+      <span class="eyebrow">END OF LESSON</span>
+      <h3>Continue your learning.</h3>
+      <p>
+        {returnTarget
+          ? "Your original lesson is waiting at the point where you opened this side lesson."
+          : "Return to where you started, or continue with the next connection when you are ready."}
+      </p>
+      <div class="button-row">
+        {#if returnTarget}<button
+            class="button primary"
+            onclick={returnFromBridge}
+            >Return to {getLesson(returnTarget.lesson)?.title}<Icon
+              name="arrow"
+              size={17}
+            /></button
+          >
+        {:else}<a class="button primary" href={destination.href}
+            >{destination.label}<Icon name="arrow" size={17} /></a
+          >{/if}
+        {#if following && !returnTarget && (origin.kind !== "path" || done)}<a
+            class="button secondary"
+            href={lessonHref(
+              following.id,
+              origin.kind === "library"
+                ? { ...origin, module: following.slot.split(".")[0] }
+                : origin,
+            )}>Next lesson: {following.title}<Icon name="arrow" size={17} /></a
+          >{/if}
+      </div>
+    </section>{/if}
 {/snippet}

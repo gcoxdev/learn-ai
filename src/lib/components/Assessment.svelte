@@ -9,12 +9,10 @@
     lesson,
     depth = "core",
     onreview,
-    onfinish,
   }: {
     lesson: Lesson;
     depth?: "core" | "mathematics";
     onreview: (id?: string) => void;
-    onfinish: () => void;
   } = $props();
   const learner = getLearner();
   const position = $derived(learner.position(lesson.id, lesson.routes.core[0]));
@@ -30,7 +28,9 @@
       : undefined,
   );
   const preview = $derived(
-    lesson.category === "advanced" || depth === "mathematics",
+    lesson.category === "advanced" ||
+      depth === "mathematics" ||
+      !!active?.retired,
   );
   const passed = $derived(
     remaining.objectives.filter((o) => mastered(o, learner.data.attempts))
@@ -44,6 +44,12 @@
 </script>
 
 <section class="assessment-panel" aria-label="Lesson knowledge check">
+  {#if learner.data.attempts.some( (a) => remaining.objectives.some((o) => o.id === a.objective && o.version !== a.version) )}
+    <p class="draft-note">
+      This lesson has new knowledge checks. Your earlier attempts are kept; try
+      the new questions to show what you understand about the updated material.
+    </p>
+  {/if}
   {#if active && attempt}
     <div
       class={["assessment-feedback", attempt.correct ? "correct" : "review"]}
@@ -60,8 +66,8 @@
       <p>{active.feedback}</p>
       <p class="muted">
         {attempt.independent
-          ? "This fresh, unassisted response was recorded against its objective."
-          : "This response is practice. Hinted, repeated, and advanced-preview responses do not award core mastery."}
+          ? "This answer was saved as a new attempt without help."
+          : "This answer was saved as practice. Hints, repeated questions, and practice previews help you learn but do not count toward completing the lesson."}
       </p>
       <div class="button-row">
         <button class="button primary" onclick={advance}
@@ -78,7 +84,13 @@
       </div>
     </div>
   {:else if active}
-    {#if preview}<p class="draft-note">
+    {#if active.retired}<p class="draft-note">
+        This saved question belongs to an earlier lesson version. You can finish
+        it as practice; use the revised checks for current mastery.
+        <button class="inline-link" onclick={advance}
+          >Start the revised checks</button
+        >
+      </p>{:else if preview}<p class="draft-note">
         This advanced view is a practice preview. It does not award formal
         mathematics or MoE course credit.
       </p>{/if}
@@ -105,15 +117,14 @@
       >
       <h3>One more connection made.</h3>
       <p>
-        You demonstrated {passed} scoped objective{passed === 1 ? "" : "s"} with two
-        different checks each. Compatible evidence will carry into your other learning
-        paths.
+        You passed two different checks for each of {passed} main idea{passed ===
+        1
+          ? ""
+          : "s"}. We’ll remember this understanding when you explore another
+        learning path.
       </p>
-      <button class="button primary" onclick={onfinish}
-        >Continue to the final thought <Icon name="arrow" size={17} /></button
-      ><small
-        >Draft instruction · personal-study evidence · not an independently
-        reviewed credential</small
+      <small
+        >Draft lesson · for personal learning · not a school certificate</small
       >
     </div>
   {:else}
@@ -121,22 +132,22 @@
       <span class="eyebrow">TURN FAMILIARITY INTO UNDERSTANDING</span>
       <h3>A small check. A stronger foundation.</h3>
       <p>
-        Apply the lesson to a different example. Each critical objective needs
-        two varied, unassisted checks. Existing compatible evidence is already
-        counted.
+        Try a different example without hints to show what you understand. Each
+        main idea needs two different correct answers. We already count the
+        ideas you have demonstrated in these checks.
       </p>
       <div class="check-facts">
         <span
-          ><Icon name="check" size={16} />{remaining.items.length} fresh checks available</span
+          ><Icon name="check" size={16} />{remaining.items.length} new questions available</span
         ><span
           ><Icon name="clock" size={16} />Untimed · revisit whenever you need</span
         >
       </div>
       {#if remaining.exhausted.length}<p class="hint-box">
-          This draft bank has no unused variants for {remaining.exhausted
-            .length} requirement{remaining.exhausted.length === 1 ? "" : "s"}.
-          Reading and practice remain available; repeated answers will not be
-          relabeled as fresh mastery evidence.
+          You have tried all the available questions for {remaining.exhausted
+            .length} idea{remaining.exhausted.length === 1 ? "" : "s"}. You can
+          still review and practice. Repeated answers will not count as new
+          checks toward completing the lesson.
         </p>{/if}
       <div class="button-row">
         <button
