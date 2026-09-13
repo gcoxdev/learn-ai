@@ -22,9 +22,9 @@ it("uses contextual phrases for ambiguous ordinary words", () => {
     termsInText("<strong>query</strong> vector").map((t) => t.id),
   ).toContain("query");
   const ids = termsInText(
-    "The arrows mean that a value leaves this step. The key idea answers a query.",
+    "The arrows mean that a value leaves this step. The key idea answers a query. The shape of a cloud changes.",
   ).map((t) => t.id);
-  for (const id of ["mean", "value", "key", "query"])
+  for (const id of ["mean", "value", "key", "query", "shape"])
     expect(ids).not.toContain(id);
   expect(
     termsInText("Compute the arithmetic mean; mix the value vectors.").map(
@@ -45,6 +45,20 @@ it("puts definitions before training and includes evaluation and projects on bot
       "inside-a-system",
     ];
     expect(ids.slice(0, early.length)).toEqual(early);
+    expect(ids.indexOf("digital-representations")).toBeLessThan(
+      ids.indexOf("tensor-shape-tracing"),
+    );
+    expect(ids.indexOf("algebra-notation")).toBeLessThan(
+      ids.indexOf("matrices-tensors"),
+    );
+    expect(ids.indexOf("algorithms-and-programs")).toBeLessThan(
+      ids.indexOf("randomness-reproducibility"),
+    );
+    expect(ids.indexOf("toy-model-limits")).toBeLessThan(
+      ids.indexOf(
+        recipe.id === "language" ? "training-loop" : "latent-diffusion",
+      ),
+    );
     expect(ids).toContain("human-and-model-judges");
     expect(ids).toContain("privacy-and-memorization");
     expect(ids.at(-1)).toBe(recipe.destination);

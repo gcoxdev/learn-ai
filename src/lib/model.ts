@@ -59,6 +59,7 @@ export const sceneSchema = z.object({
       "loss-curve",
       "attention",
       "weighted-rule",
+      "pixel-encoding",
     ])
     .optional(),
   activity: questionSchema.optional(),

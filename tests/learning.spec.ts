@@ -67,8 +67,10 @@ test("mastery survives refresh and is reused on either path", async ({
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await firstLessonMastery(page);
+  await expect(page.getByText("Keep what you’ve learned.")).toHaveCount(0);
   await page.reload();
   await expect(page.getByText("One more connection made.")).toBeVisible();
+  await expect(page.getByText("Keep what you’ve learned.")).toHaveCount(0);
   for (const path of ["language", "images"]) {
     await ready(page, `/paths/${path}/`);
     await expect(
@@ -601,6 +603,106 @@ test("numeric foundation checks persist in reading mode on the combined closing 
   ).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Lesson completion" }),
+  ).toBeVisible();
+});
+
+test("pixel controls distinguish stored values from their interpretation on mobile and keyboard", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await ready(page, "/learn/digital-representations/");
+  await page
+    .getByRole("button", { name: /Scene \d+: Build the smallest picture/ })
+    .click();
+  const reading = page.getByTestId("pixel-reading");
+  await expect(reading).toContainText("[0, 1, 1, 0]");
+  await expect(reading).toContainText("2 rows of 2");
+  await page.getByLabel("Pixels per row").selectOption("4");
+  await expect(reading).toContainText("1 row of 4");
+  await page.getByLabel("Swap the color convention").check();
+  await expect(reading).toContainText("[0, 1, 1, 0]");
+  const first = page.getByRole("button", {
+    name: "Stored value 1: 0. Displayed white",
+    exact: true,
+  });
+  await first.focus();
+  await page.keyboard.press("Space");
+  await expect(
+    page.getByRole("button", {
+      name: "Stored value 1: 1. Displayed black",
+      exact: true,
+    }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(reading).toContainText("[1, 1, 1, 0]");
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    (await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze())
+      .violations,
+  ).toEqual([]);
+});
+
+test("chain-rule checks retain intermediate answers across reload and award both calculation families", async ({
+  page,
+}) => {
+  await ready(page, "/learn/chain-rule/");
+  await page
+    .getByRole("button", { name: "Check my knowledge", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await page.getByLabel("Prediction p", { exact: true }).fill("3");
+  await page.getByLabel("Local loss rate dL/dp", { exact: true }).fill("-4");
+  await expect(
+    page.getByRole("button", { name: "Check answer", exact: true }),
+  ).toBeDisabled();
+  await expect
+    .poll(
+      async () =>
+        (await database(page))?.positions["chain-rule"]?.drafts?.[
+          "chain-rule.base.v2.1"
+        ]?.outer,
+    )
+    .toBe("-4");
+  await page.reload();
+  await expect(page.getByLabel("Prediction p", { exact: true })).toHaveValue(
+    "3",
+  );
+  await expect(
+    page.getByLabel("Local loss rate dL/dp", { exact: true }),
+  ).toHaveValue("-4");
+  await page
+    .getByLabel("Local prediction rate dp/dw", { exact: true })
+    .fill("3");
+  await page.getByLabel("Total loss rate dL/dw", { exact: true }).fill("-12");
+  await page
+    .getByRole("radio", {
+      name: "Multiply the two local rates evaluated at this example.",
+      exact: true,
+    })
+    .check();
+  await page.getByRole("button", { name: "Check answer", exact: true }).click();
+  await page.getByRole("button", { name: "Next check", exact: true }).click();
+  await page.getByLabel("Full loss derivative", { exact: true }).fill("-12");
+  await page.getByLabel("Next weight", { exact: true }).fill("1.2");
+  await page
+    .getByRole("radio", {
+      name: "Subtract 0.1 times the full derivative from w.",
+      exact: true,
+    })
+    .check();
+  await page.getByRole("button", { name: "Check answer", exact: true }).click();
+  await page
+    .getByRole("button", { name: "See my result", exact: true })
+    .click();
+  await expect(page.getByText("One more connection made.")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Lesson takeaway", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Lesson completion", exact: true }),
   ).toBeVisible();
 });
 

@@ -362,15 +362,3 @@ export function mergeProgress(
     ),
   };
 }
-
-export function backupDue(progress: Progress): boolean {
-  const boundary = new Date(
-    Math.max(progress.lastExportAt, progress.backupDismissedAt),
-  )
-    .toISOString()
-    .slice(0, 10);
-  return (
-    progress.attempts.length > 0 &&
-    new Set(progress.studyDays.filter((day) => day > boundary)).size >= 7
-  );
-}

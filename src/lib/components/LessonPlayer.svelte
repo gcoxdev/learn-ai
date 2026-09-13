@@ -19,6 +19,7 @@
   import Assessment from "./Assessment.svelte";
   import AttentionLab from "./AttentionLab.svelte";
   import WeightLab from "./WeightLab.svelte";
+  import PixelLab from "./PixelLab.svelte";
   import { termsInText } from "$lib/vocabulary";
   let { lesson }: { lesson: Lesson } = $props();
   const learner = getLearner();
@@ -475,7 +476,8 @@
         </table>
       </div>{/if}
     {#if scene.simulation && (!scene.activity || position.reveals.includes(scene.activity.id))}
-      {#if scene.simulation === "weighted-rule"}<WeightLab />
+      {#if scene.simulation === "pixel-encoding"}<PixelLab />
+      {:else if scene.simulation === "weighted-rule"}<WeightLab />
       {:else if scene.simulation === "gradient" || scene.simulation === "loss-curve"}<GradientLab
           rate={position.simulation?.rate ?? 0.1}
           initialWeight={position.simulation?.initialWeight ?? 0}

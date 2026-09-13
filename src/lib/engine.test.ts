@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { curriculum } from "./content";
 import {
-  backupDue,
   grade,
   mastered,
   mergeProgress,
@@ -127,15 +126,15 @@ describe("objective evidence", () => {
 });
 
 describe("dependency planning", () => {
-  it("closes the full draft paths with 108 shared lessons", () => {
+  it("closes the full draft paths with 114 shared lessons", () => {
     const plans = curriculum.recipes.map((r) => planPath(curriculum, r, []));
-    expect(plans.map((p) => p.lessons.length)).toEqual([184, 143]);
-    expect(plans.map((p) => p.required.length)).toEqual([185, 144]);
+    expect(plans.map((p) => p.lessons.length)).toEqual([187, 148]);
+    expect(plans.map((p) => p.required.length)).toEqual([188, 149]);
     expect(
       plans[0].lessons.filter((l) =>
         plans[1].lessons.some((other) => other.id === l.id),
       ),
-    ).toHaveLength(108);
+    ).toHaveLength(114);
     for (const plan of plans)
       for (const id of plan.remaining) {
         const obj = curriculum.objectives.find((o) => o.id === id)!;
@@ -322,25 +321,6 @@ describe("portable progress", () => {
       lesson.id,
     ]);
   });
-});
-
-it("reminds after seven distinct study days rather than seven idle calendar days", () => {
-  const p = emptyProgress();
-  p.attempts = evidence(objective.id);
-  p.studyDays = ["2026-08-01"];
-  expect(backupDue(p)).toBe(false);
-  p.studyDays = [
-    "2026-08-01",
-    "2026-08-03",
-    "2026-08-06",
-    "2026-08-07",
-    "2026-08-11",
-    "2026-08-15",
-    "2026-08-20",
-  ];
-  expect(backupDue(p)).toBe(true);
-  p.lastExportAt = Date.parse("2026-08-15T12:00:00Z");
-  expect(backupDue(p)).toBe(false);
 });
 
 it("all lesson routes end in a combined check and takeaway", () => {

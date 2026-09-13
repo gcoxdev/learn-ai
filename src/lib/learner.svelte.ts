@@ -9,7 +9,7 @@ import {
   type Responses,
   type LessonOrigin,
 } from "./model";
-import { backupDue, grade, mastered, mergeProgress } from "./engine";
+import { grade, mergeProgress } from "./engine";
 import {
   openProgressDB,
   readProgress,
@@ -24,7 +24,6 @@ export class Learner {
     "loading",
   );
   notice = $state("");
-  backupPrompt = $state(false);
   resetting = $state(false);
   #db: IDBDatabase | null = null;
   #queue = Promise.resolve();
@@ -45,7 +44,6 @@ export class Learner {
           : "Local storage is unavailable.";
     } finally {
       this.hydrated = true;
-      this.backupPrompt = backupDue(this.data);
     }
   }
   #listenForChanges() {
@@ -56,7 +54,6 @@ export class Learner {
       try {
         const latest = await readProgress(this.#db);
         if (latest) this.data = mergeProgress(this.data, latest, false);
-        this.backupPrompt = backupDue(this.data);
       } catch {
         this.notice =
           "Another tab could not be synchronized. Export your progress before closing.";
@@ -73,7 +70,6 @@ export class Learner {
       ...change(this.data),
       updatedAt: Math.max(Date.now(), this.data.updatedAt + 1),
     };
-    if (backupDue(this.data)) this.backupPrompt = true;
     if (!this.hydrated || !this.#db) {
       this.saveStatus = "unavailable";
       return;
@@ -104,7 +100,6 @@ export class Learner {
       this.#listenForChanges();
       const cleared = await resetProgress(this.#db);
       this.data = mergeProgress(this.data, cleared, false);
-      this.backupPrompt = false;
       this.saveStatus = "saved";
       this.notice =
         "All progress in this browser has been reset. You can start a new learning path.";
@@ -179,7 +174,6 @@ export class Learner {
     const objective = curriculum.objectives.find(
       (o) => o.id === question.objective,
     )!;
-    const wasMastered = mastered(objective, this.data.attempts);
     // Formal gradient and advanced MoE remain explicit practice previews in this first scope.
     const preview =
       objective.scope === "mathematics" || objective.lesson === "experts";
@@ -209,12 +203,6 @@ export class Learner {
       ],
       exposures: [...new Set([...p.exposures, question.id])],
     }));
-    if (
-      !wasMastered &&
-      mastered(objective, this.data.attempts) &&
-      this.data.lastExportAt === 0
-    )
-      this.backupPrompt = true;
     return attempt;
   }
   bookmark(id: string) {
@@ -240,10 +228,6 @@ export class Learner {
     this.update((p) => ({ ...p, detours: p.detours.slice(0, -1) }));
     return target;
   }
-  dismissBackup() {
-    this.backupPrompt = false;
-    this.update((p) => ({ ...p, backupDismissedAt: Date.now() }));
-  }
   exportProgress() {
     const exported = { ...this.data, lastExportAt: Date.now() };
     const url = URL.createObjectURL(
@@ -257,7 +241,6 @@ export class Learner {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     this.update((p) => ({ ...p, lastExportAt: exported.lastExportAt }));
-    this.backupPrompt = false;
     this.notice =
       "Backup download started. Keep the file somewhere you can find it.";
   }

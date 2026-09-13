@@ -174,21 +174,3 @@
     </footer>
   </div>
 </div>
-{#if learner.backupPrompt}<div class="backup-reminder" role="status">
-    <Icon name="download" />
-    <div>
-      <strong>Keep what you’ve learned.</strong>
-      <p>
-        Download a backup so clearing browser data doesn’t erase your progress.
-      </p>
-    </div>
-    <button
-      class="button primary small"
-      onclick={() => learner.exportProgress()}>Export</button
-    ><button
-      class="icon-button"
-      aria-label="Dismiss backup reminder"
-      onclick={() => learner.dismissBackup()}
-      ><Icon name="close" size={17} /></button
-    >
-  </div>{/if}
