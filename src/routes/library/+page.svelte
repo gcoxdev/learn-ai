@@ -125,8 +125,8 @@
     <span class="eyebrow">FOLLOW YOUR CURIOSITY</span>
     <h1>A place for every connection.</h1>
     <p>
-      Explore the first lessons, find a definition, or see where the full
-      curriculum is heading.
+      Explore the full draft curriculum, find a definition, or return to the
+      next connection in your learning.
     </p>
   </div>
   <div class="library-controls">
@@ -149,9 +149,12 @@
   </div>
   {#if view === "curriculum"}
     <p class="scope-caption">
-      38 planned modules · 304 lesson slots · {curriculum.lessons.length} authored
-      draft assets, including math side lessons. A slot title is a roadmap item, not
-      an available course.
+      {curriculum.catalog.length} modules · {curriculum.catalog.reduce(
+        (n, m) => n + m.lessons.length,
+        0,
+      )}
+      main lessons · 23 math and programming side lessons. Every lesson has an initial
+      draft with explanations and knowledge checks.
     </p>
     <div class="curriculum-list">
       {#each modules as module (module.id)}<details
@@ -161,7 +164,7 @@
         >
           <summary
             ><span>{module.id}</span>{module.title}<small
-              >{module.lessons.length} planned lessons</small
+              >{module.lessons.length} draft lessons</small
             ></summary
           >
           <ol>
@@ -182,7 +185,7 @@
                         : "DRAFT AVAILABLE"}</span
                     ></a
                   >{:else}<span>{title}</span>
-                  <small class="muted">Planned</small>{/if}
+                  <small class="muted">Unavailable</small>{/if}
               </li>{/each}
           </ol>
         </details>{/each}
@@ -205,7 +208,8 @@
   {:else}
     <p class="scope-caption">
       {lessons.length} draft lessons · Core knowledge checks track personal study.
-      Formal mathematics and MoE checks are practice previews.
+      Formal mathematics extensions and the A01 MoE preview are uncredited practice.
+      Project artifacts need separate self or peer review.
     </p>
     <div class="library-grid">
       {#each lessons as lesson (lesson.id)}<a
@@ -243,7 +247,7 @@
         <h3>Start with a system.</h3>
         <p>
           Choose language models or image generation. Your path starts with
-          shared foundations and builds toward an introductory mechanism.
+          shared foundations and builds toward modern system lifecycles.
         </p>
       </article>
       <article>
@@ -263,9 +267,9 @@
       </article>
     </div>
     <p class="draft-note">
-      This private prototype is the first slice of the school. Its content and
-      assessments are drafts awaiting independent subject and teaching review.
-      Estimates are editorial, not measured learner times.
+      This private prototype contains the initial curriculum draft. Its content
+      and assessments are drafts awaiting independent subject and teaching
+      review. Estimates are editorial, not measured learner times.
     </p>
   </section>
 </div>

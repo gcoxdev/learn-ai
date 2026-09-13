@@ -5,6 +5,7 @@ export function entries() {
 }
 export function load({ params }: { params: { id: string } }) {
   const lesson = getLesson(params.id);
-  if (!lesson) error(404, "This lesson is not available in the prototype yet.");
+  if (!lesson)
+    error(404, "This lesson could not be found in the draft curriculum.");
   return { lesson };
 }

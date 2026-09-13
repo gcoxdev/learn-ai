@@ -86,7 +86,9 @@ describe("lesson return context", () => {
     expect(nextLesson(curriculum, first, origins[0], emptyProgress())?.id).toBe(
       "models-and-products",
     );
-    const last = curriculum.lessons.find((l) => l.id === "cached-inference")!;
+    const last = curriculum.lessons.find(
+      (l) => l.id === "comparing-alternative-neural-models",
+    )!;
     expect(
       nextLesson(curriculum, last, origins[0], emptyProgress()),
     ).toBeUndefined();

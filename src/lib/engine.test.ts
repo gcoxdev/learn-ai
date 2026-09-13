@@ -121,15 +121,15 @@ describe("objective evidence", () => {
 });
 
 describe("dependency planning", () => {
-  it("closes the expanded paths with sixteen shared lessons", () => {
+  it("closes the full draft paths with ninety-two shared lessons", () => {
     const plans = curriculum.recipes.map((r) => planPath(curriculum, r, []));
-    expect(plans.map((p) => p.lessons.length)).toEqual([25, 19]);
-    expect(plans.map((p) => p.required.length)).toEqual([26, 20]);
+    expect(plans.map((p) => p.lessons.length)).toEqual([169, 121]);
+    expect(plans.map((p) => p.required.length)).toEqual([170, 122]);
     expect(
       plans[0].lessons.filter((l) =>
         plans[1].lessons.some((other) => other.id === l.id),
       ),
-    ).toHaveLength(16);
+    ).toHaveLength(92);
     for (const plan of plans)
       for (const id of plan.remaining) {
         const obj = curriculum.objectives.find((o) => o.id === id)!;
@@ -154,23 +154,13 @@ describe("dependency planning", () => {
         curriculum.recipes[1 - index],
         completed,
       );
-      const expected =
-        index === 0
-          ? ["denoising", "generative-models", "latent-diffusion"]
-          : [
-              "tokenization",
-              "embeddings",
-              "attention",
-              "powers-logs",
-              "softmax-attention",
-              "next-token",
-              "transformer-trace",
-              "training-loop",
-              "cached-inference",
-            ];
+      const target = planPath(curriculum, curriculum.recipes[1 - index], []);
+      const completedIds = new Set(completed.map((a) => a.objective));
       expect(switched.remaining.toSorted()).toEqual(
-        expected.map((id) => `objective.${id}`).toSorted(),
+        target.required.filter((id) => !completedIds.has(id)).toSorted(),
       );
+      expect(switched.remaining.length).toBeGreaterThan(0);
+      expect(switched.remaining).not.toContain("objective.ai-systems");
     },
   );
   it("stops at a mastered intermediate without manufacturing ancestor evidence", () => {

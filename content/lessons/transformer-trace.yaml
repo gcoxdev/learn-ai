@@ -14,6 +14,8 @@ lesson:
     url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/transformer.html
   - title: Attention Is All You Need
     url: https://arxiv.org/abs/1706.03762
+  - title: 'FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness'
+    url: https://arxiv.org/abs/2205.14135
 objectives:
 - id: objective.transformer-trace
   version: 1-draft
@@ -35,13 +37,13 @@ objectives:
     - objective.next-token
 scenes:
 - title: Keep one position in view
-  markdown: 'Start with the prompt “a bird sings”. Tokenization chooses IDs, and embedding lookup supplies
-    vectors. Follow the last prompt position: after the network processes it, its final representation helps
-    score the next token.
+  markdown: 'Start with the prompt “a bird sings”. Tokenization chooses IDs, and embedding lookup supplies vectors.
+    Follow the last prompt position: after the network processes it, its final representation helps score the next
+    token.
 
 
-    A decoder-only transformer repeats blocks over these representations. This is a conceptual trace of the
-    main components, not a claim that every architecture uses the same block order or parameter shapes.'
+    A decoder-only transformer repeats blocks over these representations. This is a conceptual trace of the main
+    components, not a claim that every architecture uses the same block order or parameter shapes.'
   id: transformer-trace.s1
   type: explanation
   depth: mechanics
@@ -50,13 +52,13 @@ scenes:
   text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
 - title: Order must enter the computation
   markdown: 'A plain collection of token embeddings does not by itself specify sequence positions. Transformers
-    include positional information. Designs may add positional vectors or modify query/key calculations using
-    position, as rotary methods do.
+    include positional information. Designs may add positional vectors or modify query/key calculations using position,
+    as rotary methods do.
 
 
     Consider “dog bites person” and “person bites dog”. The same vocabulary entries appear, but the order changes
-    the sentence. Positional mechanisms give the computation information it needs to distinguish such cases.
-    Their detailed mathematics belongs in the positional-encoding lesson.'
+    the sentence. Positional mechanisms give the computation information it needs to distinguish such cases. Their
+    detailed mathematics belongs in the positional-encoding lesson.'
   id: transformer-trace.s2
   type: explanation
   depth: mechanics
@@ -64,14 +66,14 @@ scenes:
   - objective.transformer-trace
   text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
 - title: Attention supplies contextual information
-  markdown: 'At the position we follow, attention computes permitted mixtures of information from earlier and
-    current positions. Multiple heads can use different learned projections and therefore different mixtures.
-    Their outputs are combined through an output projection.
+  markdown: 'At the position we follow, attention computes permitted mixtures of information from earlier and current
+    positions. Multiple heads can use different learned projections and therefore different mixtures. Their outputs
+    are combined through an output projection.
 
 
-    A projection is a learned numerical transformation of a vector. It can mix coordinates rather than simply
-    selecting one. The single-head experiment explains the central scoring-and-mixing operation; tensor shapes
-    and efficient multi-head implementations need a deeper follow-up.'
+    A projection is a learned numerical transformation of a vector. It can mix coordinates rather than simply selecting
+    one. The single-head experiment explains the central scoring-and-mixing operation; tensor shapes and efficient
+    multi-head implementations need a deeper follow-up.'
   bridges:
   - vectors
   id: transformer-trace.s3
@@ -81,14 +83,14 @@ scenes:
   - objective.transformer-trace
   text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
 - title: Keep a residual path; transform each position
-  markdown: 'A residual connection adds a block’s update to its incoming representation. For a toy vector [1,
-    2] and an attention update [0.5, −0.25], the sum is [1.5, 1.75]. This preserves a direct route for information
+  markdown: 'A residual connection adds a block’s update to its incoming representation. For a toy vector [1, 2]
+    and an attention update [0.5, −0.25], the sum is [1.5, 1.75]. This preserves a direct route for information
     while also allowing changes.
 
 
     Feed-forward components then apply learned transformations and nonlinearities at each position. Normalization
-    controls representation statistics. Common block variants arrange normalization and residual additions
-    differently; neither normalization nor the feed-forward network replaces attention’s cross-position mixing.'
+    controls representation statistics. Common block variants arrange normalization and residual additions differently;
+    neither normalization nor the feed-forward network replaces attention’s cross-position mixing.'
   id: transformer-trace.s4
   type: explanation
   depth: mechanics
@@ -96,14 +98,14 @@ scenes:
   - objective.transformer-trace
   text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
 - title: Project to the vocabulary, then choose
-  markdown: 'After the final block and the architecture’s final processing, a vocabulary projection gives a
-    score, or logit, for each possible next token. A distribution can be formed from those logits and a decoding
-    policy selects an output.
+  markdown: 'After the final block and the architecture’s final processing, a vocabulary projection gives a score,
+    or logit, for each possible next token. A distribution can be formed from those logits and a decoding policy
+    selects an output.
 
 
     Do not confuse two uses of normalization. Attention weights mix input-position values inside a head. Vocabulary
-    probabilities describe candidate output tokens near the end. A head attending strongly to “bird” does not
-    mean the next generated token must be “bird”.'
+    probabilities describe candidate output tokens near the end. A head attending strongly to “bird” does not mean
+    the next generated token must be “bird”.'
   id: transformer-trace.s5
   type: explanation
   depth: mechanics
@@ -116,15 +118,43 @@ scenes:
     and the user interface may surround the model.
 
 
-    You can now trace IDs → embeddings and positions → contextual blocks → vocabulary logits → selected token.
-    Encoder-only and encoder–decoder families reuse related components for different information flow and objectives;
-    this lesson’s assessed trace is specifically decoder-only.'
+    You can now trace IDs → embeddings and positions → contextual blocks → vocabulary logits → selected token. Encoder-only
+    and encoder–decoder families reuse related components for different information flow and objectives; this lesson’s
+    assessed trace is specifically decoder-only.'
   id: transformer-trace.s6
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.transformer-trace
   text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
+- id: transformer-trace.extension-context-cost
+  title: Count the cost of looking across a context
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.transformer-trace
+  markdown: 'For standard dense self-attention over T positions, each query can compare with up to T keys, giving
+    work on the scale of T squared for those comparisons. Doubling T quadruples the number of position pairs. A
+    causal mask removes future access but does not turn this whole training or prefill computation into a constant-size
+    operation.
+
+
+    During cached autoregressive decoding, one new query can attend to retained keys, so its attention work grows
+    with retained context. The KV cache stores earlier per-layer key/value activations and normally grows with retained
+    positions. Efficient kernels can avoid materializing a full score matrix, while different attention patterns
+    or architectures change the accounting. Distinguish arithmetic, stored intermediates, and total end-to-end latency.'
+  text_mode: 'For standard dense self-attention over T positions, each query can compare with up to T keys, giving
+    work on the scale of T squared for those comparisons. Doubling T quadruples the number of position pairs. A
+    causal mask removes future access but does not turn this whole training or prefill computation into a constant-size
+    operation.
+
+
+    During cached autoregressive decoding, one new query can attend to retained keys, so its attention work grows
+    with retained context. The KV cache stores earlier per-layer key/value activations and normally grows with retained
+    positions. Efficient kernels can avoid materializing a full score matrix, while different attention patterns
+    or architectures change the accounting. Distinguish arithmetic, stored intermediates, and total end-to-end latency.'
+  bridges:
+  - algorithm-cost
 - id: transformer-trace.check
   title: Make the idea your own
   type: assessment
@@ -153,6 +183,7 @@ navigation:
     - transformer-trace.s4
     - transformer-trace.s5
     - transformer-trace.s6
+    - transformer-trace.extension-context-cost
     - transformer-trace.check
     - transformer-trace.recap
     gate_refs:
@@ -170,8 +201,8 @@ assessment_families:
     - id: a
       text: Vocabulary probabilities → tokenizer training → a guaranteed factual answer.
     answer: answer
-    feedback: The model transforms representations through contextual blocks before projecting to vocabulary
-      scores. Attention weights alone are not the final next-token distribution.
+    feedback: The model transforms representations through contextual blocks before projecting to vocabulary scores.
+      Attention weights alone are not the final next-token distribution.
     id: transformer-trace.base.1
   - prompt: What does a residual addition do in the toy case [2, 1] + [−0.5, 0.25]?
     options:
@@ -182,8 +213,8 @@ assessment_families:
     - id: b
       text: It directly chooses a token ID from the vocabulary.
     answer: answer
-    feedback: Residual addition combines the incoming representation and its update. It is a vector operation
-      inside the network, not a decoding policy.
+    feedback: Residual addition combines the incoming representation and its update. It is a vector operation inside
+      the network, not a decoding policy.
     id: transformer-trace.base.2
   id: transformer-trace.base
   objective_ref: objective.transformer-trace
@@ -193,8 +224,8 @@ assessment_families:
 - response_type: single_choice
   hint: Attention mixes information from input positions; the output projection scores possible next tokens.
   variants:
-  - prompt: An attention head gives an input position weight 0.8. Does that mean the token at that position
-      has next-token probability 0.8?
+  - prompt: An attention head gives an input position weight 0.8. Does that mean the token at that position has
+      next-token probability 0.8?
     options:
     - id: answer
       text: No; attention-position weights and output-vocabulary probabilities are different quantities.
@@ -203,8 +234,8 @@ assessment_families:
     - id: b
       text: Yes; residual connections copy attention weights into output probabilities unchanged.
     answer: answer
-    feedback: Attention weights control value mixing inside a head. Further transformations and a vocabulary
-      projection determine the output logits.
+    feedback: Attention weights control value mixing inside a head. Further transformations and a vocabulary projection
+      determine the output logits.
     id: transformer-trace.transfer.1
   - prompt: Two prompts contain the same words in different orders. Why does positional information matter?
     options:
@@ -215,8 +246,8 @@ assessment_families:
     - id: answer
       text: It lets the computation distinguish where tokens occur and how their order differs.
     answer: answer
-    feedback: Order can change meaning. Position-aware computation can distinguish arrangements even when the
-      vocabulary entries are the same.
+    feedback: Order can change meaning. Position-aware computation can distinguish arrangements even when the vocabulary
+      entries are the same.
     id: transformer-trace.transfer.2
   id: transformer-trace.transfer
   objective_ref: objective.transformer-trace

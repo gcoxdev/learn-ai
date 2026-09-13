@@ -430,3 +430,71 @@ test("new attention controls survive a math detour and stay usable on mobile", a
     fullPage: true,
   });
 });
+
+test("the complete catalog exposes 304 lessons and opens a late case study", async ({
+  page,
+}) => {
+  await ready(page, "/library/?view=curriculum#M35");
+  await expect(page.locator(".curriculum-module")).toHaveCount(38);
+  await expect(page.locator(".curriculum-module li a")).toHaveCount(304);
+  await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(0);
+  await page.locator('#M35 a[href*="/learn/deepseek-r1-case-study/"]').click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "Separate DeepSeek-R1, R1-Zero, and distilled students",
+  );
+  await page.getByRole("button", { name: "Read as a page" }).click();
+  await expect(page.locator(".reading-page")).toContainText("January 22, 2025");
+  await expect(page.locator(".lesson-sources a").first()).toHaveAttribute(
+    "href",
+    "https://arxiv.org/abs/2501.12948v1",
+  );
+  const ending = page.getByRole("region", { name: "Lesson completion" });
+  await expect(
+    ending.getByRole("link", { name: /^Next lesson:/ }),
+  ).toHaveAttribute("href", /olmo-three-case-study/);
+  await ending.getByRole("link", { name: "Back to the curriculum" }).click();
+  await expect(page).toHaveURL(/library\/\?view=curriculum#M35$/);
+  await expect(page.locator("#M35")).toHaveAttribute("open", "");
+});
+
+test("new project and final module drafts render and preserve the final thought on mobile", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await ready(page, "/learn/small-network-gradient-project/");
+  await page.getByRole("button", { name: "Read as a page" }).click();
+  await expect(page.locator(".reading-page")).toContainText("0.0072");
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  await ready(page, "/library/?view=curriculum#M37");
+  await page
+    .locator('#M37 a[href*="/learn/comparing-alternative-neural-models/"]')
+    .click();
+  await page
+    .getByRole("button", { name: /Scene \d+: One idea to take with you/ })
+    .click();
+  const ending = page.getByRole("region", { name: "Lesson completion" });
+  await expect(ending.getByRole("link", { name: /^Next lesson:/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    ending.getByRole("link", { name: "Back to the curriculum" }),
+  ).toHaveAttribute("href", "/library/?view=curriculum#M37");
+  await page.reload();
+  await expect(page.locator("#lesson-stage h2")).toHaveText(
+    "One idea to take with you",
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(errors).toEqual([]);
+});

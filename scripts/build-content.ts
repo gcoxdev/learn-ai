@@ -10,6 +10,7 @@ import {
   type Scene,
 } from "../src/lib/model";
 import { validateGraph, planPath } from "../src/lib/engine";
+import { auditContent, coverageReport } from "./content-audit";
 
 function readYaml(text: string) {
   const doc = parseDocument(text, { uniqueKeys: true });
@@ -214,6 +215,15 @@ for (const filename of (await readdir("content/lessons"))
 }
 const curriculum = curriculumSchema.parse({ ...index, lessons, objectives });
 validateGraph(curriculum);
+auditContent(curriculum);
+curriculum.lessons.sort((a, b) => {
+  const group = (slot: string) =>
+    slot.startsWith("M") ? 0 : slot.startsWith("B") ? 1 : 2;
+  return (
+    group(a.slot) - group(b.slot) ||
+    a.slot.localeCompare(b.slot, "en", { numeric: true })
+  );
+});
 await mkdir("src/lib/generated", { recursive: true });
 await writeFile(
   "src/lib/generated/curriculum.json",
@@ -223,7 +233,7 @@ const closure = curriculum.recipes.map((recipe) => {
   const path = planPath(curriculum, recipe, []);
   return {
     recipe: recipe.id,
-    level: "core mechanisms prototype",
+    level: "initial draft course",
     objectiveCount: path.required.length,
     objectiveIds: path.required,
     lessonIds: path.lessons.map((l) => l.id),
@@ -236,9 +246,10 @@ await writeFile(
   JSON.stringify(closure, null, 2),
 );
 console.log(
-  `Validated ${lessons.length} draft assets, ${objectives.length} objectives, ${curriculum.catalog.length} planned modules.`,
+  `Validated ${lessons.length} draft assets, ${objectives.length} objectives, ${curriculum.catalog.length} complete draft modules.`,
 );
 for (const route of closure)
   console.log(
-    `${route.recipe}: ${route.assetCount} assets / ${route.objectiveCount} objectives (core mechanisms scope).`,
+    `${route.recipe}: ${route.assetCount} assets / ${route.objectiveCount} objectives (initial draft course).`,
   );
+await writeFile("content/COVERAGE.md", coverageReport(curriculum));

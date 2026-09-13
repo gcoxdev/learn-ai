@@ -55,7 +55,7 @@
       <h1>{data.recipe.title}</h1>
       <p class="lead">{data.recipe.description}</p>
       <div class="path-stat-row">
-        <span><strong>{full.lessons.length}</strong> short lessons</span><span
+        <span><strong>{full.lessons.length}</strong> draft lessons</span><span
           ><strong>{current.mastered.length}</strong> objectives carried forward</span
         ><span
           ><strong>{Math.round(minutes / 5) * 5}</strong> estimated minutes remaining</span

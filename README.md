@@ -1,6 +1,6 @@
 # Learn AI
 
-A private prototype of a presentation-style AI school. Choose a system, learn its foundations, and carry demonstrated understanding into another path.
+A private presentation-style AI school prototype with a complete initial curriculum draft. Choose a system, learn its foundations, and carry demonstrated understanding into another path.
 
 ## Run locally
 
@@ -25,23 +25,26 @@ The production build writes a static site to `build/`. `npm run preview` serves 
 
 ## Current implementation
 
-- Two introductory paths: language models and image generation. Their complete prerequisite routes contain 25 and 19 lessons respectively; sixteen lessons overlap and demonstrated objectives carry across paths.
-- Thirty-one authored draft lessons, including math bridges and an advanced MoE preview. The latest twelve cover vectors, probability, powers and logs, tokenization, embeddings, attention, softmax and causal masking, a decoder transformer trace, the training loop, cached inference, generative modeling, and latent diffusion.
+- Two guided draft courses: language models (169 lessons) and image generation (121 lessons). Their prerequisite closures share 92 lessons; demonstrated objectives carry across paths. Paths begin with foundations and extend through modern architectures, training, evaluation, and inference.
+- All 304 main lessons across 38 modules have initial drafts, plus 23 mathematics/programming bridge overviews and the preserved A01 advanced MoE preview: 328 authored assets with 330 scoped objectives. See [coverage](content/COVERAGE.md).
+- The curriculum spans history, symbolic reasoning, search, probability, classical learning, neural and alternative neural models, vision, language/audio, transformers, pretraining, distributed training, MoE, state-space models, post-training, reasoning, diffusion/flow models, multimodality, RL, agents, retrieval, serving, evaluation, interpretability, social/security questions, robotics, causality, hybrid methods, operations, and scientific AI.
+- Dated model studies connect Llama 3.1, Qwen3, DeepSeek-V3/R1, and Olmo 3 to their published lifecycle evidence. Additional comparisons cover image/audio/state-space systems and the limits of proprietary disclosures. These are historical mechanism anchors, not a live model ranking.
+- Eight synthesis projects include supplied toy data, worked calculations or reference fragments, no-code/manual options, and self/peer-review rubrics. Project quizzes check concepts; they do not grade unseen artifacts.
 - Presentation and continuous reading modes, saved positions and bookmarks, math detours, spoken equation descriptions, and exact numerical tables.
 - Quiz results lead to the final thought, with return links on that final slide. Returns preserve the originating curriculum module, library/glossary filter, path, or progress page across reloads. Curriculum lessons offer the next available lesson; assessed paths recommend the next unmet dependency.
 - Interactive scalar gradient descent and attention experiments, a top-k expert routing example, and clearly labeled illustrative token and denoising activities. The attention experiment exposes scores, scaling, masking, normalized weights, and the resulting value mixture.
 - Objective-based personal-study mastery, fresh retakes, hints and answer feedback. Two varied unassisted checks are required per critical core objective. Viewing material, using hints, or repeating exposed variants cannot award mastery.
 - Shared objective evidence across paths. Compatible mastery stops prerequisite expansion without granting evidence for ancestors. Separately required foundations remain required; a mastered alternative is preferred.
 - IndexedDB persistence, synchronization of evidence and positions across tabs, and validated JSON backup import/export with a review step. Evidence records merge once, conflicting IDs are rejected, and newer positions are preserved. Backup reminders follow first mastery and seven distinct study days (UTC dates) since export or dismissal.
-- Search, a starting glossary, and a roadmap of 38 modules / 304 main lesson slots. Roadmap entries are explicitly marked as planned.
+- Search, a starting glossary, and a complete browsable catalog of 38 modules / 304 main lessons. All catalog entries open draft lessons; side lessons and the advanced preview are also available in the library.
 
-Formal mathematics extensions and MoE checks are uncredited practice in this scope; the core math bridges have scoped checks. Existing core evidence remains intact. Live paths explain selected core mechanisms through transformer training/inference and latent diffusion; full architecture families, post-training, and production-system courses remain unfinished. Reference reading and placement checks remain available throughout the library.
+Formal mathematics extension checks and the older A01 MoE preview remain uncredited practice; the eight new M18 core MoE lessons and 23 bridges have scoped knowledge checks. All 31 checkpoint lesson IDs, scene IDs, objective versions, and assessment contracts were preserved. Catalog assignments changed for two orientation/neural lessons and the older preview without changing their evidence. Reference reading and placement checks remain available throughout the library.
 
 ## Content and code
 
-`content/lessons/*.yaml` contains original draft explanations, sources, scenes, objective mappings, and assessment variants. `content/curriculum.yaml` declares path roots and the future catalog.
+`content/lessons/*.yaml` contains original draft explanations, sources, scenes, objective mappings, and assessment variants. `content/curriculum.yaml` declares path roots and the authored catalog.
 
-`scripts/build-content.ts` validates YAML and the runtime Zod contract, checks references and graph cycles, compiles sanitized Markdown, and generates the runtime curriculum and exact prototype path closures in `src/lib/generated/`. Generated files are ignored and rebuilt by the application/check/test commands. The gradient asset adapts the reviewed authoring specimen; the source contract is still a draft, and this adapter is not a claim to implement every proposed authoring feature.
+`scripts/build-content.ts` validates YAML and the runtime Zod contract, checks references and graph cycles, compiles sanitized Markdown, and generates the runtime curriculum and exact draft path closures in `src/lib/generated/`. Runtime generated files are ignored and rebuilt by the application/check/test commands. `scripts/content-audit.ts` additionally enforces complete slot coverage, unique assignments and question prompts, and assessment-before-final-thought ordering; it regenerates the tracked coverage report. The gradient asset adapts the reviewed authoring specimen; the source contract is still a draft, and this adapter is not a claim to implement every proposed authoring feature.
 
 `src/lib/engine.ts` contains the planner, evidence rules, and backup validation/merge logic. `src/lib/simulations.ts` provides deterministic numerical mechanisms. `src/lib/learner.svelte.ts` scopes reactive learner state to each application layout, and `src/lib/storage.ts` performs transactional browser persistence. Reusable interaction components live in `src/lib/components/`.
 
@@ -57,10 +60,10 @@ Browser evidence is editable by its owner and is not an authoritative school gra
 
 The introductory token/denoising illustrations do not run trained models. Their transient controls are not saved; gradient and attention experiments, reading state, return destinations, drafts, and committed formative reveals are saved. A static production build is not an offline-installable PWA.
 
-Continue against the staged plan: validate the authoring contract with an independent editor, independently review all authored lessons and assessments, finish accessibility/learner trials, and expand complete destination closures toward modern architecture families, pretraining, post-training, evaluation, and inference systems. Expanded content remains draft while those review gates are open.
+Continue against the staged plan: independently review every draft and assessment, try the authoring contract with a non-author editor, deepen worked examples and mathematical treatments, expand bridge micro-lessons and assessment banks, and finish accessibility/learner trials. The initial draft fills the agreed catalog; it does not imply that every topic has exhaustive treatment or that the full planned school platform is implemented.
 
 The remote Svelte autofixer was attempted, but its source-disclosure step was blocked by automatic approval review. Validation uses local Svelte compiler/type checks, numerical and learning-rule tests, and local Chromium/axe checks instead.
 
 The verification suites cover learning rules, graph dependencies, numerical experiments, backups, final-slide navigation, saved return destinations, math detours, keyboard/mobile use, and selected axe WCAG A/AA rules. Independent review and the remaining browser/screen-reader matrix are still open.
 
-Current checkpoint: 54 logic tests and 12 Chromium tests pass, with no findings in the eight tested axe states. The final build and local Svelte/TypeScript checks pass; the three navigation flows were rechecked after the final return-link handling change.
+The completion checkpoint passes 59 logic/content tests and 14 Chromium flows, covering the complete catalog, late model studies, project calculations in reading mode, and final-module navigation as well as existing progress, backup, math-detour, and mobile behavior. The production build generates all 328 lesson pages and the Svelte/TypeScript check reports no errors or warnings. Accessibility assertions pass in the selected states; they do not cover the whole course.

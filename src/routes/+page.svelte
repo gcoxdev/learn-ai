@@ -116,7 +116,7 @@
                   name={recipe.id === "language" ? "chat" : "image"}
                   size={21}
                 /></span
-              ><span class="small-badge">INTRODUCTORY PATH</span>
+              ><span class="small-badge">GUIDED DRAFT COURSE</span>
             </div>
             <h3>{recipe.title}</h3>
             <p>
@@ -126,7 +126,7 @@
             </p>
             <div class="path-meta">
               <span
-                ><Icon name="book" size={15} />{plan.lessons.length} short lessons</span
+                ><Icon name="book" size={15} />{plan.lessons.length} lessons</span
               ><span><Icon name="layers" size={15} />Foundations first</span>
             </div>
             <div class="path-card-footer">
@@ -136,8 +136,10 @@
         >{/each}
     </div>
     <p class="scope-caption">
-      <span class="status-dot"></span>Two introductory paths to explore now.
-      Deeper architecture courses and more systems are in development.
+      <span class="status-dot"></span>Two guided courses, with shared
+      foundations. Explore all 38 modules, math side lessons, and projects in
+      the
+      <a href="/library/?view=curriculum">full draft curriculum</a>.
     </p>
   </section>
   <section class="foundation-section">
