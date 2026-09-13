@@ -1,0 +1,231 @@
+schema_version: 0.2-draft
+lesson:
+  id: cached-inference
+  version: 0.1.0-draft
+  title: From a prompt to a stream of tokens
+  state: draft
+  summary: Explain prefill and cached decoding, including how request-specific key/value activations differ
+    from learned model weights.
+  slot: M27.2
+  category: destination
+  minutes: 14
+  sources:
+  - title: Hugging Face — how caching works
+    url: https://huggingface.co/docs/transformers/cache_explanation
+objectives:
+- id: objective.cached-inference
+  version: 1-draft
+  statement: Explain prefill and cached decoding, including how request-specific key/value activations differ
+    from learned model weights.
+  depths:
+  - intuition
+  - mechanics
+  critical: true
+  evidence_families:
+  - cached-inference.base
+  - cached-inference.transfer
+  prerequisites:
+  - anyOf:
+    - objective.transformer-trace
+  - anyOf:
+    - objective.inside-a-system
+scenes:
+- title: Process the prompt before the first new token
+  markdown: 'Suppose the prompt has three tokens. Prefill runs the model on that prompt, respecting its attention
+    pattern, and computes the information needed to begin generation. The last prompt position supplies the
+    first next-token distribution.
+
+
+    The program can process prompt positions in parallel within a layer where dependencies permit, but later
+    layers still depend on earlier layers’ outputs. Prefill is a forward computation, not an optimizer update.'
+  id: cached-inference.s1
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.cached-inference
+  text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
+- title: Cache the past computations that stay useful
+  markdown: 'In a standard causal transformer, past positions’ key and value vectors at each attention layer
+    can be reused when the prefix is extended. A KV cache stores those computed activations.
+
+
+    These vectors depend on the request’s tokens, positions, and the model computation. They are different
+    from the learned projection weights that produced them. A cache does not contain an independent copy of
+    all model parameters, and it is not a general external knowledge database.'
+  id: cached-inference.s2
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.cached-inference
+  text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
+- title: Append one token, then compute its new contribution
+  markdown: 'After selecting a token from prefill’s final distribution, the next decode step processes that
+    token. Its query attends to eligible cached keys and its own new key/value information. Its output helps
+    predict the following token.
+
+
+    The new keys and values join the cache for later steps. The program saves repeated computation on the past,
+    but each newly generated token still needs a forward calculation. This dependency is why ordinary autoregressive
+    output is generated sequentially.'
+  type: table
+  columns:
+  - Moment
+  - New model input
+  - What is reused
+  rows:
+  - - Prefill
+    - All three prompt tokens
+    - No prior prefix cache in this example
+  - - First decode step
+    - First selected output token
+    - Prompt keys and values
+  - - Second decode step
+    - Next selected output token
+    - Prompt and earlier generated keys and values
+  id: cached-inference.s3
+  depth: mechanics
+  objective_refs:
+  - objective.cached-inference
+  text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
+- title: Caching changes work and memory, not the objective
+  markdown: 'With matching arithmetic and settings, cached and uncached implementations aim to compute the
+    same model result. Small numerical differences can arise in practical implementations. Caching does not
+    train the model or add facts to its parameters.
+
+
+    The cache usually grows with retained context and layers. Exact memory use depends on architecture, data
+    types, batching, and cache policy. Grouped-query, sliding-window, quantized, and other designs change that
+    accounting; avoid inferring an exact byte count from token count alone.'
+  id: cached-inference.s4
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.cached-inference
+  text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
+- title: A cache belongs to a compatible prefix
+  markdown: 'Imagine editing the first prompt token while retaining a cache from the old prompt. Later cached
+    representations may depend on that changed prefix, so blindly reusing them is incorrect. Prefix reuse requires
+    compatible tokenization, positions, model state, and cache conventions.
+
+
+    A new request’s prompt also does not automatically train the model. Distinguish request state, reusable
+    compatible prefix computation, and persistent parameter updates.'
+  id: cached-inference.s5
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.cached-inference
+  text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
+- title: Latency has several parts
+  markdown: 'Time to the first output token includes request preparation, scheduling, and prefill. Time between
+    later output tokens includes decode work and scheduling. Streaming exposes selected tokens as they become
+    available; it does not remove the computation.
+
+
+    To assess a serving change, measure quality, time to first token, later token latency, throughput, and
+    memory under a stated workload. A faster toy run alone is not a universal performance claim.'
+  id: cached-inference.s6
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.cached-inference
+  text_mode: Full prose, labeled calculations, and equivalent text tables are available in reading order.
+- id: cached-inference.check
+  title: Make the idea your own
+  type: assessment
+  depth: mechanics
+  objective_refs:
+  - objective.cached-inference
+  markdown: Use a fresh example to check what you can explain. Hints remain available for practice.
+  text_mode: Labeled controls and untimed feedback.
+- id: cached-inference.recap
+  title: One idea to take with you
+  type: recap
+  depth: intuition
+  objective_refs:
+  - objective.cached-inference
+  markdown: Prefill computes the prompt; decoding extends it. A KV cache reuses compatible request-specific
+    activations, while ordinary inference leaves the trained model parameters fixed.
+  text_mode: Prefill computes the prompt; decoding extends it. A KV cache reuses compatible request-specific
+    activations, while ordinary inference leaves the trained model parameters fixed.
+navigation:
+  routes:
+  - id: route.core
+    scene_sequence:
+    - cached-inference.s1
+    - cached-inference.s2
+    - cached-inference.s3
+    - cached-inference.s4
+    - cached-inference.s5
+    - cached-inference.s6
+    - cached-inference.check
+    - cached-inference.recap
+    gate_refs:
+    - gate.core
+assessment_families:
+- response_type: single_choice
+  hint: Prefill handles the available prompt; decoding extends it using prior compatible activations.
+  variants:
+  - prompt: For a fresh prompt with no reusable cache, where does the first output-token distribution come
+      from?
+    options:
+    - id: a
+      text: An obligatory optimizer update on the user’s message.
+    - id: b
+      text: A KV cache that already contains every possible answer.
+    - id: answer
+      text: The model’s prefill computation over the prompt.
+    answer: answer
+    feedback: Prefill computes the prompt representations and the final prompt position’s next-token scores.
+      No training update is required.
+    id: cached-inference.base.1
+  - prompt: What does a KV cache primarily retain in a standard causal transformer?
+    options:
+    - id: b
+      text: A certified factual database of all earlier answers.
+    - id: answer
+      text: Previously computed key and value activations for a compatible prefix.
+    - id: a
+      text: The optimizer’s gradients for future training.
+    answer: answer
+    feedback: The cache retains forward-computation activations for attention reuse. It is neither an optimizer
+      buffer nor an independently verified knowledge source.
+    id: cached-inference.base.2
+  id: cached-inference.base
+  objective_ref: objective.cached-inference
+  task: base
+  points: 1
+  remediation_scene: cached-inference.s1
+- response_type: single_choice
+  hint: Past cached vectors may depend on the exact prefix and model that produced them.
+  variants:
+  - prompt: A user edits an early prompt token. Can all later cached vectors from the old prompt be blindly
+      reused?
+    options:
+    - id: b
+      text: Yes; editing text automatically retrains every cached vector.
+    - id: answer
+      text: No; those vectors may depend on the changed prefix.
+    - id: a
+      text: Yes; caches depend only on the number of tokens.
+    answer: answer
+    feedback: Cache reuse requires compatible computation. Prefix content, positions, and model state can affect
+      the values being reused.
+    id: cached-inference.transfer.1
+  - prompt: A serving system adds a correct KV cache and becomes faster. What changed conceptually?
+    options:
+    - id: answer
+      text: It reused compatible past activations instead of recomputing all of them.
+    - id: a
+      text: It necessarily learned new model weights from the request.
+    - id: b
+      text: It removed the need to compute each new token.
+    answer: answer
+    feedback: Caching saves work on the prefix. Each new token still needs computation, and ordinary cached
+      inference leaves the learned parameters fixed.
+    id: cached-inference.transfer.2
+  id: cached-inference.transfer
+  objective_ref: objective.cached-inference
+  task: transfer
+  points: 1
+  remediation_scene: cached-inference.s1
