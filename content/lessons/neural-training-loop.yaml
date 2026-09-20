@@ -1,29 +1,31 @@
 schema_version: 0.2-draft
 lesson:
   id: neural-training-loop
-  version: 0.1.0-draft
+  version: 0.2.1-draft
   title: Connect data, gradients, and saved model state
   state: draft
-  summary: A neural training loop coordinates batches, forward loss, backward derivatives, optimizer updates, evaluation,
-    and checkpoints; a restart needs more state than weights alone.
+  summary: Run one complete learning step with a tiny prediction, then identify which parts must repeat and which
+    must stay protected.
   slot: M11.7
   category: learning
-  minutes: 12
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+  - title: Dive into Deep Learning — computational graphs and backpropagation
+    url: https://d2l.ai/chapter_multilayer-perceptrons/backprop.html
+  - title: Biderman et al. — Pythia, a suite for analyzing language-model training
+    url: https://arxiv.org/abs/2304.01373
+  archetype: mechanism
 objectives:
 - id: objective.neural-training-loop
-  version: 1-draft
-  statement: A neural training loop coordinates batches, forward loss, backward derivatives, optimizer updates,
-    evaluation, and checkpoints; a restart needs more state than weights alone.
+  version: 2-draft
+  statement: Trace forward loss, backward gradient, and an optimizer update while separating training batches from
+    validation and checkpoint selection.
   depths:
   - intuition
   - mechanics
   critical: true
   evidence_families:
-  - neural-training-loop.base
-  - neural-training-loop.transfer
+  - neural-training-loop.base.v2
+  - neural-training-loop.transfer.v2
   prerequisites:
   - anyOf:
     - objective.automatic-differentiation
@@ -33,56 +35,78 @@ objectives:
     - objective.residuals-normalization-dropout
 scenes:
 - id: neural-training-loop.s1
-  title: One update has several stages
   type: explanation
   depth: intuition
   objective_refs:
   - objective.neural-training-loop
-  markdown: Choose a batch, clear or manage gradient buffers, compute predictions, calculate the intended loss,
-    differentiate it, and apply an optimizer update. The order matters. Evaluation runs a defined forward procedure
-    on held-out data, ordinarily without parameter updates. Logging should distinguish training and evaluation metrics.
-  text_mode: Choose a batch, clear or manage gradient buffers, compute predictions, calculate the intended loss,
-    differentiate it, and apply an optimizer update. The order matters. Evaluation runs a defined forward procedure
-    on held-out data, ordinarily without parameter updates. Logging should distinguish training and evaluation metrics.
+  title: Give the model a small job
+  markdown: A **training loop** repeatedly uses examples to adjust model parameters. A **batch** is the group of
+    examples used for a particular calculation. To see the whole loop, use one example with input x=2 and target
+    t=5. Our model predicts p=w×x, starting at w=1. The target is provided by the task; the model does not choose
+    it to make its score look better. We will use squared error as the loss and an explicitly stated update rule.
+  text_mode: A **training loop** repeatedly uses examples to adjust model parameters. A **batch** is the group of
+    examples used for a particular calculation. To see the whole loop, use one example with input x=2 and target
+    t=5. Our model predicts p=w×x, starting at w=1. The target is provided by the task; the model does not choose
+    it to make its score look better. We will use squared error as the loss and an explicitly stated update rule.
   bridges: []
 - id: neural-training-loop.s2
-  title: Trace an accumulation boundary
   type: explanation
-  depth: mechanics
+  depth: intuition
   objective_refs:
   - objective.neural-training-loop
-  markdown: Suppose two microbatches each contribute half of an intended batch mean loss. Backpropagate both contributions,
-    then update once and clear the buffers. Updating after each microbatch is a different trajectory. Unequal microbatch
-    sizes or valid-token counts require appropriate weights to match the intended combined objective.
-  text_mode: Suppose two microbatches each contribute half of an intended batch mean loss. Backpropagate both contributions,
-    then update once and clear the buffers. Updating after each microbatch is a different trajectory. Unequal microbatch
-    sizes or valid-token counts require appropriate weights to match the intended combined objective.
-  bridges: []
+  title: Predict, then measure the miss
+  markdown: The forward pass gives p=1×2=2. Subtract the target to get residual 2−5=−3. Squaring produces loss 9.
+    This step computes values but leaves w unchanged. For a larger batch, define whether its losses are summed or
+    averaged. The reduction changes the scale of the gradient. Keep the input, target, prediction, residual, and
+    loss in separate table columns; this helps catch a missing target shift or an incorrect sign before changing
+    any settings.
+  text_mode: The forward pass gives p=1×2=2. Subtract the target to get residual 2−5=−3. Squaring produces loss
+    9. This step computes values but leaves w unchanged. For a larger batch, define whether its losses are summed
+    or averaged. The reduction changes the scale of the gradient. Keep the input, target, prediction, residual,
+    and loss in separate table columns; this helps catch a missing target shift or an incorrect sign before changing
+    any settings.
+  bridges:
+  - neural-forward-pass
 - id: neural-training-loop.s3
-  title: Save enough to resume
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.neural-training-loop
-  markdown: Weights are sufficient for some inference uses, but resuming training can also require optimizer moments,
-    schedule position, random states, data-order state, and configuration. A checkpoint should be versioned and
-    recoverable. Restoring only a subset may be useful as a restart, but it is not identical continuation.
-  text_mode: Weights are sufficient for some inference uses, but resuming training can also require optimizer moments,
-    schedule position, random states, data-order state, and configuration. A checkpoint should be versioned and
-    recoverable. Restoring only a subset may be useful as a restart, but it is not identical continuation.
-  bridges: []
+  title: Calculate sensitivity and make one update
+  markdown: 'The derivative of L=(w×x−t)² with respect to w is 2(w×x−t)×x. Here it is 2×(−3)×2=−12. With learning
+    rate 0.1, subtract the scaled derivative: w becomes 1−0.1×(−12)=2.2. This small example uses plain gradient
+    descent. Momentum or adaptive optimizers carry additional state and change the update rule, but the boundary
+    between calculating a gradient and applying an optimizer step remains useful.'
+  text_mode: 'The derivative of L=(w×x−t)² with respect to w is 2(w×x−t)×x. Here it is 2×(−3)×2=−12. With learning
+    rate 0.1, subtract the scaled derivative: w becomes 1−0.1×(−12)=2.2. This small example uses plain gradient
+    descent. Momentum or adaptive optimizers carry additional state and change the update rule, but the boundary
+    between calculating a gradient and applying an optimizer step remains useful.'
+  bridges:
+  - backpropagation
+  - derivatives
+  - multivariable-calculus
+  - chain-rule
+  figure:
+    kind: parameter-training
+    caption: Extend the one-weight example to a line with both a weight and a bias, fitted to three explicit points.
+    description: Fit prediction=weight×input+bias to (0,1), (1,3), and (2,5). Mean squared error depends on both
+      parameters. Compute both partial derivatives at the current pair before updating them together.
 - id: neural-training-loop.s4
-  title: Check the loop before scaling
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.neural-training-loop
-  markdown: Try a small clean dataset, inspect parameter changes, and verify that validation examples do not drive
-    gradients. Test checkpoint restore on a short run. Many apparent architecture failures come from mismatched
-    targets, reductions, modes, or state handling in the loop.
-  text_mode: Try a small clean dataset, inspect parameter changes, and verify that validation examples do not drive
-    gradients. Test checkpoint restore on a short run. Many apparent architecture failures come from mismatched
-    targets, reductions, modes, or state handling in the loop.
+  title: Recompute instead of recycling old values
+  markdown: At the updated weight, p=2.2×2=4.4, residual is −0.6, and loss is 0.36. Reusing the old prediction 2
+    would falsely suggest that learning changed nothing. The next step needs a fresh forward calculation and the
+    intended gradient-storage reset or accumulation. One **epoch** is a pass through the defined training dataset;
+    one optimizer **step** is a parameter update. They coincide only under special choices of dataset and batch
+    size.
+  text_mode: At the updated weight, p=2.2×2=4.4, residual is −0.6, and loss is 0.36. Reusing the old prediction
+    2 would falsely suggest that learning changed nothing. The next step needs a fresh forward calculation and the
+    intended gradient-storage reset or accumulation. One **epoch** is a pass through the defined training dataset;
+    one optimizer **step** is a parameter update. They coincide only under special choices of dataset and batch
+    size.
   bridges: []
 - id: neural-training-loop.check
   title: Review and check your understanding
@@ -92,8 +116,8 @@ scenes:
   - objective.neural-training-loop
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: A neural training loop coordinates batches, forward loss, backward derivatives, optimizer updates, evaluation,
-    and checkpoints; a restart needs more state than weights alone.
+  takeaway: Batch, predict, score, differentiate, update. Validation observes a fixed candidate; it does not join
+    the update step.
 - id: neural-training-loop.recap
   title: One idea to take with you
   type: recap
@@ -104,6 +128,65 @@ scenes:
     and checkpoints; a restart needs more state than weights alone.
   text_mode: A neural training loop coordinates batches, forward loss, backward derivatives, optimizer updates,
     evaluation, and checkpoints; a restart needs more state than weights alone.
+- id: neural-training-loop.s5
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.neural-training-loop
+  title: Pause to observe a candidate
+  markdown: Validation evaluates current settings without fitting them to those validation examples. It can help
+    choose when to stop or which saved **checkpoint** to retain. A checkpoint stores a version of model state; resuming
+    the same training process may also require optimizer, random-generator, and data-position state. A falling training
+    loss does not guarantee improving validation performance. Keep final test results protected from this repeated
+    selection loop.
+  text_mode: Validation evaluates current settings without fitting them to those validation examples. It can help
+    choose when to stop or which saved **checkpoint** to retain. A checkpoint stores a version of model state; resuming
+    the same training process may also require optimizer, random-generator, and data-position state. A falling training
+    loss does not guarantee improving validation performance. Keep final test results protected from this repeated
+    selection loop.
+  bridges: []
+- id: neural-training-loop.s6
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.neural-training-loop
+  title: Debug the smallest repeatable run
+  markdown: Try fitting a tiny clean batch before scaling up. Inspect that the intended parameters receive gradients,
+    the optimizer uses the expected rate, and the loss behaves sensibly. Some cases cannot be perfectly fitted because
+    the architecture or labels make that impossible, so interpret the diagnostic in context. Record the data version,
+    model settings, random seeds, and measurements. Remember “batch, predict, score, differentiate, update,” with
+    a separate lane for evaluation and checkpoint decisions.
+  text_mode: Try fitting a tiny clean batch before scaling up. Inspect that the intended parameters receive gradients,
+    the optimizer uses the expected rate, and the loss behaves sensibly. Some cases cannot be perfectly fitted because
+    the architecture or labels make that impossible, so interpret the diagnostic in context. Record the data version,
+    model settings, random seeds, and measurements. Remember “batch, predict, score, differentiate, update,” with
+    a separate lane for evaluation and checkpoint decisions.
+  bridges: []
+- id: neural-training-loop.s7
+  type: question
+  depth: mechanics
+  objective_refs:
+  - objective.neural-training-loop
+  title: A weight changed; what happens next?
+  markdown: The optimizer changes w from 1 to 2.2. A learner reports the old prediction 2 as the updated result
+    for x=2. Which repair is needed?
+  text_mode: The optimizer changes w from 1 to 2.2. A learner reports the old prediction 2 as the updated result
+    for x=2. Which repair is needed?
+  bridges: []
+  question:
+    response_type: single_choice
+    options:
+    - id: a
+      text: Run the forward calculation again using w=2.2.
+    - id: b
+      text: Subtract the learning rate from the old prediction.
+    - id: c
+      text: Reuse the old prediction because the input stayed fixed.
+    answer: a
+    reveal_markdown: The input stayed fixed but the model setting changed. Recompute 2.2×2=4.4 before calculating
+      the new loss.
+    hint: Trace the example using the rule from the preceding pages.
+    id: neural-training-loop.practice.v2.7
 navigation:
   routes:
   - id: route.core
@@ -112,6 +195,9 @@ navigation:
     - neural-training-loop.s2
     - neural-training-loop.s3
     - neural-training-loop.s4
+    - neural-training-loop.s5
+    - neural-training-loop.s6
+    - neural-training-loop.s7
     - neural-training-loop.check
     gate_refs:
     - gate.core
@@ -137,6 +223,7 @@ assessment_families:
       text: Only loading a validation image
     answer: a
     feedback: Forward and backward computation supply information; the update applies the change.
+    retired: true
   - id: neural-training-loop.base.2
     prompt: What extra state may Adam training resume need beyond weights?
     options:
@@ -148,6 +235,7 @@ assessment_families:
       text: Moment buffers and schedule position
     answer: a
     feedback: Optimizer and schedule history affect subsequent updates.
+    retired: true
 - id: neural-training-loop.transfer
   objective_ref: objective.neural-training-loop
   task: transfer
@@ -167,6 +255,7 @@ assessment_families:
       text: The effective weighting of examples in the objective
     answer: a
     feedback: Equal averages of unequal groups need not equal the overall example mean.
+    retired: true
   - id: neural-training-loop.transfer.2
     prompt: Validation loss is accidentally included in backward propagation. What boundary is broken?
     options:
@@ -178,3 +267,137 @@ assessment_families:
       text: Only the rendering layout
     answer: a
     feedback: Validation information has entered parameter fitting.
+    retired: true
+- id: neural-training-loop.base.v2
+  objective_ref: objective.neural-training-loop
+  task: base
+  response_type: numeric_fields_with_reason
+  points: 1
+  hint: Work through the example one step at a time before answering.
+  remediation_scene: neural-training-loop.s3
+  variants:
+  - prompt: Use p=w×x, L=(p−t)², and learning rate 0.1 with w=1, x=2, t=4. Record loss, derivative dL/dw, and next
+      w.
+    answers:
+      loss: 4
+      gradient: -8
+      next: 1.8
+    reason_answer: a
+    reason_options:
+    - id: c
+      text: Add 0.1 times the signed derivative to w.
+    - id: a
+      text: Subtract 0.1 times the signed full derivative from w.
+    - id: b
+      text: Subtract 0.1 times the loss from w.
+    feedback: Compute residual p−t, square for loss, multiply 2×residual×x for the gradient, then update.
+    id: neural-training-loop.base.v2.1
+  - prompt: Use p=w×x, L=(p−t)², and learning rate 0.1 with w=2, x=1, t=5. Record loss, derivative dL/dw, and next
+      w.
+    answers:
+      loss: 9
+      gradient: -6
+      next: 2.6
+    reason_answer: a
+    reason_options:
+    - id: b
+      text: Subtract 0.1 times the loss from w.
+    - id: c
+      text: Add 0.1 times the signed derivative to w.
+    - id: a
+      text: Subtract 0.1 times the signed full derivative from w.
+    feedback: Compute residual p−t, square for loss, multiply 2×residual×x for the gradient, then update.
+    id: neural-training-loop.base.v2.2
+  - prompt: Use p=w×x, L=(p−t)², and learning rate 0.1 with w=0, x=3, t=2. Record loss, derivative dL/dw, and next
+      w.
+    answers:
+      loss: 4
+      gradient: -12
+      next: 1.2
+    reason_answer: a
+    reason_options:
+    - id: a
+      text: Subtract 0.1 times the signed full derivative from w.
+    - id: b
+      text: Subtract 0.1 times the loss from w.
+    - id: c
+      text: Add 0.1 times the signed derivative to w.
+    feedback: Compute residual p−t, square for loss, multiply 2×residual×x for the gradient, then update.
+    id: neural-training-loop.base.v2.3
+  - prompt: Use p=w×x, L=(p−t)², and learning rate 0.1 with w=3, x=2, t=4. Record loss, derivative dL/dw, and next
+      w.
+    answers:
+      loss: 4
+      gradient: 8
+      next: 2.2
+    reason_answer: a
+    reason_options:
+    - id: a
+      text: Subtract 0.1 times the signed full derivative from w.
+    - id: b
+      text: Subtract 0.1 times the loss from w.
+    - id: c
+      text: Add 0.1 times the signed derivative to w.
+    feedback: Compute residual p−t, square for loss, multiply 2×residual×x for the gradient, then update.
+    id: neural-training-loop.base.v2.4
+  numeric_fields:
+  - id: loss
+    label: Loss before update
+  - id: gradient
+    label: Full derivative
+  - id: next
+    label: Weight after update
+  absolute_tolerance: 1.0e-06
+- id: neural-training-loop.transfer.v2
+  objective_ref: objective.neural-training-loop
+  task: transfer
+  response_type: single_choice
+  points: 1
+  hint: Work through the example one step at a time before answering.
+  remediation_scene: neural-training-loop.s3
+  variants:
+  - prompt: A dataset has 12 examples and batches of 3, with one update per batch. How many optimizer steps make
+      one full pass?
+    answer: a
+    options:
+    - id: b
+      text: '3'
+    - id: a
+      text: '4'
+    - id: c
+      text: '12'
+    feedback: Twelve examples divided into groups of three give four updates per epoch under this setup.
+    id: neural-training-loop.transfer.v2.1
+  - prompt: Why keep validation outside the gradient-fitting batch?
+    answer: a
+    options:
+    - id: b
+      text: Validation examples have no measurable targets
+    - id: c
+      text: Its loss must be zero before the optimizer is allowed to update
+    - id: a
+      text: Its role is to guide evaluation and selection of candidates
+    feedback: The partition’s job determines its use; validation should not become ordinary fitting data.
+    id: neural-training-loop.transfer.v2.2
+  - prompt: The next forward pass uses old cached activations after weights changed. What is wrong?
+    answer: a
+    options:
+    - id: a
+      text: Those values may no longer match the current model settings
+    - id: c
+      text: Every activation is an unchanging model parameter
+    - id: b
+      text: The learning rate must be set to zero permanently
+    feedback: Activations depend on the current computation and may need to be recomputed after updates.
+    id: neural-training-loop.transfer.v2.3
+  - prompt: What can be needed to resume training beyond the saved model weights?
+    answer: a
+    options:
+    - id: c
+      text: Only the last validation score
+    - id: b
+      text: The architecture configuration without the optimizer’s accumulated state
+    - id: a
+      text: Optimizer, random-generator, and data-position state
+    feedback: Training state includes more than the weights needed for a plain forward pass.
+    id: neural-training-loop.transfer.v2.4

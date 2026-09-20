@@ -538,6 +538,9 @@ test("path entry and direct entry have distinct useful final destinations", asyn
   page,
 }) => {
   await ready(page, "/paths/images/");
+  await page
+    .getByRole("button", { name: "Show all lessons", exact: true })
+    .click();
   await page.locator('.syllabus-row[href*="/learn/denoising/"]').click();
   await page.getByRole("button", { name: "Read as a page" }).click();
   await expect(
@@ -1131,4 +1134,183 @@ test("a failed reset keeps progress and displays a retryable error", async ({
   ]);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(dialog).not.toBeVisible();
+});
+
+test("chapters open with the keyboard, expose every lesson, and preserve return navigation", async ({
+  page,
+}) => {
+  await ready(page, "/paths/language/");
+  const chapters = page.locator(".path-chapter");
+  await expect(chapters.first()).toHaveAttribute("open", "");
+  const first = chapters.first().locator("summary");
+  await first.focus();
+  await page.keyboard.press("Enter");
+  await expect(chapters.first()).not.toHaveAttribute("open", "");
+  await page.keyboard.press("Enter");
+  await expect(chapters.first()).toHaveAttribute("open", "");
+  await page
+    .getByRole("button", { name: "Show all lessons", exact: true })
+    .click();
+  await expect(page.locator(".path-chapter[open]")).toHaveCount(
+    await chapters.count(),
+  );
+  const target = page.locator(
+    '.syllabus-row[href*="/learn/evaluation-releases-and-rollback/"]',
+  );
+  await expect(target).toBeVisible();
+  await target.click();
+  await page
+    .getByRole("button", { name: "Check my knowledge", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Lesson completion" })
+    .getByRole("link", { name: "Back to my learning path" })
+    .click();
+  await expect(page).toHaveURL(/\/paths\/language\/$/);
+  await expect(page.locator(".path-chapter[open]")).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  await page.screenshot({
+    path: "/tmp/learn-ai-language-chapters.png",
+    fullPage: true,
+  });
+});
+
+test("sampling controls expose changed probabilities without awarding mastery", async ({
+  page,
+}) => {
+  await ready(page, "/learn/decoding-and-sampling/");
+  const lesson = data.lessons.find((l) => l.id === "decoding-and-sampling")!;
+  const activity = lesson.scenes.find((s) => s.simulation === "sampling")!;
+  await page
+    .getByRole("button", { name: new RegExp(`Scene \\d+: ${activity.title}`) })
+    .click();
+  await expect(page.getByTestId("sampling-probability-A")).toHaveText("66.5%");
+  await expect(page.getByTestId("sampling-choice")).toContainText(
+    "candidate B",
+  );
+  const temperature = page.getByRole("slider", {
+    name: "Temperature",
+    exact: true,
+  });
+  await temperature.focus();
+  for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowLeft");
+  await expect(temperature).toHaveValue("0.5");
+  await expect(page.getByTestId("sampling-probability-A")).toHaveText("86.7%");
+  await expect(page.getByTestId("sampling-choice")).toContainText(
+    "candidate A",
+  );
+  await page
+    .getByRole("combobox", { name: "Top-k", exact: true })
+    .selectOption("1");
+  await expect(page.getByTestId("sampling-probability-A")).toHaveText("100.0%");
+  await expect(page.getByTestId("sampling-probability-B")).toHaveText("0.0%");
+  await page
+    .getByRole("slider", { name: "Sampling draw", exact: true })
+    .focus();
+  await page.keyboard.press("End");
+  await expect(page.getByTestId("sampling-choice")).toContainText(
+    "Draw 0.99 picks candidate A",
+  );
+  await page
+    .getByRole("button", { name: "Reset experiment", exact: true })
+    .click();
+  await expect(page.getByTestId("sampling-choice")).toContainText(
+    "Draw 0.75 picks candidate B",
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    (
+      await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
+        .analyze()
+    ).violations,
+  ).toEqual([]);
+  expect((await database(page))?.attempts).toEqual([]);
+  await page.screenshot({
+    path: "/tmp/learn-ai-sampling-mobile.png",
+    fullPage: true,
+  });
+});
+
+test("new prediction puzzles preserve drafts and reveals separately from assessment evidence", async ({
+  page,
+}) => {
+  const lesson = data.lessons.find((l) => l.id === "routers-and-top-k")!;
+  const scene = lesson.scenes.find(
+    (s) => lesson.routes.core.includes(s.id) && s.activity,
+  )!;
+  const activity = scene.activity!;
+  await ready(page, `/learn/${lesson.id}/`);
+  await page
+    .getByRole("button", { name: new RegExp(`Scene \\d+: ${scene.title}`) })
+    .click();
+  const wrong = activity.options.find((o) => o.id !== activity.answers.choice)!;
+  await page.getByRole("radio", { name: wrong.text, exact: true }).check();
+  await expect
+    .poll(
+      async () =>
+        (await database(page))?.positions[lesson.id]?.drafts[activity.id]
+          ?.choice,
+    )
+    .toBe(wrong.id);
+  await page.reload();
+  await expect(
+    page.getByRole("radio", { name: wrong.text, exact: true }),
+  ).toBeChecked();
+  await page.getByRole("button", { name: "Check answer", exact: true }).click();
+  await expect(
+    page.getByText(activity.feedback, { exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(async () => (await database(page))?.positions[lesson.id]?.reveals)
+    .toContain(activity.id);
+  await page.reload();
+  await expect(
+    page.getByText(activity.feedback, { exact: true }),
+  ).toBeVisible();
+  expect((await database(page))?.attempts).toEqual([]);
+  await page
+    .getByRole("button", { name: "Check my knowledge", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await expect(
+    page.getByText(lesson.questions[0].prompt, { exact: true }),
+  ).toBeVisible();
+});
+
+test("expert routing is interactive inside its teaching lesson", async ({
+  page,
+}) => {
+  await ready(page, "/learn/routers-and-top-k/");
+  await page
+    .getByRole("button", {
+      name: /Scene \d+: Predict, then change the expert count/,
+    })
+    .click();
+  const lab = page.getByRole("region", { name: "Expert routing example" });
+  await expect(lab).toBeVisible();
+  const selector = lab.getByRole("combobox", { name: "Select experts" });
+  await expect(selector).toHaveValue("2");
+  await selector.selectOption("1");
+  await expect(selector).toHaveValue("1");
+  await expect(lab).toContainText("[2, 0]");
+  await selector.selectOption("2");
+  await expect(lab).toContainText("[1.375, 1.25]");
 });

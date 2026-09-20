@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { savedVisualSchema, visualKindSchema } from "./visual-state";
 
 const timestampSchema = z.number().finite().nonnegative().max(253402300799999);
 
@@ -60,9 +61,18 @@ export const sceneSchema = z.object({
       "attention",
       "weighted-rule",
       "pixel-encoding",
+      "sampling",
     ])
     .optional(),
   activity: questionSchema.optional(),
+  figure: z
+    .object({
+      kind: visualKindSchema,
+      caption: z.string().min(12),
+      description: z.string().min(20),
+    })
+    .strict()
+    .optional(),
   note: z.string().optional(),
 });
 export type Scene = z.infer<typeof sceneSchema>;
@@ -211,6 +221,13 @@ export const positionSchema = z
         causal: z.boolean(),
       })
       .strict()
+      .optional(),
+    visuals: z
+      .record(z.string().max(150), savedVisualSchema)
+      .refine(
+        (values) => Object.keys(values).length <= 100,
+        "Too many saved visual activities",
+      )
       .optional(),
   })
   .strict();

@@ -1,90 +1,102 @@
 schema_version: 0.2-draft
 lesson:
   id: decoding-and-sampling
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   title: Turn logits into a controlled generation procedure
   state: draft
-  summary: Decoding transforms model scores into token choices using temperature, candidate restrictions, search,
-    and stopping rules; these choices change output behavior without necessarily changing weights.
+  summary: Keep the model fixed and change how one next token is chosen. Predict the result, then test it in a small
+    probability playground.
   slot: M27.3
   category: learning
-  minutes: 12
   sources:
-  - title: The Curious Case of Neural Text Degeneration
+  - title: Holtzman et al. — The Curious Case of Neural Text Degeneration
     url: https://arxiv.org/abs/1904.09751
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+  archetype: mechanism
 objectives:
 - id: objective.decoding-and-sampling
-  version: 1-draft
-  statement: Decoding transforms model scores into token choices using temperature, candidate restrictions, search,
-    and stopping rules; these choices change output behavior without necessarily changing weights.
+  version: 2-draft
+  statement: Distinguish scores, normalized probabilities, top-k filtering, temperature, and sampled draws while
+    tracing one selection.
   depths:
   - intuition
   - mechanics
   critical: true
   evidence_families:
-  - decoding-and-sampling.base
-  - decoding-and-sampling.transfer
+  - decoding-and-sampling.base.v2
+  - decoding-and-sampling.transfer.v2
   prerequisites:
   - anyOf:
-    - objective.cached-inference
+    - objective.next-token
   - anyOf:
     - objective.softmax-attention
 scenes:
 - id: decoding-and-sampling.s1
-  title: From logits to a distribution
   type: explanation
   depth: intuition
   objective_refs:
   - objective.decoding-and-sampling
-  markdown: 'Logits are unnormalized output scores. Dividing them by a positive temperature before softmax changes
-    concentration: lower temperature sharpens relative preferences, higher temperature flattens them. Greedy selection
-    chooses the largest score directly; temperature zero is usually an interface convention for a limiting or greedy
-    procedure, not literal division by zero.'
-  text_mode: 'Logits are unnormalized output scores. Dividing them by a positive temperature before softmax changes
-    concentration: lower temperature sharpens relative preferences, higher temperature flattens them. Greedy selection
-    chooses the largest score directly; temperature zero is usually an interface convention for a limiting or greedy
-    procedure, not literal division by zero.'
+  title: The model gives scores; something must choose
+  markdown: A language model produces one numerical **score**, often called a logit, for each candidate next token.
+    A **decoding** procedure turns those scores into an output sequence. **Greedy decoding** chooses the highest-scoring
+    candidate at each step. **Sampling** draws a candidate according to a probability distribution. Two systems
+    can use identical model weights and still produce different text because these procedures differ. Keep the learned
+    scores separate from the rule used to choose an output.
+  text_mode: A language model produces one numerical **score**, often called a logit, for each candidate next token.
+    A **decoding** procedure turns those scores into an output sequence. **Greedy decoding** chooses the highest-scoring
+    candidate at each step. **Sampling** draws a candidate according to a probability distribution. Two systems
+    can use identical model weights and still produce different text because these procedures differ. Keep the learned
+    scores separate from the rule used to choose an output.
   bridges: []
 - id: decoding-and-sampling.s2
-  title: Restrict candidates explicitly
   type: explanation
-  depth: mechanics
+  depth: intuition
   objective_refs:
   - objective.decoding-and-sampling
-  markdown: Top-k keeps a fixed number of highest-ranked candidates. Top-p keeps a smallest high-probability prefix
-    whose cumulative mass reaches a threshold under the implementation’s rule. Renormalize retained probabilities
-    before sampling. The order of penalties, temperature, and filtering can change the result.
-  text_mode: Top-k keeps a fixed number of highest-ranked candidates. Top-p keeps a smallest high-probability prefix
-    whose cumulative mass reaches a threshold under the implementation’s rule. Renormalize retained probabilities
-    before sampling. The order of penalties, temperature, and filtering can change the result.
-  bridges: []
+  title: Give scores a probability meaning
+  markdown: '**Softmax** converts scores to nonnegative probabilities that sum to one: exponentiate the scores,
+    then divide each result by the sum. For scores [2,1,0], the probabilities are approximately [0.665,0.245,0.090].
+    Implementations commonly subtract the largest score before exponentiation for numerical stability; the ratios
+    stay the same. Scores themselves are not percentages. A model score of two does not mean a 200% chance or twice
+    the probability of a score of one.'
+  text_mode: '**Softmax** converts scores to nonnegative probabilities that sum to one: exponentiate the scores,
+    then divide each result by the sum. For scores [2,1,0], the probabilities are approximately [0.665,0.245,0.090].
+    Implementations commonly subtract the largest score before exponentiation for numerical stability; the ratios
+    stay the same. Scores themselves are not percentages. A model score of two does not mean a 200% chance or twice
+    the probability of a score of one.'
+  bridges:
+  - softmax-attention
+  - powers-logs
 - id: decoding-and-sampling.s3
-  title: Search and constrain sequences
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.decoding-and-sampling
-  markdown: Beam search retains several high-scoring partial sequences and expands them, often with length-related
-    adjustments. Grammar-constrained decoding can restrict tokens to syntactically valid structures. A valid JSON
-    output can still contain wrong facts; sequence likelihood and task correctness are distinct objectives.
-  text_mode: Beam search retains several high-scoring partial sequences and expands them, often with length-related
-    adjustments. Grammar-constrained decoding can restrict tokens to syntactically valid structures. A valid JSON
-    output can still contain wrong facts; sequence likelihood and task correctness are distinct objectives.
+  title: Temperature changes the spread
+  markdown: For positive **temperature** T, divide scores by T before softmax. T below one usually concentrates
+    probability on higher scores; T above one flattens the distribution. At T=0.5, our scores become [4,2,0], producing
+    approximately [0.867,0.117,0.016]. The candidate ranking stays the same for positive T, but the chances change.
+    “Temperature zero” often names a greedy mode in an interface; it is not literal division by zero in this formula.
+  text_mode: For positive **temperature** T, divide scores by T before softmax. T below one usually concentrates
+    probability on higher scores; T above one flattens the distribution. At T=0.5, our scores become [4,2,0], producing
+    approximately [0.867,0.117,0.016]. The candidate ranking stays the same for positive T, but the chances change.
+    “Temperature zero” often names a greedy mode in an interface; it is not literal division by zero in this formula.
   bridges: []
 - id: decoding-and-sampling.s4
-  title: Stop for a defined reason
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.decoding-and-sampling
-  markdown: Generation may stop at an end token, matched stop sequence, output limit, or application condition.
-    Handle truncated structured outputs and partial tool calls. Evaluate diversity, correctness, latency, and repetition
-    under matched settings rather than assuming one decoding method is best for every task.
-  text_mode: Generation may stop at an end token, matched stop sequence, output limit, or application condition.
-    Handle truncated structured outputs and partial tool calls. Evaluate diversity, correctness, latency, and repetition
-    under matched settings rather than assuming one decoding method is best for every task.
+  title: Choose which candidates remain eligible
+  markdown: '**Top-k** keeps the k highest-scoring candidates and excludes the rest, then normalizes the retained
+    probabilities. From [0.6,0.3,0.1], top-two gives [2/3,1/3,0]. **Top-p**, or nucleus sampling, instead keeps
+    a smallest high-probability prefix whose cumulative mass reaches the chosen threshold under a specified convention.
+    For this distribution and threshold 0.8, the first two total 0.9. These controls can interact; report the order
+    and settings instead of assuming every sampler is identical.'
+  text_mode: '**Top-k** keeps the k highest-scoring candidates and excludes the rest, then normalizes the retained
+    probabilities. From [0.6,0.3,0.1], top-two gives [2/3,1/3,0]. **Top-p**, or nucleus sampling, instead keeps
+    a smallest high-probability prefix whose cumulative mass reaches the chosen threshold under a specified convention.
+    For this distribution and threshold 0.8, the first two total 0.9. These controls can interact; report the order
+    and settings instead of assuming every sampler is identical.'
   bridges: []
 - id: decoding-and-sampling.check
   title: Review and check your understanding
@@ -94,8 +106,8 @@ scenes:
   - objective.decoding-and-sampling
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: Decoding transforms model scores into token choices using temperature, candidate restrictions, search,
-    and stopping rules; these choices change output behavior without necessarily changing weights.
+  takeaway: Scores become chances; a decoding rule turns chances into a choice. Changing the choice rule does not
+    retrain the model or guarantee truth.
 - id: decoding-and-sampling.recap
   title: One idea to take with you
   type: recap
@@ -106,6 +118,65 @@ scenes:
     and stopping rules; these choices change output behavior without necessarily changing weights.
   text_mode: Decoding transforms model scores into token choices using temperature, candidate restrictions, search,
     and stopping rules; these choices change output behavior without necessarily changing weights.
+- id: decoding-and-sampling.s5
+  type: simulation
+  depth: mechanics
+  objective_refs:
+  - objective.decoding-and-sampling
+  title: Try a probability steering wheel
+  markdown: 'Before touching a control, predict what will change. First move the draw while keeping scores, temperature,
+    and top-k fixed: only the selected candidate should change. Then hold the draw still and change temperature:
+    the intervals move. Top-k=1 leaves the highest-scoring candidate with probability one. The playground uses invented
+    scores and repeatable draw positions so the mechanism stays visible. It does not run a trained model. The hundred-draw
+    table is a deterministic comparison, not independent random sampling.'
+  text_mode: 'Before touching a control, predict what will change. First move the draw while keeping scores, temperature,
+    and top-k fixed: only the selected candidate should change. Then hold the draw still and change temperature:
+    the intervals move. Top-k=1 leaves the highest-scoring candidate with probability one. The playground uses invented
+    scores and repeatable draw positions so the mechanism stays visible. It does not run a trained model. The hundred-draw
+    table is a deterministic comparison, not independent random sampling.'
+  bridges:
+  - probability
+  simulation: sampling
+- id: decoding-and-sampling.s6
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.decoding-and-sampling
+  title: One sampled token is not the whole answer
+  markdown: Imagine probability intervals [0,0.6), [0.6,0.9), and [0.9,1). A draw of 0.75 chooses the second candidate.
+    Append that token, then compute a new distribution from the longer context for the next step. A random seed
+    can help reproduce draws under matching conditions, but runtime differences may still affect results. Sampling
+    is useful for diverse outputs; it does not verify facts. Evaluate generated sequences for the intended task
+    instead of treating randomness as either knowledge or a guaranteed mistake.
+  text_mode: Imagine probability intervals [0,0.6), [0.6,0.9), and [0.9,1). A draw of 0.75 chooses the second candidate.
+    Append that token, then compute a new distribution from the longer context for the next step. A random seed
+    can help reproduce draws under matching conditions, but runtime differences may still affect results. Sampling
+    is useful for diverse outputs; it does not verify facts. Evaluate generated sequences for the intended task
+    instead of treating randomness as either knowledge or a guaranteed mistake.
+  bridges: []
+- id: decoding-and-sampling.s7
+  type: question
+  depth: mechanics
+  objective_refs:
+  - objective.decoding-and-sampling
+  title: Move the draw, keep the chances
+  markdown: With probabilities [0.6,0.3,0.1] in candidate order A,B,C, which candidate does draw 0.85 select?
+  text_mode: With probabilities [0.6,0.3,0.1] in candidate order A,B,C, which candidate does draw 0.85 select?
+  bridges: []
+  question:
+    response_type: single_choice
+    options:
+    - id: a
+      text: B
+    - id: b
+      text: A
+    - id: c
+      text: C
+    answer: a
+    reveal_markdown: A occupies [0,0.6), B occupies [0.6,0.9), and C occupies [0.9,1). The draw 0.85 lies in B’s
+      interval.
+    hint: Trace the example using the rule from the preceding pages.
+    id: decoding-and-sampling.practice.v2.7
 navigation:
   routes:
   - id: route.core
@@ -114,6 +185,9 @@ navigation:
     - decoding-and-sampling.s2
     - decoding-and-sampling.s3
     - decoding-and-sampling.s4
+    - decoding-and-sampling.s5
+    - decoding-and-sampling.s6
+    - decoding-and-sampling.s7
     - decoding-and-sampling.check
     gate_refs:
     - gate.core
@@ -139,6 +213,7 @@ assessment_families:
       text: Concentrates probability on higher logits
     answer: a
     feedback: Scaling logits changes relative probability concentration.
+    retired: true
   - id: decoding-and-sampling.base.2
     prompt: How does top-p differ from top-k?
     options:
@@ -150,6 +225,7 @@ assessment_families:
       text: It always keeps exactly p tokens
     answer: a
     feedback: The retained count can vary with the distribution.
+    retired: true
 - id: decoding-and-sampling.transfer
   objective_ref: objective.decoding-and-sampling
   task: transfer
@@ -169,6 +245,7 @@ assessment_families:
       text: 'Yes'
     answer: a
     feedback: Syntax constraints do not validate content.
+    retired: true
   - id: decoding-and-sampling.transfer.2
     prompt: Why record the stopping reason?
     options:
@@ -180,3 +257,109 @@ assessment_families:
       text: It guarantees no error
     answer: a
     feedback: Completion semantics depend on why generation ended.
+    retired: true
+- id: decoding-and-sampling.base.v2
+  objective_ref: objective.decoding-and-sampling
+  task: base
+  response_type: single_choice
+  points: 1
+  hint: Work through the example one step at a time before answering.
+  remediation_scene: decoding-and-sampling.s3
+  variants:
+  - prompt: At fixed model scores, temperature, and top-k, what changes when only the random draw changes?
+    answer: a
+    options:
+    - id: a
+      text: The sampled candidate, while probabilities stay fixed
+    - id: b
+      text: The trained model parameters
+    - id: c
+      text: The original next-token scores
+    feedback: The draw selects within a fixed distribution.
+    id: decoding-and-sampling.base.v2.1
+  - prompt: For positive temperature, what happens when [2,1,0] is divided by 0.5 before softmax?
+    answer: a
+    options:
+    - id: b
+      text: The candidate ranking reverses
+    - id: a
+      text: The top candidate receives a larger share
+    - id: c
+      text: All candidates receive equal probability
+    feedback: Dividing by a smaller positive temperature increases score gaps before softmax.
+    id: decoding-and-sampling.base.v2.2
+  - prompt: Top-k=1 retains a uniquely highest-scoring candidate. What distribution remains?
+    answer: a
+    options:
+    - id: c
+      text: Equal probability across the old vocabulary
+    - id: a
+      text: Probability one on that candidate
+    - id: b
+      text: The original full distribution
+    feedback: After excluding every other candidate and normalizing, the retained candidate has all the mass.
+    id: decoding-and-sampling.base.v2.3
+  - prompt: What distinguishes a logit from a probability?
+    answer: a
+    options:
+    - id: b
+      text: A logit is a token ID; a probability is the character count
+    - id: c
+      text: They are interchangeable percentages
+    - id: a
+      text: A logit is an unnormalized score; a probability belongs to a normalized distribution
+    feedback: Softmax gives scores their normalized probability interpretation.
+    id: decoding-and-sampling.base.v2.4
+- id: decoding-and-sampling.transfer.v2
+  objective_ref: objective.decoding-and-sampling
+  task: transfer
+  response_type: single_choice
+  points: 1
+  hint: Work through the example one step at a time before answering.
+  remediation_scene: decoding-and-sampling.s3
+  variants:
+  - prompt: Probabilities are [0.5,0.3,0.2] for A,B,C. Draw 0.65 selects which candidate?
+    answer: a
+    options:
+    - id: a
+      text: B
+    - id: c
+      text: C
+    - id: b
+      text: A
+    feedback: B occupies the interval from 0.5 up to 0.8.
+    id: decoding-and-sampling.transfer.v2.1
+  - prompt: Probabilities [0.6,0.3,0.1] are filtered to top-two. What is A’s new probability?
+    answer: a
+    options:
+    - id: c
+      text: '0.9'
+    - id: a
+      text: 2/3
+    - id: b
+      text: '0.6'
+    feedback: The retained total is 0.9; normalize A as 0.6/0.9=2/3.
+    id: decoding-and-sampling.transfer.v2.2
+  - prompt: A greedy answer contains an incorrect claim. What does greediness establish?
+    answer: a
+    options:
+    - id: b
+      text: Verification that each claim matches external evidence
+    - id: c
+      text: A guarantee that the whole sequence is globally most probable
+    - id: a
+      text: Highest-scoring local choices under the stated rule
+    feedback: Greedy selection is a decoding rule, not a truth test or general global sequence optimizer.
+    id: decoding-and-sampling.transfer.v2.3
+  - prompt: Top-p uses [0.5,0.3,0.2] and keeps a smallest descending prefix reaching mass 0.7. Which candidates
+      remain?
+    answer: a
+    options:
+    - id: a
+      text: A and B
+    - id: c
+      text: B and C
+    - id: b
+      text: A alone
+    feedback: A alone has mass 0.5; adding B reaches 0.8, which meets the threshold.
+    id: decoding-and-sampling.transfer.v2.4

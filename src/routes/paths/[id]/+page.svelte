@@ -7,6 +7,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import PathArt from "$lib/components/PathArt.svelte";
   import { lessonHref } from "$lib/navigation";
+  import { chapterProgress, pathChapters } from "$lib/path-chapters";
   let { data }: { data: { recipe: Recipe } } = $props();
   const learner = getLearner();
   const full = $derived(planPath(curriculum, data.recipe, []));
@@ -35,6 +36,40 @@
       l.objectives.some((id) => current.remaining.includes(id)),
     ),
   );
+  const chapters = $derived(pathChapters(full.lessons));
+  const nextChapter = $derived(
+    chapters.find((chapter) =>
+      chapter.lessons.some((lesson) => lesson.id === next?.id),
+    ) ?? chapters[0],
+  );
+  // A writable derived resets expansion when the path, hydration, or next chapter changes.
+  let expansion = $derived({
+    path: data.recipe.id,
+    hydrated: learner.hydrated,
+    open: Object.fromEntries(
+      chapters.map((chapter) => [chapter.id, chapter.id === nextChapter?.id]),
+    ),
+  });
+  const allExpanded = $derived(
+    chapters.every((chapter) => expansion.open[chapter.id]),
+  );
+  function toggleChapter(id: string) {
+    expansion = {
+      ...expansion,
+      open: { ...expansion.open, [id]: !expansion.open[id] },
+    };
+  }
+  function toggleAll() {
+    expansion = {
+      ...expansion,
+      open: Object.fromEntries(
+        chapters.map((chapter) => [
+          chapter.id,
+          !allExpanded || chapter.id === nextChapter?.id,
+        ]),
+      ),
+    };
+  }
   const minutes = $derived(
     current.lessons
       .filter((l) => l.objectives.some((id) => current.remaining.includes(id)))
@@ -88,6 +123,9 @@
             ? "Continue my path"
             : "Start this path"}<Icon name="arrow" size={18} /></button
       >
+      {#if next}<p class="next-lesson-note">
+          Next: <strong>{next.title}</strong> · {next.minutes} min
+        </p>{/if}
     </div>
     <PathArt type={data.recipe.id} />
   </section>
@@ -100,32 +138,83 @@
         </div>
         <span class="small-badge">Shared credit is automatic</span>
       </div>
-      {#each full.lessons as lesson, i (lesson.id)}{@const status =
-          state(lesson)}<a
-          class="syllabus-row"
-          href={lessonHref(lesson.id, {
-            kind: "path",
-            path: data.recipe.id,
-          })}
-          ><span class={["lesson-number", { done: status === "Demonstrated" }]}
-            >{#if status === "Demonstrated"}<Icon
-                name="check"
-                size={16}
-              />{:else}{String(i + 1).padStart(2, "0")}{/if}</span
+      <div class="chapter-toolbar">
+        <p>
+          {chapters.length} short chapters, in prerequisite order. Open any chapter
+          to explore.
+        </p>
+        <button class="text-button" onclick={toggleAll}>
+          {allExpanded ? "Collapse to next chapter" : "Show all lessons"}
+        </button>
+      </div>
+      <p class="chapter-credit-note">
+        Chapter counts use compatible knowledge-check evidence. Reading a lesson
+        does not mark its ideas as demonstrated.
+      </p>
+      {#each chapters as chapter, chapterIndex (chapter.id)}
+        {@const evidence = chapterProgress(
+          chapter,
+          curriculum,
+          full.required,
+          learner.data.attempts,
+        )}
+        <details class="path-chapter" open={expansion.open[chapter.id]}>
+          <summary
+            onclick={(event) => {
+              event.preventDefault();
+              toggleChapter(chapter.id);
+            }}
           >
-          <div>
-            <strong>{lesson.title}</strong><span
-              >{lesson.category === "common"
-                ? "Common Ground"
-                : lesson.category === "bridge"
-                  ? "Math preparation"
-                  : lesson.category === "destination"
-                    ? "Your system, connected"
-                    : "Learning mechanisms"} · {lesson.minutes} min</span
-            >
+            <span class="chapter-heading">
+              <span class="chapter-kicker"
+                >Chapter {chapterIndex + 1} · Lessons {chapter.start +
+                  1}–{chapter.start + chapter.lessons.length}</span
+              >
+              <strong>{chapter.title}</strong>
+              <span class="chapter-description">{chapter.summary}</span>
+              <span class="chapter-counts">
+                {chapter.lessons.length} lessons · {evidence.demonstrated} of {evidence.total}
+                core ideas demonstrated
+                {#if next && chapter.id === nextChapter?.id}<span
+                    class="chapter-next">Up next</span
+                  >{/if}
+              </span>
+            </span>
+          </summary>
+          <div class="chapter-lessons">
+            {#each chapter.lessons as lesson, i (lesson.id)}
+              {@const status = state(lesson)}
+              <a
+                class="syllabus-row"
+                href={lessonHref(lesson.id, {
+                  kind: "path",
+                  path: data.recipe.id,
+                })}
+              >
+                <span
+                  class={["lesson-number", { done: status === "Demonstrated" }]}
+                >
+                  {#if status === "Demonstrated"}<Icon name="check" size={16} />
+                  {:else}{String(chapter.start + i + 1).padStart(2, "0")}{/if}
+                </span>
+                <div>
+                  <strong>{lesson.title}</strong>
+                  <span
+                    >{lesson.category === "common"
+                      ? "Common Ground"
+                      : lesson.category === "bridge"
+                        ? "Math preparation"
+                        : lesson.category === "destination"
+                          ? "Your system, connected"
+                          : "Learning mechanisms"} · {lesson.minutes} min</span
+                  >
+                </div>
+                <small>{status}</small><Icon name="chevron" size={17} />
+              </a>
+            {/each}
           </div>
-          <small>{status}</small><Icon name="chevron" size={17} /></a
-        >{/each}
+        </details>
+      {/each}
       {#if extensions.length}<details class="path-extensions">
           <summary
             >Optional extensions and comparisons ({extensions.length})</summary
@@ -197,3 +286,111 @@
     </aside>
   </div>
 </div>
+
+<style>
+  .next-lesson-note {
+    margin: 1rem 0 0;
+    font-size: 0.8rem;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .chapter-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+  }
+  .chapter-toolbar p {
+    flex: 1;
+    font-size: 0.8rem;
+    margin: 0;
+    line-height: 1.7;
+  }
+  .chapter-toolbar button {
+    flex-shrink: 0;
+  }
+  .chapter-credit-note {
+    font-size: 0.75rem;
+    line-height: 1.7;
+    margin: 0.7rem 0 1.3rem;
+    color: var(--muted);
+  }
+  .path-chapter {
+    background: #fff;
+    border: 1px solid #dce5d1;
+    border-radius: 9px;
+    margin: 0 0 1rem;
+  }
+  .path-chapter > summary {
+    padding: 1.2rem;
+    cursor: pointer;
+  }
+  .chapter-heading {
+    display: inline-grid;
+    gap: 0.5rem;
+    width: calc(100% - 1.4rem);
+    vertical-align: top;
+    padding-left: 0.35rem;
+  }
+  .chapter-heading > strong {
+    font-size: 1.05rem;
+    line-height: 1.5;
+  }
+  .chapter-kicker {
+    font-size: 0.72rem;
+    color: #5c704f;
+  }
+  .chapter-description {
+    font-size: 0.78rem;
+    line-height: 1.7;
+    color: #59664f;
+  }
+  .chapter-counts {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.72rem;
+    line-height: 1.6;
+  }
+  .chapter-next {
+    background: #e8f0df;
+    color: #3f5f32;
+    border-radius: 4px;
+    padding: 0.1rem 0.45rem;
+    font-weight: 600;
+  }
+  .chapter-lessons {
+    border-top: 1px solid #dce5d1;
+    padding: 0 0.8rem;
+  }
+  .chapter-lessons .syllabus-row:last-child {
+    border-bottom: 0;
+  }
+  .chapter-lessons .syllabus-row > div {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 620px) {
+    .chapter-toolbar {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+    .path-chapter > summary {
+      padding: 1rem 0.8rem;
+    }
+    .chapter-heading > strong {
+      font-size: 1rem;
+    }
+    .chapter-lessons {
+      padding: 0 0.6rem;
+    }
+    .chapter-lessons .syllabus-row {
+      gap: 0.6rem;
+    }
+    .chapter-lessons .syllabus-row small {
+      flex-shrink: 0;
+    }
+  }
+</style>

@@ -292,6 +292,14 @@ export function parseBackup(text: string, curriculum: Curriculum): Progress {
       throw new Error("Unknown saved question.");
     if (p.depth === "mathematics" && !lesson.routes.mathematics.length)
       throw new Error("Unsupported saved reading depth.");
+    for (const [scene, visual] of Object.entries(p.visuals ?? {})) {
+      if (
+        lesson.scenes.find((s) => s.id === scene)?.figure?.kind !== visual.kind
+      )
+        throw new Error(
+          "This backup references an unavailable visual activity.",
+        );
+    }
   }
   if (parsed.bookmarks.some((id) => !ids.has(id)))
     throw new Error("Unknown saved lesson.");

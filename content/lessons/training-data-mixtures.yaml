@@ -1,31 +1,32 @@
 schema_version: 0.2-draft
 lesson:
   id: training-data-mixtures
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   title: Choose how much the model sees of each source
   state: draft
-  summary: Data mixtures control sampling across sources and stages; token accounting, repetition, quality, and
-    held-out performance determine the effect of those choices.
+  summary: Plan a reading diet for a model, then calculate how sampling changes the examples it actually practices.
   slot: M16.3
   category: learning
-  minutes: 12
   sources:
-  - title: The Llama 3 Herd of Models
-    url: https://arxiv.org/abs/2407.21783
-  - title: Qwen3 Technical Report
-    url: https://arxiv.org/abs/2505.09388
+  - title: Groeneveld et al. — OLMo, an open language-model framework
+    url: https://arxiv.org/abs/2402.00838
+  - title: Biderman et al. — Pythia, a suite for analyzing language-model training
+    url: https://arxiv.org/abs/2304.01373
+  - title: Hoffmann et al. — Training Compute-Optimal Large Language Models
+    url: https://arxiv.org/abs/2203.15556
+  archetype: mechanism
 objectives:
 - id: objective.training-data-mixtures
-  version: 1-draft
-  statement: Data mixtures control sampling across sources and stages; token accounting, repetition, quality, and
-    held-out performance determine the effect of those choices.
+  version: 2-draft
+  statement: Calculate expected token exposure from mixture weights and distinguish source size, sampling share,
+    oversampling, and validation-based selection.
   depths:
   - intuition
   - mechanics
   critical: true
   evidence_families:
-  - training-data-mixtures.base
-  - training-data-mixtures.transfer
+  - training-data-mixtures.base.v2
+  - training-data-mixtures.transfer.v2
   prerequisites:
   - anyOf:
     - objective.pretraining-data-pipeline
@@ -33,57 +34,72 @@ objectives:
     - objective.stochastic-gradients
 scenes:
 - id: training-data-mixtures.s1
-  title: A mixture defines exposure
   type: explanation
   depth: intuition
   objective_refs:
   - objective.training-data-mixtures
-  markdown: 'A pretraining dataset can combine web text, books, code, multilingual material, and synthetic examples.
-    Sampling weights determine how often each source contributes. Raw collection size and training exposure are
-    different: a small source can be repeatedly sampled, while a large source may be downweighted.'
-  text_mode: 'A pretraining dataset can combine web text, books, code, multilingual material, and synthetic examples.
-    Sampling weights determine how often each source contributes. Raw collection size and training exposure are
-    different: a small source can be repeatedly sampled, while a large source may be downweighted.'
+  title: A library and a reading schedule are different
+  markdown: Suppose a training collection contains stories, code, and science explanations. Having ten times more
+    story tokens on disk does not require reading ten times more stories during training. A **mixture** specifies
+    how often sources are sampled. A **sampling weight** controls a source’s share under a stated scheme. The learning
+    signal depends on the examples actually consumed, their order, and their targets. Inventory size and training
+    exposure answer different questions.
+  text_mode: Suppose a training collection contains stories, code, and science explanations. Having ten times more
+    story tokens on disk does not require reading ten times more stories during training. A **mixture** specifies
+    how often sources are sampled. A **sampling weight** controls a source’s share under a stated scheme. The learning
+    signal depends on the examples actually consumed, their order, and their targets. Inventory size and training
+    exposure answer different questions.
   bridges: []
 - id: training-data-mixtures.s2
-  title: Calculate a simple allocation
   type: explanation
-  depth: mechanics
+  depth: intuition
   objective_refs:
   - objective.training-data-mixtures
-  markdown: For a budget of 10,000 sampled tokens with target weights 0.6 and 0.4, expected source contributions
-    are 6,000 and 4,000 tokens. If sampling is by document rather than token, variable document lengths can change
-    token proportions. Record the unit of weighting and the actual observed counts.
-  text_mode: For a budget of 10,000 sampled tokens with target weights 0.6 and 0.4, expected source contributions
-    are 6,000 and 4,000 tokens. If sampling is by document rather than token, variable document lengths can change
-    token proportions. Record the unit of weighting and the actual observed counts.
+  title: Turn weights into an exposure budget
+  markdown: 'Choose token-level mixture shares of 50% stories, 30% code, and 20% science. For an expected budget
+    of 1,000 sampled tokens, those shares correspond to 500, 300, and 200 tokens. They sum to the total. These are
+    expected counts under random sampling unless a schedule enforces exact quotas. Check whether a recipe weights
+    tokens, documents, or batches: equally weighting long and short documents can create unequal token exposure.'
+  text_mode: 'Choose token-level mixture shares of 50% stories, 30% code, and 20% science. For an expected budget
+    of 1,000 sampled tokens, those shares correspond to 500, 300, and 200 tokens. They sum to the total. These are
+    expected counts under random sampling unless a schedule enforces exact quotas. Check whether a recipe weights
+    tokens, documents, or batches: equally weighting long and short documents can create unequal token exposure.'
   bridges:
   - probability
+  - arithmetic
 - id: training-data-mixtures.s3
-  title: Repetition has benefits and limits
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.training-data-mixtures
-  markdown: Repeating a high-quality source can strengthen a desired skill, but can also overfit or increase memorization.
-    Synthetic data reflects its generator and selection rules. Multilingual or domain mixtures can improve one capability
-    while reducing another under a fixed budget. Mixture schedules can change during training.
-  text_mode: Repeating a high-quality source can strengthen a desired skill, but can also overfit or increase memorization.
-    Synthetic data reflects its generator and selection rules. Multilingual or domain mixtures can improve one capability
-    while reducing another under a fixed budget. Mixture schedules can change during training.
+  title: Oversampling means meeting examples again
+  markdown: Suppose the science source contains only 100 distinct tokens in our toy inventory, while the schedule
+    requests 200 science-token exposures. The model must revisit material under a repeatable sampling scheme. This
+    is **oversampling** relative to available unique data. Repetition may emphasize a useful domain, but it does
+    not create 200 distinct tokens of new evidence. Excess repetition can encourage memorization or reduce diversity.
+    Record both total exposures and unique-source coverage.
+  text_mode: Suppose the science source contains only 100 distinct tokens in our toy inventory, while the schedule
+    requests 200 science-token exposures. The model must revisit material under a repeatable sampling scheme. This
+    is **oversampling** relative to available unique data. Repetition may emphasize a useful domain, but it does
+    not create 200 distinct tokens of new evidence. Excess repetition can encourage memorization or reduce diversity.
+    Record both total exposures and unique-source coverage.
   bridges: []
 - id: training-data-mixtures.s4
-  title: Evaluate the recipe as an intervention
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.training-data-mixtures
-  markdown: Compare held-out losses and target tasks across sources, not only a single overall average. Keep evaluation
-    data independent of mixture tuning where possible. Report sampling rules, repetitions, and stage boundaries.
-    A model’s expert routing is a separate mechanism from choosing which training documents it sees.
-  text_mode: Compare held-out losses and target tasks across sources, not only a single overall average. Keep evaluation
-    data independent of mixture tuning where possible. Report sampling rules, repetitions, and stage boundaries.
-    A model’s expert routing is a separate mechanism from choosing which training documents it sees.
+  title: Evaluate the diet on more than one dish
+  markdown: A code-heavy mixture might improve code tasks while changing general writing or other domains. Evaluate
+    the intended range using protected source-separated examples and comparable budgets. If you try several mixture
+    settings and choose one using validation scores, that choice is part of development. Preserve a final evaluation
+    for the selected recipe. “Best mixture” is incomplete without a task distribution, data constraints, compute
+    budget, and quality criteria.
+  text_mode: A code-heavy mixture might improve code tasks while changing general writing or other domains. Evaluate
+    the intended range using protected source-separated examples and comparable budgets. If you try several mixture
+    settings and choose one using validation scores, that choice is part of development. Preserve a final evaluation
+    for the selected recipe. “Best mixture” is incomplete without a task distribution, data constraints, compute
+    budget, and quality criteria.
   bridges: []
 - id: training-data-mixtures.check
   title: Review and check your understanding
@@ -93,8 +109,8 @@ scenes:
   - objective.training-data-mixtures
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: Data mixtures control sampling across sources and stages; token accounting, repetition, quality, and
-    held-out performance determine the effect of those choices.
+  takeaway: Stored size is not training exposure. Mixture weights choose the practice diet; validate the resulting
+    capabilities and tradeoffs.
 - id: training-data-mixtures.recap
   title: One idea to take with you
   type: recap
@@ -105,6 +121,65 @@ scenes:
     held-out performance determine the effect of those choices.
   text_mode: Data mixtures control sampling across sources and stages; token accounting, repetition, quality, and
     held-out performance determine the effect of those choices.
+- id: training-data-mixtures.s5
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.training-data-mixtures
+  title: A changing schedule needs a record
+  markdown: Some training runs change source shares over time. A **curriculum** in this context is a schedule for
+    which examples or difficulty levels are emphasized during learning; it is separate from our human course chapters.
+    A run that uses 80% stories early and 20% later cannot be fully described by its final weights. Save schedule
+    versions, sampling state when needed for resumption, and actual consumed counts. Expected shares are a plan;
+    realized exposure is a measurement.
+  text_mode: Some training runs change source shares over time. A **curriculum** in this context is a schedule for
+    which examples or difficulty levels are emphasized during learning; it is separate from our human course chapters.
+    A run that uses 80% stories early and 20% later cannot be fully described by its final weights. Save schedule
+    versions, sampling state when needed for resumption, and actual consumed counts. Expected shares are a plan;
+    realized exposure is a measurement.
+  bridges: []
+- id: training-data-mixtures.s6
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.training-data-mixtures
+  title: Separate data quality from its volume
+  markdown: A larger source can contain duplicates, errors, or examples outside the intended use. A small carefully
+    chosen source can be useful, but its influence and limits still need evaluation. Inspect provenance, filtering,
+    representation, and coverage alongside sampling weights. The memory cue is “inventory, diet, exposure, results.”
+    It helps distinguish what was available, what was requested, what the model consumed, and which changes were
+    demonstrated on held-out tasks.
+  text_mode: A larger source can contain duplicates, errors, or examples outside the intended use. A small carefully
+    chosen source can be useful, but its influence and limits still need evaluation. Inspect provenance, filtering,
+    representation, and coverage alongside sampling weights. The memory cue is “inventory, diet, exposure, results.”
+    It helps distinguish what was available, what was requested, what the model consumed, and which changes were
+    demonstrated on held-out tasks.
+  bridges: []
+- id: training-data-mixtures.s7
+  type: question
+  depth: mechanics
+  objective_refs:
+  - objective.training-data-mixtures
+  title: Does repetition create new evidence?
+  markdown: A schedule consumes 300 token exposures from a source containing 100 distinct tokens. What should the
+    report keep separate?
+  text_mode: A schedule consumes 300 token exposures from a source containing 100 distinct tokens. What should the
+    report keep separate?
+  bridges: []
+  question:
+    response_type: single_choice
+    options:
+    - id: a
+      text: Total exposures and unique data coverage
+    - id: b
+      text: Token exposures and the file’s display color
+    - id: c
+      text: The source’s name and the alphabetic order of that name
+    answer: a
+    reveal_markdown: Repeated exposure can influence learning but does not multiply the amount of distinct source
+      evidence.
+    hint: Trace the example using the rule from the preceding pages.
+    id: training-data-mixtures.practice.v2.7
 navigation:
   routes:
   - id: route.core
@@ -113,6 +188,9 @@ navigation:
     - training-data-mixtures.s2
     - training-data-mixtures.s3
     - training-data-mixtures.s4
+    - training-data-mixtures.s5
+    - training-data-mixtures.s6
+    - training-data-mixtures.s7
     - training-data-mixtures.check
     gate_refs:
     - gate.core
@@ -138,6 +216,7 @@ assessment_families:
       text: 20,000
     answer: a
     feedback: Multiply the token budget by the intended token proportion.
+    retired: true
   - id: training-data-mixtures.base.2
     prompt: Do equal document sampling weights guarantee equal token counts?
     options:
@@ -149,6 +228,7 @@ assessment_families:
       text: Only if a model is dense
     answer: a
     feedback: The sampling unit determines how source exposure accumulates.
+    retired: true
 - id: training-data-mixtures.transfer
   objective_ref: objective.training-data-mixtures
   task: transfer
@@ -168,6 +248,7 @@ assessment_families:
       text: A guarantee of unlimited new information
     answer: a
     feedback: Repeated exposure changes emphasis without creating equivalent new independent data.
+    retired: true
   - id: training-data-mixtures.transfer.2
     prompt: One mixture improves code but hurts another language. What does this illustrate?
     options:
@@ -179,3 +260,130 @@ assessment_families:
       text: A capability tradeoff under the chosen budget and data recipe
     answer: a
     feedback: Mixture choices can redistribute finite training effort.
+    retired: true
+- id: training-data-mixtures.base.v2
+  objective_ref: objective.training-data-mixtures
+  task: base
+  response_type: numeric_fields_with_reason
+  points: 1
+  hint: Work through the example one step at a time before answering.
+  remediation_scene: training-data-mixtures.s3
+  variants:
+  - prompt: A token-level mixture allocates 30% of an expected 1000-token budget to code. Record expected code tokens
+      and expected non-code tokens.
+    answers:
+      code: 300.0
+      other: 700.0
+    reason_answer: a
+    reason_options:
+    - id: a
+      text: Multiply the budget by the specified token share.
+    - id: c
+      text: Treat the percentage as a fixed number of tokens.
+    - id: b
+      text: Use the source’s file count instead of its sampling share.
+    feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
+    id: training-data-mixtures.base.v2.1
+  - prompt: A token-level mixture allocates 25% of an expected 800-token budget to code. Record expected code tokens
+      and expected non-code tokens.
+    answers:
+      code: 200.0
+      other: 600.0
+    reason_answer: a
+    reason_options:
+    - id: c
+      text: Treat the percentage as a fixed number of tokens.
+    - id: a
+      text: Multiply the budget by the specified token share.
+    - id: b
+      text: Use the source’s file count instead of its sampling share.
+    feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
+    id: training-data-mixtures.base.v2.2
+  - prompt: A token-level mixture allocates 50% of an expected 600-token budget to code. Record expected code tokens
+      and expected non-code tokens.
+    answers:
+      code: 300.0
+      other: 300.0
+    reason_answer: a
+    reason_options:
+    - id: b
+      text: Use the source’s file count instead of its sampling share.
+    - id: c
+      text: Treat the percentage as a fixed number of tokens.
+    - id: a
+      text: Multiply the budget by the specified token share.
+    feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
+    id: training-data-mixtures.base.v2.3
+  - prompt: A token-level mixture allocates 20% of an expected 500-token budget to code. Record expected code tokens
+      and expected non-code tokens.
+    answers:
+      code: 100.0
+      other: 400.0
+    reason_answer: a
+    reason_options:
+    - id: b
+      text: Use the source’s file count instead of its sampling share.
+    - id: c
+      text: Treat the percentage as a fixed number of tokens.
+    - id: a
+      text: Multiply the budget by the specified token share.
+    feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
+    id: training-data-mixtures.base.v2.4
+  numeric_fields:
+  - id: code
+    label: Expected code-token exposures
+  - id: other
+    label: Expected other-token exposures
+  absolute_tolerance: 1.0e-06
+- id: training-data-mixtures.transfer.v2
+  objective_ref: objective.training-data-mixtures
+  task: transfer
+  response_type: single_choice
+  points: 1
+  hint: Work through the example one step at a time before answering.
+  remediation_scene: training-data-mixtures.s3
+  variants:
+  - prompt: A source has 100 unique examples and is sampled 300 times. What has increased?
+    answer: a
+    options:
+    - id: b
+      text: The count of distinct examples necessarily increased to 300
+    - id: a
+      text: Exposure, with possible repetition of the same evidence
+    - id: c
+      text: The source’s factual correctness tripled
+    feedback: Sampling more often does not create additional distinct examples.
+    id: training-data-mixtures.transfer.v2.1
+  - prompt: A recipe says “equal source weights” but not the sampling unit. What needs clarification?
+    answer: a
+    options:
+    - id: a
+      text: Whether weights apply to tokens, documents, or batches
+    - id: b
+      text: Whether equal document shares imply equal token shares
+    - id: c
+      text: Whether a final overall loss can recover the undisclosed sampling unit
+    feedback: Different sampling units produce different token exposures.
+    id: training-data-mixtures.transfer.v2.2
+  - prompt: A new mixture improves code validation but harms general writing. What is the decision about?
+    answer: a
+    options:
+    - id: b
+      text: A proof that mixture choice never matters
+    - id: c
+      text: A tokenizer error established by the scores alone
+    - id: a
+      text: A task-dependent tradeoff across the intended use distribution
+    feedback: Evaluate the intended capability mix rather than declaring a universal winner.
+    id: training-data-mixtures.transfer.v2.3
+  - prompt: A run changes mixture shares halfway through. What should its record include?
+    answer: a
+    options:
+    - id: a
+      text: The schedule and actual consumed counts
+    - id: c
+      text: Only the total number of source files
+    - id: b
+      text: Only the final mixture settings
+    feedback: The full exposure history matters; final weights alone do not describe the run.
+    id: training-data-mixtures.transfer.v2.4

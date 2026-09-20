@@ -188,6 +188,7 @@ for (const filename of (await readdir("content/lessons"))
       ...(s.rows ? { table: { columns: s.columns, rows: s.rows } } : {}),
       ...(simulation ? { simulation } : {}),
       ...(normalizedActivity ? { activity: normalizedActivity } : {}),
+      ...(s.figure ? { figure: s.figure } : {}),
     };
   });
   const core = source.navigation.routes.find(
@@ -226,6 +227,10 @@ for (const filename of (await readdir("content/lessons"))
           : /^M(01|29)\./.test(source.lesson.slot)
             ? "perspective"
             : "mechanism");
+  if (archetype !== "project" && source.lesson.minutes !== undefined)
+    throw new Error(
+      `${id}: omit authored minutes for non-project lessons; the build computes them from teaching and activities.`,
+    );
   const lesson = lessonSchema.parse({
     ...source.lesson,
     id,
@@ -241,8 +246,9 @@ for (const filename of (await readdir("content/lessons"))
                   f.variants.some((q: any) => !q.retired),
                 ).length *
                   2 +
-                scenes.filter((s) => core.includes(s.id) && s.simulation)
-                  .length *
+                scenes.filter(
+                  (s) => core.includes(s.id) && (s.simulation || s.figure),
+                ).length *
                   3,
             ),
           ),

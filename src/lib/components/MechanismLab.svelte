@@ -39,6 +39,72 @@
         : "FROM NOISE TO A FIXED PATTERN"}</span
   >
   {#if type === "moe"}
+    <svg
+      class="routing-map"
+      viewBox="0 0 460 278"
+      role="img"
+      aria-label={`One token is routed to ${topK} selected experts. Their weighted outputs are added to give [${mixture.output.map(fmt).join(", ")}]. Exact weights follow below.`}
+    >
+      <title
+        >One hidden representation, selected experts, one weighted mixture</title
+      >
+      {#each [0, 1, 2, 3] as id (id)}
+        {@const selected = mixture.weights.find((e) => e.id === id)}
+        <path
+          d={`M 94 144 C 127 144 112 ${40 + id * 66} 154 ${40 + id * 66}`}
+          fill="none"
+          stroke={selected ? "#56834b" : "#cdd6c7"}
+          stroke-width={selected ? 2 + selected.weight * 8 : 1}
+          stroke-dasharray={selected ? undefined : "3 5"}
+        />
+        <path
+          d={`M 285 ${40 + id * 66} C 327 ${40 + id * 66} 325 144 353 144`}
+          fill="none"
+          stroke={selected ? "#56834b" : "#cdd6c7"}
+          stroke-width={selected ? 2 + selected.weight * 8 : 1}
+          stroke-dasharray={selected ? undefined : "3 5"}
+        />
+        <rect
+          x="154"
+          y={17 + id * 66}
+          width="131"
+          height="46"
+          rx="8"
+          fill={selected ? "#e2edda" : "#f6f6f1"}
+          stroke={selected ? "#548342" : "#aebaa6"}
+        />
+        <text x="220" y={45 + id * 66} text-anchor="middle" font-size="22"
+          >Expert {id + 1}</text
+        >
+      {/each}
+      <rect
+        x="5"
+        y="112"
+        width="90"
+        height="65"
+        rx="9"
+        fill="#dce8ee"
+        stroke="#5c7c90"
+      />
+      <text x="50" y="140" text-anchor="middle" font-size="22">Token</text><text
+        x="50"
+        y="160"
+        text-anchor="middle"
+        font-size="20">vector</text
+      >
+      <rect
+        x="353"
+        y="112"
+        width="102"
+        height="65"
+        rx="9"
+        fill="#eadfc9"
+        stroke="#8c714d"
+      />
+      <text x="404" y="140" text-anchor="middle" font-size="22">Weighted</text
+      ><text x="404" y="160" text-anchor="middle" font-size="22">sum</text>
+    </svg>
+    <p class="routing-caption">Solid paths run. Dashed paths are inactive.</p>
     <div class="expert-grid">
       {#each [0.55, 0.25, 0.15, 0.05] as probability, i (probability)}<div
           class={{ active: mixture.weights.some((e) => e.id === i) }}
@@ -139,3 +205,24 @@
     </div>
   {/if}
 </section>
+
+<style>
+  .routing-caption {
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: #344934;
+    margin: -0.25rem 0 1rem;
+  }
+  .routing-map {
+    display: block;
+    width: 100%;
+    height: auto;
+    margin: 1rem 0;
+    background: #fffefa;
+    border-radius: 10px;
+  }
+  .routing-map text {
+    font-family: inherit;
+    fill: #233d2b;
+  }
+</style>

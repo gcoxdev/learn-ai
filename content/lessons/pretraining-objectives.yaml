@@ -1,33 +1,30 @@
 schema_version: 0.2-draft
 lesson:
   id: pretraining-objectives
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   title: Choose what a pretraining prediction means
   state: draft
-  summary: Autoregressive, masked, denoising, and multi-token objectives expose different information and targets;
-    the loss and mask must implement the chosen task.
+  summary: Look at what the model is asked to guess, because that question determines which training mistakes matter.
   slot: M16.5
   category: learning
-  minutes: 12
   sources:
-  - title: Attention Is All You Need
-    url: https://arxiv.org/abs/1706.03762
-  - title: BERT
-    url: https://arxiv.org/abs/1810.04805
-  - title: DeepSeek-V3 Technical Report
-    url: https://arxiv.org/abs/2412.19437
+  - title: Biderman et al. — Pythia, a suite for analyzing language-model training
+    url: https://arxiv.org/abs/2304.01373
+  - title: Groeneveld et al. — OLMo, an open language-model framework
+    url: https://arxiv.org/abs/2402.00838
+  archetype: mechanism
 objectives:
 - id: objective.pretraining-objectives
-  version: 1-draft
-  statement: Autoregressive, masked, denoising, and multi-token objectives expose different information and targets;
-    the loss and mask must implement the chosen task.
+  version: 2-draft
+  statement: Trace causal next-token targets and distinguish them from masked-token and reconstruction objectives,
+    including loss masking and reduction.
   depths:
   - intuition
   - mechanics
   critical: true
   evidence_families:
-  - pretraining-objectives.base
-  - pretraining-objectives.transfer
+  - pretraining-objectives.base.v2
+  - pretraining-objectives.transfer.v2
   prerequisites:
   - anyOf:
     - objective.packing-and-masking
@@ -35,60 +32,71 @@ objectives:
     - objective.next-token
 scenes:
 - id: pretraining-objectives.s1
-  title: Predict a prefix continuation
   type: explanation
   depth: intuition
   objective_refs:
   - objective.pretraining-objectives
-  markdown: Autoregressive language training predicts each next token from an allowed prefix. In “birds can fly”,
-    the prediction of fly sees earlier tokens, not fly itself. Summing negative log probabilities turns many such
-    predictions into the training loss. Parallel training evaluates many positions even though generation is sequential.
-  text_mode: Autoregressive language training predicts each next token from an allowed prefix. In “birds can fly”,
-    the prediction of fly sees earlier tokens, not fly itself. Summing negative log probabilities turns many such
-    predictions into the training loss. Parallel training evaluates many positions even though generation is sequential.
+  title: Different guessing games teach different habits
+  markdown: A model is not simply told to “understand the internet.” A **training objective** specifies predictions
+    and how their errors are scored. In causal language modeling, the task is to predict the next token using allowed
+    earlier context. In masked-token modeling, selected tokens are hidden and reconstructed from allowed surrounding
+    context. Both can use text without manually labeled categories, but they expose different information and require
+    different interfaces. Start by naming the guessing game.
+  text_mode: A model is not simply told to “understand the internet.” A **training objective** specifies predictions
+    and how their errors are scored. In causal language modeling, the task is to predict the next token using allowed
+    earlier context. In masked-token modeling, selected tokens are hidden and reconstructed from allowed surrounding
+    context. Both can use text without manually labeled categories, but they expose different information and require
+    different interfaces. Start by naming the guessing game.
   bridges: []
 - id: pretraining-objectives.s2
-  title: Recover hidden information
   type: explanation
-  depth: mechanics
+  depth: intuition
   objective_refs:
   - objective.pretraining-objectives
-  markdown: Masked language modeling hides selected tokens and predicts them from permitted surrounding context.
-    Denoising objectives reconstruct clean text from corrupted input, sometimes through an encoder-decoder model.
-    These tasks train useful representations but do not automatically provide the same left-to-right generation
-    interface as a causal decoder.
-  text_mode: Masked language modeling hides selected tokens and predicts them from permitted surrounding context.
-    Denoising objectives reconstruct clean text from corrupted input, sometimes through an encoder-decoder model.
-    These tasks train useful representations but do not automatically provide the same left-to-right generation
-    interface as a causal decoder.
+  title: Write the causal pairs explicitly
+  markdown: Use [a,small,boat,END]. The predictions are a→small, [a,small]→boat, and [a,small,boat]→END. Earlier
+    context grows as the target moves forward. During training the known sequence supplies the correct earlier tokens;
+    masks prevent reading future targets. At generation time the model usually feeds its own selected tokens back
+    into the context. This difference helps explain why errors can accumulate during generation even when training
+    examples are well formatted.
+  text_mode: Use [a,small,boat,END]. The predictions are a→small, [a,small]→boat, and [a,small,boat]→END. Earlier
+    context grows as the target moves forward. During training the known sequence supplies the correct earlier tokens;
+    masks prevent reading future targets. At generation time the model usually feeds its own selected tokens back
+    into the context. This difference helps explain why errors can accumulate during generation even when training
+    examples are well formatted.
   bridges: []
 - id: pretraining-objectives.s3
-  title: Predict more than one future target
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.pretraining-objectives
-  markdown: Multi-token objectives add predictions at additional future offsets, with a recipe defining modules,
-    conditioning, and weighting. A toy loss L = L_next + 0.2 L_two-ahead gives the auxiliary target a smaller contribution.
-    More targets can shape representations; their existence does not guarantee fewer inference steps.
-  text_mode: Multi-token objectives add predictions at additional future offsets, with a recipe defining modules,
-    conditioning, and weighting. A toy loss L = L_next + 0.2 L_two-ahead gives the auxiliary target a smaller contribution.
-    More targets can shape representations; their existence does not guarantee fewer inference steps.
-  bridges: []
+  title: Turn probability into a penalty
+  markdown: For a target token assigned probability p, a common loss is −ln(p), where ln is the natural logarithm.
+    Larger target probability gives smaller loss. If p=1, this term is zero. If p is about 0.368, the term is about
+    one. The model is scored on the probability assigned to the observed target, not just on whether that token
+    was ranked first. Summing or averaging terms across chosen positions produces a batch loss.
+  text_mode: For a target token assigned probability p, a common loss is −ln(p), where ln is the natural logarithm.
+    Larger target probability gives smaller loss. If p=1, this term is zero. If p is about 0.368, the term is about
+    one. The model is scored on the probability assigned to the observed target, not just on whether that token
+    was ranked first. Summing or averaging terms across chosen positions produces a batch loss.
+  bridges:
+  - powers-logs
 - id: pretraining-objectives.s4
-  title: Audit input and supervision together
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.pretraining-objectives
-  markdown: 'For each target, write exactly what information can reach its prediction. Identify corrupted inputs,
-    target shifts, ignored positions, and auxiliary weights. Compare downstream evaluations as well as training
-    loss: two different objectives can have losses on different prediction units and therefore incomparable raw
-    scales.'
-  text_mode: 'For each target, write exactly what information can reach its prediction. Identify corrupted inputs,
-    target shifts, ignored positions, and auxiliary weights. Compare downstream evaluations as well as training
-    loss: two different objectives can have losses on different prediction units and therefore incomparable raw
-    scales.'
+  title: Do the reduction on a tiny batch
+  markdown: Suppose two included positions have loss terms 1 and 3, while a padding position is excluded. The mean
+    scored-token loss is (1+3)/2=2. Dividing by three would incorrectly let padding lower the reported average.
+    If one example has many more tokens than another, a token mean and an example mean can weight them differently.
+    State the reduction rule before comparing numbers. Perplexity, exp(mean token loss) under compatible conventions,
+    summarizes prediction uncertainty but does not directly measure factual accuracy.
+  text_mode: Suppose two included positions have loss terms 1 and 3, while a padding position is excluded. The mean
+    scored-token loss is (1+3)/2=2. Dividing by three would incorrectly let padding lower the reported average.
+    If one example has many more tokens than another, a token mean and an example mean can weight them differently.
+    State the reduction rule before comparing numbers. Perplexity, exp(mean token loss) under compatible conventions,
+    summarizes prediction uncertainty but does not directly measure factual accuracy.
   bridges: []
 - id: pretraining-objectives.check
   title: Review and check your understanding
@@ -98,8 +106,8 @@ scenes:
   - objective.pretraining-objectives
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: Autoregressive, masked, denoising, and multi-token objectives expose different information and targets;
-    the loss and mask must implement the chosen task.
+  takeaway: The objective sets the guessing game. Name the visible inputs, desired targets, and scoring rule before
+    comparing trained models.
 - id: pretraining-objectives.recap
   title: One idea to take with you
   type: recap
@@ -110,6 +118,64 @@ scenes:
     the loss and mask must implement the chosen task.
   text_mode: Autoregressive, masked, denoising, and multi-token objectives expose different information and targets;
     the loss and mask must implement the chosen task.
+- id: pretraining-objectives.s5
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.pretraining-objectives
+  title: Change the task and inspect what becomes visible
+  markdown: In a masked example such as “a [MASK] boat,” the model may inspect both a and boat to guess small. A
+    causal next-token model predicting small after a cannot inspect boat. A reconstruction task may corrupt or remove
+    larger spans and ask for their recovery. These objectives are useful design choices, not interchangeable labels.
+    A downstream task and evaluation determine which learned representations or behaviors help; one lower training
+    loss across different objectives is not automatically a fair comparison.
+  text_mode: In a masked example such as “a [MASK] boat,” the model may inspect both a and boat to guess small.
+    A causal next-token model predicting small after a cannot inspect boat. A reconstruction task may corrupt or
+    remove larger spans and ask for their recovery. These objectives are useful design choices, not interchangeable
+    labels. A downstream task and evaluation determine which learned representations or behaviors help; one lower
+    training loss across different objectives is not automatically a fair comparison.
+  bridges: []
+- id: pretraining-objectives.s6
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.pretraining-objectives
+  title: Keep capability claims separate from the loss
+  markdown: Next-token training can produce rich patterns because language encodes many relationships, but a low
+    token loss does not certify truthfulness, instruction following, or successful tool use. Those need appropriate
+    data, adaptation, and evaluation. Record the objective, tokenizer, allowed context, target mask, and reduction
+    with each experiment. The memory prompt is “what can it see, what must it guess, how is it scored?” Ask those
+    three questions whenever a new training recipe appears.
+  text_mode: Next-token training can produce rich patterns because language encodes many relationships, but a low
+    token loss does not certify truthfulness, instruction following, or successful tool use. Those need appropriate
+    data, adaptation, and evaluation. Record the objective, tokenizer, allowed context, target mask, and reduction
+    with each experiment. The memory prompt is “what can it see, what must it guess, how is it scored?” Ask those
+    three questions whenever a new training recipe appears.
+  bridges: []
+- id: pretraining-objectives.s7
+  type: question
+  depth: mechanics
+  objective_refs:
+  - objective.pretraining-objectives
+  title: Which denominator belongs here?
+  markdown: Three positions have loss terms 1, 3, and a masked-out padding term. What is the mean over the two included
+    targets?
+  text_mode: Three positions have loss terms 1, 3, and a masked-out padding term. What is the mean over the two
+    included targets?
+  bridges: []
+  question:
+    response_type: single_choice
+    options:
+    - id: a
+      text: '2'
+    - id: b
+      text: 4/3
+    - id: c
+      text: '4'
+    answer: a
+    reveal_markdown: 'Only the two included targets count: (1+3)/2=2. Padding should not dilute this specified mean.'
+    hint: Trace the example using the rule from the preceding pages.
+    id: pretraining-objectives.practice.v2.7
 navigation:
   routes:
   - id: route.core
@@ -118,6 +184,9 @@ navigation:
     - pretraining-objectives.s2
     - pretraining-objectives.s3
     - pretraining-objectives.s4
+    - pretraining-objectives.s5
+    - pretraining-objectives.s6
+    - pretraining-objectives.s7
     - pretraining-objectives.check
     gate_refs:
     - gate.core
@@ -143,6 +212,7 @@ assessment_families:
       text: Yes, every language task must be causal
     answer: a
     feedback: Leakage depends on the intended information boundary.
+    retired: true
   - id: pretraining-objectives.base.2
     prompt: What does the 0.2 coefficient in L_next + 0.2 L_aux do?
     options:
@@ -154,6 +224,7 @@ assessment_families:
       text: Sets vocabulary size
     answer: a
     feedback: The coefficient controls a loss term’s relative contribution.
+    retired: true
 - id: pretraining-objectives.transfer
   objective_ref: objective.pretraining-objectives
   task: transfer
@@ -173,6 +244,7 @@ assessment_families:
       text: Only if the corpus is English
     answer: a
     feedback: Training supervision and decoding execution are separate choices.
+    retired: true
   - id: pretraining-objectives.transfer.2
     prompt: Two objectives predict different units. How should their raw losses be compared?
     options:
@@ -184,3 +256,130 @@ assessment_families:
       text: With their definitions and normalization made explicit
     answer: a
     feedback: Loss scale depends on prediction task and normalization.
+    retired: true
+- id: pretraining-objectives.base.v2
+  objective_ref: objective.pretraining-objectives
+  task: base
+  response_type: single_choice
+  points: 1
+  hint: Work through the example one step at a time before answering.
+  remediation_scene: pretraining-objectives.s3
+  variants:
+  - prompt: A causal model predicts the third token. Which information is allowed in the stated next-token setup?
+    answer: a
+    options:
+    - id: a
+      text: The first two tokens
+    - id: c
+      text: Every later token in the same sentence
+    - id: b
+      text: The third token itself as visible future evidence
+    feedback: The target must not be available through a future-information route.
+    id: pretraining-objectives.base.v2.1
+  - prompt: What does masked-token prediction change relative to causal next-token prediction?
+    answer: a
+    options:
+    - id: b
+      text: It removes the need to specify targets
+    - id: a
+      text: It may expose context on both sides of the missing token
+    - id: c
+      text: It requires the target token to remain visible
+    feedback: Masked objectives can use surrounding context unavailable in a causal prefix.
+    id: pretraining-objectives.base.v2.2
+  - prompt: A target’s probability increases from 0.2 to 0.4. What happens to −ln(p)?
+    answer: a
+    options:
+    - id: b
+      text: It doubles
+    - id: a
+      text: It decreases
+    - id: c
+      text: It becomes the target’s token ID
+    feedback: The negative logarithm decreases as a positive probability increases.
+    id: pretraining-objectives.base.v2.3
+  - prompt: Two models use different tokenizers. Why compare token-loss numbers cautiously?
+    answer: a
+    options:
+    - id: c
+      text: A larger vocabulary always has lower loss
+    - id: b
+      text: Logarithms cannot be computed for different vocabularies
+    - id: a
+      text: Their prediction units and sequence decompositions differ
+    feedback: Token units affect the interpretation and comparability of averaged losses.
+    id: pretraining-objectives.base.v2.4
+- id: pretraining-objectives.transfer.v2
+  objective_ref: objective.pretraining-objectives
+  task: transfer
+  response_type: numeric_fields_with_reason
+  points: 1
+  hint: Work through the example one step at a time before answering.
+  remediation_scene: pretraining-objectives.s3
+  variants:
+  - prompt: Included loss terms sum to 6 across 3 scored targets; 2 extra padding positions are excluded. Record
+      the denominator and mean scored-target loss.
+    answers:
+      count: 3
+      mean: 2.0
+    reason_answer: a
+    reason_options:
+    - id: a
+      text: Average over included targets rather than all stored positions.
+    - id: c
+      text: Divide by the number of padding positions.
+    - id: b
+      text: Include excluded padding in the denominator.
+    feedback: Use the explicitly scored targets for both the summed loss and its denominator.
+    id: pretraining-objectives.transfer.v2.1
+  - prompt: Included loss terms sum to 10 across 5 scored targets; 3 extra padding positions are excluded. Record
+      the denominator and mean scored-target loss.
+    answers:
+      count: 5
+      mean: 2.0
+    reason_answer: a
+    reason_options:
+    - id: b
+      text: Include excluded padding in the denominator.
+    - id: c
+      text: Divide by the number of padding positions.
+    - id: a
+      text: Average over included targets rather than all stored positions.
+    feedback: Use the explicitly scored targets for both the summed loss and its denominator.
+    id: pretraining-objectives.transfer.v2.2
+  - prompt: Included loss terms sum to 8 across 4 scored targets; 1 extra padding positions are excluded. Record
+      the denominator and mean scored-target loss.
+    answers:
+      count: 4
+      mean: 2.0
+    reason_answer: a
+    reason_options:
+    - id: c
+      text: Divide by the number of padding positions.
+    - id: b
+      text: Include excluded padding in the denominator.
+    - id: a
+      text: Average over included targets rather than all stored positions.
+    feedback: Use the explicitly scored targets for both the summed loss and its denominator.
+    id: pretraining-objectives.transfer.v2.3
+  - prompt: Included loss terms sum to 3 across 2 scored targets; 4 extra padding positions are excluded. Record
+      the denominator and mean scored-target loss.
+    answers:
+      count: 2
+      mean: 1.5
+    reason_answer: a
+    reason_options:
+    - id: c
+      text: Divide by the number of padding positions.
+    - id: a
+      text: Average over included targets rather than all stored positions.
+    - id: b
+      text: Include excluded padding in the denominator.
+    feedback: Use the explicitly scored targets for both the summed loss and its denominator.
+    id: pretraining-objectives.transfer.v2.4
+  numeric_fields:
+  - id: count
+    label: Scored-target denominator
+  - id: mean
+    label: Mean loss
+  absolute_tolerance: 1.0e-06

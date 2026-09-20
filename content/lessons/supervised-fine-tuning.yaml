@@ -1,31 +1,29 @@
 schema_version: 0.2-draft
 lesson:
   id: supervised-fine-tuning
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   title: Learn response behavior from demonstrations
   state: draft
-  summary: Supervised fine-tuning fits demonstrated responses under a chosen template and loss mask; data quality,
-    coverage, and evaluation determine what behavior the model learns.
+  summary: Teach a library assistant with complete examples, then inspect which tokens count as the lesson and which
+    serve as context.
   slot: M20.2
   category: learning
-  minutes: 12
   sources:
-  - title: InstructGPT
+  - title: Ouyang et al. — instruction following with human feedback
     url: https://arxiv.org/abs/2203.02155
-  - title: FLAN
-    url: https://arxiv.org/abs/2109.01652
+  archetype: mechanism
 objectives:
 - id: objective.supervised-fine-tuning
-  version: 1-draft
-  statement: Supervised fine-tuning fits demonstrated responses under a chosen template and loss mask; data quality,
-    coverage, and evaluation determine what behavior the model learns.
+  version: 2-draft
+  statement: Trace a supervised conversation example, response-only loss mask, and evaluation split while distinguishing
+    demonstrations from runtime prompts.
   depths:
   - intuition
   - mechanics
   critical: true
   evidence_families:
-  - supervised-fine-tuning.base
-  - supervised-fine-tuning.transfer
+  - supervised-fine-tuning.base.v2
+  - supervised-fine-tuning.transfer.v2
   prerequisites:
   - anyOf:
     - objective.posttraining-stages
@@ -33,56 +31,71 @@ objectives:
     - objective.packing-and-masking
 scenes:
 - id: supervised-fine-tuning.s1
-  title: Turn demonstrations into token predictions
   type: explanation
   depth: intuition
   objective_refs:
   - objective.supervised-fine-tuning
-  markdown: An instruction example can contain a user request and a desired assistant response. The model predicts
-    response tokens conditioned on the preceding conversation. Teacher forcing supplies the demonstrated prefix
-    during training; deployment instead conditions on the model’s own generated continuation.
-  text_mode: An instruction example can contain a user request and a desired assistant response. The model predicts
-    response tokens conditioned on the preceding conversation. Teacher forcing supplies the demonstrated prefix
-    during training; deployment instead conditions on the model’s own generated continuation.
+  title: Show the assistant what good help looks like
+  markdown: A **demonstration** pairs a situation with a desired response. Our fictional library closes at six.
+    An example might contain a user asking “When do you close?” and an assistant answering “We close at six today.”
+    **Supervised fine-tuning**, or SFT, trains an existing model on such target responses. It changes selected trainable
+    parameters. Simply pasting the example into a prompt gives the model context for one use; that does not by itself
+    perform fine-tuning.
+  text_mode: A **demonstration** pairs a situation with a desired response. Our fictional library closes at six.
+    An example might contain a user asking “When do you close?” and an assistant answering “We close at six today.”
+    **Supervised fine-tuning**, or SFT, trains an existing model on such target responses. It changes selected trainable
+    parameters. Simply pasting the example into a prompt gives the model context for one use; that does not by itself
+    perform fine-tuning.
   bridges: []
 - id: supervised-fine-tuning.s2
-  title: Define which tokens receive loss
   type: explanation
-  depth: mechanics
+  depth: intuition
   objective_refs:
   - objective.supervised-fine-tuning
-  markdown: A recipe may apply loss only to assistant response tokens, or use a different explicit mask. User and
-    system messages can remain visible as context even when excluded from the objective. Multi-turn examples require
-    consistent role boundaries, end markers, and tool-call formatting.
-  text_mode: A recipe may apply loss only to assistant response tokens, or use a different explicit mask. User and
-    system messages can remain visible as context even when excluded from the objective. Multi-turn examples require
-    consistent role boundaries, end markers, and tool-call formatting.
+  title: Preserve who said what
+  markdown: A **conversation template** serializes roles, boundaries, and message text into the token sequence expected
+    by the model. A user request and an assistant reply should not be indistinguishable blocks. End markers specify
+    where responses or turns finish. A tool result, when used, has its own role in the conversation. The exact template
+    is part of the model’s training-and-use contract. Using a mismatched template can change behavior even when
+    the ordinary words look identical to a person.
+  text_mode: A **conversation template** serializes roles, boundaries, and message text into the token sequence
+    expected by the model. A user request and an assistant reply should not be indistinguishable blocks. End markers
+    specify where responses or turns finish. A tool result, when used, has its own role in the conversation. The
+    exact template is part of the model’s training-and-use contract. Using a mismatched template can change behavior
+    even when the ordinary words look identical to a person.
   bridges: []
 - id: supervised-fine-tuning.s3
-  title: Curate behavior rather than volume alone
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.supervised-fine-tuning
-  markdown: If every example is verbose, the model can learn verbosity even when a concise answer is preferable.
-    Include task diversity, uncertainty handling, appropriate refusals, and valid structured outputs. Demonstrations
-    containing mistakes teach mistakes; deduplication and held-out evaluation remain necessary after pretraining.
-  text_mode: If every example is verbose, the model can learn verbosity even when a concise answer is preferable.
-    Include task diversity, uncertainty handling, appropriate refusals, and valid structured outputs. Demonstrations
-    containing mistakes teach mistakes; deduplication and held-out evaluation remain necessary after pretraining.
-  bridges: []
+  title: Mark the targets that count
+  markdown: In a response-only recipe, prompt tokens are visible context while assistant-response targets contribute
+    to the loss. Suppose response token losses are 1, 2, and 3. Their mean is (1+2+3)/3=2. A four-token prompt does
+    not add four extra zeros to that denominator. Other recipes score different positions, so record the chosen
+    mask. An unscored prompt is still allowed to influence the response through attention.
+  text_mode: In a response-only recipe, prompt tokens are visible context while assistant-response targets contribute
+    to the loss. Suppose response token losses are 1, 2, and 3. Their mean is (1+2+3)/3=2. A four-token prompt does
+    not add four extra zeros to that denominator. Other recipes score different positions, so record the chosen
+    mask. An unscored prompt is still allowed to influence the response through attention.
+  bridges:
+  - packing-and-masking
 - id: supervised-fine-tuning.s4
-  title: Test beyond imitation of the training set
   type: explanation
   depth: mechanics
   objective_refs:
   - objective.supervised-fine-tuning
-  markdown: Evaluate fresh requests, paraphrases, multi-turn cases, and domains outside the tuning mixture. Compare
-    retained base capabilities and behavior under the intended chat template. Low training loss proves fit to demonstrations,
-    not universal instruction following or correctness.
-  text_mode: Evaluate fresh requests, paraphrases, multi-turn cases, and domains outside the tuning mixture. Compare
-    retained base capabilities and behavior under the intended chat template. Low training loss proves fit to demonstrations,
-    not universal instruction following or correctness.
+  title: The training prefix is supplied, not sampled
+  markdown: During ordinary teacher-forced training, the model predicts each target response token given the correct
+    earlier demonstration tokens. **Teacher forcing** is this use of the known prefix. During generation the prefix
+    usually contains the model’s own selected tokens, so an early mistake can change later predictions. A good token
+    loss on demonstrations and a useful free-running conversation are related measurements, but they are not identical.
+    Evaluate complete outputs as well as training losses.
+  text_mode: During ordinary teacher-forced training, the model predicts each target response token given the correct
+    earlier demonstration tokens. **Teacher forcing** is this use of the known prefix. During generation the prefix
+    usually contains the model’s own selected tokens, so an early mistake can change later predictions. A good token
+    loss on demonstrations and a useful free-running conversation are related measurements, but they are not identical.
+    Evaluate complete outputs as well as training losses.
   bridges: []
 - id: supervised-fine-tuning.check
   title: Review and check your understanding
@@ -92,8 +105,8 @@ scenes:
   - objective.supervised-fine-tuning
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: Supervised fine-tuning fits demonstrated responses under a chosen template and loss mask; data quality,
-    coverage, and evaluation determine what behavior the model learns.
+  takeaway: Show the behavior, mark the scored response, update selected parameters, and test new requests. Demonstrations
+    teach their mistakes as well as their strengths.
 - id: supervised-fine-tuning.recap
   title: One idea to take with you
   type: recap
@@ -104,6 +117,65 @@ scenes:
     coverage, and evaluation determine what behavior the model learns.
   text_mode: Supervised fine-tuning fits demonstrated responses under a chosen template and loss mask; data quality,
     coverage, and evaluation determine what behavior the model learns.
+- id: supervised-fine-tuning.s5
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.supervised-fine-tuning
+  title: Design examples for the behavior you want
+  markdown: If every demonstration gives an elaborate answer to a simple question, the model may learn that verbosity
+    is expected. Include representative short questions, missing-information cases, format requirements, and examples
+    where clarification is appropriate. Incorrect demonstrations teach incorrect behavior. Repeated near-copies
+    inflate volume without adding much coverage. A small reviewed set with clear rules can reveal the desired behavior
+    more cleanly than an uninspected pile, though its coverage still needs testing.
+  text_mode: If every demonstration gives an elaborate answer to a simple question, the model may learn that verbosity
+    is expected. Include representative short questions, missing-information cases, format requirements, and examples
+    where clarification is appropriate. Incorrect demonstrations teach incorrect behavior. Repeated near-copies
+    inflate volume without adding much coverage. A small reviewed set with clear rules can reveal the desired behavior
+    more cleanly than an uninspected pile, though its coverage still needs testing.
+  bridges: []
+- id: supervised-fine-tuning.s6
+  type: explanation
+  depth: mechanics
+  objective_refs:
+  - objective.supervised-fine-tuning
+  title: Test a new request, not a disguised copy
+  markdown: 'Keep evaluation requests and source-derived variants out of the training demonstrations. Try a differently
+    worded closing-time question, a request for an unknown holiday schedule, and a contradiction between supplied
+    sources. Score the behavior promised by the task: evidence use, factual consistency, helpful brevity, and handling
+    missing information. Save the starting checkpoint, training data, mask, template, and resulting checkpoint.
+    Remember “show, mark, fit, test” as four separate steps.'
+  text_mode: 'Keep evaluation requests and source-derived variants out of the training demonstrations. Try a differently
+    worded closing-time question, a request for an unknown holiday schedule, and a contradiction between supplied
+    sources. Score the behavior promised by the task: evidence use, factual consistency, helpful brevity, and handling
+    missing information. Save the starting checkpoint, training data, mask, template, and resulting checkpoint.
+    Remember “show, mark, fit, test” as four separate steps.'
+  bridges: []
+- id: supervised-fine-tuning.s7
+  type: question
+  depth: mechanics
+  objective_refs:
+  - objective.supervised-fine-tuning
+  title: Count the scored positions
+  markdown: 'A prompt has four tokens. The response has three scored token losses: 1, 2, 3. In a response-only loss
+    recipe, what is the mean?'
+  text_mode: 'A prompt has four tokens. The response has three scored token losses: 1, 2, 3. In a response-only
+    loss recipe, what is the mean?'
+  bridges: []
+  question:
+    response_type: single_choice
+    options:
+    - id: a
+      text: '2'
+    - id: b
+      text: 6/7
+    - id: c
+      text: '6'
+    answer: a
+    reveal_markdown: The three response targets contribute total loss 6 and denominator 3. Prompt length does not
+      dilute the specified response-only mean.
+    hint: Trace the example using the rule from the preceding pages.
+    id: supervised-fine-tuning.practice.v2.7
 navigation:
   routes:
   - id: route.core
@@ -112,6 +184,9 @@ navigation:
     - supervised-fine-tuning.s2
     - supervised-fine-tuning.s3
     - supervised-fine-tuning.s4
+    - supervised-fine-tuning.s5
+    - supervised-fine-tuning.s6
+    - supervised-fine-tuning.s7
     - supervised-fine-tuning.check
     gate_refs:
     - gate.core
@@ -137,6 +212,7 @@ assessment_families:
       text: An unrelated document
     answer: a
     feedback: Teacher forcing conditions on the target prefix.
+    retired: true
   - id: supervised-fine-tuning.base.2
     prompt: Can user tokens be visible while excluded from loss?
     options:
@@ -148,6 +224,7 @@ assessment_families:
       text: 'Yes'
     answer: a
     feedback: Context visibility and supervision masks differ.
+    retired: true
 - id: supervised-fine-tuning.transfer
   objective_ref: objective.supervised-fine-tuning
   task: transfer
@@ -167,6 +244,7 @@ assessment_families:
       text: A preference for verbosity
     answer: a
     feedback: Demonstration distributions influence style as well as content.
+    retired: true
   - id: supervised-fine-tuning.transfer.2
     prompt: Very low SFT training loss establishes what?
     options:
@@ -178,3 +256,131 @@ assessment_families:
       text: Universal factual correctness
     answer: a
     feedback: Generalization needs independent evaluation.
+    retired: true
+- id: supervised-fine-tuning.base.v2
+  objective_ref: objective.supervised-fine-tuning
+  task: base
+  response_type: numeric_fields_with_reason
+  points: 1
+  hint: Work through the example one step at a time before answering.
+  remediation_scene: supervised-fine-tuning.s3
+  variants:
+  - prompt: A response-only example has 5 unscored prompt tokens and 2 scored response targets with summed loss
+      3. Record the denominator and mean loss.
+    answers:
+      denominator: 2
+      mean: 1.5
+    reason_answer: a
+    reason_options:
+    - id: a
+      text: Average only the targets included by the response mask.
+    - id: b
+      text: Average over prompt and response positions together.
+    - id: c
+      text: Divide by the number of prompt tokens.
+    feedback: The prompt supplies context; the selected response targets supply this loss.
+    id: supervised-fine-tuning.base.v2.1
+  - prompt: A response-only example has 3 unscored prompt tokens and 4 scored response targets with summed loss
+      8. Record the denominator and mean loss.
+    answers:
+      denominator: 4
+      mean: 2.0
+    reason_answer: a
+    reason_options:
+    - id: c
+      text: Divide by the number of prompt tokens.
+    - id: a
+      text: Average only the targets included by the response mask.
+    - id: b
+      text: Average over prompt and response positions together.
+    feedback: The prompt supplies context; the selected response targets supply this loss.
+    id: supervised-fine-tuning.base.v2.2
+  - prompt: A response-only example has 8 unscored prompt tokens and 3 scored response targets with summed loss
+      9. Record the denominator and mean loss.
+    answers:
+      denominator: 3
+      mean: 3.0
+    reason_answer: a
+    reason_options:
+    - id: b
+      text: Average over prompt and response positions together.
+    - id: a
+      text: Average only the targets included by the response mask.
+    - id: c
+      text: Divide by the number of prompt tokens.
+    feedback: The prompt supplies context; the selected response targets supply this loss.
+    id: supervised-fine-tuning.base.v2.3
+  - prompt: A response-only example has 2 unscored prompt tokens and 5 scored response targets with summed loss
+      5. Record the denominator and mean loss.
+    answers:
+      denominator: 5
+      mean: 1.0
+    reason_answer: a
+    reason_options:
+    - id: c
+      text: Divide by the number of prompt tokens.
+    - id: b
+      text: Average over prompt and response positions together.
+    - id: a
+      text: Average only the targets included by the response mask.
+    feedback: The prompt supplies context; the selected response targets supply this loss.
+    id: supervised-fine-tuning.base.v2.4
+  numeric_fields:
+  - id: denominator
+    label: Scored target count
+  - id: mean
+    label: Mean response loss
+  absolute_tolerance: 1.0e-06
+- id: supervised-fine-tuning.transfer.v2
+  objective_ref: objective.supervised-fine-tuning
+  task: transfer
+  response_type: single_choice
+  points: 1
+  hint: Work through the example one step at a time before answering.
+  remediation_scene: supervised-fine-tuning.s3
+  variants:
+  - prompt: What does teacher forcing provide during an ordinary SFT forward calculation?
+    answer: a
+    options:
+    - id: c
+      text: The final test score as an input token
+    - id: a
+      text: The demonstrated earlier response tokens
+    - id: b
+      text: A newly sampled prefix at every target position
+    feedback: The known prefix supplies context for predicting each demonstration target.
+    id: supervised-fine-tuning.transfer.v2.1
+  - prompt: A model gives overly long answers after training on uniformly verbose examples. What should be examined
+      first?
+    answer: a
+    options:
+    - id: a
+      text: The behavior distribution in the demonstrations
+    - id: b
+      text: Whether longer answers prove better reasoning
+    - id: c
+      text: Whether every question requires a lower temperature
+    feedback: Training examples can teach style and length preferences as well as task behavior.
+    id: supervised-fine-tuning.transfer.v2.2
+  - prompt: Weights are frozen and a good example is added to the prompt. Which process occurred?
+    answer: a
+    options:
+    - id: a
+      text: Learning from supplied context during use, without the stated parameter training
+    - id: c
+      text: A permanent rewrite of the model’s vocabulary
+    - id: b
+      text: Supervised parameter updates merely because an example appeared
+    feedback: Examples in context and gradient-based fine-tuning change different parts of the system.
+    id: supervised-fine-tuning.transfer.v2.3
+  - prompt: Training and test requests paraphrase the same source cases. What should be checked?
+    answer: a
+    options:
+    - id: c
+      text: Whether the test examples are listed after the training file
+    - id: b
+      text: Whether both files use the same extension
+    - id: a
+      text: Whether source-related cases crossed the intended split
+    feedback: Source-based overlap can undermine a claim about new requests.
+    id: supervised-fine-tuning.transfer.v2.4
