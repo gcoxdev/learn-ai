@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   let { type = "language" }: { type?: string } = $props();
   const cells = Array.from({ length: 64 }, (_, i) => ({
     x: i % 8,
@@ -34,7 +35,7 @@
         stroke-width="1.5"
       />
     </svg>
-  {:else}
+  {:else if type === "language"}
     <div class="token-example">
       <span>The</span><span>world</span><span>is</span><span class="empty-token"
         >?</span
@@ -52,5 +53,65 @@
         <span>beautiful</span><i style="--bar: 26%"></i><small>0.15</small>
       </div>
     </div>
+  {:else}
+    <div class="system-art">
+      <span
+        ><Icon
+          name={type === "audio"
+            ? "audio"
+            : type === "video" || type === "vision"
+              ? "image"
+              : "layers"}
+          size={34}
+        /></span
+      >
+      <Icon name="arrow" size={24} />
+      <span class="system-core"
+        ><Icon
+          name={type === "robotics"
+            ? "robot"
+            : type === "video"
+              ? "video"
+              : type === "agents"
+                ? "tools"
+                : type === "retrieval"
+                  ? "search"
+                  : type === "edge"
+                    ? "chip"
+                    : type === "forecasting"
+                      ? "clock"
+                      : type === "audio"
+                        ? "audio"
+                        : type === "decisions"
+                          ? "map"
+                          : "chart"}
+          size={48}
+        /></span
+      >
+      <Icon name="arrow" size={24} />
+      <span><Icon name="check" size={34} /></span>
+    </div>
   {/if}
 </div>
+
+<style>
+  .system-art {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    color: #476747;
+  }
+  .system-art > span {
+    display: grid;
+    place-items: center;
+    width: 3rem;
+    height: 3rem;
+  }
+  .system-art .system-core {
+    width: 5rem;
+    height: 5rem;
+    border: 1px solid #91a48d;
+    border-radius: 1rem;
+    background: #f8faf4;
+  }
+</style>

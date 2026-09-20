@@ -32,7 +32,7 @@ it("uses contextual phrases for ambiguous ordinary words", () => {
     ),
   ).toEqual(expect.arrayContaining(["mean", "value"]));
 });
-it("puts definitions before training and includes evaluation and projects on both paths", () => {
+it("puts foundations before mechanisms and ends every reference path at its destination", () => {
   for (const recipe of curriculum.recipes) {
     const ids = planPath(curriculum, recipe, []).lessons.map((l) => l.id);
     const early = [
@@ -45,22 +45,17 @@ it("puts definitions before training and includes evaluation and projects on bot
       "inside-a-system",
     ];
     expect(ids.slice(0, early.length)).toEqual(early);
-    expect(ids.indexOf("digital-representations")).toBeLessThan(
-      ids.indexOf("tensor-shape-tracing"),
-    );
-    expect(ids.indexOf("algebra-notation")).toBeLessThan(
-      ids.indexOf("matrices-tensors"),
-    );
-    expect(ids.indexOf("algorithms-and-programs")).toBeLessThan(
-      ids.indexOf("randomness-reproducibility"),
-    );
-    expect(ids.indexOf("toy-model-limits")).toBeLessThan(
-      ids.indexOf(
-        recipe.id === "language" ? "training-loop" : "latent-diffusion",
-      ),
-    );
-    expect(ids).toContain("human-and-model-judges");
-    expect(ids).toContain("privacy-and-memorization");
+    for (const [before, after] of [
+      ["digital-representations", "tensor-shape-tracing"],
+      ["algebra-notation", "matrices-tensors"],
+      ["algorithms-and-programs", "randomness-reproducibility"],
+      ["tokenization", "next-token"],
+    ]) {
+      if (ids.includes(after)) {
+        expect(ids).toContain(before);
+        expect(ids.indexOf(before)).toBeLessThan(ids.indexOf(after));
+      }
+    }
     expect(ids.at(-1)).toBe(recipe.destination);
   }
 });

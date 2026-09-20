@@ -107,10 +107,32 @@ export function validateGraph(curriculum: Curriculum): void {
     done.add(id);
   };
   curriculum.objectives.forEach((o) => visit(o.id));
+  const pathIds = new Set(curriculum.recipes.map((r) => r.id));
+  if (pathIds.size !== curriculum.recipes.length)
+    throw new Error("Duplicate path ID");
   for (const recipe of curriculum.recipes) {
     recipe.roots.forEach(visit);
     if (!lessons.has(recipe.destination))
       throw new Error(`Missing destination: ${recipe.id}`);
+    if (
+      !recipe.roots.some((id) =>
+        lessons.get(recipe.destination)!.objectives.includes(id),
+      )
+    )
+      throw new Error(
+        `Destination must be a required path outcome: ${recipe.id}`,
+      );
+    if (
+      new Set(recipe.extensions.map((e) => e.lesson)).size !==
+      recipe.extensions.length
+    )
+      throw new Error(`Duplicate path extension: ${recipe.id}`);
+    for (const extension of recipe.extensions)
+      if (!lessons.has(extension.lesson))
+        throw new Error(`Missing path extension: ${extension.lesson}`);
+    for (const related of recipe.related)
+      if (related === recipe.id || !pathIds.has(related))
+        throw new Error(`Invalid related path: ${related}`);
   }
   const allQuestionIds = new Set<string>();
   for (const lesson of curriculum.lessons) {
@@ -250,6 +272,14 @@ export function parseBackup(text: string, curriculum: Curriculum): Progress {
   if (text.length > 8_000_000)
     throw new Error("This backup is too large (maximum 8 MB).");
   const parsed = progressSchema.parse(JSON.parse(text));
+  const paths = new Set(curriculum.recipes.map((r) => r.id));
+  if (
+    (parsed.selectedPath && !paths.has(parsed.selectedPath)) ||
+    Object.values(parsed.positions).some(
+      (p) => p.origin?.kind === "path" && !paths.has(p.origin.path),
+    )
+  )
+    throw new Error("This backup references an unavailable learning path.");
   const ids = new Set(curriculum.lessons.map((l) => l.id));
   for (const [id, p] of Object.entries(parsed.positions)) {
     const lesson = curriculum.lessons.find((l) => l.id === id);

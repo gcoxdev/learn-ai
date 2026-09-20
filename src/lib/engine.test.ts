@@ -126,15 +126,9 @@ describe("objective evidence", () => {
 });
 
 describe("dependency planning", () => {
-  it("closes the full draft paths with 114 shared lessons", () => {
+  it("orders every system path by its actual prerequisites", () => {
     const plans = curriculum.recipes.map((r) => planPath(curriculum, r, []));
-    expect(plans.map((p) => p.lessons.length)).toEqual([187, 148]);
-    expect(plans.map((p) => p.required.length)).toEqual([188, 149]);
-    expect(
-      plans[0].lessons.filter((l) =>
-        plans[1].lessons.some((other) => other.id === l.id),
-      ),
-    ).toHaveLength(114);
+    expect(plans).toHaveLength(15);
     for (const plan of plans)
       for (const id of plan.remaining) {
         const obj = curriculum.objectives.find((o) => o.id === id)!;
@@ -172,7 +166,7 @@ describe("dependency planning", () => {
     const attempts = evidence("objective.backpropagation");
     const recipe = {
       ...curriculum.recipes[0],
-      roots: ["objective.next-token"],
+      roots: ["objective.backpropagation"],
     };
     const plan = planPath(curriculum, recipe, attempts);
     expect(plan.required).toContain("objective.backpropagation");
@@ -187,7 +181,7 @@ describe("dependency planning", () => {
   it("still traverses a separately required foundation", () => {
     const recipe = {
       ...curriculum.recipes[0],
-      roots: ["objective.next-token", "objective.nonlinearity"],
+      roots: ["objective.backpropagation", "objective.nonlinearity"],
     };
     const plan = planPath(
       curriculum,

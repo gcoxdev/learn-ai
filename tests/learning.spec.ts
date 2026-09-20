@@ -82,6 +82,158 @@ test("mastery survives refresh and is reused on either path", async ({
   expect(errors).toEqual([]);
 });
 
+test("system paths can be filtered and optional branches are separate from core", async ({
+  page,
+}) => {
+  await ready(page, "/");
+  await expect(page.locator(".path-card")).toHaveCount(data.recipes.length);
+  const filters = page.getByRole("group", { name: "Filter learning paths" });
+  await filters.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.locator(".path-card")).toHaveCount(3);
+  await expect(
+    page.locator(".path-card").filter({ hasText: "Video generation" }),
+  ).toBeVisible();
+  await filters.getByRole("button", { name: "Act", exact: true }).click();
+  await page.locator(".path-card").filter({ hasText: "Robotics" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Robotics", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".related-paths")).toContainText(
+    "shared core objectives",
+  );
+  await page.locator(".path-extensions summary").click();
+  const vla = data.lessons.find(
+    (l) => l.id === "vision-language-action-models",
+  )!;
+  await expect(
+    page.locator(".extension-link").filter({ hasText: vla.title }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".syllabus-row").filter({ hasText: vla.title }),
+  ).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  expect(
+    (await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze())
+      .violations,
+  ).toEqual([]);
+  await page.screenshot({
+    path: "/tmp/learn-ai-robotics-path.png",
+    fullPage: true,
+  });
+});
+
+for (const id of ["video", "audio", "robotics"]) {
+  test(`${id} carries foundations forward, retains its return path, and exports its context`, async ({
+    page,
+    browser,
+  }) => {
+    await firstLessonMastery(page);
+    const recipe = data.recipes.find((r) => r.id === id)!;
+    await ready(page, `/paths/${id}/`);
+    await expect(
+      page.locator(".syllabus-row").filter({
+        hasText: data.lessons.find((l) => l.id === "ai-systems")!.title,
+      }),
+    ).toContainText("Demonstrated");
+    await page
+      .getByRole("button", { name: "Continue my path", exact: true })
+      .click();
+    await expect(page).toHaveURL(/\/learn\/inputs-and-outputs\//);
+    await expect
+      .poll(async () => (await database(page))?.selectedPath)
+      .toBe(id);
+    await page
+      .getByRole("button", { name: "Check my knowledge", exact: true })
+      .click();
+    await page.reload();
+    await page
+      .getByRole("region", { name: "Lesson completion" })
+      .getByRole("link", { name: "Back to my learning path", exact: true })
+      .click();
+    await expect(page).toHaveURL(new RegExp(`/paths/${id}/$`));
+    await page
+      .locator(".path-context")
+      .getByRole("link", {
+        name: data.lessons.find((l) => l.id === recipe.destination)!.title,
+        exact: true,
+      })
+      .click();
+    await page
+      .getByRole("button", { name: "Check my knowledge", exact: true })
+      .click();
+    await expect(
+      page.getByRole("region", { name: "Lesson takeaway" }),
+    ).toBeVisible();
+    await expect
+      .poll(
+        async () =>
+          (await database(page))?.positions[recipe.destination]?.origin?.path,
+      )
+      .toBe(id);
+    if (id === "robotics") {
+      await ready(page, "/progress/");
+      const download = page.waitForEvent("download");
+      await page
+        .getByRole("button", { name: "Export progress", exact: true })
+        .click();
+      const backup = await readFile((await (await download).path())!);
+      const context = await browser.newContext();
+      try {
+        const fresh = await context.newPage();
+        await ready(fresh, "/progress/");
+        await fresh.getByLabel("Choose backup file").setInputFiles({
+          name: "robotics.json",
+          mimeType: "application/json",
+          buffer: backup,
+        });
+        await fresh
+          .getByRole("button", { name: "Merge this backup", exact: true })
+          .click();
+        await expect
+          .poll(async () => (await database(fresh))?.selectedPath)
+          .toBe("robotics");
+        await ready(fresh, `/learn/${recipe.destination}/`);
+        await expect(
+          fresh
+            .getByRole("region", { name: "Lesson completion" })
+            .getByRole("link", {
+              name: "Back to my learning path",
+              exact: true,
+            }),
+        ).toHaveAttribute("href", "/paths/robotics/");
+      } finally {
+        await context.close();
+      }
+    }
+  });
+}
+
+test("worked lesson tables keep readable headers and values on mobile", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await ready(page, "/learn/algorithms-and-programs/");
+  await page
+    .getByRole("button", { name: /Scene \d+: Watch the state change/ })
+    .click();
+  await expect(
+    page.getByRole("columnheader", { name: "Weight inspected" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "9", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+});
+
 test("a hint survives reload and cannot award independent evidence", async ({
   page,
 }) => {

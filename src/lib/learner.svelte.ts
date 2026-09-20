@@ -114,7 +114,8 @@ export class Learner {
       this.resetting = false;
     }
   }
-  choosePath(id: "language" | "images") {
+  choosePath(id: string) {
+    if (!curriculum.recipes.some((r) => r.id === id)) return;
     this.update((p) => ({ ...p, selectedPath: id, detours: [] }));
   }
   enterLesson(id: string, origin: LessonOrigin) {

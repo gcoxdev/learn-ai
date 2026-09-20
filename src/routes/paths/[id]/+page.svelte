@@ -10,6 +10,23 @@
   let { data }: { data: { recipe: Recipe } } = $props();
   const learner = getLearner();
   const full = $derived(planPath(curriculum, data.recipe, []));
+  const extensions = $derived(
+    data.recipe.extensions.filter(
+      (e) => !full.lessons.some((l) => l.id === e.lesson),
+    ),
+  );
+  const related = $derived(
+    data.recipe.related.map((id) => {
+      const recipe = curriculum.recipes.find((r) => r.id === id)!;
+      const plan = planPath(curriculum, recipe, []);
+      return {
+        recipe,
+        shared: plan.required.filter((id) => full.required.includes(id)).length,
+        remaining: planPath(curriculum, recipe, learner.data.attempts).remaining
+          .length,
+      };
+    }),
+  );
   const current = $derived(
     planPath(curriculum, data.recipe, learner.data.attempts),
   );
@@ -34,11 +51,11 @@
     return "To explore";
   }
   async function start() {
-    learner.choosePath(data.recipe.id as "language" | "images");
+    learner.choosePath(data.recipe.id);
     await goto(
       lessonHref(next?.id ?? data.recipe.destination, {
         kind: "path",
-        path: data.recipe.id as "language" | "images",
+        path: data.recipe.id,
       }),
     );
   }
@@ -88,7 +105,7 @@
           class="syllabus-row"
           href={lessonHref(lesson.id, {
             kind: "path",
-            path: data.recipe.id as "language" | "images",
+            path: data.recipe.id,
           })}
           ><span class={["lesson-number", { done: status === "Demonstrated" }]}
             >{#if status === "Demonstrated"}<Icon
@@ -109,11 +126,41 @@
           </div>
           <small>{status}</small><Icon name="chevron" size={17} /></a
         >{/each}
+      {#if extensions.length}<details class="path-extensions">
+          <summary
+            >Optional extensions and comparisons ({extensions.length})</summary
+          >
+          <p>
+            These lessons deepen or compare the reference design. They do not
+            add requirements to this path’s completion.
+          </p>
+          {#each extensions as extension (extension.lesson)}{@const lesson =
+              curriculum.lessons.find((l) => l.id === extension.lesson)!}
+            <a
+              class="extension-link"
+              href={lessonHref(lesson.id, {
+                kind: "path",
+                path: data.recipe.id,
+              })}><strong>{lesson.title}</strong><span>{extension.why}</span></a
+            >
+          {/each}
+        </details>{/if}
     </section>
     <aside class="path-context">
       <span class="eyebrow">WHAT THIS PATH EXPLAINS</span>
       <h3>{data.recipe.question}</h3>
       <p>{data.recipe.outcome}</p>
+      <h4>The reference system</h4>
+      <p>{data.recipe.reference}</p>
+      <h4>Where this path leads</h4>
+      <a
+        href={lessonHref(data.recipe.destination, {
+          kind: "path",
+          path: data.recipe.id,
+        })}
+        >{curriculum.lessons.find((l) => l.id === data.recipe.destination)!
+          .title}</a
+      >
       <hr />
       <h4>A foundation you keep</h4>
       <p>
@@ -125,6 +172,20 @@
         Read any lesson as a preview, or use its knowledge check to demonstrate
         an idea you already understand.
       </p>
+      {#if related.length}<h4>Connected paths</h4>
+        <p>
+          Shared core objectives are the same learning evidence, not duplicate
+          assignments. Remaining counts reflect your current progress.
+        </p>
+        <ul class="related-paths">
+          {#each related as item (item.recipe.id)}<li>
+              <a href={`/paths/${item.recipe.id}/`}>{item.recipe.title}</a><span
+                >{item.shared} shared core objectives · {item.remaining} still to
+                learn there</span
+              >
+            </li>{/each}
+        </ul>
+      {/if}
       <div class="draft-note">
         <Icon name="info" size={17} />
         <p>

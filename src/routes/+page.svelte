@@ -14,6 +14,15 @@
       .length,
   );
   const shared = ["ai-systems", "history", "learning-update"];
+  const groups = ["All", "Create", "Perceive", "Act", "Predict", "Investigate"];
+  let group = $state("All");
+  const paths = recipes.map((recipe) => ({
+    recipe,
+    plan: planPath(curriculum, recipe, []),
+  }));
+  const visiblePaths = $derived(
+    paths.filter(({ recipe }) => group === "All" || recipe.group === group),
+  );
 </script>
 
 <svelte:head><title>Learn AI — Start with curiosity</title></svelte:head>
@@ -102,27 +111,27 @@
       <span class="section-aside">Choose a system. We’ll connect the dots.</span
       >
     </div>
+    <div class="path-filters" role="group" aria-label="Filter learning paths">
+      {#each groups as label (label)}<button
+          class="button secondary small"
+          aria-pressed={group === label}
+          onclick={() => (group = label)}>{label}</button
+        >{/each}
+    </div>
     <div class="path-grid">
-      {#each recipes as recipe (recipe.id)}{@const plan = planPath(
-          curriculum,
-          recipe,
-          [],
-        )}<a class="path-card" href={`/paths/${recipe.id}/`}
+      {#each visiblePaths as { recipe, plan } (recipe.id)}<a
+          class="path-card"
+          href={`/paths/${recipe.id}/`}
           ><PathArt type={recipe.id} />
           <div class="path-card-body">
             <div class="path-card-top">
               <span class={["topic-icon", recipe.color]}
-                ><Icon
-                  name={recipe.id === "language" ? "chat" : "image"}
-                  size={21}
-                /></span
+                ><Icon name={recipe.icon} size={21} /></span
               ><span class="small-badge">GUIDED DRAFT COURSE</span>
             </div>
             <h3>{recipe.title}</h3>
             <p>
-              {recipe.id === "language"
-                ? "How does a model turn a few words into a whole response?"
-                : "How does a model turn random noise into an image?"}
+              {recipe.question}
             </p>
             <div class="path-meta">
               <span
@@ -136,9 +145,9 @@
         >{/each}
     </div>
     <p class="scope-caption">
-      <span class="status-dot"></span>Two guided courses, with shared
-      foundations. Explore all 38 modules, math side lessons, and projects in
-      the
+      <span class="status-dot"></span>{recipes.length} system paths, with shared foundations
+      and optional extensions. Explore all {curriculum.catalog.length} modules, math
+      side lessons, and projects in the
       <a href="/library/?view=curriculum">full draft curriculum</a>.
     </p>
   </section>

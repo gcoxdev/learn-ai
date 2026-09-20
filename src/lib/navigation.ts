@@ -6,6 +6,7 @@ import {
   type Progress,
 } from "./model";
 import { planPath } from "./engine";
+import { recipes } from "./content";
 
 export const defaultOrigin: LessonOrigin = {
   kind: "library",
@@ -17,8 +18,8 @@ export const defaultOrigin: LessonOrigin = {
 export function originFromLocation(url: URL): LessonOrigin | undefined {
   if (url.pathname === "/") return { kind: "home" };
   if (/^\/progress\/?$/.test(url.pathname)) return { kind: "progress" };
-  const path = /^\/paths\/(language|images)\/?$/.exec(url.pathname)?.[1];
-  if (path) return { kind: "path", path: path as "language" | "images" };
+  const path = /^\/paths\/([a-z][a-z0-9-]*)\/?$/.exec(url.pathname)?.[1];
+  if (path && recipes.some((r) => r.id === path)) return { kind: "path", path };
   if (!/^\/library\/?$/.test(url.pathname)) return;
   const parsed = lessonOriginSchema.safeParse({
     kind: "library",
@@ -80,7 +81,8 @@ export function nextLesson(
   progress: Progress,
 ): Lesson | undefined {
   if (origin.kind === "path") {
-    const recipe = curriculum.recipes.find((r) => r.id === origin.path)!;
+    const recipe = curriculum.recipes.find((r) => r.id === origin.path);
+    if (!recipe) return;
     const plan = planPath(curriculum, recipe, progress.attempts);
     const next = plan.lessons.find((l) =>
       l.objectives.some((id) => plan.remaining.includes(id)),

@@ -166,8 +166,9 @@
       <article>
         <h3>Start with a system.</h3>
         <p>
-          Choose language models or image generation. Your path starts with
-          shared foundations and builds toward modern system lifecycles.
+          Choose a system such as video, speech, robotics, or prediction. Your
+          path starts with shared foundations and builds toward modern system
+          lifecycles.
         </p>
       </article>
       <article>

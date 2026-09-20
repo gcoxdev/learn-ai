@@ -13,6 +13,7 @@ import {
 import { validateGraph, planPath } from "../src/lib/engine";
 import { auditContent, coverageReport } from "./content-audit";
 import { editorialMetrics, editorialReport } from "./editorial-report";
+import { pathCoverageReport } from "./path-coverage";
 
 function readYaml(text: string) {
   const doc = parseDocument(text, { uniqueKeys: true });
@@ -33,6 +34,13 @@ function html(markdown: string) {
       "a",
       "blockquote",
       "br",
+      "table",
+      "thead",
+      "tbody",
+      "tr",
+      "th",
+      "td",
+      "caption",
     ],
     allowedAttributes: { a: ["href", "title"] },
     allowedSchemes: ["http", "https", "mailto"],
@@ -303,6 +311,7 @@ for (const route of closure)
   );
 await writeFile("content/COVERAGE.md", coverageReport(curriculum));
 await writeFile("content/EDITORIAL_REVIEW.md", editorialReport(curriculum));
+await writeFile("content/PATH_COVERAGE.md", pathCoverageReport(curriculum));
 const quality = editorialMetrics(curriculum);
 if (
   quality.longest / quality.choices > 0.5 ||

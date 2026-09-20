@@ -105,8 +105,9 @@ export const lessonSchema = z.object({
     .min(1),
 });
 export type Lesson = z.infer<typeof lessonSchema>;
+export const pathIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,59}$/);
 export const recipeSchema = z.object({
-  id: z.string(),
+  id: pathIdSchema,
   title: z.string(),
   subtitle: z.string(),
   question: z.string(),
@@ -115,6 +116,13 @@ export const recipeSchema = z.object({
   roots: z.array(z.string()).min(1),
   destination: z.string(),
   color: z.enum(["sage", "peach"]),
+  group: z.enum(["Create", "Perceive", "Act", "Predict", "Investigate"]),
+  icon: z.string().min(1),
+  reference: z.string().min(20),
+  extensions: z
+    .array(z.object({ lesson: z.string(), why: z.string().min(10) }))
+    .default([]),
+  related: z.array(pathIdSchema).default([]),
 });
 export type Recipe = z.infer<typeof recipeSchema>;
 export const vocabularySchema = z.array(
@@ -159,9 +167,7 @@ export const attemptSchema = z
   .strict();
 export type Attempt = z.infer<typeof attemptSchema>;
 export const lessonOriginSchema = z.discriminatedUnion("kind", [
-  z
-    .object({ kind: z.literal("path"), path: z.enum(["language", "images"]) })
-    .strict(),
+  z.object({ kind: z.literal("path"), path: pathIdSchema }).strict(),
   z
     .object({
       kind: z.literal("library"),
@@ -216,7 +222,7 @@ export const progressSchema = z
     curriculum: z.literal("prototype-1"),
     updatedAt: timestampSchema,
     resetAt: timestampSchema.default(0),
-    selectedPath: z.enum(["language", "images"]).nullable(),
+    selectedPath: pathIdSchema.nullable(),
     attempts: z.array(attemptSchema).max(20000),
     exposures: z.array(z.string().max(180)).max(20000),
     positions: z.record(z.string().max(100), positionSchema),

@@ -78,7 +78,7 @@ ${curriculum.lessons
 
 - The bridges are 23 initial overviews, not the future expanded bank of prerequisite micro-lessons.
 - New core MoE lessons occupy M18; A01 preserves the older uncredited routing preview and its evidence IDs. Existing formal mathematics extension checks also remain uncredited practice.
-- M36 supplies nine concrete projects, no-code/manual options, worked reference fragments, and self/peer-review rubrics. Guided paths include relevant projects. Quizzes check concepts; they do not grade unseen project artifacts.
+- M36 supplies ${curriculum.catalog.find((m) => m.id === "M36")!.lessons.length} concrete projects, no-code/manual options, worked reference fragments, and self/peer-review rubrics. Guided paths include relevant projects. Quizzes check concepts; they do not grade unseen project artifacts.
 - The opening module introduces everyday roles before technical terms; the shared glossary supplies short definitions throughout the classroom. Revised foundation, history, computing, and math banks keep older attempts as historical records while using new objective versions and fresh checks.
 - Lesson sizing follows the topic rather than an eight-slot constraint. Non-project time estimates use teaching words / 120 plus two minutes per active assessment family and three per interactive scene, rounded to minutes (minimum five). Project estimates include the supplied work. These remain editorial estimates.
 - M35 pins dated report revisions and separates released weights, code, data, checkpoint lineage, and undisclosed details. Sources were checked during authoring on September 13, 2026; these are historical mechanism anchors, not a live model ranking or a guarantee that every external link stays available.
