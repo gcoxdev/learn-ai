@@ -652,11 +652,6 @@
                 : origin,
             )}>Next lesson: {following.title}<Icon name="arrow" size={17} /></a
           >{/if}
-        {#if following && !returnTarget && done && origin.kind === "path"}<a
-            class="button secondary"
-            href={`${lessonHref(following.id, origin)}&check=1`}
-            >Check the next idea <Icon name="arrow" size={17} /></a
-          >{/if}
       </div>
     </section>{/if}
 {/snippet}

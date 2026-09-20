@@ -122,7 +122,7 @@ test("previous questions offer repeatable practice without creating another inde
   ]);
 });
 
-test("test-out opens real checks and carries demonstrated ideas into the next path", async ({
+test("test-out preserves shared evidence and continues into the next lesson", async ({
   page,
 }) => {
   await ready(page, "/paths/language/");
@@ -146,13 +146,24 @@ test("test-out opens real checks and carries demonstrated ideas into the next pa
   await expect(
     page.getByRole("navigation", { name: "Learning path progress" }),
   ).toContainText("1 of 7 ideas demonstrated");
-  await page
-    .getByRole("link", { name: "Check the next idea", exact: true })
-    .click();
+  await expect(
+    page.getByRole("link", { name: "Check the next idea", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("link", { name: /^Next lesson:/ }).click();
   await expect(page).toHaveURL(/\/learn\/inputs-and-outputs\//);
+  expect(new URL(page.url()).searchParams.has("check")).toBe(false);
+  const nextLesson = curriculum.lessons.find(
+    (item) => item.id === "inputs-and-outputs",
+  )!;
+  const firstScene = nextLesson.scenes.find(
+    (scene) => scene.id === nextLesson.routes.core[0],
+  )!;
+  await expect(
+    page.getByRole("heading", { name: firstScene.title, exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Begin knowledge check", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await ready(page, "/paths/images/");
   await expect(page.locator(".carried-evidence")).toContainText(
     "1 demonstrated idea carries forward",
