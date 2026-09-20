@@ -126,7 +126,7 @@ test("test-out preserves shared evidence and continues into the next lesson", as
   page,
 }) => {
   await ready(page, "/paths/language/");
-  await page.getByText("Already know some of this?", { exact: true }).click();
+  await page.locator(".placement-entry > summary").click();
   await page
     .getByRole("combobox", { name: "Choose an idea to check", exact: true })
     .selectOption("ai-systems");
@@ -189,6 +189,9 @@ test("unsuccessful attempts get useful progress feedback and the new controls fi
     "0 of 2 independent checks passed",
   );
   await ready(page, "/progress/");
+  await expect(page.locator(".empty-state")).toContainText(
+    "Your 1 recorded response gives you feedback",
+  );
   await expect(
     page.getByText("Your first connection starts here.", { exact: true }),
   ).toHaveCount(0);
@@ -204,7 +207,7 @@ test("unsuccessful attempts get useful progress feedback and the new controls fi
     ).violations,
   ).toEqual([]);
   await ready(page, "/paths/language/");
-  await page.getByText("Already know some of this?", { exact: true }).click();
+  await page.locator(".placement-entry > summary").click();
   const titles = await page
     .locator(".chapter-heading > strong")
     .allTextContents();

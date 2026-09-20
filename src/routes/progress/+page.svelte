@@ -147,9 +147,10 @@
             Your {learner.data.attempts.length} recorded response{learner.data
               .attempts.length === 1
               ? ""
-              : "s"} give you feedback to work with. Correct, fresh answers from different
-            checks build the evidence shown below. Hinted and repeated answers remain
-            useful practice.
+              : "s"}
+            {learner.data.attempts.length === 1 ? "gives" : "give"} you feedback to
+            work with. Correct, fresh answers from different checks build the evidence
+            shown below. Hinted and repeated answers remain useful practice.
           </p>
         </div>{:else}<div class="empty-state">
           <Icon name="sprout" size={30} />

@@ -1031,6 +1031,7 @@ test("reset progress confirms, clears the complete record, and permits backup re
   expect(cleared.lastExportAt).toBe(0);
   expect(cleared.backupDismissedAt).toBe(0);
   await page.reload();
+  await expect(page.locator("main")).toHaveAttribute("aria-busy", "false");
   await expect(page.locator(".progress-stats strong")).toHaveText([
     "0",
     "0",

@@ -2,6 +2,8 @@
 
 **335 of 335 authored lessons received an individual reading pass.** This includes all 311 module lessons, 23 math/programming bridges, and the A01 expert-model preview. 272 lessons received teaching, summary, feedback, source, or side-lesson changes during this pass; the remaining explanations were retained after reading. This is an editorial milestone. Publication state remains `draft`.
 
+A subsequent [learning-experience follow-up](REVIEW_FOLLOWUP.md) revises fourteen of these assets with additional practice, three visual experiments, and teaching corrections. The snapshot below records the earlier pass, before those follow-up edits.
+
 ## What was examined
 
 The pass read every routed teaching explanation, including optional mathematics where present, with the lesson summary, worked examples, tables/figure descriptions, visible formative prompts, closing takeaway, and source list. The notes below identify the specific review decision for each lesson. This pass was performed by the implementation assistant; it is not an independent human subject review or a learner study.

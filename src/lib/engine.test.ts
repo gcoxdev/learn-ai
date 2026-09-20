@@ -77,8 +77,11 @@ describe("objective evidence", () => {
     expect(retake.items).toHaveLength(2);
     expect(retake.items.every((q) => !p.exposures.includes(q.id))).toBe(true);
     p.exposures.push(...retake.items.map((q) => q.id));
-    // Revised foundations provide four variants per family.
-    for (let round = 0; round < 2; round++) {
+    // Exhaust every current variant without relying on a fixed bank size.
+    const rounds = lesson.questions.filter(
+      (q) => !q.retired && q.family === first.items[0].family,
+    ).length;
+    for (let round = 2; round < rounds; round++) {
       const more = questionsRemaining(lesson, curriculum, p, "core");
       expect(more.items).toHaveLength(2);
       p.exposures.push(...more.items.map((q) => q.id));

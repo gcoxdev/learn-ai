@@ -319,10 +319,11 @@
         Compatible objective evidence is shared across paths. A new system adds
         its own application and synthesis.
       </p>
-      <h4>Explore or place out</h4>
+      <h4>Already know some of this?</h4>
       <p>
-        Read any lesson as a preview, or use its knowledge check to demonstrate
-        an idea you already understand.
+        Read any lesson as a preview. The “Already know some of this?” selector
+        above lets you choose a named lesson and check an idea you already
+        understand.
       </p>
       {#if related.length}<h4>Connected paths</h4>
         <p>
