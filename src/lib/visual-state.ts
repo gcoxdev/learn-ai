@@ -5,6 +5,7 @@ export const visualKindSchema = z.enum([
   "training-inference",
   "data-splits",
   "neural-network",
+  "network-layers",
   "bias",
   "derivative",
   "chain-rule",

@@ -20,7 +20,7 @@ Shared lessons appear in every applicable row; do not sum these counts. A short 
 | --- | ---: | ---: | ---: | ---: |
 | Language models | 100 | 28 (28%) | 7 | 13.9 |
 | Image generation | 74 | 26 (35%) | 7 | 10.3 |
-| Video generation | 81 | 32 (40%) | 10 | 10.8 |
+| Video generation | 81 | 32 (40%) | 10 | 10.9 |
 | Speech & audio | 62 | 20 (32%) | 6 | 8.7 |
 | Robotics | 57 | 25 (44%) | 10 | 7.3 |
 | Computer vision | 67 | 29 (43%) | 8 | 8.4 |
@@ -32,7 +32,7 @@ Shared lessons appear in every applicable row; do not sum these counts. A short 
 | Games, planning & decisions | 36 | 16 (44%) | 3 | 4.4 |
 | Scientific AI | 67 | 27 (40%) | 14 | 8.6 |
 | Multimodal systems | 96 | 35 (36%) | 12 | 12.3 |
-| Edge & alternative computing | 102 | 34 (33%) | 19 | 12.9 |
+| Edge & alternative computing | 102 | 34 (33%) | 19 | 13.0 |
 
 ## Revision status
 

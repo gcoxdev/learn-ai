@@ -8,6 +8,7 @@ import {
   type Question,
   type Responses,
   type LessonOrigin,
+  type Detour,
 } from "./model";
 import { grade, mergeProgress } from "./engine";
 import {
@@ -214,20 +215,9 @@ export class Learner {
         : [...p.bookmarks, id],
     }));
   }
-  pushDetour(
-    lesson: string,
-    scene: string,
-    control: "bridge" | "vocabulary" = "bridge",
-  ) {
-    this.update((p) => ({
-      ...p,
-      detours: [...p.detours.slice(-19), { lesson, scene, control }],
-    }));
-  }
-  popDetour() {
-    const target = this.data.detours.at(-1);
-    this.update((p) => ({ ...p, detours: p.detours.slice(0, -1) }));
-    return target;
+  setDetours(detours: Detour[]) {
+    if (JSON.stringify(this.data.detours) !== JSON.stringify(detours))
+      this.update((p) => ({ ...p, detours }));
   }
   exportProgress() {
     const exported = { ...this.data, lastExportAt: Date.now() };

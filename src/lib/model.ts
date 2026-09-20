@@ -232,6 +232,14 @@ export const positionSchema = z
   })
   .strict();
 export type Position = z.infer<typeof positionSchema>;
+export const detourSchema = z
+  .object({
+    lesson: z.string().max(100),
+    scene: z.string().max(150),
+    control: z.enum(["bridge", "vocabulary"]).optional(),
+  })
+  .strict();
+export type Detour = z.infer<typeof detourSchema>;
 export const progressSchema = z
   .object({
     format: z.literal("learn-ai-progress"),
@@ -244,17 +252,7 @@ export const progressSchema = z
     exposures: z.array(z.string().max(180)).max(20000),
     positions: z.record(z.string().max(100), positionSchema),
     bookmarks: z.array(z.string().max(100)).max(1000),
-    detours: z
-      .array(
-        z
-          .object({
-            lesson: z.string().max(100),
-            scene: z.string().max(150),
-            control: z.enum(["bridge", "vocabulary"]).optional(),
-          })
-          .strict(),
-      )
-      .max(20),
+    detours: z.array(detourSchema).max(20),
     lastExportAt: timestampSchema,
     backupDismissedAt: timestampSchema,
     lastLesson: z.string().max(100).nullable(),

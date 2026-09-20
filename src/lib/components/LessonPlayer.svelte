@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { tick } from "svelte";
   import katex from "katex";
   import { curriculum, getLesson } from "$lib/content";
@@ -12,6 +13,7 @@
     returnDestination,
   } from "$lib/navigation";
   import type { Lesson, Scene } from "$lib/model";
+  import { historyDetours, lessonTrail } from "$lib/lesson-detours";
   import Icon from "./Icon.svelte";
   import QuestionCard from "./QuestionCard.svelte";
   import GradientLab from "./GradientLab.svelte";
@@ -55,7 +57,15 @@
   const done = $derived(
     scopeObjectives.every((o) => mastered(o, learner.data.attempts)),
   );
-  const returnTarget = $derived(learner.data.detours.at(-1));
+  const detours = $derived(
+    historyDetours(
+      page.state.lessonTrail,
+      lesson.id,
+      learner.data.resetAt,
+      curriculum,
+    ) ?? [],
+  );
+  const returnTarget = $derived(detours.at(-1));
   const prep = $derived(
     [
       ...new Set(
@@ -93,15 +103,37 @@
     scene: Scene,
     control: "bridge" | "vocabulary" = "bridge",
   ) {
+    if (id === lesson.id) return;
+    const ancestor = detours.findIndex((frame) => frame.lesson === id);
+    if (ancestor >= 0) {
+      await returnFromBridge(ancestor);
+      return;
+    }
     patch({ scene: scene.id });
-    learner.pushDetour(lesson.id, scene.id, control);
-    await goto(`/learn/${id}/`);
+    const frames = [
+      ...detours.slice(-19),
+      { lesson: lesson.id, scene: scene.id, control },
+    ];
+    learner.setDetours(frames);
+    await goto(`/learn/${id}/`, {
+      state: { lessonTrail: lessonTrail(id, frames, learner.data.resetAt) },
+    });
   }
-  async function returnFromBridge() {
+  async function returnFromBridge(index = detours.length - 1) {
     const childId = lesson.id;
-    const target = learner.popDetour();
+    const target = detours[index];
     if (target) {
-      await goto(`/learn/${target.lesson}/`);
+      const parent = getLesson(target.lesson)!;
+      const frames = detours.slice(0, index);
+      learner.savePosition(parent.id, parent.routes.core[0], {
+        scene: target.scene,
+      });
+      learner.setDetours(frames);
+      await goto(`/learn/${target.lesson}/`, {
+        state: {
+          lessonTrail: lessonTrail(target.lesson, frames, learner.data.resetAt),
+        },
+      });
       await tick();
       const control =
         (target.control === "vocabulary"
@@ -142,7 +174,9 @@
 
 <div class="page-content classroom-page">
   <div class="classroom-breadcrumb">
-    {#if returnTarget}<button class="inline-link" onclick={returnFromBridge}
+    {#if returnTarget}<button
+        class="inline-link"
+        onclick={() => returnFromBridge()}
         ><Icon name="left" size={17} />Return to {getLesson(returnTarget.lesson)
           ?.title}</button
       >{:else}<a class="inline-link" href={destination.href}
@@ -155,6 +189,25 @@
           : "DRAFT LESSON"}</span
     >
   </div>
+  {#if detours.length}<nav
+      class="side-lesson-trail"
+      aria-label="Side lesson trail"
+    >
+      <p>
+        You’re exploring a side lesson. Return to any earlier step when you’re
+        ready.
+      </p>
+      <ol>
+        {#each detours as frame, i (frame.lesson)}<li>
+            <button
+              aria-label={`Jump back to ${getLesson(frame.lesson)?.title}`}
+              onclick={() => returnFromBridge(i)}
+              >{getLesson(frame.lesson)?.title}</button
+            ><Icon name="arrow" size={14} />
+          </li>{/each}
+        <li><span aria-current="page">{lesson.title}</span></li>
+      </ol>
+    </nav>{/if}
   <div class="lesson-heading">
     <div>
       <span class="eyebrow"
@@ -532,7 +585,7 @@
       <div class="button-row">
         {#if returnTarget}<button
             class="button primary"
-            onclick={returnFromBridge}
+            onclick={() => returnFromBridge()}
             >Return to {getLesson(returnTarget.lesson)?.title}<Icon
               name="arrow"
               size={17}
@@ -553,3 +606,56 @@
       </div>
     </section>{/if}
 {/snippet}
+
+<style>
+  .side-lesson-trail {
+    margin: 0 0 1.4rem;
+    padding: 0.9rem 1rem;
+    border: 1px solid #cedbc5;
+    border-radius: 9px;
+    background: #f0f5e8;
+    color: #334d32;
+  }
+  .side-lesson-trail p {
+    margin: 0 0 0.55rem;
+    font-size: 0.8rem;
+    line-height: 1.6;
+  }
+  .side-lesson-trail ol {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.65rem;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .side-lesson-trail li {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    min-width: 0;
+    max-width: 100%;
+  }
+  .side-lesson-trail button,
+  .side-lesson-trail span {
+    font: inherit;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .side-lesson-trail button {
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    padding: 0.4rem 0;
+    color: #235239;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .side-lesson-trail span {
+    padding: 0.4rem 0;
+    font-weight: 600;
+  }
+</style>

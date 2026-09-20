@@ -3,8 +3,15 @@
   import "katex/dist/katex.min.css";
   import { onMount, type Snippet } from "svelte";
   import { page } from "$app/state";
-  import { beforeNavigate } from "$app/navigation";
+  import { afterNavigate, beforeNavigate, replaceState } from "$app/navigation";
   import { originFromLessonUrl, originFromLocation } from "$lib/navigation";
+  import { curriculum } from "$lib/content";
+  import {
+    historyDetours,
+    lessonTrail,
+    savedDetours,
+    type LessonTrail,
+  } from "$lib/lesson-detours";
   import { Learner, setLearner } from "$lib/learner.svelte";
   import Icon from "$lib/components/Icon.svelte";
   let { children }: { children: Snippet } = $props();
@@ -49,18 +56,75 @@
       document.getElementById("menu-toggle")?.focus();
     }
   }
-  beforeNavigate(({ from, to }) => {
-    if (!learner.hydrated || to?.route.id !== "/learn/[id]") return;
+  beforeNavigate(({ from, to, type }) => {
+    if (
+      !learner.hydrated ||
+      type === "popstate" ||
+      to?.route.id !== "/learn/[id]"
+    )
+      return;
     const origin =
       originFromLessonUrl(to.url) ??
       (from ? originFromLocation(from.url) : undefined);
     if (origin && to.params?.id) learner.enterLesson(to.params.id, origin);
   });
+  const tabTrailKey = "learn-ai-side-lesson";
+  function rememberedTrail(): unknown {
+    try {
+      const saved = sessionStorage.getItem(tabTrailKey);
+      if (saved === null) return undefined;
+      const record = JSON.parse(saved);
+      return record?.url === page.url.href ? record.trail : null;
+    } catch {
+      return undefined;
+    }
+  }
+  function rememberTrail(trail: LessonTrail | null) {
+    try {
+      if (trail)
+        sessionStorage.setItem(
+          tabTrailKey,
+          JSON.stringify({ url: page.url.href, trail }),
+        );
+      else sessionStorage.removeItem(tabTrailKey);
+    } catch {
+      // History still supports in-app Back/Forward when tab storage is unavailable.
+    }
+  }
+  function restoreTrail(initial = false) {
+    if (!learner.hydrated) return;
+    if (page.route.id !== "/learn/[id]" || !page.params.id) {
+      rememberTrail(null);
+      return;
+    }
+    const id = page.params.id;
+    const frames =
+      historyDetours(
+        // SvelteKit clears page.state on full reload. Recover this tab's current
+        // entry before consulting the shared progress record from older sessions.
+        page.state.lessonTrail ?? (initial ? rememberedTrail() : undefined),
+        id,
+        learner.data.resetAt,
+        curriculum,
+      ) ??
+      (initial && !originFromLessonUrl(page.url)
+        ? savedDetours(learner.data, id, curriculum)
+        : []);
+    learner.setDetours(frames);
+    const trail = lessonTrail(id, frames, learner.data.resetAt);
+    replaceState(page.url, {
+      ...page.state,
+      lessonTrail: trail,
+    });
+    rememberTrail(trail);
+  }
+  afterNavigate(() => restoreTrail());
   onMount(() => {
     void learner.init().then(() => {
       const origin = originFromLessonUrl(page.url);
       if (origin && page.route.id === "/learn/[id]" && page.params.id)
         learner.enterLesson(page.params.id, origin);
+      restoreTrail(true);
     });
     return () => learner.dispose();
   });

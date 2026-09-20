@@ -14,6 +14,7 @@
     "training-inference": () => import("./TrainingInferenceLab.svelte"),
     "data-splits": () => import("./DataSplitLab.svelte"),
     "neural-network": () => import("./NetworkLab.svelte"),
+    "network-layers": () => import("./LayeredNetworkLab.svelte"),
     bias: () => import("./BiasLab.svelte"),
     derivative: () => import("./DerivativeLab.svelte"),
     "chain-rule": () => import("./ChainRuleLab.svelte"),
