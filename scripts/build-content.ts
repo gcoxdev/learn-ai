@@ -28,6 +28,7 @@ function html(markdown: string) {
       "strong",
       "em",
       "code",
+      "pre",
       "ul",
       "ol",
       "li",
@@ -42,7 +43,20 @@ function html(markdown: string) {
       "td",
       "caption",
     ],
-    allowedAttributes: { a: ["href", "title"] },
+    allowedAttributes: {
+      a: ["href", "title"],
+      pre: ["tabindex", "role", "aria-label"],
+    },
+    transformTags: {
+      pre: () => ({
+        tagName: "pre",
+        attribs: {
+          tabindex: "0",
+          role: "region",
+          "aria-label": "Code example",
+        },
+      }),
+    },
     allowedSchemes: ["http", "https", "mailto"],
   });
 }

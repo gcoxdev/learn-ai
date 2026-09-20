@@ -14,10 +14,11 @@
   } from "$lib/lesson-detours";
   import { Learner, setLearner } from "$lib/learner.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import SearchSuggestions from "$lib/components/SearchSuggestions.svelte";
   let { children }: { children: Snippet } = $props();
   const learner = setLearner(new Learner());
   let menu = $state(false);
-  let searchInput: HTMLInputElement;
+  let searchInput = $state<HTMLInputElement | undefined>();
   const section = $derived(
     page.url.pathname.startsWith("/learn/")
       ? "The classroom"
@@ -79,13 +80,10 @@
       return undefined;
     }
   }
-  function rememberTrail(trail: LessonTrail | null) {
+  function rememberTrail(trail: LessonTrail | null, url = page.url.href) {
     try {
       if (trail)
-        sessionStorage.setItem(
-          tabTrailKey,
-          JSON.stringify({ url: page.url.href, trail }),
-        );
+        sessionStorage.setItem(tabTrailKey, JSON.stringify({ url, trail }));
       else sessionStorage.removeItem(tabTrailKey);
     } catch {
       // History still supports in-app Back/Forward when tab storage is unavailable.
@@ -112,11 +110,26 @@
         : []);
     learner.setDetours(frames);
     const trail = lessonTrail(id, frames, learner.data.resetAt);
-    replaceState(page.url, {
-      ...page.state,
-      lessonTrail: trail,
-    });
-    rememberTrail(trail);
+    const restoredUrl = new URL(page.url);
+    if (page.url.searchParams.get("check") === "1") {
+      const lesson = curriculum.lessons.find((lesson) => lesson.id === id)!;
+      const scene = lesson.routes.core.find(
+        (sceneId) =>
+          lesson.scenes.find((scene) => scene.id === sceneId)?.type ===
+          "assessment",
+      );
+      if (scene && !page.state.lessonTrail)
+        learner.savePosition(id, lesson.routes.core[0], {
+          mode: "slides",
+          depth: "core",
+          scene,
+        });
+      // The link requests an entry point once. A later refresh must respect
+      // the learner's saved position if they return to the explanation.
+      restoredUrl.searchParams.delete("check");
+    }
+    replaceState(restoredUrl, { ...page.state, lessonTrail: trail });
+    rememberTrail(trail, restoredUrl.href);
   }
   afterNavigate(() => restoreTrail());
   onMount(() => {
@@ -191,19 +204,11 @@
           >{section}</strong
         >
       </div>
-      <form action="/library/" method="GET" class="global-search" role="search">
-        <Icon name="search" size={17} /><input
-          bind:this={searchInput}
-          name="q"
-          type="search"
-          aria-label="Search lessons and concepts"
-          placeholder="Search a concept…"
-        /><kbd>/</kbd>
-      </form>
+      <SearchSuggestions bind:input={searchInput} />
       <a
         class="profile-button"
         href="/progress/"
-        aria-label="Your learning progress">Y</a
+        aria-label="Your learning progress"><Icon name="chart" size={20} /></a
       >
     </header>
     {#if learner.saveStatus === "unavailable"}<div
@@ -225,8 +230,7 @@
       {@render children()}
     </main>
     <footer class="app-footer">
-      <span>Built for understanding, one idea at a time.</span><a
-        href="/progress/"
+      <a href="/about/">About this classroom</a><a href="/progress/"
         >{learner.saveStatus === "loading"
           ? "Loading local progress…"
           : learner.saveStatus === "saving"

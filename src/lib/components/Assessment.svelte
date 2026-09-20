@@ -5,6 +5,8 @@
   import type { Lesson } from "$lib/model";
   import QuestionCard from "./QuestionCard.svelte";
   import Icon from "./Icon.svelte";
+  import ObjectiveProgress from "./ObjectiveProgress.svelte";
+  import PracticeChecks from "./PracticeChecks.svelte";
   let {
     lesson,
     depth = "core",
@@ -24,7 +26,16 @@
   );
   const attempt = $derived(
     active
-      ? learner.data.attempts.filter((a) => a.variant === active.id).at(-1)
+      ? learner.data.attempts
+          .filter(
+            (a) =>
+              a.variant === active.id &&
+              (lesson.category === "advanced" ||
+                depth === "mathematics" ||
+                active.retired ||
+                a.mode !== "practice"),
+          )
+          .at(-1)
       : undefined,
   );
   const preview = $derived(
@@ -44,6 +55,13 @@
 </script>
 
 <section class="assessment-panel" aria-label="Lesson knowledge check">
+  {#if lesson.category !== "advanced" && depth === "core"}
+    <div aria-label="Knowledge check progress" aria-live="polite">
+      {#each remaining.objectives as objective (objective.id)}
+        <ObjectiveProgress {objective} attempts={learner.data.attempts} />
+      {/each}
+    </div>
+  {/if}
   {#if learner.data.attempts.some( (a) => remaining.objectives.some((o) => o.id === a.objective && o.version !== a.version) )}
     <p class="draft-note">
       This lesson has new knowledge checks. Your earlier attempts are kept; try
@@ -163,4 +181,5 @@
       </div>
     </div>
   {/if}
+  <PracticeChecks {lesson} />
 </section>

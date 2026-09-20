@@ -1,11 +1,10 @@
 schema_version: 0.2-draft
 lesson:
   id: sharding-and-recomputation
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   title: Save memory by sharing state or recreating it
   state: draft
-  summary: State sharding, activation checkpointing, and offloading reduce different memory allocations and trade
-    them for communication, recomputation, or transfer latency.
+  summary: Choose whether to split, move, or recalculate stored values by finding what actually fills memory.
   slot: M17.5
   category: learning
   sources:
@@ -16,8 +15,8 @@ lesson:
 objectives:
 - id: objective.sharding-and-recomputation
   version: 1-draft
-  statement: State sharding, activation checkpointing, and offloading reduce different memory allocations and trade
-    them for communication, recomputation, or transfer latency.
+  statement: State sharding, activation checkpointing, and offloading reduce different memory allocations and
+    trade them for communication, recomputation, or transfer latency.
   depths:
   - intuition
   - mechanics
@@ -37,12 +36,24 @@ scenes:
   depth: intuition
   objective_refs:
   - objective.sharding-and-recomputation
-  markdown: Ordinary data replicas may duplicate optimizer state, gradients, and parameters. Sharding assigns ownership
-    of some of these tensors to different workers, reconstructing or communicating values when needed. Different
-    sharding stages retain different amounts locally; read the actual implementation’s state ownership contract.
-  text_mode: Ordinary data replicas may duplicate optimizer state, gradients, and parameters. Sharding assigns ownership
-    of some of these tensors to different workers, reconstructing or communicating values when needed. Different
-    sharding stages retain different amounts locally; read the actual implementation’s state ownership contract.
+  markdown: 'Ordinary data replicas may duplicate optimizer state, gradients, and parameters. Sharding assigns
+    ownership of some of these tensors to different workers, reconstructing or communicating values when needed.
+    Different sharding stages retain different amounts locally; read the actual implementation’s state ownership
+    contract.
+
+
+    A **shard** is one partition of a larger array or collection. With four workers, a 400 MB optimizer array
+    could be stored as four 100 MB pieces instead of four complete copies. Each worker still needs the values
+    required for its calculation, so the design specifies when pieces are exchanged or gathered.'
+  text_mode: 'Ordinary data replicas may duplicate optimizer state, gradients, and parameters. Sharding assigns
+    ownership of some of these tensors to different workers, reconstructing or communicating values when needed.
+    Different sharding stages retain different amounts locally; read the actual implementation’s state ownership
+    contract.
+
+
+    A **shard** is one partition of a larger array or collection. With four workers, a 400 MB optimizer array
+    could be stored as four 100 MB pieces instead of four complete copies. Each worker still needs the values
+    required for its calculation, so the design specifies when pieces are exchanged or gathered.'
   bridges: []
 - id: sharding-and-recomputation.s2
   title: Checkpoint activations selectively
@@ -50,12 +61,14 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.sharding-and-recomputation
-  markdown: Activation checkpointing saves selected intermediate boundaries and recomputes missing forward values
-    during backward differentiation. This is distinct from saving a model checkpoint to disk. A four-block segment
-    may save its input instead of every internal activation, then rerun the segment when gradients need them.
-  text_mode: Activation checkpointing saves selected intermediate boundaries and recomputes missing forward values
-    during backward differentiation. This is distinct from saving a model checkpoint to disk. A four-block segment
-    may save its input instead of every internal activation, then rerun the segment when gradients need them.
+  markdown: Activation checkpointing saves selected intermediate boundaries and recomputes missing forward
+    values during backward differentiation. This is distinct from saving a model checkpoint to disk. A four-block
+    segment may save its input instead of every internal activation, then rerun the segment when gradients
+    need them.
+  text_mode: Activation checkpointing saves selected intermediate boundaries and recomputes missing forward
+    values during backward differentiation. This is distinct from saving a model checkpoint to disk. A four-block
+    segment may save its input instead of every internal activation, then rerun the segment when gradients
+    need them.
   bridges: []
 - id: sharding-and-recomputation.s3
   title: Move state to another memory tier
@@ -63,12 +76,22 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.sharding-and-recomputation
-  markdown: Offloading stores selected tensors in CPU memory or storage and transfers them when required. It can
-    make a larger run fit, while adding bandwidth and latency costs. Prefetching helps only when transfers finish
-    before the data are needed and sufficient staging memory exists.
-  text_mode: Offloading stores selected tensors in CPU memory or storage and transfers them when required. It can
-    make a larger run fit, while adding bandwidth and latency costs. Prefetching helps only when transfers finish
-    before the data are needed and sufficient staging memory exists.
+  markdown: 'Offloading stores selected tensors in CPU memory or storage and transfers them when required.
+    It can make a larger run fit, while adding bandwidth and latency costs. Prefetching helps only when transfers
+    finish before the data are needed and sufficient staging memory exists.
+
+
+    **Prefetching** starts a transfer before the value is needed, like bringing ingredients to the counter
+    in advance. It hides delay only if there is enough time and space to finish that transfer. Reading from
+    a slower tier after computation has already stalled cannot recover the lost waiting time.'
+  text_mode: 'Offloading stores selected tensors in CPU memory or storage and transfers them when required.
+    It can make a larger run fit, while adding bandwidth and latency costs. Prefetching helps only when transfers
+    finish before the data are needed and sufficient staging memory exists.
+
+
+    **Prefetching** starts a transfer before the value is needed, like bringing ingredients to the counter
+    in advance. It hides delay only if there is enough time and space to finish that transfer. Reading from
+    a slower tier after computation has already stalled cannot recover the lost waiting time.'
   bridges: []
 - id: sharding-and-recomputation.s4
   title: Choose the limiting allocation
@@ -76,12 +99,22 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.sharding-and-recomputation
-  markdown: If long sequences dominate activation memory, optimizer-only sharding may not solve the failure. If
-    optimizer state dominates, recomputing activations addresses a smaller target. Profile peak allocations and
-    communication under a representative step, including temporary gathered parameters and checkpoint writes.
-  text_mode: If long sequences dominate activation memory, optimizer-only sharding may not solve the failure. If
-    optimizer state dominates, recomputing activations addresses a smaller target. Profile peak allocations and
-    communication under a representative step, including temporary gathered parameters and checkpoint writes.
+  markdown: 'If long sequences dominate activation memory, optimizer-only sharding may not solve the failure.
+    If optimizer state dominates, recomputing activations addresses a smaller target. Profile peak allocations
+    and communication under a representative step, including temporary gathered parameters and checkpoint writes.
+
+
+    If activations take 8 GB and optimizer state takes 1 GB, halving optimizer state saves only 0.5 GB. Recomputing
+    some activations might address more of the shortage. Conversely, a tiny batch with a huge optimizer state
+    can favor sharding. Match the method to measured memory use.'
+  text_mode: 'If long sequences dominate activation memory, optimizer-only sharding may not solve the failure.
+    If optimizer state dominates, recomputing activations addresses a smaller target. Profile peak allocations
+    and communication under a representative step, including temporary gathered parameters and checkpoint writes.
+
+
+    If activations take 8 GB and optimizer state takes 1 GB, halving optimizer state saves only 0.5 GB. Recomputing
+    some activations might address more of the shortage. Conversely, a tiny batch with a huge optimizer state
+    can favor sharding. Match the method to measured memory use.'
   bridges: []
 - id: sharding-and-recomputation.check
   title: Review and check your understanding
@@ -91,18 +124,18 @@ scenes:
   - objective.sharding-and-recomputation
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: State sharding, activation checkpointing, and offloading reduce different memory allocations and trade
-    them for communication, recomputation, or transfer latency.
+  takeaway: State sharding, activation checkpointing, and offloading reduce different memory allocations and
+    trade them for communication, recomputation, or transfer latency.
 - id: sharding-and-recomputation.recap
   title: One idea to take with you
   type: recap
   depth: intuition
   objective_refs:
   - objective.sharding-and-recomputation
-  markdown: State sharding, activation checkpointing, and offloading reduce different memory allocations and trade
-    them for communication, recomputation, or transfer latency.
-  text_mode: State sharding, activation checkpointing, and offloading reduce different memory allocations and trade
-    them for communication, recomputation, or transfer latency.
+  markdown: State sharding, activation checkpointing, and offloading reduce different memory allocations and
+    trade them for communication, recomputation, or transfer latency.
+  text_mode: State sharding, activation checkpointing, and offloading reduce different memory allocations and
+    trade them for communication, recomputation, or transfer latency.
 navigation:
   routes:
   - id: route.core

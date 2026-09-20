@@ -1,11 +1,11 @@
 schema_version: 0.2-draft
 lesson:
   id: transformer-block-components
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   title: Separate mixing across tokens from transforming one token
   state: draft
-  summary: Transformer blocks combine attention, position-wise feed-forward computation, residual additions, and
-    normalization; gated activations and placement conventions change the exact computation.
+  summary: Separate attention’s mixing across positions from the per-position calculations and shortcuts inside
+    a transformer block.
   slot: M15.6
   category: learning
   sources:
@@ -16,8 +16,8 @@ lesson:
 objectives:
 - id: objective.transformer-block-components
   version: 1-draft
-  statement: Transformer blocks combine attention, position-wise feed-forward computation, residual additions, and
-    normalization; gated activations and placement conventions change the exact computation.
+  statement: Transformer blocks combine attention, position-wise feed-forward computation, residual additions,
+    and normalization; gated activations and placement conventions change the exact computation.
   depths:
   - intuition
   - mechanics
@@ -37,14 +37,26 @@ scenes:
   depth: intuition
   objective_refs:
   - objective.transformer-block-components
-  markdown: Attention mixes information across permitted positions. A standard dense feed-forward sublayer applies
-    learned transformations separately at each position, sharing its parameters across positions. The feed-forward
-    input already contains contextual information from earlier operations, but the sublayer does not itself form
-    a new attention matrix.
-  text_mode: Attention mixes information across permitted positions. A standard dense feed-forward sublayer applies
-    learned transformations separately at each position, sharing its parameters across positions. The feed-forward
-    input already contains contextual information from earlier operations, but the sublayer does not itself form
-    a new attention matrix.
+  markdown: 'Attention mixes information across permitted positions. A standard dense feed-forward sublayer
+    applies learned transformations separately at each position, sharing its parameters across positions. The
+    feed-forward input already contains contextual information from earlier operations, but the sublayer does
+    not itself form a new attention matrix.
+
+
+    “Position-wise” means apply the same rule independently to each token''s current vector. It can use context
+    already mixed into that vector, but does not read another position directly in this sublayer. **Feed-forward**
+    names a calculation passing through its specified transformations without carrying a recurrent state from
+    one position to the next.'
+  text_mode: 'Attention mixes information across permitted positions. A standard dense feed-forward sublayer
+    applies learned transformations separately at each position, sharing its parameters across positions. The
+    feed-forward input already contains contextual information from earlier operations, but the sublayer does
+    not itself form a new attention matrix.
+
+
+    “Position-wise” means apply the same rule independently to each token''s current vector. It can use context
+    already mixed into that vector, but does not read another position directly in this sublayer. **Feed-forward**
+    names a calculation passing through its specified transformations without carrying a recurrent state from
+    one position to the next.'
   bridges: []
 - id: transformer-block-components.s2
   title: Follow a gated feed-forward path
@@ -52,12 +64,24 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.transformer-block-components
-  markdown: A gated design projects the same input along two paths, transforms one with an activation, multiplies
+  markdown: 'A gated design projects the same input along two paths, transforms one with an activation, multiplies
     them coordinate by coordinate, and projects the result back. SwiGLU uses a SiLU-based gate in this pattern.
     The gate is not generally a probability distribution over experts or tokens.
-  text_mode: A gated design projects the same input along two paths, transforms one with an activation, multiplies
+
+
+    SiLU is an activation defined as z × sigmoid(z); sigmoid is the S-shaped map into 0 to 1. SwiGLU uses this
+    activation on one projected branch before elementwise multiplication with another. To isolate the multiplication,
+    suppose the transformed gate is [0.5, 2] and the other branch is [4, −1]. Their product is [2, −2], not
+    a normalized choice between tokens.'
+  text_mode: 'A gated design projects the same input along two paths, transforms one with an activation, multiplies
     them coordinate by coordinate, and projects the result back. SwiGLU uses a SiLU-based gate in this pattern.
     The gate is not generally a probability distribution over experts or tokens.
+
+
+    SiLU is an activation defined as z × sigmoid(z); sigmoid is the S-shaped map into 0 to 1. SwiGLU uses this
+    activation on one projected branch before elementwise multiplication with another. To isolate the multiplication,
+    suppose the transformed gate is [0.5, 2] and the other branch is [4, −1]. Their product is [2, −2], not
+    a normalized choice between tokens.'
   bridges:
   - matrices-tensors
 - id: transformer-block-components.s3
@@ -66,14 +90,26 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.transformer-block-components
-  markdown: A residual addition combines an incoming representation with a computed update. Normalization can occur
-    before or after a sublayer depending on the architecture. Layer normalization subtracts a mean and rescales
-    under its convention; common RMSNorm rescales by root mean square without mean subtraction. Learned gains and
-    stabilizers are part of the exact formula.
-  text_mode: A residual addition combines an incoming representation with a computed update. Normalization can occur
-    before or after a sublayer depending on the architecture. Layer normalization subtracts a mean and rescales
-    under its convention; common RMSNorm rescales by root mean square without mean subtraction. Learned gains and
-    stabilizers are part of the exact formula.
+  markdown: 'A residual addition combines an incoming representation with a computed update. Normalization
+    can occur before or after a sublayer depending on the architecture. Layer normalization subtracts a mean
+    and rescales under its convention; common RMSNorm rescales by root mean square without mean subtraction.
+    Learned gains and stabilizers are part of the exact formula.
+
+
+    **RMS** means root mean square: square entries, average, then take the square root. For [1, 3], the RMS
+    is √5. Dividing by it gives [1/√5, 3/√5] before learned gains and a stabilizer. Unlike mean-centering,
+    it leaves both entries positive. A **stabilizer** is a small added quantity that avoids problematic division
+    near zero.'
+  text_mode: 'A residual addition combines an incoming representation with a computed update. Normalization
+    can occur before or after a sublayer depending on the architecture. Layer normalization subtracts a mean
+    and rescales under its convention; common RMSNorm rescales by root mean square without mean subtraction.
+    Learned gains and stabilizers are part of the exact formula.
+
+
+    **RMS** means root mean square: square entries, average, then take the square root. For [1, 3], the RMS
+    is √5. Dividing by it gives [1/√5, 3/√5] before learned gains and a stabilizer. Unlike mean-centering,
+    it leaves both entries positive. A **stabilizer** is a small added quantity that avoids problematic division
+    near zero.'
   bridges: []
 - id: transformer-block-components.s4
   title: Inspect a real block before tracing it
@@ -81,12 +117,14 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.transformer-block-components
-  markdown: Draw the order of normalization, projection, activation, gating, attention, and residual addition from
-    the implementation or report. Check widths and data types. Architecture labels alone do not settle these details.
-    A whole block can preserve input-output shape while doing substantially different internal computation.
-  text_mode: Draw the order of normalization, projection, activation, gating, attention, and residual addition from
-    the implementation or report. Check widths and data types. Architecture labels alone do not settle these details.
-    A whole block can preserve input-output shape while doing substantially different internal computation.
+  markdown: Draw the order of normalization, projection, activation, gating, attention, and residual addition
+    from the implementation or report. Check widths and data types. Architecture labels alone do not settle
+    these details. A whole block can preserve input-output shape while doing substantially different internal
+    computation.
+  text_mode: Draw the order of normalization, projection, activation, gating, attention, and residual addition
+    from the implementation or report. Check widths and data types. Architecture labels alone do not settle
+    these details. A whole block can preserve input-output shape while doing substantially different internal
+    computation.
   bridges: []
 - id: transformer-block-components.check
   title: Review and check your understanding
@@ -96,18 +134,18 @@ scenes:
   - objective.transformer-block-components
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: Transformer blocks combine attention, position-wise feed-forward computation, residual additions, and
-    normalization; gated activations and placement conventions change the exact computation.
+  takeaway: Transformer blocks combine attention, position-wise feed-forward computation, residual additions,
+    and normalization; gated activations and placement conventions change the exact computation.
 - id: transformer-block-components.recap
   title: One idea to take with you
   type: recap
   depth: intuition
   objective_refs:
   - objective.transformer-block-components
-  markdown: Transformer blocks combine attention, position-wise feed-forward computation, residual additions, and
-    normalization; gated activations and placement conventions change the exact computation.
-  text_mode: Transformer blocks combine attention, position-wise feed-forward computation, residual additions, and
-    normalization; gated activations and placement conventions change the exact computation.
+  markdown: Transformer blocks combine attention, position-wise feed-forward computation, residual additions,
+    and normalization; gated activations and placement conventions change the exact computation.
+  text_mode: Transformer blocks combine attention, position-wise feed-forward computation, residual additions,
+    and normalization; gated activations and placement conventions change the exact computation.
 navigation:
   routes:
   - id: route.core

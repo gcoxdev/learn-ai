@@ -1,11 +1,11 @@
 schema_version: 0.2-draft
 lesson:
   id: model-parallel-training
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   title: Split a model across devices in different ways
   state: draft
-  summary: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution; each
-    arrangement introduces specific communication and scheduling costs.
+  summary: Split either one calculation or a sequence of layers across devices, then account for the waiting
+    this creates.
   slot: M17.4
   category: learning
   sources:
@@ -18,8 +18,8 @@ lesson:
 objectives:
 - id: objective.model-parallel-training
   version: 1-draft
-  statement: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution; each
-    arrangement introduces specific communication and scheduling costs.
+  statement: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution;
+    each arrangement introduces specific communication and scheduling costs.
   depths:
   - intuition
   - mechanics
@@ -40,11 +40,23 @@ scenes:
   objective_refs:
   - objective.model-parallel-training
   markdown: 'Tensor parallelism partitions large tensor operations, such as matrix output columns, across devices
-    and combines needed results. Pipeline parallelism places successive layer groups on different devices. Neither
-    is simply a larger data-parallel batch: one example’s computation can span several devices.'
-  text_mode: 'Tensor parallelism partitions large tensor operations, such as matrix output columns, across devices
-    and combines needed results. Pipeline parallelism places successive layer groups on different devices. Neither
-    is simply a larger data-parallel batch: one example’s computation can span several devices.'
+    and combines needed results. Pipeline parallelism places successive layer groups on different devices.
+    Neither is simply a larger data-parallel batch: one example’s computation can span several devices.
+
+
+    A **tensor** is a multidimensional number array. In tensor parallelism, devices share pieces of one operation.
+    In pipeline parallelism, they own different consecutive stages. For a two-layer model, splitting the columns
+    of one layer''s weight matrix is different from putting the whole first layer on one device and the second
+    on another.'
+  text_mode: 'Tensor parallelism partitions large tensor operations, such as matrix output columns, across
+    devices and combines needed results. Pipeline parallelism places successive layer groups on different devices.
+    Neither is simply a larger data-parallel batch: one example’s computation can span several devices.
+
+
+    A **tensor** is a multidimensional number array. In tensor parallelism, devices share pieces of one operation.
+    In pipeline parallelism, they own different consecutive stages. For a two-layer model, splitting the columns
+    of one layer''s weight matrix is different from putting the whole first layer on one device and the second
+    on another.'
   bridges: []
 - id: model-parallel-training.s2
   title: Fill a pipeline with microbatches
@@ -52,12 +64,22 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.model-parallel-training
-  markdown: Imagine layers A and B on separate devices. After device A finishes microbatch one, it can process microbatch
-    two while device B processes one. Start-up, drain, and dependency gaps create pipeline bubbles. Smaller microbatches
-    can improve scheduling but increase overhead or reduce kernel efficiency.
-  text_mode: Imagine layers A and B on separate devices. After device A finishes microbatch one, it can process
-    microbatch two while device B processes one. Start-up, drain, and dependency gaps create pipeline bubbles. Smaller
-    microbatches can improve scheduling but increase overhead or reduce kernel efficiency.
+  markdown: 'Imagine layers A and B on separate devices. After device A finishes microbatch one, it can process
+    microbatch two while device B processes one. Start-up, drain, and dependency gaps create pipeline bubbles.
+    Smaller microbatches can improve scheduling but increase overhead or reduce kernel efficiency.
+
+
+    Assume each stage takes one time unit. At time 1, A processes microbatch 1 while B waits. At time 2, A
+    processes 2 and B processes 1. After A finishes the last microbatch, B still has work to drain. These idle
+    start/end periods are **bubbles**. More devices do not remove the data dependencies.'
+  text_mode: 'Imagine layers A and B on separate devices. After device A finishes microbatch one, it can process
+    microbatch two while device B processes one. Start-up, drain, and dependency gaps create pipeline bubbles.
+    Smaller microbatches can improve scheduling but increase overhead or reduce kernel efficiency.
+
+
+    Assume each stage takes one time unit. At time 1, A processes microbatch 1 while B waits. At time 2, A
+    processes 2 and B processes 1. After A finishes the last microbatch, B still has work to drain. These idle
+    start/end periods are **bubbles**. More devices do not remove the data dependencies.'
   bridges: []
 - id: model-parallel-training.s3
   title: Partition context or experts
@@ -65,14 +87,14 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.model-parallel-training
-  markdown: Context parallelism distributes sequence positions while communicating the information attention needs.
-    Expert parallelism distributes different expert networks and sends routed tokens to their owners. Long context
-    and sparse expert models therefore create different communication patterns, even when parameter totals look
-    similar.
-  text_mode: Context parallelism distributes sequence positions while communicating the information attention needs.
-    Expert parallelism distributes different expert networks and sends routed tokens to their owners. Long context
-    and sparse expert models therefore create different communication patterns, even when parameter totals look
-    similar.
+  markdown: Context parallelism distributes sequence positions while communicating the information attention
+    needs. Expert parallelism distributes different expert networks and sends routed tokens to their owners.
+    Long context and sparse expert models therefore create different communication patterns, even when parameter
+    totals look similar.
+  text_mode: Context parallelism distributes sequence positions while communicating the information attention
+    needs. Expert parallelism distributes different expert networks and sends routed tokens to their owners.
+    Long context and sparse expert models therefore create different communication patterns, even when parameter
+    totals look similar.
   bridges: []
 - id: model-parallel-training.s4
   title: Compose strategies around hardware
@@ -80,12 +102,22 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.model-parallel-training
-  markdown: A real run can combine data, tensor, pipeline, and other parallel dimensions. Frequent communication
-    often benefits from fast nearby links; cross-node transfers can dominate. Draw which tensors move, their sizes,
-    and their timing before claiming that adding devices will scale linearly.
-  text_mode: A real run can combine data, tensor, pipeline, and other parallel dimensions. Frequent communication
-    often benefits from fast nearby links; cross-node transfers can dominate. Draw which tensors move, their sizes,
-    and their timing before claiming that adding devices will scale linearly.
+  markdown: 'A real run can combine data, tensor, pipeline, and other parallel dimensions. Frequent communication
+    often benefits from fast nearby links; cross-node transfers can dominate. Draw which tensors move, their
+    sizes, and their timing before claiming that adding devices will scale linearly.
+
+
+    A **node** is a machine that can contain several accelerators. Communication inside that machine and between
+    machines can have different speeds. Draw the required transfers on the layer diagram, then ask whether
+    the saved computation exceeds the new waiting time.'
+  text_mode: 'A real run can combine data, tensor, pipeline, and other parallel dimensions. Frequent communication
+    often benefits from fast nearby links; cross-node transfers can dominate. Draw which tensors move, their
+    sizes, and their timing before claiming that adding devices will scale linearly.
+
+
+    A **node** is a machine that can contain several accelerators. Communication inside that machine and between
+    machines can have different speeds. Draw the required transfers on the layer diagram, then ask whether
+    the saved computation exceeds the new waiting time.'
   bridges: []
 - id: model-parallel-training.check
   title: Review and check your understanding
@@ -95,18 +127,18 @@ scenes:
   - objective.model-parallel-training
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution; each
-    arrangement introduces specific communication and scheduling costs.
+  takeaway: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution;
+    each arrangement introduces specific communication and scheduling costs.
 - id: model-parallel-training.recap
   title: One idea to take with you
   type: recap
   depth: intuition
   objective_refs:
   - objective.model-parallel-training
-  markdown: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution; each
-    arrangement introduces specific communication and scheduling costs.
-  text_mode: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution; each
-    arrangement introduces specific communication and scheduling costs.
+  markdown: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution;
+    each arrangement introduces specific communication and scheduling costs.
+  text_mode: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution;
+    each arrangement introduces specific communication and scheduling costs.
 navigation:
   routes:
   - id: route.core

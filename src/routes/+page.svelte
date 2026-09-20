@@ -36,7 +36,8 @@
         shaping our world. One connected idea at a time.
       </p>
       <div class="hero-points">
-        <span><Icon name="check" size={15} />No math background needed</span
+        <span
+          ><Icon name="check" size={15} />No math background required to start</span
         ><span><Icon name="check" size={15} />Go as deep as you like</span>
       </div>
     </div>

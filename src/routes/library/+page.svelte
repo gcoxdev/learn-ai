@@ -1,28 +1,45 @@
 <script lang="ts">
   import { page } from "$app/state";
+  import { afterNavigate, goto } from "$app/navigation";
   import { curriculum } from "$lib/content";
   import { vocabulary } from "$lib/vocabulary";
   import { getLearner } from "$lib/learner.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { lessonHref } from "$lib/navigation";
+  import {
+    archetypeOptions,
+    evidenceOptions,
+    filterLessons,
+    lessonEvidence,
+    libraryHref,
+    paginateLessons,
+    readLibraryState,
+    timeOptions,
+    type LibraryState,
+  } from "$lib/library-search";
   const learner = getLearner();
-  const view = $derived(
-    learner.hydrated
-      ? (page.url.searchParams.get("view") ?? "lessons")
-      : "lessons",
+  let draft = $state.raw<LibraryState | null>(null);
+  const filters = $derived(
+    draft ??
+      (learner.hydrated
+        ? readLibraryState(page.url.searchParams)
+        : readLibraryState(new URLSearchParams())),
   );
-  let filter = $state<{ url: string; value: string } | null>(null);
-  const search = $derived(
-    learner.hydrated
-      ? filter?.url === page.url.href
-        ? filter.value
-        : (page.url.searchParams.get("q") ?? "")
-      : "",
-  );
+  const view = $derived(filters.view);
+  const search = $derived(filters.query);
   const query = $derived(search.trim().toLowerCase());
+  const evidence = $derived(lessonEvidence(curriculum, learner.data.attempts));
   const lessons = $derived(
-    curriculum.lessons.filter((l) =>
-      `${l.title} ${l.summary} ${l.slot}`.toLowerCase().includes(query),
+    filterLessons(curriculum.lessons, filters, evidence),
+  );
+  const results = $derived(paginateLessons(lessons, filters.page));
+  const activeFilters = $derived(
+    Boolean(
+      search ||
+      filters.moduleFilter ||
+      filters.time ||
+      filters.archetype ||
+      filters.evidence,
     ),
   );
   const modules = $derived(
@@ -36,6 +53,29 @@
   );
   function published(slot: string) {
     return curriculum.lessons.find((l) => l.slot === slot);
+  }
+  afterNavigate(({ type }) => {
+    if (type !== "goto") draft = null;
+  });
+
+  function update(changes: Partial<LibraryState>) {
+    const next = { ...filters, ...changes, page: undefined };
+    // Render immediately while Kit commits the URL. A later edit supersedes
+    // this navigation, so only the latest completion may clear its draft.
+    draft = next;
+    const settled = () => {
+      if (draft === next) draft = null;
+    };
+    void goto(libraryHref(next), {
+      replaceState: true,
+      keepFocus: true,
+      noScroll: true,
+    }).then(settled, settled);
+  }
+  function facet(name: string, value: string) {
+    const params = new URL(libraryHref(filters), page.url).searchParams;
+    value ? params.set(name, value) : params.delete(name);
+    update(readLibraryState(params));
   }
 </script>
 
@@ -53,7 +93,11 @@
     <nav class="segmented" aria-label="Library views">
       {#each [["lessons", "Draft lessons"], ["curriculum", "Full curriculum"], ["glossary", "Glossary"]] as tab (tab[0])}<a
           class={["button ghost small", view === tab[0] && "active"]}
-          href={`/library/?view=${tab[0]}`}
+          href={libraryHref({
+            ...filters,
+            view: tab[0] as LibraryState["view"],
+            page: undefined,
+          })}
           aria-current={view === tab[0] ? "page" : undefined}>{tab[1]}</a
         >{/each}
     </nav>
@@ -61,12 +105,70 @@
       ><Icon name="search" size={17} /><input
         aria-label="Filter library"
         placeholder="Find an idea…"
+        maxlength="500"
         value={search}
-        oninput={(event) =>
-          (filter = { url: page.url.href, value: event.currentTarget.value })}
+        oninput={(event) => update({ query: event.currentTarget.value })}
       /></label
     >
   </div>
+  {#if view === "lessons"}
+    <div class="library-facets" role="group" aria-label="Filter draft lessons">
+      <label
+        >Module
+        <select
+          aria-label="Module"
+          value={filters.moduleFilter ?? ""}
+          onchange={(event) => facet("module", event.currentTarget.value)}
+        >
+          <option value="">All modules</option>
+          {#each curriculum.catalog as module (module.id)}
+            <option value={module.id}>{module.id} · {module.title}</option>
+          {/each}
+          <option value="bridges">Math and programming side lessons</option>
+          <option value="advanced">Advanced previews</option>
+        </select>
+      </label>
+      <label
+        >Estimated time
+        <select
+          aria-label="Estimated time"
+          value={filters.time ?? ""}
+          onchange={(event) => facet("time", event.currentTarget.value)}
+        >
+          <option value="">Any length</option>
+          {#each timeOptions as option (option.value)}<option
+              value={option.value}>{option.label}</option
+            >{/each}
+        </select>
+      </label>
+      <label
+        >Lesson type
+        <select
+          aria-label="Lesson type"
+          value={filters.archetype ?? ""}
+          onchange={(event) => facet("archetype", event.currentTarget.value)}
+        >
+          <option value="">All types</option>
+          {#each archetypeOptions as option (option.value)}<option
+              value={option.value}>{option.label}</option
+            >{/each}
+        </select>
+      </label>
+      <label
+        >Evidence
+        <select
+          aria-label="Evidence"
+          value={filters.evidence ?? ""}
+          onchange={(event) => facet("evidence", event.currentTarget.value)}
+        >
+          <option value="">All evidence states</option>
+          {#each evidenceOptions as option (option.value)}<option
+              value={option.value}>{option.label}</option
+            >{/each}
+        </select>
+      </label>
+    </div>
+  {/if}
   {#if view === "curriculum"}
     <p class="scope-caption">
       {curriculum.catalog.length} modules · {curriculum.catalog.reduce(
@@ -94,6 +196,7 @@
                 {#if lesson}<a
                     href={lessonHref(lesson.id, {
                       kind: "library",
+                      ...filters,
                       view: "curriculum",
                       query: search,
                       module: module.id,
@@ -119,6 +222,7 @@
             class="inline-link"
             href={lessonHref(term[2], {
               kind: "library",
+              ...filters,
               view: "glossary",
               query: search,
             })}>See it in context <Icon name="arrow" size={15} /></a
@@ -126,22 +230,45 @@
         </article>{/each}
     </div>
   {:else}
+    <div class="library-result-bar">
+      <p role="status" aria-live="polite">
+        {#if lessons.length}Showing {results.start + 1}–{results.start +
+            results.lessons.length} of {lessons.length} draft lessons{:else}0
+          draft lessons{/if}
+      </p>
+      {#if activeFilters}<button
+          class="button ghost small"
+          onclick={() =>
+            update({
+              query: "",
+              moduleFilter: undefined,
+              time: undefined,
+              archetype: undefined,
+              evidence: undefined,
+            })}>Clear filters</button
+        >{/if}
+    </div>
     <p class="scope-caption">
-      {lessons.length} draft lessons · Core knowledge checks track personal study.
-      Formal mathematics extensions and the A01 MoE preview are uncredited practice.
-      Project artifacts need separate self or peer review.
+      Core knowledge checks track personal study. Formal mathematics extensions
+      and the A01 MoE preview are uncredited practice. Project artifacts need
+      separate self or peer review.
     </p>
     <div class="library-grid">
-      {#each lessons as lesson (lesson.id)}<a
+      {#each results.lessons as lesson (lesson.id)}<a
           class="library-card"
           href={lessonHref(lesson.id, {
             kind: "library",
-            view: "lessons",
-            query: search,
+            ...filters,
+            page: results.page > 1 ? results.page : undefined,
           })}
           ><span class="eyebrow">{lesson.slot} · {lesson.category}</span>
           <h3>{lesson.title}</h3>
           <p>{lesson.summary}</p>
+          <span class="lesson-evidence"
+            >{evidenceOptions.find(
+              (option) => option.value === evidence.get(lesson.id),
+            )?.label}</span
+          >
           <footer>
             <span>{lesson.minutes} min estimate</span><span
               >{learner.data.bookmarks.includes(lesson.id)
@@ -152,12 +279,32 @@
           </footer></a
         >{/each}
     </div>
+    {#if results.pages > 1}
+      <nav class="library-pagination" aria-label="Lesson library pages">
+        {#if results.page > 1}<a
+            class="button secondary small"
+            href={libraryHref({ ...filters, page: results.page - 1 })}
+            >Previous page</a
+          >{/if}
+        <span>Page {results.page} of {results.pages}</span>
+        {#if results.page < results.pages}<a
+            class="button secondary small"
+            href={libraryHref({ ...filters, page: results.page + 1 })}
+            >Next page</a
+          >{/if}
+      </nav>
+    {/if}
   {/if}
   {#if (view === "curriculum" ? modules : view === "glossary" ? glossary : lessons).length === 0}<div
       class="empty-state"
     >
       <h2>No matching ideas yet.</h2>
-      <p>Try a broader term such as “learning”, “data”, or “gradient”.</p>
+      <p>
+        Try a broader term such as “learning”, “data”, or “gradient”{view ===
+        "lessons"
+          ? ", or clear a filter."
+          : "."}
+      </p>
     </div>{/if}
   <section id="how-it-works" class="how-it-works">
     <span class="eyebrow">HOW LEARNING WORKS</span>
@@ -188,9 +335,79 @@
       </article>
     </div>
     <p class="draft-note">
-      This private prototype contains the initial curriculum draft. Its content
-      and assessments are drafts awaiting independent subject and teaching
-      review. Estimates are editorial, not measured learner times.
+      These lessons have received an editorial reading pass. They remain drafts
+      while assessment revision, independent review, and learner trials
+      continue.
+      <a href="/about/#drafts">What makes a lesson ready?</a>
+      Estimates are editorial, not measured learner times.
     </p>
   </section>
 </div>
+
+<style>
+  .library-facets {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .library-facets label {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .library-facets select {
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    padding: 8px 10px;
+    border: 1px solid #d8e2cc;
+    border-radius: 6px;
+    background: white;
+    color: var(--ink);
+    font: inherit;
+    text-overflow: ellipsis;
+  }
+  .library-result-bar {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 44px;
+    margin-bottom: 8px;
+    font-size: 12px;
+  }
+  .library-result-bar p {
+    margin: 0;
+  }
+  .lesson-evidence {
+    display: block;
+    margin-top: 14px;
+    color: #48643d;
+    font-size: 10px;
+  }
+  .library-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 18px;
+    margin-top: 28px;
+    font-size: 12px;
+  }
+  @media (max-width: 1000px) {
+    .library-facets {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 420px) {
+    .library-facets {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .library-result-bar {
+      align-items: flex-start;
+    }
+  }
+</style>

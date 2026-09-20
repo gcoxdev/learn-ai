@@ -1,16 +1,18 @@
 schema_version: 0.2-draft
 lesson:
   id: sequence-to-sequence
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   title: Map one sequence into another
   state: draft
-  summary: Sequence-to-sequence models encode an input and generate an output sequence; alignment, attention, and
-    teacher forcing address different parts of that task.
+  summary: Translate one ordered list into another, then compare using correct prefixes in training with generating
+    your own prefixes.
   slot: M13.4
   category: learning
   sources:
   - title: Dive into Deep Learning — sequence-to-sequence learning
     url: https://d2l.ai/chapter_recurrent-modern/seq2seq.html
+  - title: Dive into Deep Learning — beam search
+    url: https://d2l.ai/chapter_recurrent-modern/beam-search.html
 objectives:
 - id: objective.sequence-to-sequence
   version: 1-draft
@@ -35,12 +37,42 @@ scenes:
   depth: intuition
   objective_refs:
   - objective.sequence-to-sequence
-  markdown: Translation maps a source sentence to a target sentence with different words and possibly a different
-    length. An encoder builds representations of the source. A decoder produces outputs conditioned on those representations
-    and its prior outputs. The encoder and decoder need not use identical architectures.
-  text_mode: Translation maps a source sentence to a target sentence with different words and possibly a different
-    length. An encoder builds representations of the source. A decoder produces outputs conditioned on those representations
-    and its prior outputs. The encoder and decoder need not use identical architectures.
+  markdown: 'Translation maps an input sequence to an output sequence, and their lengths need not match. For
+    example, the two-word French phrase “merci beaucoup” can become the four-word English phrase “thank you
+    very much”. A tokenizer may split either phrase differently again.
+
+
+    An encoder builds representations of the source. A decoder produces output tokens conditioned on those
+    representations and its prior outputs. An end-of-sequence decision lets it stop without copying the source
+    length. The encoder and decoder need not use identical architectures.
+
+
+    The key contract is a conditional sequence: the same decoder should respond differently when the source
+    changes. Fluent output that ignores the source is not successful translation.
+
+
+    A **sequence** is an ordered list. A **token** is one unit used by the model, such as a word piece; a **tokenizer**
+    splits text into those units. The **encoder** turns source units into feature representations. The **decoder**
+    uses them to produce output units. “Conditioned on the source” means the source information affects the
+    decoder''s predictions.'
+  text_mode: 'Translation maps an input sequence to an output sequence, and their lengths need not match. For
+    example, the two-word French phrase “merci beaucoup” can become the four-word English phrase “thank you
+    very much”. A tokenizer may split either phrase differently again.
+
+
+    An encoder builds representations of the source. A decoder produces output tokens conditioned on those
+    representations and its prior outputs. An end-of-sequence decision lets it stop without copying the source
+    length. The encoder and decoder need not use identical architectures.
+
+
+    The key contract is a conditional sequence: the same decoder should respond differently when the source
+    changes. Fluent output that ignores the source is not successful translation.
+
+
+    A **sequence** is an ordered list. A **token** is one unit used by the model, such as a word piece; a **tokenizer**
+    splits text into those units. The **encoder** turns source units into feature representations. The **decoder**
+    uses them to produce output units. “Conditioned on the source” means the source information affects the
+    decoder''s predictions.'
   bridges: []
 - id: sequence-to-sequence.s2
   title: A fixed summary can be a bottleneck
@@ -48,12 +80,32 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.sequence-to-sequence
-  markdown: An early encoder-decoder design may compress the whole source into one vector. Attention instead lets
-    a decoder form a context-dependent mixture over source positions at each step. Alignment describes which source
-    information is associated with an output position; word order need not match one-to-one.
-  text_mode: An early encoder-decoder design may compress the whole source into one vector. Attention instead lets
-    a decoder form a context-dependent mixture over source positions at each step. Alignment describes which source
-    information is associated with an output position; word order need not match one-to-one.
+  markdown: 'An early encoder-decoder design may compress the whole source into one vector. A long source can
+    force that fixed summary to carry many details at once. Attention instead lets the decoder form a context-dependent
+    mixture over source positions at each output step.
+
+
+    For a sentence that mentions both a red bicycle and a blue car, the useful source information changes as
+    the decoder generates the words for the bicycle and the car. Attention provides a route to different source
+    representations at those moments; it does not guarantee that the selected information is correct.
+
+
+    Alignment describes which source information is associated with an output position. Word order can change
+    between languages, and one source word can correspond to several output words. An alignment is therefore
+    not necessarily a diagonal, one-to-one word match.'
+  text_mode: 'An early encoder-decoder design may compress the whole source into one vector. A long source
+    can force that fixed summary to carry many details at once. Attention instead lets the decoder form a context-dependent
+    mixture over source positions at each output step.
+
+
+    For a sentence that mentions both a red bicycle and a blue car, the useful source information changes as
+    the decoder generates the words for the bicycle and the car. Attention provides a route to different source
+    representations at those moments; it does not guarantee that the selected information is correct.
+
+
+    Alignment describes which source information is associated with an output position. Word order can change
+    between languages, and one source word can correspond to several output words. An alignment is therefore
+    not necessarily a diagonal, one-to-one word match.'
   bridges: []
 - id: sequence-to-sequence.s3
   title: Understand teacher forcing
@@ -61,12 +113,32 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.sequence-to-sequence
-  markdown: During teacher-forced training, the decoder receives the recorded correct previous token rather than
-    its own sampled previous output. At ordinary generation time, it uses its selected outputs. Errors can therefore
-    alter later contexts in ways less common during training. The training loss must still hide future target information.
-  text_mode: During teacher-forced training, the decoder receives the recorded correct previous token rather than
-    its own sampled previous output. At ordinary generation time, it uses its selected outputs. Errors can therefore
-    alter later contexts in ways less common during training. The training loss must still hide future target information.
+  markdown: 'During teacher-forced training, the decoder receives the recorded correct previous token rather
+    than its own selected previous output. If the target begins “the red bicycle”, the training step predicting
+    “bicycle” receives the reference prefix “the red”.
+
+
+    At ordinary generation time, the decoder uses its own selected outputs. Predict what happens if it instead
+    produces “the blue”: the next prediction is now conditioned on that generated prefix, not the reference
+    “the red”. One early error can change the context for many later decisions.
+
+
+    Teacher forcing makes training inputs well defined, but good next-token accuracy under reference prefixes
+    does not guarantee a good free-running sequence. Training must still hide future target information from
+    the position being predicted; feeding in the answer would measure a different task.'
+  text_mode: 'During teacher-forced training, the decoder receives the recorded correct previous token rather
+    than its own selected previous output. If the target begins “the red bicycle”, the training step predicting
+    “bicycle” receives the reference prefix “the red”.
+
+
+    At ordinary generation time, the decoder uses its own selected outputs. Predict what happens if it instead
+    produces “the blue”: the next prediction is now conditioned on that generated prefix, not the reference
+    “the red”. One early error can change the context for many later decisions.
+
+
+    Teacher forcing makes training inputs well defined, but good next-token accuracy under reference prefixes
+    does not guarantee a good free-running sequence. Training must still hide future target information from
+    the position being predicted; feeding in the answer would measure a different task.'
   bridges: []
 - id: sequence-to-sequence.s4
   title: Evaluate the sequence, not just one token
@@ -74,13 +146,39 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.sequence-to-sequence
-  markdown: Good next-token accuracy under reference prefixes does not guarantee a coherent full generated sequence.
-    Examine task quality, length behavior, repeated outputs, and robustness to different inputs. Beam search or
-    sampling changes decoding policy; it does not by itself retrain the encoder or decoder.
-  text_mode: Good next-token accuracy under reference prefixes does not guarantee a coherent full generated sequence.
-    Examine task quality, length behavior, repeated outputs, and robustness to different inputs. Beam search or
-    sampling changes decoding policy; it does not by itself retrain the encoder or decoder.
+  markdown: 'Greedy decoding keeps the most probable next token at each step. Beam search keeps several partial
+    sequences, expands them, and retains the highest-scoring candidates. Beam width is the number retained.
+    Both policies can use exactly the same fixed model parameters.
+
+
+    Try the two-token tree below. A prefix with a weaker first token can have a stronger continuation. Predict
+    whether keeping a second prefix changes the winner, then compare products of conditional probabilities.
+    The lab uses equal-length outputs so the scores are directly comparable without a length penalty.
+
+
+    A higher sequence probability is not a guarantee of a better translation. Evaluate whether the output preserves
+    the source meaning, ends appropriately, and avoids repetition. Sampling offers another decoding policy;
+    changing any of these policies does not by itself retrain the encoder or decoder.'
+  text_mode: 'Greedy decoding keeps the most probable next token at each step. Beam search keeps several partial
+    sequences, expands them, and retains the highest-scoring candidates. Beam width is the number retained.
+    Both policies can use exactly the same fixed model parameters.
+
+
+    Try the two-token tree below. A prefix with a weaker first token can have a stronger continuation. Predict
+    whether keeping a second prefix changes the winner, then compare products of conditional probabilities.
+    The lab uses equal-length outputs so the scores are directly comparable without a length penalty.
+
+
+    A higher sequence probability is not a guarantee of a better translation. Evaluate whether the output preserves
+    the source meaning, ends appropriately, and avoids repetition. Sampling offers another decoding policy;
+    changing any of these policies does not by itself retrain the encoder or decoder.'
   bridges: []
+  figure:
+    kind: beam-search
+    caption: Keep one or two prefixes in a fixed tree and compare the complete two-token sequence scores.
+    description: The first token favors go over stay, but stay has a stronger home continuation. Beam width
+      two retains that alternative; width one prunes it. Probabilities are hand-written and model parameters
+      do not change.
 - id: sequence-to-sequence.check
   title: Review and check your understanding
   type: assessment
@@ -89,16 +187,16 @@ scenes:
   - objective.sequence-to-sequence
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: Sequence-to-sequence models encode an input and generate an output sequence; alignment, attention, and
-    teacher forcing address different parts of that task.
+  takeaway: Sequence-to-sequence models encode an input and generate an output sequence; alignment, attention,
+    and teacher forcing address different parts of that task.
 - id: sequence-to-sequence.recap
   title: One idea to take with you
   type: recap
   depth: intuition
   objective_refs:
   - objective.sequence-to-sequence
-  markdown: Sequence-to-sequence models encode an input and generate an output sequence; alignment, attention, and
-    teacher forcing address different parts of that task.
+  markdown: Sequence-to-sequence models encode an input and generate an output sequence; alignment, attention,
+    and teacher forcing address different parts of that task.
   text_mode: Sequence-to-sequence models encode an input and generate an output sequence; alignment, attention,
     and teacher forcing address different parts of that task.
 navigation:

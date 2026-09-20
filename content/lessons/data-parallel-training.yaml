@@ -1,11 +1,10 @@
 schema_version: 0.2-draft
 lesson:
   id: data-parallel-training
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   title: Train replicas on different examples and combine their gradients
   state: draft
-  summary: Data parallel training splits examples across model replicas and aggregates gradients; weighting, synchronization,
-    and accumulation must preserve the intended global objective.
+  summary: Train copies on different examples, then combine their gradients with the right weighting.
   slot: M17.3
   category: learning
   sources:
@@ -16,8 +15,8 @@ lesson:
 objectives:
 - id: objective.data-parallel-training
   version: 1-draft
-  statement: Data parallel training splits examples across model replicas and aggregates gradients; weighting, synchronization,
-    and accumulation must preserve the intended global objective.
+  statement: Data parallel training splits examples across model replicas and aggregates gradients; weighting,
+    synchronization, and accumulation must preserve the intended global objective.
   depths:
   - intuition
   - mechanics
@@ -37,12 +36,22 @@ scenes:
   depth: intuition
   objective_refs:
   - objective.data-parallel-training
-  markdown: Each data-parallel worker starts from compatible model state and processes a local batch. After backward
-    computation, workers aggregate gradients so their optimizer updates stay aligned. The model is replicated; this
-    differs from splitting one model’s layers or tensor dimensions across devices.
-  text_mode: Each data-parallel worker starts from compatible model state and processes a local batch. After backward
-    computation, workers aggregate gradients so their optimizer updates stay aligned. The model is replicated; this
-    differs from splitting one model’s layers or tensor dimensions across devices.
+  markdown: 'Each data-parallel worker starts from compatible model state and processes a local batch. After
+    backward computation, workers aggregate gradients so their optimizer updates stay aligned. The model is
+    replicated; this differs from splitting one model’s layers or tensor dimensions across devices.
+
+
+    A **worker** is one participating process or device. A **replica** is its copy of the same model. Each
+    worker computes on different examples; they then combine learning signals before updating. Two workers
+    do not each independently learn a different final model in this synchronized setup.'
+  text_mode: 'Each data-parallel worker starts from compatible model state and processes a local batch. After
+    backward computation, workers aggregate gradients so their optimizer updates stay aligned. The model is
+    replicated; this differs from splitting one model’s layers or tensor dimensions across devices.
+
+
+    A **worker** is one participating process or device. A **replica** is its copy of the same model. Each
+    worker computes on different examples; they then combine learning signals before updating. Two workers
+    do not each independently learn a different final model in this synchronized setup.'
   bridges: []
 - id: data-parallel-training.s2
   title: Average the intended units
@@ -50,12 +59,22 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.data-parallel-training
-  markdown: With equally weighted examples and equal local batch sizes, averaging workers’ mean gradients matches
-    the global batch mean. If one worker has two valid tokens and another has ten, equally averaging their token
-    means gives the small group too much weight. Aggregate sums and counts consistently.
-  text_mode: With equally weighted examples and equal local batch sizes, averaging workers’ mean gradients matches
-    the global batch mean. If one worker has two valid tokens and another has ten, equally averaging their token
-    means gives the small group too much weight. Aggregate sums and counts consistently.
+  markdown: 'With equally weighted examples and equal local batch sizes, averaging workers’ mean gradients
+    matches the global batch mean. If one worker has two valid tokens and another has ten, equally averaging
+    their token means gives the small group too much weight. Aggregate sums and counts consistently.
+
+
+    If the two-token worker has mean gradient 3 and the ten-token worker has mean gradient 9, the global token
+    mean is (2 × 3 + 10 × 9)/12 = 8. Simply averaging the two means gives 6 and changes the objective''s weighting.
+    The counted unit might be examples or valid tokens; state which one.'
+  text_mode: 'With equally weighted examples and equal local batch sizes, averaging workers’ mean gradients
+    matches the global batch mean. If one worker has two valid tokens and another has ten, equally averaging
+    their token means gives the small group too much weight. Aggregate sums and counts consistently.
+
+
+    If the two-token worker has mean gradient 3 and the ten-token worker has mean gradient 9, the global token
+    mean is (2 × 3 + 10 × 9)/12 = 8. Simply averaging the two means gives 6 and changes the objective''s weighting.
+    The counted unit might be examples or valid tokens; state which one.'
   bridges: []
 - id: data-parallel-training.s3
   title: Accumulate before updating
@@ -65,12 +84,12 @@ scenes:
   - objective.data-parallel-training
   markdown: Gradient accumulation processes several microbatches before one optimizer update. It can approximate
     a larger effective batch with less activation memory, provided losses are scaled correctly. Batch-dependent
-    operations, random behavior, and numerical reduction order can prevent exact equivalence to one physically large
-    batch.
+    operations, random behavior, and numerical reduction order can prevent exact equivalence to one physically
+    large batch.
   text_mode: Gradient accumulation processes several microbatches before one optimizer update. It can approximate
     a larger effective batch with less activation memory, provided losses are scaled correctly. Batch-dependent
-    operations, random behavior, and numerical reduction order can prevent exact equivalence to one physically large
-    batch.
+    operations, random behavior, and numerical reduction order can prevent exact equivalence to one physically
+    large batch.
   bridges: []
 - id: data-parallel-training.s4
   title: Communication is part of the step
@@ -78,12 +97,22 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.data-parallel-training
-  markdown: All-reduce combines distributed gradient contributions and returns the result to participating workers.
-    Communication can overlap some backward computation, but late gradients and slow workers can delay the update.
-    Report global batch size and optimizer-step count when comparing distributed training runs.
-  text_mode: All-reduce combines distributed gradient contributions and returns the result to participating workers.
-    Communication can overlap some backward computation, but late gradients and slow workers can delay the update.
-    Report global batch size and optimizer-step count when comparing distributed training runs.
+  markdown: 'All-reduce combines distributed gradient contributions and returns the result to participating
+    workers. Communication can overlap some backward computation, but late gradients and slow workers can delay
+    the update. Report global batch size and optimizer-step count when comparing distributed training runs.
+
+
+    **All-reduce** means combine contributions using an operation such as addition and give the combined result
+    to every participant. Averaging may then divide by the appropriate count. A late worker can keep others
+    waiting because the shared update needs its contribution too.'
+  text_mode: 'All-reduce combines distributed gradient contributions and returns the result to participating
+    workers. Communication can overlap some backward computation, but late gradients and slow workers can delay
+    the update. Report global batch size and optimizer-step count when comparing distributed training runs.
+
+
+    **All-reduce** means combine contributions using an operation such as addition and give the combined result
+    to every participant. Averaging may then divide by the appropriate count. A late worker can keep others
+    waiting because the shared update needs its contribution too.'
   bridges: []
 - id: data-parallel-training.check
   title: Review and check your understanding
@@ -93,18 +122,18 @@ scenes:
   - objective.data-parallel-training
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: Data parallel training splits examples across model replicas and aggregates gradients; weighting, synchronization,
-    and accumulation must preserve the intended global objective.
+  takeaway: Data parallel training splits examples across model replicas and aggregates gradients; weighting,
+    synchronization, and accumulation must preserve the intended global objective.
 - id: data-parallel-training.recap
   title: One idea to take with you
   type: recap
   depth: intuition
   objective_refs:
   - objective.data-parallel-training
-  markdown: Data parallel training splits examples across model replicas and aggregates gradients; weighting, synchronization,
-    and accumulation must preserve the intended global objective.
-  text_mode: Data parallel training splits examples across model replicas and aggregates gradients; weighting, synchronization,
-    and accumulation must preserve the intended global objective.
+  markdown: Data parallel training splits examples across model replicas and aggregates gradients; weighting,
+    synchronization, and accumulation must preserve the intended global objective.
+  text_mode: Data parallel training splits examples across model replicas and aggregates gradients; weighting,
+    synchronization, and accumulation must preserve the intended global objective.
 navigation:
   routes:
   - id: route.core

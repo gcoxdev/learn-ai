@@ -19,6 +19,24 @@ describe("lesson return context", () => {
       module: "M15",
     },
     { kind: "library", view: "lessons", query: "vectors" },
+    {
+      kind: "library",
+      view: "lessons",
+      query: "attention & routing",
+      moduleFilter: "M15",
+      time: "6-to-10",
+      archetype: "mechanism",
+      evidence: "not-demonstrated",
+      page: 2,
+    },
+    { kind: "library", view: "lessons", query: "", moduleFilter: "bridges" },
+    {
+      kind: "library",
+      view: "lessons",
+      query: "",
+      moduleFilter: "advanced",
+      evidence: "practice",
+    },
     { kind: "library", view: "glossary", query: "" },
     { kind: "path", path: "images" },
     { kind: "progress" },
@@ -92,5 +110,39 @@ describe("lesson return context", () => {
     expect(
       nextLesson(curriculum, last, origins[0], emptyProgress()),
     ).toBeUndefined();
+  });
+  it.each([
+    { moduleFilter: "M99" },
+    { moduleFilter: "https://elsewhere.test" },
+    { time: "quick" },
+    { archetype: "anything" },
+    { evidence: "completed" },
+    { page: -1 },
+    { page: 1.5 },
+    { page: 10001 },
+  ])("rejects unsupported saved library filters: %j", (invalid) => {
+    expect(() =>
+      positionSchema.parse({
+        scene: "ai-systems.s1",
+        depth: "core",
+        mode: "slides",
+        updatedAt: 0,
+        origin: { ...defaultOrigin, ...invalid },
+      }),
+    ).toThrow();
+  });
+  it("preserves a curriculum anchor independently of an active lesson facet", () => {
+    const origin: LessonOrigin = {
+      kind: "library",
+      view: "curriculum",
+      query: "",
+      module: "M15",
+      moduleFilter: "bridges",
+    };
+    const href = returnDestination(origin).href;
+    expect(href).toBe("/library/?view=curriculum&module=bridges#M15");
+    expect(originFromLocation(new URL(href, "https://classroom.test"))).toEqual(
+      origin,
+    );
   });
 });

@@ -8,6 +8,7 @@
   import PathArt from "$lib/components/PathArt.svelte";
   import { lessonHref } from "$lib/navigation";
   import { chapterProgress, pathChapters } from "$lib/path-chapters";
+  import { objectiveEvidence } from "$lib/evidence-progress";
   let { data }: { data: { recipe: Recipe } } = $props();
   const learner = getLearner();
   const full = $derived(planPath(curriculum, data.recipe, []));
@@ -31,10 +32,24 @@
   const current = $derived(
     planPath(curriculum, data.recipe, learner.data.attempts),
   );
+  const demonstrated = $derived(
+    full.required.filter((id) =>
+      mastered(
+        curriculum.objectives.find((o) => o.id === id)!,
+        learner.data.attempts,
+      ),
+    ).length,
+  );
+  let placementChoice = $state<{ path: string; lesson: string } | null>(null);
   const next = $derived(
     current.lessons.find((l) =>
       l.objectives.some((id) => current.remaining.includes(id)),
     ),
+  );
+  const placementLesson = $derived(
+    placementChoice?.path === data.recipe.id
+      ? placementChoice.lesson
+      : (next?.id ?? data.recipe.destination),
   );
   const chapters = $derived(pathChapters(full.lessons));
   const nextChapter = $derived(
@@ -75,7 +90,7 @@
       .filter((l) => l.objectives.some((id) => current.remaining.includes(id)))
       .reduce((sum, l) => sum + l.minutes, 0),
   );
-  function state(lesson: Lesson) {
+  function lessonState(lesson: Lesson) {
     const required = curriculum.objectives.filter(
       (o) => lesson.objectives.includes(o.id) && o.scope === "core",
     );
@@ -83,6 +98,13 @@
       return "Demonstrated";
     if (!required.some((o) => current.required.includes(o.id)))
       return "Preparation not assigned";
+    const passed = required.reduce(
+      (sum, objective) =>
+        sum + objectiveEvidence(objective, learner.data.attempts).passed,
+      0,
+    );
+    if (passed)
+      return `${passed} of ${required.reduce((sum, o) => sum + o.families.length, 0)} checks passed`;
     return "To explore";
   }
   async function start() {
@@ -107,12 +129,24 @@
       <h1>{data.recipe.title}</h1>
       <p class="lead">{data.recipe.description}</p>
       <div class="path-stat-row">
-        <span><strong>{full.lessons.length}</strong> draft lessons</span><span
-          ><strong>{current.mastered.length}</strong> objectives carried forward</span
-        ><span
+        <span
+          ><strong>{demonstrated} of {full.required.length}</strong> core ideas demonstrated</span
+        ><span><strong>{full.lessons.length}</strong> draft lessons</span><span
           ><strong>{Math.round(minutes / 5) * 5}</strong> estimated minutes remaining</span
         >
       </div>
+      <progress
+        class="path-progress"
+        max={full.required.length}
+        value={demonstrated}
+        aria-label="Core ideas demonstrated in this path"
+      ></progress>
+      {#if demonstrated}<p class="carried-evidence" role="status">
+          {demonstrated} demonstrated idea{demonstrated === 1
+            ? " carries"
+            : "s carry"} forward. Your existing checks count here, whichever path
+          you studied first. Start or continue to reach the next idea that needs evidence.
+        </p>{/if}
       <button
         class="button primary large"
         disabled={!learner.hydrated}
@@ -126,6 +160,35 @@
       {#if next}<p class="next-lesson-note">
           Next: <strong>{next.title}</strong> · {next.minutes} min
         </p>{/if}
+      <details class="placement-entry">
+        <summary>Already know some of this?</summary>
+        <p>
+          Go straight to an idea’s knowledge check. Passing its different checks
+          without hints carries that evidence into this path. Checking an
+          advanced idea does not award its prerequisites; you can still explore
+          them.
+        </p>
+        <label
+          >Choose an idea to check
+          <select
+            value={placementLesson}
+            onchange={(event) =>
+              (placementChoice = {
+                path: data.recipe.id,
+                lesson: event.currentTarget.value,
+              })}
+          >
+            {#each full.lessons as lesson (lesson.id)}<option value={lesson.id}
+                >{lesson.title}</option
+              >{/each}
+          </select>
+        </label>
+        <a
+          class="button secondary"
+          href={`${lessonHref(placementLesson, { kind: "path", path: data.recipe.id })}&check=1`}
+          >Check what I already know <Icon name="arrow" size={16} /></a
+        >
+      </details>
     </div>
     <PathArt type={data.recipe.id} />
   </section>
@@ -183,7 +246,7 @@
           </summary>
           <div class="chapter-lessons">
             {#each chapter.lessons as lesson, i (lesson.id)}
-              {@const status = state(lesson)}
+              {@const status = lessonState(lesson)}
               <a
                 class="syllabus-row"
                 href={lessonHref(lesson.id, {
@@ -288,6 +351,54 @@
 </div>
 
 <style>
+  .path-intro > div {
+    min-width: 0;
+  }
+  .path-progress {
+    display: block;
+    width: 100%;
+    height: 0.55rem;
+    margin: -0.3rem 0 1.4rem;
+    accent-color: #427655;
+  }
+  .carried-evidence {
+    font-size: 0.85rem;
+    line-height: 1.7;
+    padding: 0.8rem 1rem;
+    border-left: 3px solid #638757;
+    background: #f0f5e8;
+  }
+  .placement-entry {
+    margin-top: 1.3rem;
+    padding-top: 1rem;
+    border-top: 1px solid #d8dfd1;
+  }
+  .placement-entry summary {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #31543c;
+    cursor: pointer;
+  }
+  .placement-entry p {
+    font-size: 0.85rem;
+    line-height: 1.7;
+  }
+  .placement-entry label {
+    display: grid;
+    gap: 0.5rem;
+    margin: 0.9rem 0;
+    font-size: 0.85rem;
+  }
+  .placement-entry select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    border: 1px solid #9cad92;
+    border-radius: 6px;
+    background: #fffefa;
+    color: #294433;
+    padding: 0.7rem;
+  }
   .next-lesson-note {
     margin: 1rem 0 0;
     font-size: 0.8rem;

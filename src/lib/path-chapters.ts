@@ -83,7 +83,9 @@ function describeChapter(lessons: Lesson[], start: number) {
           .join(
             "; ",
           )}${subjectNames.length > 3 ? "; and supporting ideas" : ""}.`;
-  return { title, summary };
+  const focus =
+    lessons.find((lesson) => moduleId(lesson) === dominant) ?? lessons[0];
+  return { title, summary, focus: focus.title };
 }
 
 /** Wrap the exact prerequisite order in short, contiguous reading chapters. */
@@ -126,7 +128,7 @@ export function pathChapters(lessons: Lesson[]): PathChapter[] {
     chunks.push(lessons.slice(offset + index, offset + index + sizes[index]));
 
   let start = 0;
-  return chunks.map((chunk) => {
+  const chapters = chunks.map((chunk) => {
     const chapter = {
       id: chunk[0].id,
       ...describeChapter(chunk, start),
@@ -134,6 +136,23 @@ export function pathChapters(lessons: Lesson[]): PathChapter[] {
       lessons: chunk,
     };
     start += chunk.length;
+    return chapter;
+  });
+  // A repeated module label is not enough to find the right chapter again.
+  // Use its actual starting topic, without changing prerequisite order or IDs.
+  const counts = new Map<string, number>();
+  for (const chapter of chapters)
+    counts.set(chapter.title, (counts.get(chapter.title) ?? 0) + 1);
+  const titles = new Set<string>();
+  return chapters.map(({ focus, ...chapter }) => {
+    const title =
+      (counts.get(chapter.title) ?? 0) > 1
+        ? `${chapter.title}: ${focus}`
+        : chapter.title;
+    chapter.title = titles.has(title)
+      ? `${title} (lessons ${chapter.start + 1}–${chapter.start + chapter.lessons.length})`
+      : title;
+    titles.add(chapter.title);
     return chapter;
   });
 }

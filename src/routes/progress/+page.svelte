@@ -6,11 +6,20 @@
   import { lessonHref } from "$lib/navigation";
   import type { Progress } from "$lib/model";
   import Icon from "$lib/components/Icon.svelte";
+  import ObjectiveProgress from "$lib/components/ObjectiveProgress.svelte";
+  import { objectiveEvidence } from "$lib/evidence-progress";
   const learner = getLearner();
   const demonstrated = $derived(
     curriculum.objectives.filter(
       (o) => o.scope === "core" && mastered(o, learner.data.attempts),
     ),
+  );
+  const developing = $derived(
+    curriculum.objectives.filter((objective) => {
+      if (objective.scope !== "core") return false;
+      const evidence = objectiveEvidence(objective, learner.data.attempts);
+      return evidence.tried && !evidence.complete;
+    }),
   );
   let incoming = $state.raw<Progress | null>(null);
   let filename = $state("");
@@ -131,7 +140,18 @@
                 >{objective.title}<small>{objective.version}</small></a
               >
             </li>{/each}
-        </ul>{:else}<div class="empty-state">
+        </ul>{:else if learner.data.attempts.length}<div class="empty-state">
+          <Icon name="sprout" size={30} />
+          <h3>You’re building connections.</h3>
+          <p>
+            Your {learner.data.attempts.length} recorded response{learner.data
+              .attempts.length === 1
+              ? ""
+              : "s"} give you feedback to work with. Correct, fresh answers from different
+            checks build the evidence shown below. Hinted and repeated answers remain
+            useful practice.
+          </p>
+        </div>{:else}<div class="empty-state">
           <Icon name="sprout" size={30} />
           <h3>Your first connection starts here.</h3>
           <p>
@@ -142,6 +162,22 @@
             >Choose a learning path <Icon name="arrow" size={16} /></a
           >
         </div>{/if}
+      {#if developing.length}<section aria-label="Ideas in progress">
+          <h3>Ideas taking shape</h3>
+          {#each developing as objective (objective.id)}
+            <article class="developing-idea">
+              <a
+                class="inline-link"
+                href={`${lessonHref(objective.lesson, { kind: "progress" })}&check=1`}
+                >{getLesson(objective.lesson)?.title}<Icon
+                  name="arrow"
+                  size={15}
+                /></a
+              >
+              <ObjectiveProgress {objective} attempts={learner.data.attempts} />
+            </article>
+          {/each}
+        </section>{/if}
       {#if learner.data.lastLesson}<a
           class="resume-link inline-link"
           href={lessonHref(learner.data.lastLesson, { kind: "progress" })}

@@ -187,6 +187,20 @@ export const lessonOriginSchema = z.discriminatedUnion("kind", [
         .string()
         .regex(/^M\d{2}$/)
         .optional(),
+      moduleFilter: z
+        .union([
+          z.string().regex(/^M(?:[0-2]\d|3[0-7])$/),
+          z.enum(["bridges", "advanced"]),
+        ])
+        .optional(),
+      time: z.enum(["up-to-5", "6-to-10", "11-to-20", "over-20"]).optional(),
+      archetype: z
+        .enum(["foundation", "mechanism", "comparison", "project", "perspective"])
+        .optional(),
+      evidence: z
+        .enum(["demonstrated", "not-demonstrated", "practice"])
+        .optional(),
+      page: z.number().int().min(1).max(10000).optional(),
     })
     .strict(),
   z.object({ kind: z.literal("progress") }).strict(),

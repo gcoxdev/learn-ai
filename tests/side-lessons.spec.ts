@@ -180,9 +180,14 @@ test("another tab cannot replace this tab's side-lesson return trail", async ({
     })
     .click();
   await expect(other).toHaveURL(/\/learn\/vectors\/$/);
-  await expect(other.locator("footer").getByRole("link")).toHaveText(
-    "Progress saved in this browser",
-  );
+  await expect(
+    other
+      .locator("footer")
+      .getByRole("link", {
+        name: "Progress saved in this browser",
+        exact: true,
+      }),
+  ).toHaveText("Progress saved in this browser");
   // Reload reads shared progress, but the return trail belongs to this history entry.
   await page.reload();
   await expect(page.locator("main")).toHaveAttribute("aria-busy", "false");

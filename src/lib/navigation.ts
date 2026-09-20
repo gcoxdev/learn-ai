@@ -7,6 +7,7 @@ import {
 } from "./model";
 import { planPath } from "./engine";
 import { recipes } from "./content";
+import { libraryHref, readLibraryState } from "./library-search";
 
 export const defaultOrigin: LessonOrigin = {
   kind: "library",
@@ -22,6 +23,7 @@ export function originFromLocation(url: URL): LessonOrigin | undefined {
   if (path && recipes.some((r) => r.id === path)) return { kind: "path", path };
   if (!/^\/library\/?$/.test(url.pathname)) return;
   const parsed = lessonOriginSchema.safeParse({
+    ...readLibraryState(url.searchParams),
     kind: "library",
     view: url.searchParams.get("view") ?? "lessons",
     query: (url.searchParams.get("q") ?? "").slice(0, 500),
@@ -53,11 +55,8 @@ export function returnDestination(origin: LessonOrigin) {
     return { href: "/progress/", label: "Back to my progress" };
   if (origin.kind === "home")
     return { href: "/", label: "Back to explore paths" };
-  const params = new URLSearchParams();
-  if (origin.view !== "lessons") params.set("view", origin.view);
-  if (origin.query) params.set("q", origin.query);
   return {
-    href: `/library/${params.size ? `?${params}` : ""}${origin.module ? `#${origin.module}` : ""}`,
+    href: libraryHref(origin, origin.module),
     label:
       origin.view === "curriculum"
         ? "Back to the curriculum"

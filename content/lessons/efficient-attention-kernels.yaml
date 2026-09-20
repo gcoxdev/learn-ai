@@ -1,11 +1,11 @@
 schema_version: 0.2-draft
 lesson:
   id: efficient-attention-kernels
-  version: 0.1.0-draft
+  version: 0.2.0-draft
   title: Compute attention with less memory traffic
   state: draft
-  summary: Tiled attention kernels can preserve dense attention mathematics while avoiding a fully stored score
-    matrix; kernel fusion and overlap improve execution without automatically changing asymptotic arithmetic.
+  summary: Compute the same attention result in smaller pieces and see which memory movement the implementation
+    saves.
   slot: M17.7
   category: learning
   sources:
@@ -14,8 +14,8 @@ lesson:
 objectives:
 - id: objective.efficient-attention-kernels
   version: 1-draft
-  statement: Tiled attention kernels can preserve dense attention mathematics while avoiding a fully stored score
-    matrix; kernel fusion and overlap improve execution without automatically changing asymptotic arithmetic.
+  statement: Tiled attention kernels can preserve dense attention mathematics while avoiding a fully stored
+    score matrix; kernel fusion and overlap improve execution without automatically changing asymptotic arithmetic.
   depths:
   - intuition
   - mechanics
@@ -35,12 +35,22 @@ scenes:
   depth: intuition
   objective_refs:
   - objective.efficient-attention-kernels
-  markdown: Dense attention forms scaled query-key scores, applies a mask and softmax, and mixes values. A straightforward
-    implementation stores large intermediate score and probability arrays. Another implementation can calculate
-    the same result, up to floating-point differences, while arranging work in smaller tiles.
-  text_mode: Dense attention forms scaled query-key scores, applies a mask and softmax, and mixes values. A straightforward
-    implementation stores large intermediate score and probability arrays. Another implementation can calculate
-    the same result, up to floating-point differences, while arranging work in smaller tiles.
+  markdown: 'Dense attention forms scaled query-key scores, applies a mask and softmax, and mixes values. A
+    straightforward implementation stores large intermediate score and probability arrays. Another implementation
+    can calculate the same result, up to floating-point differences, while arranging work in smaller tiles.
+
+
+    A **tile** is a small block of an array processed together. Fast on-device working memory is limited, so
+    tiling tries to reuse data there instead of repeatedly reading and writing larger memory. The attention
+    equation can stay the same while the order and location of its calculations change.'
+  text_mode: 'Dense attention forms scaled query-key scores, applies a mask and softmax, and mixes values.
+    A straightforward implementation stores large intermediate score and probability arrays. Another implementation
+    can calculate the same result, up to floating-point differences, while arranging work in smaller tiles.
+
+
+    A **tile** is a small block of an array processed together. Fast on-device working memory is limited, so
+    tiling tries to reuse data there instead of repeatedly reading and writing larger memory. The attention
+    equation can stay the same while the order and location of its calculations change.'
   bridges: []
 - id: efficient-attention-kernels.s2
   title: Normalize across tiles
@@ -48,12 +58,24 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.efficient-attention-kernels
-  markdown: An online softmax maintains a running maximum, normalization sum, and rescaled value accumulator as
-    key tiles arrive. When a new maximum appears, previous totals are rescaled before combining. This allows a query’s
-    normalized weighted sum without keeping every attention probability in expensive external memory.
-  text_mode: An online softmax maintains a running maximum, normalization sum, and rescaled value accumulator as
-    key tiles arrive. When a new maximum appears, previous totals are rescaled before combining. This allows a query’s
-    normalized weighted sum without keeping every attention probability in expensive external memory.
+  markdown: 'An online softmax maintains a running maximum, normalization sum, and rescaled value accumulator
+    as key tiles arrive. When a new maximum appears, previous totals are rescaled before combining. This allows
+    a query’s normalized weighted sum without keeping every attention probability in expensive external memory.
+
+
+    Stable softmax subtracts the largest score before exponentiating. Suppose the first score is 1: its running
+    maximum is 1 and exponential total is 1. A new score of 3 raises the maximum to 3. Rescale the old total
+    by exp(1 − 3) = exp(−2), then add the new contribution 1. The total now represents both scores under the
+    same reference maximum. The value accumulator needs the corresponding rescaling too.'
+  text_mode: 'An online softmax maintains a running maximum, normalization sum, and rescaled value accumulator
+    as key tiles arrive. When a new maximum appears, previous totals are rescaled before combining. This allows
+    a query’s normalized weighted sum without keeping every attention probability in expensive external memory.
+
+
+    Stable softmax subtracts the largest score before exponentiating. Suppose the first score is 1: its running
+    maximum is 1 and exponential total is 1. A new score of 3 raises the maximum to 3. Rescale the old total
+    by exp(1 − 3) = exp(−2), then add the new contribution 1. The total now represents both scores under the
+    same reference maximum. The value accumulator needs the corresponding rescaling too.'
   bridges: []
 - id: efficient-attention-kernels.s3
   title: Save traffic, retain the dense pairs
@@ -61,14 +83,14 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.efficient-attention-kernels
-  markdown: FlashAttention-style methods reduce input/output traffic and intermediate storage through tiling and
-    recomputation. Exact dense attention still considers the permitted query-key pairs, so reducing memory movement
-    does not by itself turn quadratic dense arithmetic into linear attention. Masks and supported shapes constrain
-    kernels.
-  text_mode: FlashAttention-style methods reduce input/output traffic and intermediate storage through tiling and
-    recomputation. Exact dense attention still considers the permitted query-key pairs, so reducing memory movement
-    does not by itself turn quadratic dense arithmetic into linear attention. Masks and supported shapes constrain
-    kernels.
+  markdown: FlashAttention-style methods reduce input/output traffic and intermediate storage through tiling
+    and recomputation. Exact dense attention still considers the permitted query-key pairs, so reducing memory
+    movement does not by itself turn quadratic dense arithmetic into linear attention. Masks and supported
+    shapes constrain kernels.
+  text_mode: FlashAttention-style methods reduce input/output traffic and intermediate storage through tiling
+    and recomputation. Exact dense attention still considers the permitted query-key pairs, so reducing memory
+    movement does not by itself turn quadratic dense arithmetic into linear attention. Masks and supported
+    shapes constrain kernels.
   bridges: []
 - id: efficient-attention-kernels.s4
   title: Fuse and overlap with measurements
@@ -76,12 +98,26 @@ scenes:
   depth: mechanics
   objective_refs:
   - objective.efficient-attention-kernels
-  markdown: Fusing small operations can avoid launches and temporary writes. Overlapping communication with useful
-    computation can hide some transfer time. Both depend on resource availability and scheduling; benchmark numerical
-    agreement, peak memory, and end-to-end runtime rather than extrapolating one kernel’s speedup to the whole model.
-  text_mode: Fusing small operations can avoid launches and temporary writes. Overlapping communication with useful
-    computation can hide some transfer time. Both depend on resource availability and scheduling; benchmark numerical
-    agreement, peak memory, and end-to-end runtime rather than extrapolating one kernel’s speedup to the whole model.
+  markdown: 'Fusing small operations can avoid launches and temporary writes. Overlapping communication with
+    useful computation can hide some transfer time. Both depend on resource availability and scheduling; benchmark
+    numerical agreement, peak memory, and end-to-end runtime rather than extrapolating one kernel’s speedup
+    to the whole model.
+
+
+    **Fusion** combines operations in one routine so intermediate values can stay local. **Asymptotic** growth
+    describes how work scales as the problem grows, such as roughly with context length squared. A smaller
+    memory footprint and lower practical runtime can be major gains even when that pair-count scaling remains
+    quadratic.'
+  text_mode: 'Fusing small operations can avoid launches and temporary writes. Overlapping communication with
+    useful computation can hide some transfer time. Both depend on resource availability and scheduling; benchmark
+    numerical agreement, peak memory, and end-to-end runtime rather than extrapolating one kernel’s speedup
+    to the whole model.
+
+
+    **Fusion** combines operations in one routine so intermediate values can stay local. **Asymptotic** growth
+    describes how work scales as the problem grows, such as roughly with context length squared. A smaller
+    memory footprint and lower practical runtime can be major gains even when that pair-count scaling remains
+    quadratic.'
   bridges: []
 - id: efficient-attention-kernels.check
   title: Review and check your understanding
@@ -91,18 +127,18 @@ scenes:
   - objective.efficient-attention-kernels
   markdown: Apply the mechanism to a fresh example. You can use hints for practice and revisit any explanation.
   text_mode: Untimed questions with labeled controls and answer feedback.
-  takeaway: Tiled attention kernels can preserve dense attention mathematics while avoiding a fully stored score
-    matrix; kernel fusion and overlap improve execution without automatically changing asymptotic arithmetic.
+  takeaway: Tiled attention kernels can preserve dense attention mathematics while avoiding a fully stored
+    score matrix; kernel fusion and overlap improve execution without automatically changing asymptotic arithmetic.
 - id: efficient-attention-kernels.recap
   title: One idea to take with you
   type: recap
   depth: intuition
   objective_refs:
   - objective.efficient-attention-kernels
-  markdown: Tiled attention kernels can preserve dense attention mathematics while avoiding a fully stored score
-    matrix; kernel fusion and overlap improve execution without automatically changing asymptotic arithmetic.
-  text_mode: Tiled attention kernels can preserve dense attention mathematics while avoiding a fully stored score
-    matrix; kernel fusion and overlap improve execution without automatically changing asymptotic arithmetic.
+  markdown: Tiled attention kernels can preserve dense attention mathematics while avoiding a fully stored
+    score matrix; kernel fusion and overlap improve execution without automatically changing asymptotic arithmetic.
+  text_mode: Tiled attention kernels can preserve dense attention mathematics while avoiding a fully stored
+    score matrix; kernel fusion and overlap improve execution without automatically changing asymptotic arithmetic.
 navigation:
   routes:
   - id: route.core

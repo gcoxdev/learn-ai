@@ -5,7 +5,8 @@
   import katex from "katex";
   import { curriculum, getLesson } from "$lib/content";
   import { getLearner } from "$lib/learner.svelte";
-  import { mastered } from "$lib/engine";
+  import { mastered, planPath } from "$lib/engine";
+  import { pathChapters, chapterProgress } from "$lib/path-chapters";
   import {
     defaultOrigin,
     lessonHref,
@@ -19,6 +20,7 @@
   import GradientLab from "./GradientLab.svelte";
   import MechanismLab from "./MechanismLab.svelte";
   import Assessment from "./Assessment.svelte";
+  import LessonTools from "./LessonTools.svelte";
   import AttentionLab from "./AttentionLab.svelte";
   import WeightLab from "./WeightLab.svelte";
   import PixelLab from "./PixelLab.svelte";
@@ -44,6 +46,31 @@
   );
   const current = $derived(scenes[index]);
   const origin = $derived(position.origin ?? defaultOrigin);
+  const pathRecipe = $derived(
+    origin.kind === "path"
+      ? curriculum.recipes.find((r) => r.id === origin.path)
+      : undefined,
+  );
+  const fullPath = $derived(
+    pathRecipe ? planPath(curriculum, pathRecipe, []) : undefined,
+  );
+  const pathGroups = $derived(fullPath ? pathChapters(fullPath.lessons) : []);
+  const chapterIndex = $derived(
+    pathGroups.findIndex((chapter) =>
+      chapter.lessons.some((item) => item.id === lesson.id),
+    ),
+  );
+  const chapter = $derived(pathGroups[chapterIndex]);
+  const chapterEvidence = $derived(
+    chapter && fullPath
+      ? chapterProgress(
+          chapter,
+          curriculum,
+          fullPath.required,
+          learner.data.attempts,
+        )
+      : undefined,
+  );
   const destination = $derived(returnDestination(origin));
   const following = $derived(
     nextLesson(curriculum, lesson, origin, learner.data),
@@ -232,6 +259,27 @@
       ><Icon name="bookmark" size={23} /></button
     >
   </div>
+  {#if pathRecipe && chapter && chapterEvidence}<nav
+      class="lesson-momentum"
+      aria-label="Learning path progress"
+    >
+      <a href={`/paths/${pathRecipe.id}/`}
+        >{pathRecipe.title} · Chapter {chapterIndex + 1} of {pathGroups.length}</a
+      >
+      <span
+        >{chapterEvidence.demonstrated} of {chapterEvidence.total} ideas demonstrated
+        in this chapter</span
+      >
+      <progress
+        max={chapterEvidence.total}
+        value={chapterEvidence.demonstrated}
+        aria-label="Demonstrated ideas in this chapter"
+      ></progress>
+      {#if done}<p>
+          Your earlier checks already demonstrate this idea. That evidence
+          counts across paths; you can revisit the lesson or continue below.
+        </p>{/if}
+    </nav>{/if}
   <div class="lesson-toolbar">
     <div class="segmented" aria-label="Reading mode">
       <button
@@ -344,6 +392,7 @@
             rel="noreferrer">{source.title}<Icon name="external" size={14} /></a
           >{/each}
       </div>
+      <LessonTools {lesson} />
     </div>
     <aside class="lesson-outline">
       <span class="eyebrow">IN THIS LESSON</span>
@@ -603,11 +652,41 @@
                 : origin,
             )}>Next lesson: {following.title}<Icon name="arrow" size={17} /></a
           >{/if}
+        {#if following && !returnTarget && done && origin.kind === "path"}<a
+            class="button secondary"
+            href={`${lessonHref(following.id, origin)}&check=1`}
+            >Check the next idea <Icon name="arrow" size={17} /></a
+          >{/if}
       </div>
     </section>{/if}
 {/snippet}
 
 <style>
+  .lesson-momentum {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+    background: #f2f6eb;
+    border: 1px solid #d5dfcd;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: #344e39;
+  }
+  .lesson-momentum a {
+    font-weight: 600;
+    color: #31543c;
+    text-underline-offset: 3px;
+  }
+  .lesson-momentum progress {
+    width: 100%;
+    height: 0.4rem;
+    accent-color: #427655;
+  }
+  .lesson-momentum p {
+    margin: 0;
+  }
   .side-lesson-trail {
     margin: 0 0 1.4rem;
     padding: 0.9rem 1rem;

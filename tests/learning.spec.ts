@@ -323,6 +323,7 @@ test("mathematics reading checks remain uncredited practice", async ({
 test("backup restores evidence in a clean browser and rejects broken files safely", async ({
   page,
   browser,
+  baseURL,
 }) => {
   await firstLessonMastery(page);
   await ready(page, "/progress/");
@@ -332,9 +333,9 @@ test("backup restores evidence in a clean browser and rejects broken files safel
     .click();
   const path = await (await download).path();
   const backup = await readFile(path!);
-  const context = await browser.newContext();
+  const context = await browser.newContext({ baseURL });
   const fresh = await context.newPage();
-  await ready(fresh, "http://127.0.0.1:4173/progress/");
+  await ready(fresh, "/progress/");
   await fresh.getByLabel("Choose backup file").setInputFiles({
     name: "backup.json",
     mimeType: "application/json",

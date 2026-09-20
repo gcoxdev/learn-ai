@@ -15,6 +15,9 @@ describe("path chapters", () => {
       expect(new Set(chapters.map((chapter) => chapter.id)).size).toBe(
         chapters.length,
       );
+      expect(new Set(chapters.map((chapter) => chapter.title)).size).toBe(
+        chapters.length,
+      );
       let start = 0;
       for (const chapter of chapters) {
         expect(chapter.start).toBe(start);
