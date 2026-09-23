@@ -18,6 +18,20 @@ Keep path IDs stable because saved progress and lesson return destinations use t
 
 Write the summary as an invitation, the objective as an assessable ability, and the closing takeaway as a useful consequence. The final visible page combines takeaway, quiz, and continuation choices. Removed recap IDs remain as aliases so saved positions still open the closing page.
 
+## Prose and lesson flow
+
+Write for an intelligent reader encountering the subject for the first time. Use familiar words without talking down to them. Introduce a technical name or acronym beside its meaning, before relying on it in an explanation. A prerequisite can supply the deeper mathematics; briefly identify what a symbol means in the current calculation.
+
+Give each scene one teaching job. Start with a situation or question, explain the operation, and show what follows. Carry a useful example across scenes so the learner can build on what they just understood. When changing examples, say what changed and why. Place a worked calculation beside the concept it illustrates, rather than attaching an unrelated example to the end of a scene.
+
+Integrate new definitions and worked steps into the explanation. Do not leave an older dense paragraph in place and append an easier version that repeats it afterward. Split a scene when it introduces two substantial mechanisms; preserve existing scene IDs and saved-position compatibility. Use short paragraphs or a small list when the reader needs to compare roles or follow distinct steps.
+
+Keep analogies consistent and limited to the relationship they explain. Prefer a concrete counterexample to repeated abstract cautions. Include qualifications where they change how a learner should interpret or use the idea; avoid interrupting every explanation with unrelated claims about what AI cannot prove. Memory cues are optional and should help recall an already taught mechanism, without forced slogans or new metaphors.
+
+End with one or two useful sentences a learner could explain in their own words. Do not copy the formal objective or list every technical term as the takeaway. Closing instructions should tell learners what to do next; text mode needs the same teaching guidance, not a description of radio buttons or other implementation details. Project checks must remain distinct from review of the project artifact.
+
+Record editorial decisions separately from independent subject review, assessment-bank validation, and learner trials. The [prose and flow review](PROSE_REVIEW.md) records a complete reading pass and its limits; a wording improvement alone does not justify changing evidence standards or declaring a lesson ready for release.
+
 For revised banks, retire old variants and preserve their response contracts for backups. Bump the objective version when its evidence standard changes; do not relabel old responses as proof of the new standard. Supply at least four fresh variants per family in revised foundational banks. Variants within a family must demonstrate equivalent skills: putting a missing step in a retake does not make it required for first-pass mastery. Use numeric input where a calculation is the intended evidence; collect intermediate fields when a final number could hide an error, such as a reversed residual sign or an incorrect negative value before ReLU. Choose distractors reflecting plausible errors, give explanatory feedback, and inspect answer lengths without padding options to hit a statistical target.
 
 Vary correct-option positions independently between question families; a repeated position should not reveal the next answer. Keep option IDs stable for saved response contracts.

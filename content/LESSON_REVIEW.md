@@ -4,6 +4,8 @@
 
 A subsequent [learning-experience follow-up](REVIEW_FOLLOWUP.md) revises fourteen of these assets with additional practice, three visual experiments, and teaching corrections. The snapshot below records the earlier pass, before those follow-up edits.
 
+A later [prose and flow review](PROSE_REVIEW.md) rereads all 335 lessons and records another set of editorial revisions with a separate snapshot. The findings and hashes in this document remain the historical record of the earlier pass.
+
 ## What was examined
 
 The pass read every routed teaching explanation, including optional mathematics where present, with the lesson summary, worked examples, tables/figure descriptions, visible formative prompts, closing takeaway, and source list. The notes below identify the specific review decision for each lesson. This pass was performed by the implementation assistant; it is not an independent human subject review or a learner study.

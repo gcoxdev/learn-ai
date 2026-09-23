@@ -95,15 +95,15 @@ An extension path listed below may reach the lesson through that extension’s p
 | M07.6 | [Choose a boundary with a margin](lessons/support-vector-machines.yaml) | — | prediction |
 | M07.7 | [Control complexity without peeking at the answer](lessons/regularization-and-tuning.yaml) | language, images, video, audio, robotics, vision, agents, retrieval, prediction, forecasting, recommendation, science, multimodal, edge | decisions |
 | M07.8 | [Look inside the average score](lessons/classification-metrics.yaml) | language, images, video, audio, robotics, vision, agents, prediction, recommendation, science | forecasting, edge |
-| M08.1 | [Find groups without assuming the groups are natural kinds](lessons/clustering.yaml) | prediction | — |
+| M08.1 | [Find groups that help with your task](lessons/clustering.yaml) | prediction | — |
 | M08.2 | [Let several hidden sources explain the data](lessons/mixture-models.yaml) | — | prediction |
 | M08.3 | [Compress variation into fewer directions](lessons/pca-and-factorization.yaml) | recommendation, edge | prediction |
-| M08.4 | [Read a map without mistaking it for the territory](lessons/nonlinear-embeddings.yaml) | — | prediction |
-| M08.5 | [Find unusual cases without assuming unusual means wrong](lessons/anomaly-detection.yaml) | prediction | — |
+| M08.4 | [Read a data map with care](lessons/nonlinear-embeddings.yaml) | — | prediction |
+| M08.5 | [Find unusual cases worth investigating](lessons/anomaly-detection.yaml) | prediction | — |
 | M08.6 | [Create a learning task from the data itself](lessons/self-supervised-representations.yaml) | images, video, vision, multimodal | audio, robotics, agents, prediction, science |
 | M08.7 | [Estimate what a person may find useful](lessons/recommendation-models.yaml) | recommendation | — |
 | M08.8 | [Learn from choices that your system helped create](lessons/recommendation-feedback.yaml) | recommendation | — |
-| M09.1 | [Distinguish fitting the sample from learning a useful rule](lessons/generalization.yaml) | language, vision, retrieval, multimodal, edge | images, audio, agents, prediction, science |
+| M09.1 | [Will the model work on new examples?](lessons/generalization.yaml) | language, vision, retrieval, multimodal, edge | images, audio, agents, prediction, science |
 | M09.2 | [Why a simpler model can predict better](lessons/bias-variance.yaml) | language, retrieval, multimodal, edge | images, audio, agents, prediction, science |
 | M09.3 | [What can a learning guarantee actually guarantee?](lessons/learning-theory.yaml) | — | prediction |
 | M09.4 | [Test the rule where conditions change](lessons/robustness-and-shift.yaml) | vision | images, agents, prediction |
@@ -114,9 +114,9 @@ An extension path listed below may reach the lesson through that extension’s p
 | M10.1 | [How does a model improve a prediction?](lessons/learning-update.yaml) | language, images, video, audio, vision, retrieval, science, multimodal, edge | robotics, agents, prediction, forecasting, decisions |
 | M10.2 | [Check a derivative against a small change](lessons/gradient-checks.yaml) | — | language, images |
 | M10.3 | [Learn from a sample of examples at each step](lessons/stochastic-gradients.yaml) | language, images, video, vision, retrieval, multimodal, edge | audio, robotics, agents, prediction, decisions, science |
-| M10.4 | [Remember previous gradients without confusing memory with certainty](lessons/momentum-and-adam.yaml) | language, images, video, vision, retrieval, multimodal, edge | audio, robotics, agents, prediction, decisions, science |
+| M10.4 | [How momentum and Adam use earlier gradients](lessons/momentum-and-adam.yaml) | language, images, video, vision, retrieval, multimodal, edge | audio, robotics, agents, prediction, decisions, science |
 | M10.5 | [Constrain a solution or change the update](lessons/penalties-and-clipping.yaml) | language, images, video, vision, retrieval, multimodal, edge | audio, robotics, agents, prediction, decisions, science |
-| M10.6 | [Read local geometry without imagining a visible map of every weight](lessons/loss-landscapes.yaml) | — | language |
+| M10.6 | [Read the shape of a loss landscape](lessons/loss-landscapes.yaml) | — | language |
 | M10.7 | [Keep signals and gradients in a usable range](lessons/stable-training.yaml) | language, images, video, vision, retrieval, multimodal, edge | audio, robotics, agents, prediction, decisions, science |
 | M10.8 | [Find the first broken assumption in a training run](lessons/training-debugging.yaml) | — | language |
 | M11.1 | [Inside an artificial neuron](lessons/neurons.yaml) | language, images, video, audio, vision, retrieval, science, multimodal, edge | robotics, agents, prediction, forecasting, recommendation, decisions |
@@ -189,13 +189,13 @@ An extension path listed below may reach the lesson through that extension’s p
 | M19.4 | [Represent a sequence through an evolving hidden state](lessons/state-space-sequences.yaml) | — | language, video, audio, robotics, retrieval, forecasting, science, multimodal |
 | M19.5 | [Let the current input control what the state retains](lessons/selective-state-spaces.yaml) | — | language, audio, retrieval, science |
 | M19.6 | [Combine attention, recurrence, and convolution deliberately](lessons/hybrid-sequence-architectures.yaml) | — | language, retrieval, science |
-| M19.7 | [Distinguish accepting a long prompt from using it well](lessons/long-context-capability.yaml) | — | language, retrieval, science |
+| M19.7 | [Can the model use a long prompt?](lessons/long-context-capability.yaml) | — | language, retrieval, science |
 | M19.8 | [Compare sequence architectures with an honest budget](lessons/architecture-tradeoff-study.yaml) | — | language, science |
 | M20.1 | [Track what each adaptation stage changes](lessons/posttraining-stages.yaml) | language, retrieval, multimodal, edge | images, audio, agents, prediction |
 | M20.2 | [Learn response behavior from demonstrations](lessons/supervised-fine-tuning.yaml) | language, multimodal, edge | images, audio, agents, retrieval, prediction |
 | M20.3 | [Adapt a model by learning a smaller parameter update](lessons/low-rank-adaptation.yaml) | — | language |
 | M20.4 | [Learn a scoring signal from response comparisons](lessons/preferences-and-reward-models.yaml) | multimodal, edge | language, images, audio, agents, prediction |
-| M20.5 | [Optimize a language policy against feedback while limiting drift](lessons/rlhf-and-kl-control.yaml) | multimodal | language, images, audio, agents |
+| M20.5 | [Learn from feedback while controlling policy changes](lessons/rlhf-and-kl-control.yaml) | multimodal | language, images, audio, agents |
 | M20.6 | [Train on preference pairs without a separate online reward loop](lessons/direct-preference-optimization.yaml) | multimodal | language, images, audio |
 | M20.7 | [Transfer behavior through teacher outputs and selected examples](lessons/distillation-and-selection.yaml) | multimodal, edge | language, images, audio, prediction |
 | M20.8 | [Measure adaptation gains without overlooking regressions](lessons/posttraining-evaluation.yaml) | multimodal | language, images, audio |
@@ -232,7 +232,7 @@ An extension path listed below may reach the lesson through that extension’s p
 | M24.7 | [Plan with learned dynamics when the full state is hidden](lessons/model-based-and-partially-observed-rl.yaml) | — | robotics, multimodal |
 | M24.8 | [Learn from recorded decisions without assuming safe exploration](lessons/offline-rl-and-imitation.yaml) | — | robotics, multimodal |
 | M25.1 | [Decide where a system follows a workflow and where it chooses actions](lessons/agents-and-workflows.yaml) | agents, retrieval | language, prediction, decisions, edge |
-| M25.2 | [Make actions and observations explicit data contracts](lessons/tool-contracts-and-state.yaml) | agents, retrieval | language, prediction, decisions, edge |
+| M25.2 | [Give tools clear inputs, results, and state](lessons/tool-contracts-and-state.yaml) | agents, retrieval | language, prediction, decisions, edge |
 | M25.3 | [Turn a plan into checked execution with recovery paths](lessons/agent-planning-and-recovery.yaml) | agents | language, retrieval, decisions |
 | M25.4 | [Decide what to retain and what to show the model now](lessons/agent-memory-and-context.yaml) | agents, retrieval | language |
 | M25.5 | [Coordinate several decision-makers without assuming independent judgment](lessons/multi-agent-coordination.yaml) | — | agents, decisions |
