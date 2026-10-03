@@ -1,207 +1,444 @@
 schema_version: 0.2-draft
 lesson:
   id: image-geometry
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: What changes when an image changes?
   state: draft
-  summary: Read an image as a grid of measurements, then distinguish changes in brightness, position, and meaning.
+  summary: Your phone finds every photo of your dog without knowing the word "dog". See the numbers it actually reads, and which ones should change when the photo moves.
   slot: M12.1
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: Dive into Deep Learning — authors’ open textbook
+      url: https://d2l.ai/
+    - title: "Computer Vision: Algorithms and Applications, 2nd edition (Szeliski, 2022)"
+      url: https://szeliski.org/Book/
+    - title: "Distinctive Image Features from Scale-Invariant Keypoints (Lowe, 2004)"
+      url: https://doi.org/10.1023/B:VISI.0000029664.99615.94
 objectives:
-- id: objective.image-geometry
-  version: 1-draft
-  statement: Pixels, color channels, geometry, and local features represent different aspects of an image;
-    invariance assumptions should match the visual task.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - image-geometry.base
-  - image-geometry.transfer
-  prerequisites:
-  - anyOf:
-    - objective.digital-representations
-  - anyOf:
-    - objective.geometry-and-symmetry
+  - id: objective.image-geometry
+    version: 2-draft
+    statement: Pixels, color channels, geometry, and local features represent different aspects of an image; invariance assumptions should match the visual task.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - image-geometry.base.v2
+      - image-geometry.transfer.v2
+      - image-geometry.calculate
+    prerequisites:
+      - anyOf:
+          - objective.digital-representations
+      - anyOf:
+          - objective.geometry-and-symmetry
 scenes:
-- id: image-geometry.s1
-  title: Read the measurements in an image
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.image-geometry
-  markdown: 'A **pixel** is one location in an image grid. A **channel** is one value stored there, such as
-    red, green, or blue intensity. A 2-by-2 RGB image contains 2 × 2 × 3 = 12 channel values.
+  - id: image-geometry.s1
+    title: A photo is three grids of numbers
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.image-geometry
+    markdown: |-
+      Type "dog" into your phone's photo search and there's every picture of Biscuit, your beagle. Nobody tagged those photos. All the phone had was numbers.
 
+      This module follows one photo app through three jobs: **finding pets**, **reading signs**, and **blurring strangers' faces** before you share. Each job needs a different answer from the same numbers.
 
-    Lighting, camera response, compression, and viewpoint all affect those numbers. They describe the recorded
-    picture under a color convention; identifying its objects is another task. A large red-channel value is
-    not itself a label saying “red object.”'
-  text_mode: 'A **pixel** is one location in an image grid. A **channel** is one value stored there, such as
-    red, green, or blue intensity. A 2-by-2 RGB image contains 2 × 2 × 3 = 12 channel values.
+      A 12-megapixel phone photo is 4,000 pixels wide and 3,000 tall. A **pixel** is one cell of that grid. Each pixel stores three numbers, one per **color channel** (red, green, blue), usually from 0 (none) to 255 (full). Here are four pixels from the edge of Biscuit's ear:
 
+      | Pixel (row, column) | Red | Green | Blue | Looks like |
+      | --- | ---: | ---: | ---: | --- |
+      | (1200, 2000) | 150 | 100 | 60 | brown fur |
+      | (1200, 2001) | 148 | 97 | 58 | brown fur |
+      | (1200, 2002) | 235 | 232 | 225 | white wall |
+      | (1200, 2003) | 236 | 233 | 226 | white wall |
 
-    Lighting, camera response, compression, and viewpoint all affect those numbers. They describe the recorded
-    picture under a color convention; identifying its objects is another task. A large red-channel value is
-    not itself a label saying “red object.”'
-  bridges: []
-- id: image-geometry.s2
-  title: Decide what should change with the image
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.image-geometry
-  markdown: 'Brightening an image changes its pixel values without necessarily moving anything. Translating
-    an object shifts its position; rotating it changes its orientation; perspective can change its apparent
-    shape.
+      So the whole photo is a block of numbers with shape **height × width × channels**, written H × W × C: 3,000 × 4,000 × 3 = 36,000,000 numbers. A grid of numbers with several axes like this is called a **tensor**.
 
+      :::predict Pet search shrinks each photo to 224 × 224 pixels before looking at it. How many numbers does the model receive?
+      224 × 224 × 3 = 150,528, about 240 times fewer than the full photo and plenty to spot a beagle. The next lessons ask how many weights a network needs to read it.
+      :::
 
-    Which changes should affect the answer? A cat shifted to the right should still be called “cat”: the label
-    should be **invariant** to that shift. Its predicted box should move right with it: the location should
-    be **equivariant**. The property you want depends on the output your task requires.'
-  text_mode: 'Brightening an image changes its pixel values without necessarily moving anything. Translating
-    an object shifts its position; rotating it changes its orientation; perspective can change its apparent
-    shape.
+      These numbers record light, not meaning: the same brown fur can read 150 in the sun and 60 in the shade.
+    bridges: []
+  - id: image-geometry.s2
+    title: Move the photo, and ask which answers move
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.image-geometry
+    markdown: |-
+      In a 400-pixel-wide photo, Biscuit sits in the box $(x_1, y_1, x_2, y_2) = (100, 80, 220, 200)$: left, top, right, and bottom edges, in pixels from the top-left corner. Shift the whole picture 30 pixels right.
 
+      - The pet search answer should still be "dog". An output that stays the same when the input is transformed is **invariant** to that transformation.
+      - The box should move with Biscuit, to $(130, 80, 250, 200)$. An output that changes *in step with* the input is **equivariant**.
 
-    Which changes should affect the answer? A cat shifted to the right should still be called “cat”: the label
-    should be **invariant** to that shift. Its predicted box should move right with it: the location should
-    be **equivariant**. The property you want depends on the output your task requires.'
-  bridges:
-  - geometry-and-symmetry
-- id: image-geometry.s3
-  title: Use a local visual cue
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.image-geometry
-  markdown: 'A simple horizontal difference compares neighboring pixel intensities. Values [2, 2, 8, 8] have
-    a large change between the middle entries, suggesting an edge. Gradients, corners, and texture descriptors
-    can support classical vision methods. An intensity edge can also come from a shadow rather than an object
-    boundary.
+      Which one you want depends on the job:
 
+      | Change to the photo | Pet search ("dog?") | Face box for blurring | Sign reading |
+      | --- | --- | --- | --- |
+      | Shift 30 px right | same | moves 30 px right | same text |
+      | Flip left–right | same | mirrors across the photo | mirror writing: wrong |
+      | Brighten every pixel | same | same | same text |
+      | Rotate 180° | same | rotates with the face | upside-down: harder |
 
-    Neighbor differences for [2, 2, 8, 8] are 0, 6, and 0. The middle change is a local cue. Try adding 3 to
-    every input: [5, 5, 11, 11] gives the same differences. This small calculation separates an overall brightness
-    change from a change in this particular edge signal.'
-  text_mode: 'A simple horizontal difference compares neighboring pixel intensities. Values [2, 2, 8, 8] have
-    a large change between the middle entries, suggesting an edge. Gradients, corners, and texture descriptors
-    can support classical vision methods. An intensity edge can also come from a shadow rather than an object
-    boundary.
+      :::papers Invariance and equivariance as equations
+      Write the model as $f$ and an image transformation (shift, flip, rotation) as $T$.
 
+      $$\text{invariant: } f(T(x)) = f(x) \qquad \text{equivariant: } f(T(x)) = T'(f(x))$$
 
-    Neighbor differences for [2, 2, 8, 8] are 0, 6, and 0. The middle change is a local cue. Try adding 3 to
-    every input: [5, 5, 11, 11] gives the same differences. This small calculation separates an overall brightness
-    change from a change in this particular edge signal.'
-  bridges: []
-- id: image-geometry.s4
-  title: Connect representation to the task
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.image-geometry
-  markdown: Detection, recognition, tracking, and measurement require different outputs and tolerances. Preserve
-    coordinate conventions and transformations in labels when resizing or cropping. A preprocessing choice
-    can change the task, especially when small objects or fine texture are essential.
-  text_mode: Detection, recognition, tracking, and measurement require different outputs and tolerances. Preserve
-    coordinate conventions and transformations in labels when resizing or cropping. A preprocessing choice
-    can change the task, especially when small objects or fine texture are essential.
-  bridges: []
-- id: image-geometry.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.image-geometry
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: An image transformation can change measurements, positions, or both. Decide which changes should
-    leave your answer alone and which should move the answer with the object.
-- id: image-geometry.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.image-geometry
-  markdown: An image transformation can change measurements, positions, or both. Decide which changes should
-    leave your answer alone and which should move the answer with the object.
-  text_mode: An image transformation can change measurements, positions, or both. Decide which changes should
-    leave your answer alone and which should move the answer with the object.
+      $T'$ is the matching change to the output: for the 30-pixel shift, it adds 30 to $x_1$ and $x_2$.
+      :::
+
+      :::predict The same 400-pixel-wide photo is flipped left to right. Where does the box (100, 80, 220, 200) go?
+      A point at $x$ lands at $400 - x$, so the old right edge becomes the new left edge: $400 - 220 = 180$, and $400 - 100 = 300$. The new box is $(180, 80, 300, 200)$; $y$ values don't change.
+      :::
+
+      :::mixup "Flipping the training photos is always a free way to get more data."
+      Flipping is a fine **augmentation** (a changed copy of a training photo that keeps its label) for pet search, because a mirrored beagle is still a beagle. For sign reading it's harmful: a mirrored "b" becomes "d". Add a change only if your task's answer ignores it, or if you change the label to match, as you would move a box.
+      :::
+    bridges:
+      - geometry-and-symmetry
+  - id: image-geometry.s3
+    title: An edge is a jump between neighbors
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.image-geometry
+    markdown: |-
+      The simplest clue to where things begin and end is a jump in brightness between neighbors. Take one row of a gray image where dark fur meets a bright wall: [2, 2, 8, 8]. Subtract each pixel from its right-hand neighbor: 2 − 2 = 0, 8 − 2 = 6, 8 − 8 = 0. The differences [0, 6, 0] point to an **edge** between the second and third pixels.
+
+      Brighten the whole photo by adding 3 to every pixel: [5, 5, 11, 11]. The differences are still [0, 6, 0]. The edge signal is invariant to brightness, because the added 3 cancels in every subtraction. Double the contrast instead and the differences double too, to [0, 12, 0].
+
+      ```python run
+      import numpy as np
+
+      photo = np.zeros((300, 400, 3), dtype=np.uint8)   # H x W x C
+      print("photo shape:", photo.shape, "->", photo.size, "numbers")
+
+      # A tiny grayscale strip: dark fur on the left, bright wall on the right.
+      img = np.array([[2, 2, 8, 8],
+                      [2, 2, 8, 8],
+                      [2, 2, 8, 8]])
+
+      def edges(a):
+          """Difference between each pixel and its right-hand neighbor."""
+          return a[:, 1:] - a[:, :-1]
+
+      print("differences:           ", edges(img)[0])
+      print("brighter (+3):         ", edges(img + 3)[0])
+      print("more contrast (x2):    ", edges(img * 2)[0])
+
+      # Biscuit's box in the 400-wide photo: (x1, y1, x2, y2)
+      W = photo.shape[1]
+      x1, y1, x2, y2 = 100, 80, 220, 200
+      print("box shifted 30 px right:", (x1 + 30, y1, x2 + 30, y2))
+      print("box flipped left-right: ", (W - x2, y1, W - x1, y2))
+      ```
+
+      Try swapping the 2s and 8s in `img`: the difference turns negative, giving the edge's direction as well as its strength.
+
+      For decades, vision systems were built on hand-designed clues like this. SIFT (Lowe, 2004) used brightness differences at several scales to find distinctive points, so the same building corner could be matched across two photos. From 2012 on, convolutional networks took over by *learning* their own difference patterns; the next lesson shows how. One caution: a shadow on a lawn makes the same jump as a dog's outline, so test edge clues on shadowed photos too.
+    bridges: []
+  - id: image-geometry.s4
+    title: Resize the photo, resize the labels
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.image-geometry
+    markdown: |-
+      The photo app runs its models on a 400 × 300 copy of the 4,000 × 3,000 photo, which scales every coordinate by 0.1. That one choice affects each job differently.
+
+      - **Faces.** The face finder spots a stranger at $(120, 80, 160, 130)$ in the small copy. To blur the *original*, scale the box back up by 10: $(1200, 800, 1600, 1300)$. Skip that, and the blur lands on a small patch near the top-left corner.
+      - **Signs.** Letters 40 pixels tall become 4 pixels tall, too small to read, so the sign reader crops the sign from the full-resolution photo.
+      - **Pets.** A beagle is still recognizable at 400 × 300, so pet search can use the small copy directly.
+
+      Decide the input size per job, and move every label (box, point, or mask) through the same resize, crop, or flip you apply to the pixels.
+    diagram:
+      caption: One photo, three jobs. Each job needs its own input size and its own kind of answer.
+      description: The phone photo (3,000 × 4,000 × 3 numbers) is resized by 0.1 into a small copy. The small copy feeds pet search, whose label is invariant to shifts, and the face finder, whose boxes move with each face. The face boxes are scaled back up by 10 so the blur is drawn on the full photo. Separately, the full photo is cropped at full resolution for the sign reader, because text must stay readable and is not invariant to flips.
+      nodes:
+        - id: photo
+          label: Phone photo
+          note: 3,000 × 4,000 × 3
+          col: 0
+          row: 1
+          tone: data
+        - id: small
+          label: Small copy
+          note: 300 × 400 × 3
+          col: 1
+          row: 0
+          tone: data
+        - id: pets
+          label: Pet search
+          note: label stays "dog"
+          col: 2
+          row: 0
+          tone: accent
+        - id: faces
+          label: Face finder
+          note: boxes move with faces
+          col: 2
+          row: 1
+          tone: accent
+        - id: blur
+          label: Blur full photo
+          note: boxes scaled back ×10
+          col: 3
+          row: 1
+          tone: warn
+        - id: crop
+          label: Full-size crop
+          note: letters stay readable
+          col: 1
+          row: 2
+          tone: data
+        - id: signs
+          label: Sign reader
+          note: text can't be flipped
+          col: 2
+          row: 2
+          tone: accent
+      edges:
+        - from: photo
+          to: small
+          label: resize × 0.1
+        - from: small
+          to: pets
+        - from: small
+          to: faces
+        - from: faces
+          to: blur
+          label: × 10
+        - from: photo
+          to: crop
+        - from: crop
+          to: signs
+  - id: image-geometry.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.image-geometry
+    markdown: A receipt scanner, a satellite map, a chest X-ray, and a wildlife camera test whether you can tell which answers should stay put and which should move with the picture.
+    takeaway: |-
+      An image is a grid of light measurements. Decide which changes your answer should ignore (invariance) and which it should follow (equivariance), and move every label through the same resize, crop, or flip as the pixels.
+  - id: image-geometry.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.image-geometry
+    markdown: |-
+      An image transformation can change measurements, positions, or both. Decide which changes should leave your answer alone and which should move the answer with the object.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - image-geometry.s1
-    - image-geometry.s2
-    - image-geometry.s3
-    - image-geometry.s4
-    - image-geometry.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - image-geometry.s1
+        - image-geometry.s2
+        - image-geometry.s3
+        - image-geometry.s4
+        - image-geometry.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     image-geometry.recap: image-geometry.check
 assessment_families:
-- id: image-geometry.base
-  objective_ref: objective.image-geometry
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Separate appearance from geometry: trace the inputs, operation, and result before choosing.'
-  remediation_scene: image-geometry.s2
-  variants:
-  - id: image-geometry.base.1
-    prompt: A large neighboring intensity change can indicate what?
-    options:
-    - id: a
-      text: An edge-like visual feature
-    - id: b
-      text: A guaranteed object boundary
-    - id: c
-      text: A complete semantic description
-    answer: a
-    feedback: Intensity discontinuities can arise from several physical causes.
-  - id: image-geometry.base.2
-    prompt: A detector’s coordinates should shift when the image shifts. Which relationship is desired?
-    options:
-    - id: b
-      text: An unchanged coordinate vector
-    - id: c
-      text: No defined geometry
-    - id: a
-      text: Equivariance
-    answer: a
-    feedback: The output location should transform with the input.
-- id: image-geometry.transfer
-  objective_ref: objective.image-geometry
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Connect representation to the task: trace the inputs, operation, and result before choosing.'
-  remediation_scene: image-geometry.s4
-  variants:
-  - id: image-geometry.transfer.1
-    prompt: A crop removes a small target object but keeps its label. What went wrong?
-    options:
-    - id: b
-      text: The array lost all numeric values
-    - id: c
-      text: The optimizer must be changed first
-    - id: a
-      text: The transformation invalidated the target
-    answer: a
-    feedback: Label validity must be preserved or updated during image transformations.
-  - id: image-geometry.transfer.2
-    prompt: A shadow creates a strong edge. Does the edge alone prove two objects meet there?
-    options:
-    - id: c
-      text: Only in RGB images
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Local visual features need contextual interpretation.
+  - id: image-geometry.base
+    objective_ref: objective.image-geometry
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Separate appearance from geometry: trace the inputs, operation, and result before choosing.'
+    remediation_scene: image-geometry.s2
+    variants:
+      - id: image-geometry.base.1
+        prompt: A large neighboring intensity change can indicate what?
+        options:
+          - id: a
+            text: An edge-like visual feature
+          - id: b
+            text: A guaranteed object boundary
+          - id: c
+            text: A complete semantic description
+        answer: a
+        feedback: Intensity discontinuities can arise from several physical causes.
+        retired: true
+      - id: image-geometry.base.2
+        prompt: A detector’s coordinates should shift when the image shifts. Which relationship is desired?
+        options:
+          - id: b
+            text: An unchanged coordinate vector
+          - id: c
+            text: No defined geometry
+          - id: a
+            text: Equivariance
+        answer: a
+        feedback: The output location should transform with the input.
+        retired: true
+  - id: image-geometry.transfer
+    objective_ref: objective.image-geometry
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Connect representation to the task: trace the inputs, operation, and result before choosing.'
+    remediation_scene: image-geometry.s4
+    variants:
+      - id: image-geometry.transfer.1
+        prompt: A crop removes a small target object but keeps its label. What went wrong?
+        options:
+          - id: b
+            text: The array lost all numeric values
+          - id: c
+            text: The optimizer must be changed first
+          - id: a
+            text: The transformation invalidated the target
+        answer: a
+        feedback: Label validity must be preserved or updated during image transformations.
+        retired: true
+      - id: image-geometry.transfer.2
+        prompt: A shadow creates a strong edge. Does the edge alone prove two objects meet there?
+        options:
+          - id: c
+            text: Only in RGB images
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Local visual features need contextual interpretation.
+        retired: true
+  - id: image-geometry.base.v2
+    objective_ref: objective.image-geometry
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask what the job's answer is (a label, a location, or text), then check whether that answer should stay put or move when the picture changes.
+    remediation_scene: image-geometry.s2
+    variants:
+      - id: image-geometry.base.v2.1
+        prompt: The photo app shifts a picture 50 pixels to the left before running the face finder. What should happen to the box around a stranger's face?
+        options:
+          - id: b
+            text: It should keep its old coordinates, since it is the same face
+          - id: c
+            text: It should grow by 50 pixels to cover the old and new positions
+          - id: a
+            text: It should move 50 pixels to the left along with the face
+        answer: a
+        feedback: A location output should be equivariant, changing in step with the image. Keeping the old coordinates is the invariance idea applied to the wrong kind of output; the label "face" is what stays the same.
+      - id: image-geometry.base.v2.2
+        prompt: A gray row reads [10, 10, 40, 40]. Every pixel is brightened by 20. What happens to the neighbor differences?
+        options:
+          - id: a
+            text: They stay [0, 30, 0], because the added 20 cancels
+          - id: c
+            text: They become [20, 50, 20], because each pixel rose by 20
+          - id: b
+            text: They become [0, 60, 0], because the image got brighter
+        answer: a
+        feedback: Each difference subtracts two pixels that both rose by 20, so the 20 cancels. Adding 20 to the differences themselves forgets that subtraction; doubling would come from doubling the contrast, not from adding a constant.
+      - id: image-geometry.base.v2.3
+        prompt: A NumPy photo has shape (300, 400, 3). What do the three numbers mean?
+        options:
+          - id: c
+            text: 300 pixels wide, 400 pixels tall, and 3 bytes per pixel
+          - id: a
+            text: 300 rows tall, 400 columns wide, and 3 color channels
+          - id: b
+            text: 300 red values, 400 green values, and 3 blue values
+        answer: a
+        feedback: The usual order is height × width × channels, so this photo is 300 rows by 400 columns, with red, green, and blue at each pixel. Reading the first number as width swaps the two spatial axes, a common source of sideways boxes.
+      - id: image-geometry.base.v2.4
+        prompt: Pet search should answer "dog" whether Biscuit is on the left or the right of the photo. Which property does that describe?
+        options:
+          - id: b
+            text: Equivariance, since the dog's position changes in the photo
+          - id: a
+            text: Invariance, since the answer stays the same when the dog moves
+          - id: c
+            text: Calibration, since the model is equally confident on both sides
+        answer: a
+        feedback: The output (the label) doesn't change when the input shifts, so it is invariant. Equivariance would describe an output, such as a box, that moves along with the dog.
+  - id: image-geometry.transfer.v2
+    objective_ref: objective.image-geometry
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Imagine applying the change to one real example. Would the correct answer stay the same, move with the picture, or become a different answer?
+    remediation_scene: image-geometry.s4
+    variants:
+      - id: image-geometry.transfer.v2.1
+        prompt: A receipt-scanning app wants extra training images. Which augmentation keeps the correct answer (the printed text) unchanged?
+        options:
+          - id: a
+            text: Slightly brightening or darkening each receipt photo
+          - id: b
+            text: Flipping each receipt photo left to right
+          - id: c
+            text: Rotating each receipt photo upside down, with no label change
+        answer: a
+        feedback: Reading text is invariant to a modest brightness change. A flip turns the text into mirror writing, and an upside-down receipt no longer matches its label unless the reader is also taught that orientation.
+      - id: image-geometry.transfer.v2.2
+        prompt: A model labels buildings in satellite photos taken straight down. The team debates rotating training images by 90°. What is the best argument?
+        options:
+          - id: c
+            text: Avoid it, because rotation spoils labels as it does for street signs
+          - id: b
+            text: Avoid it, because rotated photos change every pixel value
+          - id: a
+            text: Use it, because an overhead view has no fixed "up" for buildings
+        answer: a
+        feedback: Seen from above, a building is still a building at any rotation, so the label is invariant to it. Street signs are different because text has an up direction; changing pixel values is what every augmentation does.
+      - id: image-geometry.transfer.v2.3
+        prompt: A chest X-ray model must report whether a problem is in the left or the right lung. How should the team use left–right flips for augmentation?
+        options:
+          - id: b
+            text: Flip freely, since the lungs and the problem stay visible
+          - id: a
+            text: Flip, and switch each flipped image's label between left and right
+          - id: c
+            text: Flip freely, since chest images are symmetric left to right
+        answer: a
+        feedback: The answer itself is a side, so it changes with the flip and the label must be updated, the way a box would be. Keeping the old label teaches the wrong side, and the chest isn't truly symmetric (the heart sits to one side).
+      - id: image-geometry.transfer.v2.4
+        prompt: A wildlife camera saves 1920 × 1080 images, and a bird detector runs on a 480 × 270 copy. It finds a bird at (100, 50, 120, 70) in the copy. Where should the app draw the box on the original?
+        options:
+          - id: c
+            text: (100, 50, 120, 70), since the bird is the same bird
+          - id: b
+            text: (25, 12.5, 30, 17.5), dividing each coordinate by 4
+          - id: a
+            text: (400, 200, 480, 280), multiplying each coordinate by 4
+        answer: a
+        feedback: The copy is 4 times smaller in each direction (1920 / 480 = 4), so coordinates grow by 4 on the way back. Dividing applies the resize a second time instead of undoing it.
+  - id: image-geometry.calculate
+    objective_ref: objective.image-geometry
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Write the rule for the change first. A shift adds the same amount to x₁ and x₂, a left–right flip sends x to W − x (and swaps which edge is which), and a resize multiplies by the scale factor.
+    remediation_scene: image-geometry.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: image-geometry.calculate.1
+        prompt: A photo is 600 pixels wide. A face box spans x₁ = 150 to x₂ = 250. After a left–right flip, what is the new left edge x₁?
+        answer: 350
+        feedback: The old right edge becomes the new left edge, 600 − 250 = 350. (The new right edge is 600 − 150 = 450.)
+      - id: image-geometry.calculate.2
+        prompt: A pet box has x₁ = 40 and x₂ = 140. The whole photo is shifted 25 pixels to the right. What is the new x₂?
+        answer: 165
+        feedback: A shift adds the same amount to every horizontal coordinate, 140 + 25 = 165.
+      - id: image-geometry.calculate.3
+        prompt: A 4000 × 3000 photo is shrunk to 500 × 375 for the face finder, which reports a face with x₁ = 90 in the small copy. What is x₁ in the original photo?
+        answer: 720
+        feedback: The scale factor is 500 / 4000 = 0.125, so going back multiplies by 8, giving 90 × 8 = 720.
+      - id: image-geometry.calculate.4
+        prompt: A photo is 800 pixels wide. A sign's box spans x₁ = 500 to x₂ = 700. After a left–right flip, what is the new right edge x₂?
+        answer: 300
+        feedback: The old left edge becomes the new right edge, 800 − 500 = 300. (The new left edge is 800 − 700 = 100.)
+      - id: image-geometry.calculate.5
+        prompt: How many numbers does one 1080 × 1920 RGB video frame hold (height × width × channels)?
+        answer: 6220800
+        feedback: 1080 × 1920 = 2,073,600 pixels, times 3 channels = 6,220,800 numbers.

@@ -8,7 +8,7 @@ function verify(slug: string, family: string, rows: Record<string, number>[]) {
     const q = lesson.questions.find(
       (q) => q.id === `${slug}.${family}.v2.${i + 1}`,
     )!;
-    expect(q.retired).not.toBe(true);
+    // Retired variants keep grading exactly as before so saved answers stay valid.
     const responses = { choice: String(q.answers.choice) };
     for (const [field, value] of Object.entries(expected)) {
       expect(q.answers[field]).toBeCloseTo(value, 6);
@@ -24,6 +24,19 @@ function verify(slug: string, family: string, rows: Record<string, number>[]) {
     }
     const wrongReason = q.options.find((o) => o.id !== q.answers.choice)!;
     expect(grade(q, { ...responses, choice: wrongReason.id })).toBe(false);
+  }
+  // Every active calculation still requires each intermediate value.
+  const active = lesson.questions.filter(
+    (q) => !q.retired && q.kind === "structured",
+  );
+  for (const q of active) {
+    const responses: Record<string, string> = {
+      choice: String(q.answers.choice),
+    };
+    for (const f of q.fields) responses[f.id] = String(q.answers[f.id]);
+    expect(grade(q, responses)).toBe(true);
+    for (const f of q.fields)
+      expect(grade(q, { ...responses, [f.id]: "" })).toBe(false);
   }
 }
 

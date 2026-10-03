@@ -1,205 +1,410 @@
 schema_version: 0.2-draft
 lesson:
   id: reasoning-distillation-and-cost
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Transfer reasoning behavior and compare its operating cost
   state: draft
-  summary: Transfer selected solution behavior to a smaller model and compare the cost of a useful completed
-    answer.
+  summary: A 32-billion-parameter model copied a bigger model's worked solutions and beat the same model trained with RL by 25 points. When is distillation worth it, and what does a solved problem really cost?
   slot: M21.8
   category: learning
   sources:
-  - title: DeepSeek-R1
-    url: https://arxiv.org/abs/2501.12948
-  - title: Distilling Step-by-Step
-    url: https://arxiv.org/abs/2305.02301
+    - title: "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning (DeepSeek-AI, 2025), sections 2.4 and 4.1"
+      url: https://arxiv.org/abs/2501.12948
+    - title: "Distilling Step-by-Step! Outperforming Larger Language Models with Less Training Data and Smaller Model Sizes (Hsieh et al., 2023)"
+      url: https://arxiv.org/abs/2305.02301
+    - title: "s1: Simple test-time scaling (Muennighoff et al., 2025)"
+      url: https://arxiv.org/abs/2501.19393
 objectives:
-- id: objective.reasoning-distillation-and-cost
-  version: 1-draft
-  statement: Reasoning distillation trains students on selected teacher behavior; compare accuracy, explanation
-    quality, output length, latency, and training provenance at matched budgets.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - reasoning-distillation-and-cost.base
-  - reasoning-distillation-and-cost.transfer
-  prerequisites:
-  - anyOf:
-    - objective.distillation-and-selection
-  - anyOf:
-    - objective.reasoning-with-tools-and-budgets
-  - anyOf:
-    - objective.posttraining-evaluation
+  - id: objective.reasoning-distillation-and-cost
+    version: 2-draft
+    statement: Reasoning distillation trains students on selected teacher behavior; compare accuracy, explanation quality, output length, latency, and training provenance at matched budgets.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - reasoning-distillation-and-cost.base.v2
+      - reasoning-distillation-and-cost.transfer.v2
+      - reasoning-distillation-and-cost.calculate
+    prerequisites:
+      - anyOf:
+          - objective.distillation-and-selection
+      - anyOf:
+          - objective.reasoning-with-tools-and-budgets
+      - anyOf:
+          - objective.posttraining-evaluation
 scenes:
-- id: reasoning-distillation-and-cost.s1
-  title: Build a supervised transfer dataset
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.reasoning-distillation-and-cost
-  markdown: 'A teacher can generate problem solutions that are filtered for correctness and presentation before
-    student training. Record whether targets contain full traces, concise answers, tool results, or probability
-    distributions. These choices transfer different signals and can change how much the student generates at
-    inference.
+  - id: reasoning-distillation-and-cost.s1
+    title: A big model's homework, a small model's lesson
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.reasoning-distillation-and-cost
+    markdown: |-
+      Your maths-help service runs on a large reasoning model. It's good, but every answer involves thousands of thinking tokens on expensive hardware, and the bills are growing faster than your users. Could a small model do the job?
 
+      The recipe is the distillation lesson from the post-training module, applied to reasoning traces. The large **teacher** writes worked solutions to many problems. A verifier keeps the correct ones, the same generate-and-filter step. Then a small **student** is fine-tuned on them with ordinary SFT. The student learns to produce the teacher's kind of reasoning without ever going through RL.
 
-    For example, a teacher generates ten solutions, a checker retains four and a student learns from those
-    four. The resulting dataset contains successful selected examples. It does not mean the teacher—or the
-    student—solves 100% of fresh problems. Keep the rejected count and selection rule with the dataset description.'
-  text_mode: 'A teacher can generate problem solutions that are filtered for correctness and presentation before
-    student training. Record whether targets contain full traces, concise answers, tool results, or probability
-    distributions. These choices transfer different signals and can change how much the student generates at
-    inference.
+      DeepSeek did exactly this with R1 in January 2025. They curated about 800,000 samples with R1, mostly reasoning traces plus some general data, and fine-tuned six open models from 1.5 to 70 billion parameters (Qwen2.5 and Llama bases) on them. The students got SFT only, no RL stage.
+    diagram:
+      caption: Distilling reasoning. The teacher's filtered traces become the student's supervised training data.
+      description: A set of problems goes to the teacher model, which writes several solutions per problem. A verifier keeps the correct solutions, which form the training traces. The student model is fine-tuned on these traces with SFT. The student is then evaluated on fresh problems that the teacher never wrote solutions for.
+      nodes:
+        - id: problems
+          label: Training problems
+          col: 0
+          row: 0
+          tone: data
+        - id: teacher
+          label: Teacher writes solutions
+          note: large reasoning model
+          col: 1
+          row: 0
+          tone: muted
+        - id: filter
+          label: Verifier keeps correct ones
+          col: 2
+          row: 0
+          tone: warn
+        - id: traces
+          label: Training traces
+          note: e.g. about 800k for R1's students
+          col: 3
+          row: 0
+          tone: data
+        - id: student
+          label: Student fine-tuned (SFT)
+          note: small model, no RL needed
+          col: 3
+          row: 1
+          tone: accent
+        - id: evaluate
+          label: Evaluate on fresh problems
+          note: none written by the teacher
+          col: 2
+          row: 1
+      edges:
+        - from: problems
+          to: teacher
+        - from: teacher
+          to: filter
+        - from: filter
+          to: traces
+        - from: traces
+          to: student
+          label: SFT
+        - from: student
+          to: evaluate
+    bridges: []
+  - id: reasoning-distillation-and-cost.s2
+    title: Why not run RL on the small model directly?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reasoning-distillation-and-cost
+    markdown: |-
+      The DeepSeek team asked that too. They ran large-scale RL on Qwen2.5-32B-Base for over 10,000 steps, the R1-Zero recipe, and compared it with the same base model distilled from R1:
 
+      | Qwen2.5-32B, trained by | AIME 2024 (one attempt) | MATH-500 |
+      | --- | ---: | ---: |
+      | Large-scale RL on its own | 47.0% | 91.6% |
+      | SFT on R1's traces (distillation) | 72.6% | 94.3% |
 
-    For example, a teacher generates ten solutions, a checker retains four and a student learns from those
-    four. The resulting dataset contains successful selected examples. It does not mean the teacher—or the
-    student—solves 100% of fresh problems. Keep the rejected count and selection rule with the dataset description.'
-  bridges: []
-- id: reasoning-distillation-and-cost.s2
-  title: Capacity and architecture still matter
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reasoning-distillation-and-cost
-  markdown: A smaller student does not become a copy of every teacher capability. It may learn frequent solution
-    patterns yet fail on novel compositions, rare knowledge, or very long contexts. Different tokenizers and
-    architectures also change the cost of reproducing a teacher’s response style.
-  text_mode: A smaller student does not become a copy of every teacher capability. It may learn frequent solution
-    patterns yet fail on novel compositions, rare knowledge, or very long contexts. Different tokenizers and
-    architectures also change the cost of reproducing a teacher’s response style.
-  bridges: []
-- id: reasoning-distillation-and-cost.s3
-  title: Compare equal useful budgets
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reasoning-distillation-and-cost
-  markdown: 'Suppose a student answers correctly more often only when allowed ten times as many generated tokens.
-    That may still be useful, but it is a different operating point. Measure accuracy against total latency
-    or cost, including verification and discarded samples, rather than reporting quality without its resource
-    conditions.
+      Distillation won by more than 25 points on AIME, for far less compute. The team concluded that reasoning patterns found by a larger model transfer well to a smaller one, while a small model relying on RL alone needs enormous compute and may still fall short. Pushing past the frontier, they added, may still need bigger base models and more RL.
 
+      Two earlier results point the same way. **Distilling step-by-step** (Hsieh et al., 2023) trained small models to predict both the answer and the teacher's rationale; a 770-million-parameter T5 outperformed few-shot-prompted 540-billion-parameter PaLM on one benchmark, using 80% of the available data. And s1 (Muennighoff et al., 2025) fine-tuned a 32B model on just 1,000 carefully chosen reasoning traces.
 
-    Imagine one model needs 100 tokens at 20 tokens per second and another needs 300 at 60 per second. Their
-    output-generation times are both about 5 seconds before prompt processing and checks. A faster token rate
-    is not automatically a faster useful answer. Compare total time and correctness on the same requests.'
-  text_mode: 'Suppose a student answers correctly more often only when allowed ten times as many generated
-    tokens. That may still be useful, but it is a different operating point. Measure accuracy against total
-    latency or cost, including verification and discarded samples, rather than reporting quality without its
-    resource conditions.
+      :::mixup "The student becomes a smaller copy of the teacher."
+      It learns to imitate the teacher's *outputs on the training problems*. A smaller network holds less knowledge, so it tends to do well on problems like the ones it saw and worse on unfamiliar kinds. It also copies the teacher's systematic mistakes, since those were in the traces the verifier let through. And it inherits nothing of the teacher's architecture: R1's students are ordinary dense Qwen and Llama models.
+      :::
+    bridges: []
+  - id: reasoning-distillation-and-cost.s3
+    title: What does a solved problem cost?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reasoning-distillation-and-cost
+    markdown: |-
+      As in the last lesson, compare **cost per solved problem**: the cost of an attempt divided by its success rate. The prices below are made up but realistically proportioned. Suppose the student writes *longer* traces than its teacher, 4,000 tokens to 3,000: imitating long reasoning doesn't mean imitating it efficiently.
 
+      ```python run
+      # Made-up prices: dollars per million generated tokens
+      options = {
+          # name: (price per million, tokens per attempt, attempts, success rate)
+          "teacher":              (8.00, 3000, 1, 0.80),
+          "student":              (0.40, 4000, 1, 0.65),
+          "student, best of 4":   (0.40, 4000, 4, 1 - (1 - 0.65) ** 4),  # needs a checker
+      }
+      per_solved = {}
+      for name, (price, tokens, attempts, success) in options.items():
+          cost = price / 1e6 * tokens * attempts
+          per_solved[name] = cost / success
+          print(f"{name:19}: ${cost:.4f} per try, success {success:.3f}, ${per_solved[name]:.4f} per solved problem")
 
-    Imagine one model needs 100 tokens at 20 tokens per second and another needs 300 at 60 per second. Their
-    output-generation times are both about 5 seconds before prompt processing and checks. A faster token rate
-    is not automatically a faster useful answer. Compare total time and correctness on the same requests.'
-  bridges: []
-- id: reasoning-distillation-and-cost.s4
-  title: Preserve independent evidence
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reasoning-distillation-and-cost
-  markdown: Avoid evaluating on the teacher-generated training problems or close variants. Inspect explanation
-    validity, unnecessary verbosity, and failures under new tasks. Distillation can improve deployment options
-    while inheriting teacher errors and selection biases; report which capabilities were actually tested.
-  text_mode: Avoid evaluating on the teacher-generated training problems or close variants. Inspect explanation
-    validity, unnecessary verbosity, and failures under new tasks. Distillation can improve deployment options
-    while inheriting teacher errors and selection biases; report which capabilities were actually tested.
-  bridges: []
-- id: reasoning-distillation-and-cost.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.reasoning-distillation-and-cost
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A student learns from selected teacher solutions. Compare the accuracy and total cost of completed
-    answers, including extra tokens, checks, and discarded attempts.
-- id: reasoning-distillation-and-cost.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.reasoning-distillation-and-cost
-  markdown: A student learns from selected teacher solutions. Compare the accuracy and total cost of completed
-    answers, including extra tokens, checks, and discarded attempts.
-  text_mode: A student learns from selected teacher solutions. Compare the accuracy and total cost of completed
-    answers, including extra tokens, checks, and discarded attempts.
+      one_off = 100_000 * 4 * 3000 * 8.00 / 1e6 + 5000   # teacher traces + fine-tuning
+      saving = per_solved["teacher"] - per_solved["student"]
+      print(f"distillation costs ${one_off:,.0f}; it pays off after {one_off / saving:,.0f} solved problems")
+      ```
+
+      The student is less accurate (65% against 80%) but about 12 times cheaper per solved problem: \$0.0025 against \$0.030. Where answers can be checked, best-of-4 on the student reaches 98.5% success, above the teacher, at under a quarter of the teacher's cost. That's the best-of-n arithmetic from the inference-time search lesson, applied to a cheap model.
+
+      But distillation isn't free. Having the teacher write 4 solutions for each of 100,000 problems costs \$9,600, plus an assumed \$5,000 of fine-tuning.
+
+      :::predict Your service solves 20,000 problems a month. How long until distillation pays for itself?
+      It breaks even after about 530,000 solved problems, which at 20,000 a month takes about 26 and a half months. At a million problems a month, it pays off in under three weeks. Distillation is a volume decision: run the break-even sum with your own traffic before you commit.
+      :::
+    bridges: []
+  - id: reasoning-distillation-and-cost.s4
+    title: Test it where the teacher didn't write the answers
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reasoning-distillation-and-cost
+    markdown: |-
+      A distilled student is easy to over-rate, because the natural test set, problems like the ones the teacher solved, is the one it's best at. Here's a student evaluated three ways:
+
+      | Test set | Teacher | Student |
+      | --- | ---: | ---: |
+      | Held-out problems from the training generator | 80% | 78% |
+      | Fresh problems of the same types, written by people | 79% | 70% |
+      | New problem types, not in the training data | 70% | 43% |
+
+      On the first row the student looks nearly as good as the teacher. Those problems share templates, and sometimes near-duplicate wording, with the training traces. The gap opens on fresh problems and becomes a chasm on new types. Your users will bring new types.
+
+      So evaluate the student on problems the teacher never wrote solutions for, including some unlike the training set. Give teacher and student the same token budget and prompt. Report accuracy together with answer length and latency. And read a sample of the student's traces, not just its final answers, because a student can learn to reach the right answer through reasoning that no longer holds together.
+    bridges: []
+  - id: reasoning-distillation-and-cost.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.reasoning-distillation-and-cost
+    markdown: A legal-questions startup, a tax assistant, a suspiciously good test score, and some cost-per-solved-problem sums test whether distillation would pay off.
+    takeaway: |-
+      A small student fine-tuned on a strong teacher's filtered traces can beat the same model trained with RL alone, at a fraction of the running cost. Compare cost per solved problem, count the one-off distillation cost, and test on problems the teacher never solved.
+  - id: reasoning-distillation-and-cost.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.reasoning-distillation-and-cost
+    markdown: |-
+      A student learns from selected teacher solutions. Compare the accuracy and total cost of completed answers, including extra tokens, checks, and discarded attempts.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - reasoning-distillation-and-cost.s1
-    - reasoning-distillation-and-cost.s2
-    - reasoning-distillation-and-cost.s3
-    - reasoning-distillation-and-cost.s4
-    - reasoning-distillation-and-cost.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - reasoning-distillation-and-cost.s1
+        - reasoning-distillation-and-cost.s2
+        - reasoning-distillation-and-cost.s3
+        - reasoning-distillation-and-cost.s4
+        - reasoning-distillation-and-cost.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     reasoning-distillation-and-cost.recap: reasoning-distillation-and-cost.check
 assessment_families:
-- id: reasoning-distillation-and-cost.base
-  objective_ref: objective.reasoning-distillation-and-cost
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Capacity and architecture still matter: trace the inputs, operation, and result before choosing.'
-  remediation_scene: reasoning-distillation-and-cost.s2
-  variants:
-  - id: reasoning-distillation-and-cost.base.1
-    prompt: Does sequence distillation copy every teacher capability?
-    options:
-    - id: c
-      text: Only if the teacher generated many words
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: The student learns from a limited training signal under its own capacity.
-  - id: reasoning-distillation-and-cost.base.2
-    prompt: Why record whether targets contain traces or only answers?
-    options:
-    - id: a
-      text: They supervise different output behavior and costs
-    - id: b
-      text: They always produce identical training
-    - id: c
-      text: Only file compression changes
-    answer: a
-    feedback: Target format changes what the student is asked to predict.
-- id: reasoning-distillation-and-cost.transfer
-  objective_ref: objective.reasoning-distillation-and-cost
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Preserve independent evidence: trace the inputs, operation, and result before choosing.'
-  remediation_scene: reasoning-distillation-and-cost.s4
-  variants:
-  - id: reasoning-distillation-and-cost.transfer.1
-    prompt: Higher accuracy requires ten times more tokens. How should it be reported?
-    options:
-    - id: a
-      text: As a quality-cost operating point with the full budget
-    - id: b
-      text: As a free accuracy improvement
-    - id: c
-      text: Without mentioning generation length
-    answer: a
-    feedback: Resource conditions are part of the result.
-  - id: reasoning-distillation-and-cost.transfer.2
-    prompt: What should independent evaluation avoid?
-    options:
-    - id: b
-      text: All fresh problems
-    - id: c
-      text: Every concise answer
-    - id: a
-      text: Teacher-generated training problems and close leakage variants
-    answer: a
-    feedback: Evaluation needs evidence beyond fitting the transfer dataset.
+  - id: reasoning-distillation-and-cost.base
+    objective_ref: objective.reasoning-distillation-and-cost
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Capacity and architecture still matter: trace the inputs, operation, and result before choosing.'
+    remediation_scene: reasoning-distillation-and-cost.s2
+    variants:
+      - id: reasoning-distillation-and-cost.base.1
+        prompt: Does sequence distillation copy every teacher capability?
+        options:
+          - id: c
+            text: Only if the teacher generated many words
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: The student learns from a limited training signal under its own capacity.
+        retired: true
+      - id: reasoning-distillation-and-cost.base.2
+        prompt: Why record whether targets contain traces or only answers?
+        options:
+          - id: a
+            text: They supervise different output behavior and costs
+          - id: b
+            text: They always produce identical training
+          - id: c
+            text: Only file compression changes
+        answer: a
+        feedback: Target format changes what the student is asked to predict.
+        retired: true
+  - id: reasoning-distillation-and-cost.transfer
+    objective_ref: objective.reasoning-distillation-and-cost
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Preserve independent evidence: trace the inputs, operation, and result before choosing.'
+    remediation_scene: reasoning-distillation-and-cost.s4
+    variants:
+      - id: reasoning-distillation-and-cost.transfer.1
+        prompt: Higher accuracy requires ten times more tokens. How should it be reported?
+        options:
+          - id: a
+            text: As a quality-cost operating point with the full budget
+          - id: b
+            text: As a free accuracy improvement
+          - id: c
+            text: Without mentioning generation length
+        answer: a
+        feedback: Resource conditions are part of the result.
+        retired: true
+      - id: reasoning-distillation-and-cost.transfer.2
+        prompt: What should independent evaluation avoid?
+        options:
+          - id: b
+            text: All fresh problems
+          - id: c
+            text: Every concise answer
+          - id: a
+            text: Teacher-generated training problems and close leakage variants
+        answer: a
+        feedback: Evaluation needs evidence beyond fitting the transfer dataset.
+        retired: true
+  - id: reasoning-distillation-and-cost.base.v2
+    objective_ref: objective.reasoning-distillation-and-cost
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: The student learns only from the teacher's filtered traces, through ordinary SFT. Ask what that data contains, and what it leaves out.
+    remediation_scene: reasoning-distillation-and-cost.s2
+    variants:
+      - id: reasoning-distillation-and-cost.base.v2.1
+        prompt: How were DeepSeek-R1's small distilled models trained?
+        options:
+          - id: b
+            text: With RL, using the same rule-based rewards as R1 itself
+          - id: a
+            text: With SFT on about 800,000 samples curated using R1
+          - id: c
+            text: By matching R1's full probability over each next token
+        answer: a
+        feedback: The students were fine-tuned on text R1 generated, with no RL stage. Matching full token probabilities would need a shared tokenizer, and the students used Qwen and Llama bases with their own.
+      - id: reasoning-distillation-and-cost.base.v2.2
+        prompt: When the R1 team compared RL on Qwen2.5-32B-Base with distilling R1 into it, what did they find?
+        options:
+          - id: a
+            text: Distillation scored far higher, 72.6% against 47.0% on AIME 2024
+          - id: c
+            text: RL matched distillation's scores at a fraction of the compute
+          - id: b
+            text: The two were about equal, so they recommended RL for simplicity
+        answer: a
+        feedback: Over 10,000 RL steps reached 47.0% on AIME 2024, while plain SFT on R1's traces reached 72.6%, and it was cheaper too. The team concluded that distilling a stronger model beats small-model RL.
+      - id: reasoning-distillation-and-cost.base.v2.3
+        prompt: A student is less accurate than its teacher. How can its cost per solved problem still be much lower?
+        options:
+          - id: c
+            text: Cost per solved problem leaves accuracy out of the calculation
+          - id: b
+            text: Students are more accurate than teachers on the easy problems
+          - id: a
+            text: Its cost per attempt falls much further than its accuracy does
+        answer: a
+        feedback: Cost per solved problem is cost per attempt ÷ success rate. If attempts get 15 times cheaper while accuracy falls from 0.80 to 0.65, the ratio still drops about twelvefold. Accuracy is in the calculation; it just changes less.
+      - id: reasoning-distillation-and-cost.base.v2.4
+        prompt: What did distilling step-by-step (Hsieh et al., 2023) train the small student to predict?
+        options:
+          - id: a
+            text: Both the label and the teacher's rationale for it
+          - id: b
+            text: The final labels, with rationales thrown away
+          - id: c
+            text: The teacher's hidden activations, layer by layer
+        answer: a
+        feedback: The rationale gives the student extra supervision beyond the label; this let a 770M T5 outperform few-shot 540B PaLM on one benchmark. Dropping rationales is ordinary label distillation, and the method didn't use hidden activations.
+      - id: reasoning-distillation-and-cost.base.v2.5
+        prompt: Which evaluation best shows whether a distilled student is ready for real users?
+        options:
+          - id: b
+            text: A sample of the problems in the teacher-written training set
+          - id: a
+            text: Fresh problems the teacher never solved, including new types
+          - id: c
+            text: The problems on which the teacher was the most confident
+        answer: a
+        feedback: A student is strongest on problems like its training traces, so only fresh problems, including unfamiliar types, show how it will do in use. Training problems or the teacher's favorites flatter it.
+  - id: reasoning-distillation-and-cost.transfer.v2
+    objective_ref: objective.reasoning-distillation-and-cost
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Put numbers on it. Divide the one-off cost by the monthly saving, and test the student where the teacher's traces don't reach.
+    remediation_scene: reasoning-distillation-and-cost.s3
+    variants:
+      - id: reasoning-distillation-and-cost.transfer.v2.1
+        prompt: A legal-questions startup pays 5 cents per solved question with its teacher model; a distilled student would cost 0.5 cents. Distillation would cost $45,000 once, and the startup solves 10,000 questions a month. What is the sensible decision?
+        options:
+          - id: c
+            text: Distill now, since the student is ten times cheaper per question
+          - id: b
+            text: Distill only if the student matches the teacher on every benchmark
+          - id: a
+            text: Keep the teacher for now; the saving takes about 100 months to repay
+        answer: a
+        feedback: The saving is 4.5 cents × 10,000 = $450 a month, so $45,000 takes 100 months to recover. A cheaper price per question doesn't pay off at low volume. Matching every benchmark is the wrong bar; the question is cost at acceptable accuracy.
+      - id: reasoning-distillation-and-cost.transfer.v2.2
+        prompt: A distilled student scores 90% on a test set made by the same generator as its training data, but 55% on real customer questions. What is the most likely explanation?
+        options:
+          - id: a
+            text: The test set resembles the training traces, so it flatters the student
+          - id: b
+            text: The student needs more epochs on the same training traces
+          - id: c
+            text: The customers' questions were written in an unusual style
+        answer: a
+        feedback: Problems from the same generator share templates with the training traces, which is where students do best. The fix is to evaluate, and then add training data, on fresh customer-like problems; more epochs on the same traces would widen the gap.
+      - id: reasoning-distillation-and-cost.transfer.v2.3
+        prompt: A teacher model consistently misapplies one tax rule, and its verifier doesn't check that rule. After distillation, what will the student most likely do?
+        options:
+          - id: b
+            text: Correct the mistake, since smaller models generalize differently
+          - id: a
+            text: Make the same mistake, since it was in the traces it learned from
+          - id: c
+            text: Refuse tax questions, since the traces on them disagree
+        answer: a
+        feedback: The student imitates the traces the verifier let through, including systematic mistakes. Nothing in SFT on those traces would teach it the correct rule, and the traces agree with each other, just wrongly.
+      - id: reasoning-distillation-and-cost.transfer.v2.4
+        prompt: A distilled student matches the teacher's accuracy but writes answers twice as long, and your product has a strict latency target. What should the comparison report?
+        options:
+          - id: c
+            text: The price per token, since the student is far cheaper
+          - id: a
+            text: Accuracy with tokens and latency per answer, at the same budget
+          - id: b
+            text: Accuracy by itself, since the two models are equally accurate
+        answer: a
+        feedback: Twice the tokens can mean twice the waiting time, which matters under a latency target. Price per token alone hides the longer answers, and accuracy alone hides both cost and delay.
+  - id: reasoning-distillation-and-cost.calculate
+    objective_ref: objective.reasoning-distillation-and-cost
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Cost per attempt = tokens × price per token. Then divide by the success rate. Watch the units; the answer is in cents.
+    remediation_scene: reasoning-distillation-and-cost.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: reasoning-distillation-and-cost.calculate.1
+        prompt: A student model writes 5,000 tokens per attempt at $2 per million tokens and solves 50% of problems. What is its cost per solved problem, in cents?
+        answer: 2
+        feedback: 5,000 × $2 ÷ 1,000,000 = $0.01 = 1 cent per attempt, and 1 ÷ 0.5 = 2 cents per solved problem.
+      - id: reasoning-distillation-and-cost.calculate.2
+        prompt: A teacher model writes 2,000 tokens per attempt at $10 per million tokens and solves 80% of problems. What is its cost per solved problem, in cents?
+        answer: 2.5
+        feedback: 2,000 × $10 ÷ 1,000,000 = $0.02 = 2 cents per attempt, and 2 ÷ 0.8 = 2.5 cents per solved problem.
+      - id: reasoning-distillation-and-cost.calculate.3
+        prompt: A small model writes 8,000 tokens per attempt at $0.50 per million tokens and solves 40% of problems. What is its cost per solved problem, in cents?
+        answer: 1
+        feedback: 8,000 × $0.50 ÷ 1,000,000 = $0.004 = 0.4 cents per attempt, and 0.4 ÷ 0.4 = 1 cent per solved problem.
+      - id: reasoning-distillation-and-cost.calculate.4
+        prompt: A model writes 3,000 tokens per attempt at $8 per million tokens and solves 80% of problems. What is its cost per solved problem, in cents?
+        answer: 3
+        feedback: 3,000 × $8 ÷ 1,000,000 = $0.024 = 2.4 cents per attempt, and 2.4 ÷ 0.8 = 3 cents per solved problem, the lesson's teacher.

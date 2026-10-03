@@ -1,194 +1,421 @@
 schema_version: 0.2-draft
 lesson:
   id: localization-mapping-and-slam
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Estimate where the robot is while learning the map
   state: draft
-  summary: Estimate a robot’s location while building the map it relies on.
+  summary: Tidy drives one lap of the kitchen and its wheels swear it's home, yet it's 17 cm off. See how robots catch their own drift and build a map at the same time.
   slot: M30.3
   category: learning
   sources:
-  - title: Modern Robotics — authors’ textbook and resources
-    url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
-  - title: Past, Present, and Future of SLAM
-    url: https://arxiv.org/abs/1606.05830
+    - title: Modern Robotics — authors’ textbook and resources
+      url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
+    - title: "Past, Present, and Future of Simultaneous Localization and Mapping (Cadena et al., 2016)"
+      url: https://arxiv.org/abs/1606.05830
+    - title: "Monte Carlo Localization for Mobile Robots (Dellaert, Fox, Burgard & Thrun, ICRA 1999)"
+      url: https://doi.org/10.1109/ROBOT.1999.772544
 objectives:
-- id: objective.localization-mapping-and-slam
-  version: 1-draft
-  statement: Localization estimates pose, mapping estimates surroundings, and SLAM couples both; uncertain
-    measurements, data association, and loop closure determine the reliability of the joint estimate.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - localization-mapping-and-slam.base
-  - localization-mapping-and-slam.transfer
-  prerequisites:
-  - anyOf:
-    - objective.robot-sensors-and-frames
-  - anyOf:
-    - objective.state-estimation
+  - id: objective.localization-mapping-and-slam
+    version: 2-draft
+    statement: Compute odometry drift, explain how a Kalman or particle filter corrects a pose with landmarks, update an occupancy grid, and explain how loop closure in SLAM spreads accumulated error, and how a false closure breaks the map.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - localization-mapping-and-slam.base.v2
+      - localization-mapping-and-slam.transfer.v2
+      - localization-mapping-and-slam.calculate
+    prerequisites:
+      - anyOf:
+          - objective.robot-sensors-and-frames
+      - anyOf:
+          - objective.state-estimation
 scenes:
-- id: localization-mapping-and-slam.s1
-  title: Two unknowns depend on each other
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.localization-mapping-and-slam
-  markdown: 'A robot’s **pose** is its position and orientation: where it is and which way it faces. To place
-    a landmark on a map, it needs that pose. To infer pose from landmarks, it needs a map. **Simultaneous localization
-    and mapping**, or **SLAM**, estimates these together from motion and sensor observations, often retaining
-    uncertainty and constraints between poses and landmarks.'
-  text_mode: 'A robot’s **pose** is its position and orientation: where it is and which way it faces. To place
-    a landmark on a map, it needs that pose. To infer pose from landmarks, it needs a map. **Simultaneous localization
-    and mapping**, or **SLAM**, estimates these together from motion and sensor observations, often retaining
-    uncertainty and constraints between poses and landmarks.'
-  bridges: []
-- id: localization-mapping-and-slam.s2
-  title: Predict then correct
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.localization-mapping-and-slam
-  markdown: 'Wheel motion or inertial measurements predict movement, but accumulated bias causes drift. Visual
-    or range observations can correct estimates when matched to known structure. Filters, particle methods,
-    and graph optimization are different computational approaches with distinct assumptions and scaling costs.
+  - id: localization-mapping-and-slam.s1
+    title: Wheels that slowly lie
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.localization-mapping-and-slam
+    markdown: |-
+      Tidy's **pose** is its position and heading on the kitchen floor: $(x, y, \theta)$. The simplest way to track it is **odometry**: count wheel-encoder ticks, turn them into distance and turning, and add up every little move. Tidy's wheels have a 0.3 m circumference and 1,000 ticks per turn, so 5,000 ticks means 1.5 m.
 
+      Odometry never jumps, but it drifts, because every small error is added forever:
 
-    If wheel readings overestimate each one-meter move by 0.02 meter, ten such moves produce 0.2 meter of accumulated
-    distance error. Matching a visible doorway to the same doorway on the map can constrain that drift. Deciding
-    which observation belongs to which landmark is data association. Without an external reference, a consistent
-    map can still have an arbitrary overall origin and orientation.'
-  text_mode: 'Wheel motion or inertial measurements predict movement, but accumulated bias causes drift. Visual
-    or range observations can correct estimates when matched to known structure. Filters, particle methods,
-    and graph optimization are different computational approaches with distinct assumptions and scaling costs.
+      | Error | Size | After driving |
+      | --- | --- | --- |
+      | Tires worn 1% smaller than the software thinks | 1% of distance | 20 m lap: 0.2 m |
+      | Heading off by 2° after a slip on a wet tile | $d \sin 2°$ sideways | 5 m straight: $5 \times 0.0349 \approx 0.17$ m |
 
+      Heading errors are the dangerous kind. A 2° mistake is invisible at first, but every meter afterwards carries Tidy further sideways. One slip on a wet tile 5 m before the end of a lap is enough: the wheels "swear" Tidy is home, but it's 17 cm off, too far to dock with its charger.
 
-    If wheel readings overestimate each one-meter move by 0.02 meter, ten such moves produce 0.2 meter of accumulated
-    distance error. Matching a visible doorway to the same doorway on the map can constrain that drift. Deciding
-    which observation belongs to which landmark is data association. Without an external reference, a consistent
-    map can still have an arbitrary overall origin and orientation.'
-  bridges: []
-- id: localization-mapping-and-slam.s3
-  title: Associate observations carefully
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.localization-mapping-and-slam
-  markdown: Two similar-looking corridors can create an incorrect landmark match. Loop closure recognizes a
-    previously visited place and adds a constraint that can reduce accumulated drift. A false loop closure
-    can distort the map, so matching confidence and geometric consistency checks matter.
-  text_mode: Two similar-looking corridors can create an incorrect landmark match. Loop closure recognizes
-    a previously visited place and adds a constraint that can reduce accumulated drift. A false loop closure
-    can distort the map, so matching confidence and geometric consistency checks matter.
-  bridges: []
-- id: localization-mapping-and-slam.s4
-  title: Evaluate the usable map
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.localization-mapping-and-slam
-  markdown: Compare pose trajectories, map consistency, uncertainty, and performance under changed lighting,
-    moving objects, or textureless scenes. A visually attractive reconstruction may still contain localization
-    errors. State whether scale is observable from the available sensors and what coordinate frame defines
-    the result.
-  text_mode: Compare pose trajectories, map consistency, uncertainty, and performance under changed lighting,
-    moving objects, or textureless scenes. A visually attractive reconstruction may still contain localization
-    errors. State whether scale is observable from the available sensors and what coordinate frame defines
-    the result.
-  bridges: []
-- id: localization-mapping-and-slam.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.localization-mapping-and-slam
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: SLAM estimates the robot’s pose and its map together. Correct landmark matches and loop closures
-    can reduce drift; mistaken matches can distort both estimates.
-- id: localization-mapping-and-slam.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.localization-mapping-and-slam
-  markdown: SLAM estimates the robot’s pose and its map together. Correct landmark matches and loop closures
-    can reduce drift; mistaken matches can distort both estimates.
-  text_mode: SLAM estimates the robot’s pose and its map together. Correct landmark matches and loop closures
-    can reduce drift; mistaken matches can distort both estimates.
+      The cure is to notice things: the fridge's edge, a doorway, a table leg, whose positions are known. To place those on a map, though, Tidy needs its pose, and to fix its pose it needs the map. Doing both together is **simultaneous localization and mapping (SLAM)**.
+    bridges: []
+  - id: localization-mapping-and-slam.s2
+    title: Predict with the wheels, correct with the fridge
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.localization-mapping-and-slam
+    markdown: |-
+      First suppose the map is known. The Kalman filter from the lesson on tracking a hidden state does the job: predict with the motion, then update with a reading.
+
+      Tidy drives 10 m down the counter, and each meter adds $0.01\ \text{m}^2$ of variance to its position. After 10 m the variance is 0.1 (a standard deviation of about 0.32 m). Then its lidar sees the fridge's edge, whose position is on the map, with measurement variance 0.01:
+
+      $$K = \frac{0.1}{0.1 + 0.01} = 0.909, \qquad P = (1 - 0.909) \times 0.1 = 0.0091$$
+
+      The standard deviation drops from 0.32 m to 0.095 m in one reading. The fridge reading's variance is ten times smaller than the odometry estimate's, so the filter moves 91% of the way toward it.
+
+      A real pose has a heading, and moving forward by $d$ changes $x$ by $d\cos\theta$: not a straight-line (linear) rule. The **extended Kalman filter (EKF)** handles that by linearizing, approximating the curve by its tangent at the current estimate.
+
+      :::papers The EKF, one predict and one update
+      $$\hat{x}^- = f(\hat{x}, u), \qquad P^- = F P F^\top + Q$$
+      $$K = P^- H^\top (H P^- H^\top + R)^{-1}, \qquad \hat{x} \leftarrow \hat{x}^- + K\big(z - h(\hat{x}^-)\big), \qquad P \leftarrow (I - KH)P^-$$
+
+      $f$ is the motion model and $h$ predicts what the lidar should see; $F$ and $H$ are their Jacobians (slopes) at the current estimate. In our one-dimensional drive along the counter, $F = H = 1$, $P^- = 0.1$, $R = 0.01$, so $K = 0.909$ and $P = 0.0091$, exactly as above.
+      :::
+    bridges: []
+  - id: localization-mapping-and-slam.particles
+    title: A thousand guesses, one hallway
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.localization-mapping-and-slam
+    markdown: |-
+      A Kalman filter keeps one best guess with a spread. That fails when Tidy is switched on and has *no idea* where it is, or when two spots look alike. A **particle filter** keeps thousands of guesses (particles) instead. Every step it:
+
+      1. **moves** each particle by the odometry, plus a little random noise;
+      2. **weights** each particle by how well it explains the sensor reading;
+      3. **resamples**: draws a new set, copying heavy particles and dropping light ones.
+
+      Used for robot localization, this is **Monte Carlo localization** (Dellaert, Fox, Burgard & Thrun, 1999). Below, Tidy wakes up somewhere in a 10 m hallway with open doorways at 2, 3, and 7 m, and a side sensor that says "doorway" or "wall" correctly 90% of the time.
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(1)
+      doorways = np.array([2.0, 3.0, 7.0])        # open doorways along a 10 m hallway
+      def near_door(x):                           # within 0.3 m of any doorway?
+          return (np.abs(x[:, None] - doorways) < 0.3).any(axis=1)
+
+      particles = rng.uniform(0, 10, 2000)        # Tidy has no idea where it is: guesses everywhere
+      true_x = 0.0
+      for step in range(1, 8):
+          true_x += 1.0                                            # Tidy drives 1 m
+          particles += 1.0 + rng.normal(0, 0.1, particles.size)    # predict: move every guess, add noise
+          seen = near_door(np.array([true_x]))[0]                  # sensor: doorway or wall?
+          weights = np.where(near_door(particles) == seen, 0.9, 0.1)   # update: 90%-reliable sensor
+          particles = rng.choice(particles, particles.size, p=weights / weights.sum())  # resample
+          share = np.mean(np.abs(particles - true_x) < 0.5)
+          print(f"step {step}: at {true_x:.0f} m, sees {'doorway' if seen else 'wall   '}, "
+                f"{share:4.0%} of guesses within 0.5 m")
+      ```
+
+      One doorway could be any of three; two doorways 1 m apart happen only at 2–3 m, so the share jumps to 55%. The doorway at 7 m confirms it: 89%. Try a flakier sensor, weights `0.7, 0.3` instead of `0.9, 0.1`, and watch the guesses take longer to agree.
+    bridges: []
+  - id: localization-mapping-and-slam.s3
+    title: Build the map, then close the loop
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.localization-mapping-and-slam
+    markdown: |-
+      Now the map itself. An **occupancy grid** (Moravec & Elfes, 1985) splits the floor into cells, say 5 cm square, each holding the probability that something is there. Each lidar beam that ends in a cell is a "hit"; each beam that passes through is a "miss". Grids store **log-odds**, $\ln\frac{p}{1-p}$, so each reading just adds: $+0.847$ for a hit and $-0.847$ for a miss ($\pm\ln\frac{0.7}{0.3}$). Every cell starts at 0, which means $p = 0.5$. A cell that gets hit, hit, hit, miss sits at $2 \times 0.847 = 1.69$, which is $p \approx 0.845$: probably a chair leg.
+
+      While mapping, Tidy's pose still drifts. **Graph-based SLAM** stores each pose as a node, links consecutive poses with odometry edges ("moved 5 m, turned 90°"), and then finds the poses that best fit all the edges at once.
+
+      Tidy drives a square lap of four 5 m legs. Odometry says it ends 0.4 m from where it started. Then the camera recognizes the starting doorway: a **loop closure**, a new edge saying "this pose is the start pose". The optimizer can't satisfy every edge exactly, so it spreads the 0.4 m gap across the loop, about 0.1 m per leg when all legs are equally trusted. Every earlier pose, and every wall mapped from it, shifts into place.
+
+      :::mixup "More loop closures always make the map better."
+      A *wrong* closure is poison. Two identical cabinet doors, or warehouse aisles that look the same, can convince the robot it's somewhere it isn't. The optimizer then bends the whole map to glue two different places together. Real systems check that the geometry agrees before accepting a closure, and use robust costs that down-weight edges that don't fit.
+      :::
+    diagram:
+      caption: A pose graph for one lap. The loop-closure edge pulls the drifted end back to the start.
+      description: Four poses P0 to P3 and an end pose P4 are linked in order by odometry edges, each saying moved 5 m and turned. A dashed loop-closure edge links P4 back to P0, saying they are the same place. The optimizer spreads the 0.4 m gap across all edges.
+      nodes:
+        - id: p0
+          label: P0, start
+          col: 0
+          row: 0
+          tone: accent
+        - id: p1
+          label: P1
+          col: 2
+          row: 0
+        - id: p2
+          label: P2
+          col: 2
+          row: 2
+        - id: p3
+          label: P3
+          col: 0
+          row: 2
+        - id: p4
+          label: P4, end
+          note: odometry says 0.4 m from P0
+          col: 0
+          row: 1
+          tone: warn
+      edges:
+        - from: p0
+          to: p1
+          label: odometry, 5 m
+        - from: p1
+          to: p2
+          label: odometry, 5 m
+        - from: p2
+          to: p3
+          label: odometry, 5 m
+        - from: p3
+          to: p4
+          label: odometry, 5 m
+        - from: p4
+          to: p0
+          label: loop closure, same place
+          dashed: true
+    bridges: []
+  - id: localization-mapping-and-slam.s4
+    title: Check the map against the floor
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.localization-mapping-and-slam
+    markdown: |-
+      A map can look crisp and still be wrong. To test Tidy, tape five markers on the floor, measure their true positions, and drive past them. Compare where the robot *thinks* it is at each marker with where it really is:
+
+      | Marker | 1 | 2 | 3 | 4 | 5 |
+      | --- | ---: | ---: | ---: | ---: | ---: |
+      | Position error (m) | 0.02 | 0.03 | 0.02 | 0.11 | 0.03 |
+
+      The typical error is 2–3 cm, but marker 4 is 11 cm off, and that's the one to investigate. It sits by the glass oven door, which lidar sees poorly. Test again with the chairs moved and the lights dimmed, since kitchens change daily.
+    bridges: []
+  - id: localization-mapping-and-slam.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.localization-mapping-and-slam
+    markdown: Work out how far odometry drifts, then diagnose a warehouse whose map folds in half, a cafeteria full of ghost obstacles, and a lawn mower with GPS.
+    takeaway: |-
+      Odometry drifts, and heading errors grow with distance. Landmarks correct the pose, particles handle "I could be anywhere", and a correct loop closure spreads accumulated error back around the map, while a false one bends it.
+  - id: localization-mapping-and-slam.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.localization-mapping-and-slam
+    markdown: |-
+      SLAM estimates the robot’s pose and its map together. Correct landmark matches and loop closures can reduce drift; mistaken matches can distort both estimates.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - localization-mapping-and-slam.s1
-    - localization-mapping-and-slam.s2
-    - localization-mapping-and-slam.s3
-    - localization-mapping-and-slam.s4
-    - localization-mapping-and-slam.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - localization-mapping-and-slam.s1
+        - localization-mapping-and-slam.s2
+        - localization-mapping-and-slam.particles
+        - localization-mapping-and-slam.s3
+        - localization-mapping-and-slam.s4
+        - localization-mapping-and-slam.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     localization-mapping-and-slam.recap: localization-mapping-and-slam.check
 assessment_families:
-- id: localization-mapping-and-slam.base
-  objective_ref: objective.localization-mapping-and-slam
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Predict then correct: trace the inputs, operation, and result before choosing.'
-  remediation_scene: localization-mapping-and-slam.s2
-  variants:
-  - id: localization-mapping-and-slam.base.1
-    prompt: What makes SLAM coupled?
-    options:
-    - id: c
-      text: Mapping requires no observations
-    - id: a
-      text: Pose estimates help mapping and map estimates help localization
-    - id: b
-      text: Every sensor measures exact global coordinates
-    answer: a
-    feedback: The two unknowns constrain each other.
-  - id: localization-mapping-and-slam.base.2
-    prompt: Why does dead reckoning drift?
-    options:
-    - id: a
-      text: Small motion-estimation errors accumulate
-    - id: b
-      text: Coordinates cannot represent movement
-    - id: c
-      text: Every wheel reading is exact
-    answer: a
-    feedback: Repeated uncertainty and bias compound over time.
-- id: localization-mapping-and-slam.transfer
-  objective_ref: objective.localization-mapping-and-slam
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate the usable map: trace the inputs, operation, and result before choosing.'
-  remediation_scene: localization-mapping-and-slam.s4
-  variants:
-  - id: localization-mapping-and-slam.transfer.1
-    prompt: What is loop closure?
-    options:
-    - id: a
-      text: Recognizing a previously visited place and adding a consistency constraint
-    - id: b
-      text: Stopping the robot permanently
-    - id: c
-      text: Resetting every landmark randomly
-    answer: a
-    feedback: Revisits can correct trajectory drift.
-  - id: localization-mapping-and-slam.transfer.2
-    prompt: Can an incorrect loop closure damage a map?
-    options:
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if no images exist
-    - id: a
-      text: 'Yes'
-    answer: a
-    feedback: A false correspondence introduces a wrong geometric constraint.
+  - id: localization-mapping-and-slam.base
+    objective_ref: objective.localization-mapping-and-slam
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Predict then correct: trace the inputs, operation, and result before choosing.'
+    remediation_scene: localization-mapping-and-slam.s2
+    variants:
+      - id: localization-mapping-and-slam.base.1
+        prompt: What makes SLAM coupled?
+        options:
+          - id: c
+            text: Mapping requires no observations
+          - id: a
+            text: Pose estimates help mapping and map estimates help localization
+          - id: b
+            text: Every sensor measures exact global coordinates
+        answer: a
+        feedback: The two unknowns constrain each other.
+        retired: true
+      - id: localization-mapping-and-slam.base.2
+        prompt: Why does dead reckoning drift?
+        options:
+          - id: a
+            text: Small motion-estimation errors accumulate
+          - id: b
+            text: Coordinates cannot represent movement
+          - id: c
+            text: Every wheel reading is exact
+        answer: a
+        feedback: Repeated uncertainty and bias compound over time.
+        retired: true
+  - id: localization-mapping-and-slam.transfer
+    objective_ref: objective.localization-mapping-and-slam
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate the usable map: trace the inputs, operation, and result before choosing.'
+    remediation_scene: localization-mapping-and-slam.s4
+    variants:
+      - id: localization-mapping-and-slam.transfer.1
+        prompt: What is loop closure?
+        options:
+          - id: a
+            text: Recognizing a previously visited place and adding a consistency constraint
+          - id: b
+            text: Stopping the robot permanently
+          - id: c
+            text: Resetting every landmark randomly
+        answer: a
+        feedback: Revisits can correct trajectory drift.
+        retired: true
+      - id: localization-mapping-and-slam.transfer.2
+        prompt: Can an incorrect loop closure damage a map?
+        options:
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if no images exist
+          - id: a
+            text: 'Yes'
+        answer: a
+        feedback: A false correspondence introduces a wrong geometric constraint.
+        retired: true
+  - id: localization-mapping-and-slam.base.v2
+    objective_ref: objective.localization-mapping-and-slam
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Separate the two steps: motion (odometry) always adds uncertainty, and recognizing something already on the map removes it."
+    remediation_scene: localization-mapping-and-slam.s2
+    variants:
+      - id: localization-mapping-and-slam.base.v2.1
+        prompt: Robot A overestimates distance by 1%. Robot B has a 1° heading error. Both drive 50 m in a straight line. Which ends further from where it thinks it is?
+        options:
+          - id: b
+            text: A, since 1% of 50 m is more than one degree
+          - id: a
+            text: B, about 0.87 m sideways versus A's 0.5 m
+          - id: c
+            text: They end up about equally far off
+        answer: a
+        feedback: A is off by 1% × 50 = 0.5 m. B drifts sideways by 50 × sin 1° ≈ 0.87 m, and that keeps growing with every meter. Comparing "1%" with "1°" directly mixes units; you have to turn both into meters.
+      - id: localization-mapping-and-slam.base.v2.2
+        prompt: Tidy drives 10 m along a blank wall with no landmarks in view. What happens to its pose uncertainty, and what reduces it?
+        options:
+          - id: c
+            text: It shrinks as more odometry readings average out the noise
+          - id: b
+            text: It stays level, provided the wheel encoders are well calibrated
+          - id: a
+            text: It grows with every move; recognizing a mapped landmark shrinks it
+        answer: a
+        feedback: Each predict step adds the motion noise, so variance grows as Tidy drives. Only a measurement of something whose position is known (an update) pulls it back down. Odometry readings don't average out; they add up.
+      - id: localization-mapping-and-slam.base.v2.3
+        prompt: A warehouse robot is powered on in an unknown aisle. Several aisles look identical to its lidar. Which localization method fits best?
+        options:
+          - id: a
+            text: A particle filter, keeping weighted guesses in every matching aisle
+          - id: b
+            text: A Kalman filter started with a very large variance on its position
+          - id: c
+            text: An extended Kalman filter, since it linearizes the robot's motion
+        answer: a
+        feedback: Several look-alike aisles make the belief multi-peaked. Particles can hold a cluster in each aisle until a distinguishing feature appears. Any Kalman filter, extended or not, keeps a single bell curve, which would sit between aisles.
+      - id: localization-mapping-and-slam.base.v2.4
+        prompt: In graph-based SLAM, what does a correct loop-closure edge do?
+        options:
+          - id: b
+            text: It resets the current pose to the start, leaving earlier poses as they were
+          - id: c
+            text: It adds a new landmark that extends the map into unexplored areas
+          - id: a
+            text: It ties the current pose to an earlier one, so the drift is spread along the loop
+        answer: a
+        feedback: The closure is a constraint between two poses. Optimizing the whole graph distributes the accumulated gap across all the odometry edges, correcting earlier poses and the map too. Just snapping the last pose would leave a kink in the map.
+  - id: localization-mapping-and-slam.transfer.v2
+    objective_ref: objective.localization-mapping-and-slam
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Ask which source of information is failing: the drifting odometry, a noisy or misleading sensor, or a wrong match between two places."
+    remediation_scene: localization-mapping-and-slam.s3
+    variants:
+      - id: localization-mapping-and-slam.transfer.v2.1
+        prompt: A warehouse robot's map suddenly folds, with two different aisles drawn on top of each other. The aisles have identical shelving and end caps. What most likely happened?
+        options:
+          - id: a
+            text: A false loop closure matched two look-alike places
+          - id: b
+            text: Wheel slip added a sudden 2° heading error
+          - id: c
+            text: The lidar's range was too short to see the far wall
+        answer: a
+        feedback: Two separate aisles merging is the signature of a wrong loop closure; the optimizer bent the map to make them coincide. Wheel slip causes gradual drift, not two places glued together. Geometric checks before accepting a closure prevent it.
+      - id: localization-mapping-and-slam.transfer.v2.2
+        prompt: A delivery robot maps a busy cafeteria. Its occupancy grid fills with "walls" wherever people stood. What change helps most?
+        options:
+          - id: c
+            text: Mark every lidar hit as permanently occupied to stay on the safe side
+          - id: a
+            text: Let later beams that pass through a cell lower its occupancy again
+          - id: b
+            text: Use finer cells so that each person covers fewer of them
+        answer: a
+        feedback: In a log-odds grid, misses subtract. Once a person walks away, beams pass through those cells and the ghosts fade. Permanent hits make the problem worse, and finer cells just draw the ghosts in more detail.
+      - id: localization-mapping-and-slam.transfer.v2.3
+        prompt: A robot lawn mower has wheel odometry (smooth but drifting) and GPS (no drift, but jumps by about 1 m). How should it estimate its position?
+        options:
+          - id: b
+            text: Use GPS alone, since drift-free matters more than smoothness
+          - id: c
+            text: Use odometry alone, then reset it by hand every few hours
+          - id: a
+            text: Predict with odometry and correct with GPS in a Kalman filter
+        answer: a
+        feedback: "The two sensors fail in opposite ways: odometry is smooth but drifts, GPS is noisy but anchored. A filter predicts with the wheels and pulls toward GPS by the Kalman gain, getting both benefits. Either sensor alone keeps its weakness."
+      - id: localization-mapping-and-slam.transfer.v2.4
+        prompt: A team says its new SLAM system "produces beautiful, sharp maps". How should you check whether its localization is accurate?
+        options:
+          - id: b
+            text: Inspect the map image to confirm walls are straight and sharp
+          - id: a
+            text: Compare its pose with surveyed floor markers along a test route
+          - id: c
+            text: Count how many grid cells the finished map has filled in
+        answer: a
+        feedback: Pose error against known positions measures localization directly and shows where it fails, like a spot near glass. A map can look straight while being shifted or bent, and cell counts say nothing about accuracy.
+  - id: localization-mapping-and-slam.calculate
+    objective_ref: objective.localization-mapping-and-slam
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "A distance error scales with distance traveled (percent × meters). A heading error pushes you sideways by distance × sin(angle)."
+    remediation_scene: localization-mapping-and-slam.s1
+    absolute_tolerance: 0.01
+    variants:
+      - id: localization-mapping-and-slam.calculate.1
+        prompt: A robot's odometry overestimates every distance by 1%. It drives 30 m. How far off is its distance estimate, in meters?
+        answer: 0.3
+        feedback: "1% of 30 m = 0.01 × 30 = 0.3 m."
+      - id: localization-mapping-and-slam.calculate.2
+        prompt: After a wheel slip, a robot's heading estimate is off by 3°. It then drives 10 m straight. About how far sideways is it from where it thinks it is, in meters? (sin 3° ≈ 0.0523)
+        answer: 0.523
+        feedback: "Sideways error = 10 × sin 3° ≈ 10 × 0.0523 = 0.523 m."
+      - id: localization-mapping-and-slam.calculate.3
+        prompt: A robot's wheels have a 0.3 m circumference and its encoders count 1,000 ticks per wheel turn. The encoder reports 5,000 ticks. How far did the wheel roll, in meters?
+        answer: 1.5
+        feedback: "5,000 ticks ÷ 1,000 ticks per turn = 5 turns, and 5 × 0.3 m = 1.5 m."
+      - id: localization-mapping-and-slam.calculate.4
+        prompt: A robot's heading is off by 1°. It drives 20 m straight. About how far sideways is it from its estimate, in meters? (sin 1° ≈ 0.01745)
+        answer: 0.349
+        feedback: "Sideways error = 20 × sin 1° ≈ 20 × 0.01745 = 0.349 m."
+      - id: localization-mapping-and-slam.calculate.5
+        prompt: The software thinks a robot's wheel circumference is 0.306 m, but the worn tire is really 0.300 m around. The robot drives a true 15 m. By how many meters does odometry overestimate the distance?
+        answer: 0.3
+        feedback: "The software counts 15 ÷ 0.300 = 50 turns and multiplies by 0.306 m, giving 15.3 m: a 2% overestimate of 0.3 m."

@@ -1,213 +1,424 @@
 schema_version: 0.2-draft
 lesson:
   id: compute-and-bandwidth
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Why arithmetic counts do not tell the whole speed story
   state: draft
-  summary: Compare time spent calculating with time spent moving data before deciding what would make a model
-    faster.
+  summary: On a GPU, pushing 64 tokens through a weight matrix takes about as long as pushing one. Learn to count bytes as well as FLOPs, and read the roofline.
   slot: M17.1
   category: learning
   sources:
-  - title: Roofline model
-    url: https://www.osti.gov/biblio/970070
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: "Roofline: An Insightful Visual Performance Model for Multicore Architectures (Williams, Waterman & Patterson, Communications of the ACM, 2009)"
+      url: https://doi.org/10.1145/1498765.1498785
+    - title: NVIDIA A100 Tensor Core GPU datasheet
+      url: https://www.nvidia.com/content/dam/en-zz/Solutions/Data-Center/a100/pdf/nvidia-a100-datasheet-us-nvidia-1758950-r4-web.pdf
+    - title: "PaLM: Scaling Language Modeling with Pathways (Chowdhery et al., 2022), which introduced model FLOPs utilization"
+      url: https://arxiv.org/abs/2204.02311
+    - title: "Llama 2: Open Foundation and Fine-Tuned Chat Models (Touvron et al., 2023)"
+      url: https://arxiv.org/abs/2307.09288
 objectives:
-- id: objective.compute-and-bandwidth
-  version: 1-draft
-  statement: Runtime depends on arithmetic throughput, memory traffic, communication, and scheduling; arithmetic
-    intensity helps identify which resource limits an operation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - compute-and-bandwidth.base
-  - compute-and-bandwidth.transfer
-  prerequisites:
-  - anyOf:
-    - objective.processors-and-parallelism
-  - anyOf:
-    - objective.algorithm-cost
+  - id: objective.compute-and-bandwidth
+    version: 2-draft
+    statement: Runtime depends on arithmetic throughput, memory traffic, communication, and scheduling; arithmetic intensity helps identify which resource limits an operation.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - compute-and-bandwidth.base.v2
+      - compute-and-bandwidth.transfer.v2
+      - compute-and-bandwidth.calculate
+    prerequisites:
+      - anyOf:
+          - objective.processors-and-parallelism
+      - anyOf:
+          - objective.algorithm-cost
 scenes:
-- id: compute-and-bandwidth.s1
-  title: Count work and movement
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.compute-and-bandwidth
-  markdown: 'A matrix multiplication performs many multiply-add operations, while its inputs and outputs move
-    through memory. Hardware has limits on both arithmetic throughput and bytes transferred per second. A fast
-    arithmetic unit can sit idle while waiting for data or another device.
+  - id: compute-and-bandwidth.s1
+    title: Sixty-four times the work in the same time
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.compute-and-bandwidth
+    markdown: |-
+      A team is training a 7-billion-parameter language model, the size of Llama 2 7B, on 256 NVIDIA A100 GPUs: 32 machines with 8 GPUs each. We'll follow them through this module, starting with a tiny benchmark.
 
+      One layer of the model multiplies activations by a 4,096 × 4,096 weight matrix. Fed a single token's vector, the multiplication takes about 17 microseconds (µs). Fed 64 tokens at once, which is 64 times the arithmetic, it takes about 17 µs again. How can 64 times the work be free?
 
-    **Throughput** is work completed per second; **bandwidth** is data moved per second. A **FLOP** counts
-    a floating-point arithmetic operation under a specified convention. Think of a cook who can chop quickly
-    but keeps waiting for ingredients: faster chopping alone will not fix the supply delay.'
-  text_mode: 'A matrix multiplication performs many multiply-add operations, while its inputs and outputs move
-    through memory. Hardware has limits on both arithmetic throughput and bytes transferred per second. A fast
-    arithmetic unit can sit idle while waiting for data or another device.
+      The arithmetic was never the slow part. A **FLOP** is one floating-point addition or multiplication, and a GPU has two separate speed limits:
 
+      | Limit | What it measures | A100 80 GB, bf16 |
+      | --- | --- | --- |
+      | Peak compute | FLOPs per second the tensor cores can do | about 312 trillion (312 TFLOP/s) |
+      | Memory bandwidth | Bytes per second moved between main memory and the cores | about 2 trillion (2 TB/s) |
 
-    **Throughput** is work completed per second; **bandwidth** is data moved per second. A **FLOP** counts
-    a floating-point arithmetic operation under a specified convention. Think of a cook who can chop quickly
-    but keeps waiting for ingredients: faster chopping alone will not fix the supply delay.'
-  bridges: []
-- id: compute-and-bandwidth.s2
-  title: Compare two lower bounds
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.compute-and-bandwidth
-  markdown: 'Suppose an operation needs 100 billion FLOPs and transfers 20 billion bytes. At one trillion FLOPs
-    per second, arithmetic takes at least 0.1 seconds; at 100 billion bytes per second, transfer takes at least
-    0.2 seconds. Ideal overlap cannot beat the larger bound, before other overheads.
+      The main memory is **HBM** (high-bandwidth memory): the 80 GB that holds weights and activations. The 4,096 × 4,096 matrix is 16.8 million bf16 numbers at 2 bytes each, 33.6 MB, and reading it from HBM takes about 17 µs whatever you do with it next. With one token, the cores finish their math in a tenth of a microsecond, then wait.
+    diagram:
+      caption: The path every number takes inside one GPU. Arithmetic happens only at the tensor cores; everything else is delivery.
+      description: Weights and activations live in HBM, which feeds the small on-chip memory at about 2 TB/s. On-chip memory feeds the tensor cores, which compute at up to 312 TFLOP/s. Results flow back from the cores to on-chip memory and are written back to HBM. HBM also connects over the network to other GPUs, the subject of later lessons.
+      nodes:
+        - id: hbm
+          label: HBM main memory
+          note: 80 GB, about 2 TB/s
+          col: 0
+          row: 0
+          tone: data
+        - id: sram
+          label: On-chip memory
+          note: tiny, much faster
+          col: 2
+          row: 0
+        - id: cores
+          label: Tensor cores
+          note: up to 312 TFLOP/s
+          col: 4
+          row: 0
+          tone: accent
+        - id: others
+          label: Other GPUs
+          note: via NVLink or network
+          col: 0
+          row: 2
+          tone: muted
+      edges:
+        - from: hbm
+          to: sram
+          label: read, about 2 TB/s
+        - from: sram
+          to: cores
+          label: operands
+        - from: cores
+          to: sram
+          label: results
+          bend: 1
+        - from: sram
+          to: hbm
+          label: write back
+          bend: 1
+        - from: hbm
+          to: others
+          label: gradients, activations
+          dashed: true
+    bridges: []
+  - id: compute-and-bandwidth.s2
+    title: "Arithmetic intensity: FLOPs per byte moved"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.compute-and-bandwidth
+    markdown: |-
+      To see which limit applies, count both the work and the traffic of one operation. **Arithmetic intensity** is the FLOPs an operation performs divided by the bytes it moves to and from HBM.
 
+      Multiplying an m × k matrix by a k × n matrix takes 2mkn FLOPs: each of the m × n outputs needs k multiplies and k adds. In bf16 every number is 2 bytes, and at best each matrix crosses HBM once.
 
-    Divide required work by work per second: 100 billion/1 trillion = 0.1 second. Divide bytes by bytes per
-    second: 20 billion/100 billion = 0.2 second. If both could overlap perfectly, the operation would still
-    need at least 0.2 second. If they happen sequentially, the two times add instead. These are lower bounds,
-    not measurements of a real device.'
-  text_mode: 'Suppose an operation needs 100 billion FLOPs and transfers 20 billion bytes. At one trillion
-    FLOPs per second, arithmetic takes at least 0.1 seconds; at 100 billion bytes per second, transfer takes
-    at least 0.2 seconds. Ideal overlap cannot beat the larger bound, before other overheads.
+      | Case | FLOPs | Bytes moved | Intensity |
+      | --- | ---: | ---: | ---: |
+      | 1 token × 4,096 × 4,096 weights | 2 × 4,096² ≈ 33.6 million | ≈ 33.6 MB (almost all weights) | ≈ 1 FLOP/byte |
+      | 4,096 tokens × the same weights | 2 × 4,096³ ≈ 137 billion | 3 matrices × 33.6 MB ≈ 101 MB | ≈ 1,365 FLOP/byte |
 
+      Now time each case both ways. The slower of the two sets the pace:
 
-    Divide required work by work per second: 100 billion/1 trillion = 0.1 second. Divide bytes by bytes per
-    second: 20 billion/100 billion = 0.2 second. If both could overlap perfectly, the operation would still
-    need at least 0.2 second. If they happen sequentially, the two times add instead. These are lower bounds,
-    not measurements of a real device.'
-  bridges: []
-- id: compute-and-bandwidth.s3
-  title: Reuse raises arithmetic intensity
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.compute-and-bandwidth
-  markdown: Arithmetic intensity is operations per transferred byte. Reusing weights across a batch or keeping
-    tiles in fast local memory can increase it. Small decode batches often struggle to reuse weights enough;
-    large prefill matrix operations can exploit more arithmetic parallelism. Actual bottlenecks depend on shapes
-    and hardware.
-  text_mode: Arithmetic intensity is operations per transferred byte. Reusing weights across a batch or keeping
-    tiles in fast local memory can increase it. Small decode batches often struggle to reuse weights enough;
-    large prefill matrix operations can exploit more arithmetic parallelism. Actual bottlenecks depend on shapes
-    and hardware.
-  bridges: []
-- id: compute-and-bandwidth.s4
-  title: Measure the critical path
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.compute-and-bandwidth
-  markdown: 'Profile kernels, transfers, synchronization, and idle intervals under the intended workload. Peak
-    advertised throughput assumes particular precision and operation shapes. An optimization that reduces FLOPs
-    can still slow execution by increasing memory traffic or launching many tiny kernels.
+      - **1 token:** math takes 33.6 million ÷ 312 trillion ≈ 0.1 µs; memory takes 33.6 MB ÷ 2 TB/s ≈ 16.8 µs.
+      - **4,096 tokens:** math takes 137 billion ÷ 312 trillion ≈ 440 µs; memory takes 101 MB ÷ 2 TB/s ≈ 50 µs.
 
+      An operation is **memory-bound** (as in the accelerators lesson) when moving its bytes takes longer than its math, and **compute-bound** when the math takes longer. A matrix-vector product is memory-bound on any modern GPU: each weight is fetched, used once, and discarded. A large matrix multiply reuses each fetched weight thousands of times.
 
-    A **kernel** is a device routine performing an operation. The **critical path** is the dependency chain
-    that determines when the complete result can finish. Timing just one fast matrix multiplication misses
-    waiting, transfers and other required operations on that path.'
-  text_mode: 'Profile kernels, transfers, synchronization, and idle intervals under the intended workload.
-    Peak advertised throughput assumes particular precision and operation shapes. An optimization that reduces
-    FLOPs can still slow execution by increasing memory traffic or launching many tiny kernels.
+      :::predict The team feeds 64 tokens through the same weights. What's the intensity, and which limit applies?
+      FLOPs: 2 × 64 × 4,096² ≈ 2.15 billion. Bytes: the 33.6 MB of weights plus two 0.5 MB activation matrices, about 34.6 MB. Intensity ≈ 62 FLOP/byte. Memory takes 17.3 µs and math 6.9 µs, so it's still memory-bound: that's why it matched the one-token time. When tokens are far fewer than the matrix size, intensity ≈ the token count, because each fetched weight is used once per token.
+      :::
+    bridges: []
+  - id: compute-and-bandwidth.s3
+    title: The roofline puts every operation on one chart
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.compute-and-bandwidth
+    markdown: |-
+      Generalize the two timings. If an operation has intensity $I$, memory can deliver enough bytes for $I \times 2$ TB/s worth of FLOPs, but the cores can never exceed 312 TFLOP/s. Whichever is smaller is the best speed you can hope for.
 
+      :::papers The roofline model (Williams, Waterman & Patterson, 2009)
+      $$P_{\text{attainable}} = \min\big(P_{\text{peak}},\; I \times B_{\text{mem}}\big)$$
 
-    A **kernel** is a device routine performing an operation. The **critical path** is the dependency chain
-    that determines when the complete result can finish. Timing just one fast matrix multiplication misses
-    waiting, transfers and other required operations on that path.'
-  bridges: []
-- id: compute-and-bandwidth.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.compute-and-bandwidth
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Count both the calculations and the data that must move. Speed improves when an optimization addresses
-    the resource that is actually limiting the operation.
-- id: compute-and-bandwidth.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.compute-and-bandwidth
-  markdown: Count both the calculations and the data that must move. Speed improves when an optimization addresses
-    the resource that is actually limiting the operation.
-  text_mode: Count both the calculations and the data that must move. Speed improves when an optimization addresses
-    the resource that is actually limiting the operation.
+      Here $P_{\text{peak}}$ = 312 TFLOP/s, $B_{\text{mem}}$ = 2 TB/s, and $I$ is FLOPs per byte. Plotted against $I$ on log axes, this is a sloped line (the bandwidth roof) meeting a flat line (the compute roof) at the **ridge point**, $I = P_{\text{peak}} / B_{\text{mem}} = 156$ FLOP/byte. Our 1-token multiply ($I \approx 1$) sits low on the slope at 2 TFLOP/s; the 64-token one ($I \approx 62$) reaches 124 TFLOP/s; the 4,096-token one ($I \approx 1{,}365$) sits on the flat roof at 312.
+      :::
+
+      Here is the calculator. Each row is the same 4,096 × 4,096 weight matrix fed a different number of tokens.
+
+      ```python run
+      PEAK = 312e12   # A100 bf16 dense tensor-core FLOP/s
+      BW = 2.0e12     # A100 80GB HBM bytes/s (about 2 TB/s)
+      BYTES = 2       # bf16
+
+      def matmul(m, k, n):
+          """(m x k) @ (k x n): FLOPs and bytes if each matrix crosses HBM once."""
+          flops = 2 * m * k * n
+          moved = BYTES * (m * k + k * n + m * n)
+          return flops, moved
+
+      print(f"ridge point: {PEAK / BW:.0f} FLOP/byte")
+      for tokens in [1, 64, 4096]:           # rows of activations hitting one 4096x4096 weight
+          flops, moved = matmul(tokens, 4096, 4096)
+          intensity = flops / moved
+          attainable = min(PEAK, intensity * BW)
+          t_math, t_mem = flops / PEAK, moved / BW
+          bound = "memory" if t_mem > t_math else "compute"
+          print(f"{tokens:5d} tokens: {intensity:7.1f} FLOP/byte, "
+                f"{attainable / 1e12:5.1f} TFLOP/s ({attainable / PEAK:5.1%} of peak), "
+                f"{max(t_math, t_mem) * 1e6:7.1f} us, {bound}-bound")
+      ```
+
+      Add 169 to the token list: it's the smallest count that crosses the ridge. Then halve `BW` and watch the memory-bound rows slow down while the 4,096-token row doesn't budge.
+
+      Elementwise operations sit even lower. Adding two bf16 tensors does 1 FLOP per 6 bytes (read two numbers, write one). That's why GPU libraries **fuse** chains of elementwise steps: one routine reads the data once, does every step, and writes once. The lesson on efficient attention kernels, at the end of this module, applies this trick to attention.
+    bridges: []
+  - id: compute-and-bandwidth.s4
+    title: "Measure the whole step: model FLOPs utilization"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.compute-and-bandwidth
+    markdown: |-
+      From the pretraining module you know the rule of thumb: training costs about 6 FLOPs per parameter per token (the 6ND rule). For the 7B model that's 6 × 7 billion = 42 billion FLOPs per token.
+
+      Suppose each GPU processes 3,000 tokens per second. Its useful work is 42 billion × 3,000 = 126 TFLOP/s, or 40% of the 312 peak. You met that ratio, useful model FLOPs per second divided by peak, in the lesson on pretraining budgets: it's the **model FLOPs utilization (MFU)**, and that lesson simply assumed 40%. Here's evidence it's realistic: Meta's Llama 2 report lists 184,320 A100 GPU-hours for the 7B model's 2 trillion tokens, about 3,000 tokens per GPU per second. At that rate the team's 256 GPUs need about 30 days.
+
+      Where does the other 60% go? A training step ends only when its **critical path** finishes, meaning the longest chain of work in which each piece must wait for the one before. That chain includes memory-bound kernels (a **kernel** is one routine launched on the GPU), waiting for other GPUs to exchange gradients, idle pipeline stages, and recomputed activations. The rest of this module takes these on one at a time.
+
+      :::mixup "The GPU utilization meter says 98%, so we're using 98% of the GPU."
+      The common readout (for example, `nvidia-smi`) reports the fraction of time *some* kernel was running, not the fraction of FLOP/s used. A memory-bound kernel keeps that meter near 100% while the tensor cores sit mostly idle. MFU is the number that tells you how much arithmetic you're actually getting.
+      :::
+
+      When a kernel is slow, place it on the roofline first. Below the ridge, cut bytes: feed more tokens per weight read, fuse steps, or use smaller number formats. Above the ridge, only fewer FLOPs or faster cores help.
+    bridges: []
+  - id: compute-and-bandwidth.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.compute-and-bandwidth
+    markdown: Roofline readings for several kernels, a new chip, a slow chain of elementwise ops, and a chatbot test whether you can tell which limit a workload hits.
+    takeaway: |-
+      Divide an operation's FLOPs by the bytes it moves to get its arithmetic intensity. Below the ridge point (about 156 FLOP/byte on an A100) memory bandwidth sets the speed; above it, compute does.
+  - id: compute-and-bandwidth.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.compute-and-bandwidth
+    markdown: |-
+      Count both the calculations and the data that must move. Speed improves when an optimization addresses the resource that is actually limiting the operation.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - compute-and-bandwidth.s1
-    - compute-and-bandwidth.s2
-    - compute-and-bandwidth.s3
-    - compute-and-bandwidth.s4
-    - compute-and-bandwidth.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - compute-and-bandwidth.s1
+        - compute-and-bandwidth.s2
+        - compute-and-bandwidth.s3
+        - compute-and-bandwidth.s4
+        - compute-and-bandwidth.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     compute-and-bandwidth.recap: compute-and-bandwidth.check
 assessment_families:
-- id: compute-and-bandwidth.base
-  objective_ref: objective.compute-and-bandwidth
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Compare two lower bounds: trace the inputs, operation, and result before choosing.'
-  remediation_scene: compute-and-bandwidth.s2
-  variants:
-  - id: compute-and-bandwidth.base.1
-    prompt: What is arithmetic intensity?
-    options:
-    - id: a
-      text: Operations per byte transferred
-    - id: b
-      text: Bytes per model name
-    - id: c
-      text: Only accelerator clock frequency
-    answer: a
-    feedback: It relates computation to data movement.
-  - id: compute-and-bandwidth.base.2
-    prompt: Compute needs 0.1 s and transfer 0.2 s. Ideal overlapped lower bound?
-    options:
-    - id: b
-      text: 0.1 s
-    - id: c
-      text: 0 s
-    - id: a
-      text: 0.2 s
-    answer: a
-    feedback: The slower resource sets this simplified bound.
-- id: compute-and-bandwidth.transfer
-  objective_ref: objective.compute-and-bandwidth
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Measure the critical path: trace the inputs, operation, and result before choosing.'
-  remediation_scene: compute-and-bandwidth.s4
-  variants:
-  - id: compute-and-bandwidth.transfer.1
-    prompt: Why can batching improve weight reuse?
-    options:
-    - id: b
-      text: It eliminates all model parameters
-    - id: c
-      text: It removes every synchronization
-    - id: a
-      text: Several examples use the same loaded weights
-    answer: a
-    feedback: Reuse can amortize memory transfers over more arithmetic.
-  - id: compute-and-bandwidth.transfer.2
-    prompt: A FLOP-reducing change runs slower. Is that possible?
-    options:
-    - id: c
-      text: Only with incorrect arithmetic
-    - id: a
-      text: Yes; memory traffic or overhead can dominate
-    - id: b
-      text: 'No'
-    answer: a
-    feedback: Runtime follows the actual critical path.
+  - id: compute-and-bandwidth.base
+    objective_ref: objective.compute-and-bandwidth
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Compare two lower bounds: trace the inputs, operation, and result before choosing.'
+    remediation_scene: compute-and-bandwidth.s2
+    variants:
+      - id: compute-and-bandwidth.base.1
+        prompt: What is arithmetic intensity?
+        options:
+          - id: a
+            text: Operations per byte transferred
+          - id: b
+            text: Bytes per model name
+          - id: c
+            text: Only accelerator clock frequency
+        answer: a
+        feedback: It relates computation to data movement.
+        retired: true
+      - id: compute-and-bandwidth.base.2
+        prompt: Compute needs 0.1 s and transfer 0.2 s. Ideal overlapped lower bound?
+        options:
+          - id: b
+            text: 0.1 s
+          - id: c
+            text: 0 s
+          - id: a
+            text: 0.2 s
+        answer: a
+        feedback: The slower resource sets this simplified bound.
+        retired: true
+  - id: compute-and-bandwidth.transfer
+    objective_ref: objective.compute-and-bandwidth
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Measure the critical path: trace the inputs, operation, and result before choosing.'
+    remediation_scene: compute-and-bandwidth.s4
+    variants:
+      - id: compute-and-bandwidth.transfer.1
+        prompt: Why can batching improve weight reuse?
+        options:
+          - id: b
+            text: It eliminates all model parameters
+          - id: c
+            text: It removes every synchronization
+          - id: a
+            text: Several examples use the same loaded weights
+        answer: a
+        feedback: Reuse can amortize memory transfers over more arithmetic.
+        retired: true
+      - id: compute-and-bandwidth.transfer.2
+        prompt: A FLOP-reducing change runs slower. Is that possible?
+        options:
+          - id: c
+            text: Only with incorrect arithmetic
+          - id: a
+            text: Yes; memory traffic or overhead can dominate
+          - id: b
+            text: 'No'
+        answer: a
+        feedback: Runtime follows the actual critical path.
+        retired: true
+  - id: compute-and-bandwidth.base.v2
+    objective_ref: objective.compute-and-bandwidth
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Work out FLOPs ÷ bytes moved and compare it with the ridge point (peak FLOP/s ÷ bandwidth). Below the ridge, bytes set the speed; above it, arithmetic does.
+    remediation_scene: compute-and-bandwidth.s2
+    variants:
+      - id: compute-and-bandwidth.base.v2.1
+        prompt: On an A100 (ridge point about 156 FLOP/byte), which of these bf16 operations is limited by memory bandwidth rather than arithmetic?
+        options:
+          - id: b
+            text: Multiplying 4,096 tokens' activations by a 4,096 × 4,096 weight matrix
+          - id: a
+            text: Multiplying a single token's vector by a 4,096 × 4,096 weight matrix
+          - id: c
+            text: Multiplying two 8,192 × 8,192 matrices together in one kernel
+        answer: a
+        feedback: A matrix-vector product uses each fetched weight once, so its intensity is about 1 FLOP/byte, far below the ridge. The two large matrix products reuse every weight thousands of times and sit above the ridge.
+      - id: compute-and-bandwidth.base.v2.2
+        prompt: A kernel performs about 2 FLOPs per byte it moves on an A100. A new GPU doubles peak FLOP/s but keeps the same memory bandwidth. What happens to this kernel's speed?
+        options:
+          - id: c
+            text: It roughly doubles, because peak compute doubled
+          - id: b
+            text: It halves, because faster cores wait longer for memory
+          - id: a
+            text: It stays about the same, because memory sets its speed
+        answer: a
+        feedback: At 2 FLOP/byte the kernel is deep in the memory-bound region, where attainable speed is intensity × bandwidth. Raising the compute roof doesn't move the bandwidth slope it sits on. Faster cores don't slow it down either; they just idle more.
+      - id: compute-and-bandwidth.base.v2.3
+        prompt: Why does pushing 64 tokens through a 4,096 × 4,096 weight matrix take barely longer than pushing one token?
+        options:
+          - id: a
+            text: Reading the weights dominates the time, and one read serves all 64 tokens
+          - id: b
+            text: Tensor cores switch on only once at least 64 tokens are present
+          - id: c
+            text: The 64 tokens share most of their values, so there is less to compute
+        answer: a
+        feedback: Both cases must read the same 33.6 MB of weights, which takes about 17 µs. The extra math for 64 tokens (about 7 µs) hides under that read. Nothing is skipped; each token is fully computed.
+      - id: compute-and-bandwidth.base.v2.4
+        prompt: What does the ridge point on a GPU's roofline tell you?
+        options:
+          - id: c
+            text: The peak FLOP/s that the chip reaches on typical real workloads
+          - id: a
+            text: The intensity at which an operation stops being memory-bound
+          - id: b
+            text: The data size above which a matrix no longer fits in fast memory
+        answer: a
+        feedback: The ridge is where the bandwidth slope meets the compute roof, at peak FLOP/s ÷ bandwidth (about 156 FLOP/byte on an A100). It's an intensity, not a speed or a size; real workloads usually run well below peak.
+  - id: compute-and-bandwidth.transfer.v2
+    objective_ref: objective.compute-and-bandwidth
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: First decide which side of the ridge the workload is on. Then pick the change that attacks that limit, fewer bytes per FLOP or more FLOP/s.
+    remediation_scene: compute-and-bandwidth.s4
+    variants:
+      - id: compute-and-bandwidth.transfer.v2.1
+        prompt: A new accelerator offers 1,000 TFLOP/s and 4 TB/s. A kernel on it has an intensity of 100 FLOP/byte. What limits the kernel, and how fast can it run at best?
+        options:
+          - id: b
+            text: Compute-bound, at up to 1,000 TFLOP/s
+          - id: a
+            text: Memory-bound, at up to 400 TFLOP/s
+          - id: c
+            text: Memory-bound, at up to 40 TFLOP/s
+        answer: a
+        feedback: The ridge is 1,000 ÷ 4 = 250 FLOP/byte, and 100 is below it, so the bound is 100 × 4 TB/s = 400 TFLOP/s. 40 comes from dividing instead of multiplying; the kernel would need 250 FLOP/byte to reach the compute roof.
+      - id: compute-and-bandwidth.transfer.v2.2
+        prompt: A profile shows a training step spends 20% of its time in three back-to-back elementwise kernels (bias add, GELU, dropout) that do almost no FLOPs. Which change is most likely to speed them up?
+        options:
+          - id: c
+            text: Move to a GPU with twice the peak FLOP/s and the same memory
+          - id: b
+            text: Split each operation into smaller kernels so more run at once
+          - id: a
+            text: Fuse the three into one kernel that reads and writes the data once
+        answer: a
+        feedback: Elementwise kernels are memory-bound, so the fix is fewer bytes moved; fusion cuts three round trips through HBM to one. More FLOP/s doesn't help below the ridge, and more, smaller kernels would add launches and traffic.
+      - id: compute-and-bandwidth.transfer.v2.3
+        prompt: A team's dashboard shows 98% GPU utilization, yet their MFU is only 18%. What best explains the gap?
+        options:
+          - id: a
+            text: Kernels are running nearly all the time, but many are memory-bound or waiting
+          - id: b
+            text: MFU is measured in fp32 while the GPU is really running bf16 kernels
+          - id: c
+            text: The utilization figure averages all 8 GPUs in the machine together
+        answer: a
+        feedback: The utilization meter counts time when any kernel is running, not FLOPs used. Memory-bound kernels and communication waits keep it high while useful arithmetic stays low. MFU is computed against the peak for the format actually used.
+      - id: compute-and-bandwidth.transfer.v2.4
+        prompt: A chatbot generates replies one user at a time, one token per step, and uses under 1% of its GPU's peak FLOP/s. Which change raises throughput the most?
+        options:
+          - id: b
+            text: Buy a GPU with more FLOP/s but the same memory bandwidth
+          - id: a
+            text: Batch many users' requests so each weight read serves many tokens
+          - id: c
+            text: Give each user a separate GPU stream so they never share weights
+        answer: a
+        feedback: One token per step is a matrix-vector product with intensity near 1. Batching B users raises intensity roughly to B, so the same weight read does B times the useful work. More FLOP/s doesn't help a memory-bound kernel, and separate streams would read the weights separately for each user.
+  - id: compute-and-bandwidth.calculate
+    objective_ref: objective.compute-and-bandwidth
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Intensity = FLOPs ÷ bytes. Attainable speed = min(peak, intensity × bandwidth). Time is at least the larger of FLOPs ÷ peak and bytes ÷ bandwidth."
+    remediation_scene: compute-and-bandwidth.s3
+    absolute_tolerance: 0.5
+    variants:
+      - id: compute-and-bandwidth.calculate.1
+        prompt: A kernel performs 60 billion FLOPs and moves 2 billion bytes to and from memory. What is its arithmetic intensity, in FLOP/byte?
+        answer: 30
+        feedback: 60 billion ÷ 2 billion = 30 FLOP/byte. On an A100 that is well below the ridge of 156, so it would be memory-bound.
+      - id: compute-and-bandwidth.calculate.2
+        prompt: On an A100 (312 TFLOP/s peak, 2 TB/s bandwidth), a kernel has an intensity of 40 FLOP/byte. What is its attainable speed under the roofline, in TFLOP/s?
+        answer: 80
+        feedback: 40 FLOP/byte × 2 TB/s = 80 TFLOP/s, which is less than 312, so the bandwidth roof applies.
+      - id: compute-and-bandwidth.calculate.3
+        prompt: A chip has 900 TFLOP/s of peak compute and 3 TB/s of memory bandwidth. Where is its ridge point, in FLOP/byte?
+        answer: 300
+        feedback: Ridge = peak ÷ bandwidth = 900 ÷ 3 = 300 FLOP/byte. Operations below 300 FLOP/byte are memory-bound on this chip.
+      - id: compute-and-bandwidth.calculate.4
+        prompt: On an A100 (312 TFLOP/s, 2 TB/s), a kernel performs 624 billion FLOPs and moves 1 GB. Assuming math and memory traffic overlap perfectly, what is its minimum run time, in milliseconds?
+        answer: 2
+        feedback: Math takes 624 billion ÷ 312 trillion = 2 ms; memory takes 1 GB ÷ 2 TB/s = 0.5 ms. With perfect overlap the slower one sets the time, 2 ms, so this kernel is compute-bound.
+      - id: compute-and-bandwidth.calculate.5
+        prompt: A 7-billion-parameter model needs about 6 × 7 billion FLOPs per training token. One GPU with a 312 TFLOP/s peak processes 2,600 tokens per second. What is its MFU, in percent?
+        answer: 35
+        feedback: 42 billion × 2,600 = 109.2 TFLOP/s of useful work, and 109.2 ÷ 312 = 0.35, so MFU is 35%.
+      - id: compute-and-bandwidth.calculate.6
+        prompt: A bf16 layer multiplies 16 tokens' activations (16 × 4,096) by a 4,096 × 4,096 weight matrix. Counting 2mkn FLOPs and 2 bytes for each number of all three matrices, what is its arithmetic intensity, in FLOP/byte (to one decimal place)?
+        answer: 15.9
+        feedback: FLOPs = 2 × 16 × 4,096² ≈ 537 million. Bytes = 2 × (16 × 4,096 + 4,096² + 16 × 4,096) ≈ 33.8 million. 537 ÷ 33.8 ≈ 15.9, close to the token count, as expected when tokens are far fewer than the matrix size.

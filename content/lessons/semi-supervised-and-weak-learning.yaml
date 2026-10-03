@@ -1,193 +1,462 @@
 schema_version: 0.2-draft
 lesson:
   id: semi-supervised-and-weak-learning
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Use unlabeled data and imperfect label sources carefully
   state: draft
-  summary: Learn from missing or imperfect labels without treating guesses as facts.
+  summary: A marketplace has 1,000 labeled listings and 50,000 unlabeled ones. Turn confident guesses and rough rules of thumb into training labels, without letting the model believe its own mistakes.
   slot: M31.7
   category: learning
   sources:
-  - title: FixMatch
-    url: https://arxiv.org/abs/2001.07685
-  - title: Snorkel
-    url: https://arxiv.org/abs/1711.10160
+    - title: "FixMatch: Simplifying Semi-Supervised Learning with Consistency and Confidence (Sohn et al., 2020)"
+      url: https://arxiv.org/abs/2001.07685
+    - title: "Snorkel: Rapid Training Data Creation with Weak Supervision (Ratner et al., 2017)"
+      url: https://arxiv.org/abs/1711.10160
 objectives:
-- id: objective.semi-supervised-and-weak-learning
-  version: 1-draft
-  statement: Semi-supervised methods combine labeled and unlabeled examples, while weak supervision combines
-    imperfect signals; pseudo-labels and heuristics can amplify errors unless assumptions and independent labels
-    are checked.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - semi-supervised-and-weak-learning.base
-  - semi-supervised-and-weak-learning.transfer
-  prerequisites:
-  - anyOf:
-    - objective.self-supervised-representations
-  - anyOf:
-    - objective.active-and-curriculum-learning
+  - id: objective.semi-supervised-and-weak-learning
+    version: 2-draft
+    statement: Train on confident pseudo-labels with a threshold, explain consistency regularization as in FixMatch, combine noisy labeling-function votes by their accuracies, and check every label source against a hand-labeled gold set.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - semi-supervised-and-weak-learning.base.v2
+      - semi-supervised-and-weak-learning.transfer.v2
+      - semi-supervised-and-weak-learning.calculate
+    prerequisites:
+      - anyOf:
+          - objective.self-supervised-representations
+      - anyOf:
+          - objective.active-and-curriculum-learning
 scenes:
-- id: semi-supervised-and-weak-learning.s1
-  title: Learn from unlabeled structure
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.semi-supervised-and-weak-learning
-  markdown: Semi-supervised learning uses some labeled examples plus unlabeled data under assumptions about
-    their relationship. Consistency methods encourage compatible predictions under suitable perturbations.
-    Unlabeled data can hurt when its distribution or class structure conflicts with those assumptions.
-  text_mode: Semi-supervised learning uses some labeled examples plus unlabeled data under assumptions about
-    their relationship. Consistency methods encourage compatible predictions under suitable perturbations.
-    Unlabeled data can hurt when its distribution or class structure conflicts with those assumptions.
-  bridges: []
-- id: semi-supervised-and-weak-learning.s2
-  title: Create pseudo-labels cautiously
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.semi-supervised-and-weak-learning
-  markdown: A model can label confident predictions and train on them. Confidence thresholds reduce some noise
-    but can exclude difficult groups or preserve confidently wrong beliefs. If an early model mistakes rare
-    class B for A, repeated pseudo-labeling can reinforce that error.
-  text_mode: A model can label confident predictions and train on them. Confidence thresholds reduce some noise
-    but can exclude difficult groups or preserve confidently wrong beliefs. If an early model mistakes rare
-    class B for A, repeated pseudo-labeling can reinforce that error.
-  bridges: []
-- id: semi-supervised-and-weak-learning.s3
-  title: Combine weak signals
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.semi-supervised-and-weak-learning
-  markdown: 'Heuristic rules, knowledge bases, and model-generated labels can provide noisy supervision. Label
-    functions may abstain or conflict. A label model can estimate relationships among sources, but correlated
-    heuristics should not be treated as many independent votes without justification.
+  - id: semi-supervised-and-weak-learning.s1
+    title: Fifty thousand photos, one thousand labels
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.semi-supervised-and-weak-learning
+    markdown: |-
+      An online secondhand marketplace wants to sort listing photos into 20 categories: lamps, bikes, guitars, and so on. Staff have labeled 1,000 photos. Another 50,000 sit unlabeled. The active learning lesson spent a budget on *more* labels. This lesson squeezes value from the photos nobody will label.
 
+      **Semi-supervised learning** trains on a few labeled examples plus many unlabeled ones. How can photos with no labels teach anything? They show where the data cluster. If thousands of unlabeled photos form a tight group around the 40 labeled guitars, the guitar boundary shouldn't cut through that group. Most methods rest on this **cluster assumption**: points in the same dense region usually share a label, so decision boundaries should run through the sparse gaps.
 
-    For a toy message classifier, one weak rule marks messages containing “win a prize” as unwanted. Another
-    checks the sender against a known unwanted-sender list. They can disagree or both abstain. These rules
-    are label functions: imperfect procedures that produce a label or decline. A pseudo-label instead comes
-    from the model’s own prediction. Both can expand training signals, but neither becomes verified truth merely
-    because it is stored in the label column.'
-  text_mode: 'Heuristic rules, knowledge bases, and model-generated labels can provide noisy supervision. Label
-    functions may abstain or conflict. A label model can estimate relationships among sources, but correlated
-    heuristics should not be treated as many independent votes without justification.
+      Its twin for messy labels is **weak supervision**: labels come from cheap, imperfect sources such as keyword rules, old databases, or another model, instead of careful hand labeling. The marketplace uses both, and they fail in the same way: a label source that is wrong with confidence teaches the model to be wrong with confidence.
+    bridges: []
+  - id: semi-supervised-and-weak-learning.s2
+    title: Keep only the confident guesses
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.semi-supervised-and-weak-learning
+    markdown: |-
+      The simplest method is **pseudo-labeling** (Lee, 2013): train on the 1,000 labels, predict the 50,000 unlabeled photos, and treat each prediction above a confidence **threshold** $\tau$ as if it were a real label. Then retrain on both, and repeat.
 
+      The threshold trades quantity for quality. To choose it, the team checks pseudo-labels against 500 extra hand-labeled photos:
 
-    For a toy message classifier, one weak rule marks messages containing “win a prize” as unwanted. Another
-    checks the sender against a known unwanted-sender list. They can disagree or both abstain. These rules
-    are label functions: imperfect procedures that produce a label or decline. A pseudo-label instead comes
-    from the model’s own prediction. Both can expand training signals, but neither becomes verified truth merely
-    because it is stored in the label column.'
-  bridges: []
-- id: semi-supervised-and-weak-learning.s4
-  title: Keep trusted evaluation data
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.semi-supervised-and-weak-learning
-  markdown: Use a carefully labeled independent subset to evaluate final quality, subgroup behavior, and source
-    errors. Report which labels were human, weak, or pseudo-generated. Increasing the number of labels does
-    not create equivalent amounts of independent ground-truth evidence.
-  text_mode: Use a carefully labeled independent subset to evaluate final quality, subgroup behavior, and source
-    errors. Report which labels were human, weak, or pseudo-generated. Increasing the number of labels does
-    not create equivalent amounts of independent ground-truth evidence.
-  bridges: []
-- id: semi-supervised-and-weak-learning.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.semi-supervised-and-weak-learning
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Unlabeled data and imperfect labels can provide useful signals. Keep their origins visible and
-    test against independent trusted labels so mistakes do not reinforce themselves.
-- id: semi-supervised-and-weak-learning.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.semi-supervised-and-weak-learning
-  markdown: Unlabeled data and imperfect labels can provide useful signals. Keep their origins visible and
-    test against independent trusted labels so mistakes do not reinforce themselves.
-  text_mode: Unlabeled data and imperfect labels can provide useful signals. Keep their origins visible and
-    test against independent trusted labels so mistakes do not reinforce themselves.
+      | Threshold $\tau$ | Unlabeled photos kept | Pseudo-labels correct | Wrong labels added |
+      | ---: | ---: | ---: | ---: |
+      | 0.99 | 20,000 | 99% | 200 |
+      | 0.95 | 31,000 | 97% | 930 |
+      | 0.80 | 42,500 | 91% | 3,825 |
+
+      :::predict Rare categories like harps have few labeled examples. What happens to them at τ = 0.99?
+      Almost none pass. A model trained on six labeled harps is rarely 99% sure of anything harp-like, so the pseudo-labels pile up in the common categories. Each round, lamps and bikes get more examples and harps fall further behind. Many systems set a lower threshold, or a quota, for rare classes.
+      :::
+
+      Errors can also snowball. If the first model calls ukuleles "guitars" with 0.97 confidence, those pseudo-labels teach the next model the same mistake, more firmly. This self-reinforcing loop is called **confirmation bias**.
+    bridges: []
+  - id: semi-supervised-and-weak-learning.s5
+    title: "FixMatch: agree with yourself on a harder view"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.semi-supervised-and-weak-learning
+    markdown: |-
+      A photo of a lamp is still a lamp when flipped, shifted, or recolored: the label-keeping changes from the data augmentation lesson in module 3. **Consistency regularization** turns that into a training signal: the model should give the same answer for two altered versions of the same unlabeled photo. No label is needed, only agreement.
+
+      **FixMatch** (Sohn et al., 2020) combines this with pseudo-labeling, per unlabeled photo:
+
+      1. Make a *weak* augmentation (a flip and a small shift) and predict. Say it's "lamp, 0.97".
+      2. If the top probability is at least $\tau = 0.95$, "lamp" becomes the pseudo-label. Below the threshold, the photo is skipped this step.
+      3. Make a *strong* augmentation of the same photo (heavy color distortion, a patch blanked out) and train the model to predict "lamp" on it.
+
+      :::papers The FixMatch unlabeled loss
+      $$\ell_u = \frac{1}{\mu B}\sum_{b=1}^{\mu B} \mathbb{1}\big(\max(q_b) \ge \tau\big)\; H\big(\hat q_b,\; p_m(y \mid \mathcal{A}(u_b))\big)$$
+
+      $q_b$ is the prediction on the weak view of unlabeled photo $u_b$, $\hat q_b$ its top class, $\mathcal{A}$ the strong augmentation, and $H$ cross-entropy. The indicator $\mathbb{1}$ is 1 only when confidence passes $\tau$. The full loss adds the ordinary loss on labeled photos, and $\mu B$ is the number of unlabeled photos per batch.
+      :::
+
+      The easy view supplies a trustworthy target; the hard view forces the model to recognize lamps under distortion. On the CIFAR-10 image benchmark, FixMatch reached 94.93% accuracy with only 250 labels, and 88.61% with 40, just 4 per class.
+    diagram:
+      caption: One FixMatch step on an unlabeled photo. The weak view sets the target; the strong view is trained to match it.
+      description: An unlabeled photo is augmented two ways. The weak view goes to the model, whose prediction becomes a pseudo-label if its confidence is at least 0.95. The strong view goes to the same model, and the loss pushes its prediction toward the pseudo-label.
+      nodes:
+        - id: photo
+          label: Unlabeled photo
+          col: 0
+          row: 1
+          tone: data
+        - id: weak
+          label: Weak view
+          note: flip, small shift
+          col: 1
+          row: 0
+        - id: strong
+          label: Strong view
+          note: heavy color change, patch cut out
+          col: 1
+          row: 2
+        - id: pred
+          label: Model prediction
+          note: lamp, 0.97
+          col: 2
+          row: 0
+        - id: pseudo
+          label: Pseudo-label "lamp"
+          note: kept only if confidence ≥ 0.95
+          col: 3
+          row: 0
+          tone: warn
+        - id: loss
+          label: Cross-entropy loss
+          note: train strong view to say "lamp"
+          col: 3
+          row: 2
+          tone: accent
+      edges:
+        - from: photo
+          to: weak
+        - from: photo
+          to: strong
+        - from: weak
+          to: pred
+        - from: pred
+          to: pseudo
+          label: threshold
+        - from: strong
+          to: loss
+          label: model prediction
+        - from: pseudo
+          to: loss
+          label: target
+    bridges: []
+  - id: semi-supervised-and-weak-learning.s3
+    title: Rules of thumb as noisy voters
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.semi-supervised-and-weak-learning
+    markdown: |-
+      The marketplace also wants to flag counterfeit listings, and it has no labels for that at all. But the trust-and-safety team knows rules of thumb. In **Snorkel** (Ratner et al., 2017), each rule becomes a **labeling function**: a small program that votes "counterfeit", votes "genuine", or abstains.
+
+      | Labeling function | Votes | Accuracy when it votes |
+      | --- | --- | ---: |
+      | Text says "replica" or "inspired by" | counterfeit | 0.90 |
+      | Price below 30% of retail | counterfeit | 0.70 |
+      | Seller is a verified brand store | genuine | 0.95 |
+
+      A plain majority vote treats them as equals. A better combination gives each function a weight of $\log\frac{a}{1-a}$ for accuracy $a$: 2.20, 0.85, and 2.94. If the functions make mistakes independently and both classes are equally common, adding weighted votes is the log-odds addition of naive Bayes, and a sigmoid turns the total into a probability.
+
+      ```python run
+      import math
+
+      # Each labeling function: its accuracy when it votes (estimated on 300 hand-checked listings)
+      accuracy = {"says_replica": 0.90, "very_cheap": 0.70, "brand_store": 0.95}
+      weight = {f: math.log(a / (1 - a)) for f, a in accuracy.items()}   # log-odds weight
+
+      # Votes: 1 = counterfeit, 0 = genuine; a function that abstains is simply missing
+      votes = {
+          "L1": {"says_replica": 1, "very_cheap": 1},
+          "L2": {"very_cheap": 1, "brand_store": 0},
+          "L3": {"says_replica": 1, "very_cheap": 1, "brand_store": 0},
+      }
+
+      print("weights:", {f: round(w, 2) for f, w in weight.items()})
+      for listing, v in votes.items():
+          fake = sum(1 for x in v.values() if x == 1)
+          real = len(v) - fake
+          majority = "counterfeit" if fake > real else "genuine" if real > fake else "tie"
+          score = sum(weight[f] if x == 1 else -weight[f] for f, x in v.items())
+          p_fake = 1 / (1 + math.exp(-score))
+          print(f"{listing}: votes {fake}-{real}  majority {majority:11s}  "
+                f"weighted score {score:+.2f}  P(counterfeit) = {p_fake:.2f}")
+      ```
+
+      Listing L2 is a 1–1 tie by majority, but the brand-store vote outweighs the cheap-price vote: P(counterfeit) = 0.11. L3 wins 2–1 by majority yet comes out a near coin toss, 0.53. Change `very_cheap` to 0.90 and watch L3 climb to 0.81.
+
+      Snorkel's **label model** goes one step further: it estimates each function's accuracy *without* any ground truth, from how often the functions agree and disagree. Its probabilistic labels then train an ordinary classifier, which can learn from listings that no rule covers.
+
+      :::mixup "Three rules voting 'counterfeit' means three pieces of evidence."
+      Only if they err independently. Two rules that both check for the word "replica" are one piece of evidence counted twice. Snorkel can model such correlations; a plain vote can't.
+      :::
+    bridges: []
+  - id: semi-supervised-and-weak-learning.s4
+    title: A small gold set keeps everyone honest
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.semi-supervised-and-weak-learning
+    markdown: |-
+      Pseudo-labels, weak labels, and human labels all end up in the same "label" column. Only one of them was checked. So the team keeps a **gold set**: a few hundred examples labeled carefully by people, drawn at random, and never used for training.
+
+      Here's how they use their 300 gold listings:
+
+      1. **Score each labeling function.** "Price below 30% of retail" votes on 60 gold listings and is right on 42: accuracy 0.70, the number used above.
+      2. **Score the pseudo-labels** at each threshold, as in the threshold table.
+      3. **Score the final model by category,** so that harps and ukuleles aren't hidden inside an overall average.
+      4. **Record where every training label came from:** human, pseudo-label, or which labeling function. When the model fails, that tells them which source to fix.
+
+      Without step 3, the model can look excellent on the common categories while the confirmation-bias loop quietly erases the rare ones.
+    bridges: []
+  - id: semi-supervised-and-weak-learning.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.semi-supervised-and-weak-learning
+    markdown: Weighted votes to add up by hand, then a medical-note classifier, a spam team's keyword rules, bird photos, and a rare-disease screener test when guessed labels help and when they mislead.
+    takeaway: |-
+      Unlabeled data and rough rules can multiply your labels. Keep only confident pseudo-labels, weight rules by their accuracy, and check every source against a small hand-labeled gold set.
+  - id: semi-supervised-and-weak-learning.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.semi-supervised-and-weak-learning
+    markdown: |-
+      Unlabeled data and imperfect labels can provide useful signals. Keep their origins visible and test against independent trusted labels so mistakes do not reinforce themselves.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - semi-supervised-and-weak-learning.s1
-    - semi-supervised-and-weak-learning.s2
-    - semi-supervised-and-weak-learning.s3
-    - semi-supervised-and-weak-learning.s4
-    - semi-supervised-and-weak-learning.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - semi-supervised-and-weak-learning.s1
+        - semi-supervised-and-weak-learning.s2
+        - semi-supervised-and-weak-learning.s5
+        - semi-supervised-and-weak-learning.s3
+        - semi-supervised-and-weak-learning.s4
+        - semi-supervised-and-weak-learning.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     semi-supervised-and-weak-learning.recap: semi-supervised-and-weak-learning.check
 assessment_families:
-- id: semi-supervised-and-weak-learning.base
-  objective_ref: objective.semi-supervised-and-weak-learning
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Create pseudo-labels cautiously: trace the inputs, operation, and result before choosing.'
-  remediation_scene: semi-supervised-and-weak-learning.s2
-  variants:
-  - id: semi-supervised-and-weak-learning.base.1
-    prompt: Can unlabeled target data hurt semi-supervised learning?
-    options:
-    - id: a
-      text: Yes, if assumptions or distributions mismatch
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if labels are complete
-    answer: a
-    feedback: Unlabeled structure is useful only under appropriate conditions.
-  - id: semi-supervised-and-weak-learning.base.2
-    prompt: What risk comes from confidently wrong pseudo-labels?
-    options:
-    - id: b
-      text: They automatically correct themselves
-    - id: c
-      text: They prove ground truth
-    - id: a
-      text: They can reinforce the model’s existing error
-    answer: a
-    feedback: Self-training can amplify mistaken targets.
-- id: semi-supervised-and-weak-learning.transfer
-  objective_ref: objective.semi-supervised-and-weak-learning
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Keep trusted evaluation data: trace the inputs, operation, and result before choosing.'
-  remediation_scene: semi-supervised-and-weak-learning.s4
-  variants:
-  - id: semi-supervised-and-weak-learning.transfer.1
-    prompt: Ten correlated heuristics repeat one signal. Are they ten independent votes?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if implemented in separate files
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Source dependence changes evidence strength.
-  - id: semi-supervised-and-weak-learning.transfer.2
-    prompt: Why retain independently labeled evaluation examples?
-    options:
-    - id: c
-      text: Only to count labels
-    - id: a
-      text: To measure quality beyond the generated supervision
-    - id: b
-      text: To replace all training data
-    answer: a
-    feedback: Evaluation needs a reference not produced by the same feedback loop.
+  - id: semi-supervised-and-weak-learning.base
+    objective_ref: objective.semi-supervised-and-weak-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Create pseudo-labels cautiously: trace the inputs, operation, and result before choosing.'
+    remediation_scene: semi-supervised-and-weak-learning.s2
+    variants:
+      - id: semi-supervised-and-weak-learning.base.1
+        prompt: Can unlabeled target data hurt semi-supervised learning?
+        options:
+          - id: a
+            text: Yes, if assumptions or distributions mismatch
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if labels are complete
+        answer: a
+        feedback: Unlabeled structure is useful only under appropriate conditions.
+        retired: true
+      - id: semi-supervised-and-weak-learning.base.2
+        prompt: What risk comes from confidently wrong pseudo-labels?
+        options:
+          - id: b
+            text: They automatically correct themselves
+          - id: c
+            text: They prove ground truth
+          - id: a
+            text: They can reinforce the model’s existing error
+        answer: a
+        feedback: Self-training can amplify mistaken targets.
+        retired: true
+  - id: semi-supervised-and-weak-learning.transfer
+    objective_ref: objective.semi-supervised-and-weak-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Keep trusted evaluation data: trace the inputs, operation, and result before choosing.'
+    remediation_scene: semi-supervised-and-weak-learning.s4
+    variants:
+      - id: semi-supervised-and-weak-learning.transfer.1
+        prompt: Ten correlated heuristics repeat one signal. Are they ten independent votes?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if implemented in separate files
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Source dependence changes evidence strength.
+        retired: true
+      - id: semi-supervised-and-weak-learning.transfer.2
+        prompt: Why retain independently labeled evaluation examples?
+        options:
+          - id: c
+            text: Only to count labels
+          - id: a
+            text: To measure quality beyond the generated supervision
+          - id: b
+            text: To replace all training data
+        answer: a
+        feedback: Evaluation needs a reference not produced by the same feedback loop.
+        retired: true
+  - id: semi-supervised-and-weak-learning.base.v2
+    objective_ref: objective.semi-supervised-and-weak-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask where each label came from and how confident it had to be. A threshold trades how many pseudo-labels you keep against how many are wrong.
+    remediation_scene: semi-supervised-and-weak-learning.s2
+    variants:
+      - id: semi-supervised-and-weak-learning.base.v2.1
+        prompt: A team raises its pseudo-labeling threshold from 0.80 to 0.99. What happens to the pseudo-labels?
+        options:
+          - id: b
+            text: More photos pass, since a stricter rule makes the model more confident
+          - id: a
+            text: Fewer photos pass, but a larger share of those that do are correct
+          - id: c
+            text: The same photos pass, but each one is weighted more heavily in training
+        answer: a
+        feedback: A higher threshold keeps only the most confident predictions, so quantity falls and quality rises (in the lesson, 20,000 at 99% correct versus 42,500 at 91%). The threshold filters predictions; it doesn't change the model's confidence or the weights.
+      - id: semi-supervised-and-weak-learning.base.v2.2
+        prompt: In FixMatch, which view of an unlabeled photo produces the pseudo-label, and which is trained to match it?
+        options:
+          - id: a
+            text: The weak view produces it; the strong view is trained to match it
+          - id: b
+            text: The strong view produces it; the weak view is trained to match it
+          - id: c
+            text: Both views produce labels, which are averaged into one soft target
+        answer: a
+        feedback: The mildly altered photo gives a trustworthy prediction, which becomes the target if it passes τ. The heavily altered photo is harder, so training on it teaches robustness. Reversing the roles would use the least reliable prediction as the target.
+      - id: semi-supervised-and-weak-learning.base.v2.3
+        prompt: An early model labels ukuleles as "guitar" with 0.97 confidence. After several rounds of pseudo-labeling at τ = 0.95, what is most likely?
+        options:
+          - id: c
+            text: The error fades, because unlabeled data correct the boundary over time
+          - id: a
+            text: The error grows firmer, because the model trains on its own wrong labels
+          - id: b
+            text: Ukuleles drop out of training, because they never pass the threshold
+        answer: a
+        feedback: Confident mistakes pass the threshold and become training labels, so each round reinforces them. That's confirmation bias. The mistakes here are above 0.95, so they don't drop out, and unlabeled data can't correct an error nothing contradicts.
+      - id: semi-supervised-and-weak-learning.base.v2.4
+        prompt: "Three labeling functions vote on a listing: one with accuracy 0.90 says counterfeit, one with 0.70 says counterfeit, and one with 0.95 says genuine. Why is the weighted result close to 50/50 when the majority says counterfeit 2–1?"
+        options:
+          - id: b
+            text: Majority vote ignores abstentions, while weighting counts them as genuine
+          - id: c
+            text: Functions that vote counterfeit get lower weights by design, to avoid false alarms
+          - id: a
+            text: The genuine vote's weight nearly equals the other two weights combined
+        answer: a
+        feedback: The log-odds weights are 2.20 and 0.85 for counterfeit against 2.94 for genuine, a net +0.10, so P ≈ 0.53. No function abstained here, and weights depend on accuracy, not on which class a function votes for.
+      - id: semi-supervised-and-weak-learning.base.v2.5
+        prompt: What does Snorkel's label model estimate, and from what?
+        options:
+          - id: a
+            text: Each labeling function's accuracy, from their agreements and disagreements
+          - id: b
+            text: Each labeling function's accuracy, from a large hand-labeled training set
+          - id: c
+            text: The final classifier's accuracy, from its predictions on the gold set
+        answer: a
+        feedback: The point of the label model is to weigh the functions without ground-truth labels, using only how their votes overlap and conflict. A gold set is still wise for checking, but the label model doesn't need one to train.
+  - id: semi-supervised-and-weak-learning.transfer.v2
+    objective_ref: objective.semi-supervised-and-weak-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Look for the label source that could be confidently wrong or double-counted, then pick the check that uses independent, hand-labeled examples.
+    remediation_scene: semi-supervised-and-weak-learning.s4
+    variants:
+      - id: semi-supervised-and-weak-learning.transfer.v2.1
+        prompt: A rare-disease screener uses pseudo-labeling at τ = 0.99. Overall accuracy rises each round, but recall on the rarest disease falls. What is the likely cause?
+        options:
+          - id: b
+            text: The gold set is too small to measure the rare disease's recall accurately
+          - id: a
+            text: Rare-disease cases seldom pass the threshold, so pseudo-labels crowd them out
+          - id: c
+            text: The strong threshold removes too many wrong labels from the common classes
+        answer: a
+        feedback: A model with few rare examples is rarely 99% sure about them, so the pseudo-labels pile up in common classes and the rare class shrinks in relative terms. A lower threshold or quota for rare classes, and per-class gold scores, address it. Removing wrong labels helps rather than hurts.
+      - id: semi-supervised-and-weak-learning.transfer.v2.2
+        prompt: A spam team writes five keyword rules, and three of them all check for the word "winner". The label model trusts the "winner" votes heavily. What is wrong?
+        options:
+          - id: a
+            text: The three rules are correlated, so one signal is being counted three times
+          - id: c
+            text: Keyword rules are too crude to use, so the team should hand-label instead
+          - id: b
+            text: Five rules are too few for a label model to estimate their accuracies
+        answer: a
+        feedback: Weighted voting assumes independent errors. Three rules keyed to one word agree because they share a cause, not because they're each right. Merge them or model the correlation. Crude rules are fine when weighted and checked.
+      - id: semi-supervised-and-weak-learning.transfer.v2.3
+        prompt: A bird-photo classifier has 400 labeled and 100,000 unlabeled photos. Which approach uses the unlabeled photos in the FixMatch way?
+        options:
+          - id: c
+            text: Label the 100,000 photos with the current model and retrain on the lot
+          - id: b
+            text: Train on just the 400 labels, then use the unlabeled photos for testing
+          - id: a
+            text: Train each confident weak-view prediction as the target for a strong view
+        answer: a
+        feedback: FixMatch keeps only confident predictions on weak views and uses them as targets for strongly altered views. Retraining on every prediction adds many wrong labels, and unlabeled photos can't serve as a test set.
+      - id: semi-supervised-and-weak-learning.transfer.v2.4
+        prompt: A hospital labels clinical notes with keyword rules and trains a classifier on the result. How should it measure the classifier's accuracy?
+        options:
+          - id: a
+            text: On a random set of notes labeled by clinicians and kept out of training
+          - id: b
+            text: On notes where most of the keyword rules agree, since those labels are reliable
+          - id: c
+            text: On the rule-labeled training notes, since they reflect what the rules intended
+        answer: a
+        feedback: Only independent human labels can reveal what the rules get wrong. Notes where the rules agree are the easy cases, and scoring against rule labels measures agreement with the rules, not correctness.
+      - id: semi-supervised-and-weak-learning.transfer.v2.5
+        prompt: A marketplace's final model fails on vintage lamps. Its training labels came from staff, pseudo-labels, and four labeling functions. What record would help most to find the cause?
+        options:
+          - id: b
+            text: The model's overall accuracy on the gold set before and after the failure
+          - id: a
+            text: The source of each training label for the lamp examples
+          - id: c
+            text: The number of unlabeled photos in each category of the dataset
+        answer: a
+        feedback: Knowing whether the lamp labels came from staff, a threshold, or one particular rule points straight at the source to fix. An overall accuracy hides the lamps, and unlabeled counts say nothing about label quality.
+  - id: semi-supervised-and-weak-learning.calculate
+    objective_ref: objective.semi-supervised-and-weak-learning
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Add the weight of each function voting for the positive class and subtract the weight of each voting against it. Abstaining functions add nothing.
+    remediation_scene: semi-supervised-and-weak-learning.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: semi-supervised-and-weak-learning.calculate.1
+        prompt: "Labeling functions with weights 2.2 and 0.8 vote spam; one with weight 2.9 votes not spam. What is the weighted score (spam positive)?"
+        answer: 0.1
+        feedback: 2.2 + 0.8 − 2.9 = 0.1, a slight lean toward spam despite the strong "not spam" vote.
+      - id: semi-supervised-and-weak-learning.calculate.2
+        prompt: "Functions with weights 1.4 and 0.6 vote spam; one with weight 1.1 votes not spam; a fourth abstains. What is the weighted score (spam positive)?"
+        answer: 0.9
+        feedback: 1.4 + 0.6 − 1.1 = 0.9. The abstaining function contributes nothing.
+      - id: semi-supervised-and-weak-learning.calculate.3
+        prompt: "A function with weight 3.0 votes genuine; two functions with weight 0.5 each vote counterfeit. What is the weighted score (counterfeit positive)?"
+        answer: -2
+        feedback: 0.5 + 0.5 − 3.0 = −2.0. Two weak votes can't outweigh one strong one.
+      - id: semi-supervised-and-weak-learning.calculate.4
+        prompt: A labeling function is right 75% of the time when it votes. What is its log-odds weight, ln(a / (1 − a))? (ln 3 ≈ 1.099; two decimals.)
+        answer: 1.1
+        feedback: 0.75 / 0.25 = 3, and ln 3 ≈ 1.10.
+      - id: semi-supervised-and-weak-learning.calculate.5
+        prompt: "Two functions with weight 1.5 each disagree on a listing, and a third with weight 0.7 votes genuine. What is the weighted score (counterfeit positive)?"
+        answer: -0.7
+        feedback: The two 1.5 votes cancel, leaving −0.7 from the genuine vote.

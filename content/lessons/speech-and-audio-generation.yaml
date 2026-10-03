@@ -1,224 +1,432 @@
 schema_version: 0.2-draft
 lesson:
   id: speech-and-audio-generation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Generate sound from a representation
   state: draft
-  summary: Follow a sentence or sound description through an acoustic representation to a generated waveform.
+  summary: To read your note aloud, a model must produce 16,000 numbers for every second of speech. See how WaveNet, vocoders, and codec tokens make that fast enough to talk.
   slot: M13.7
   category: learning
   sources:
-  - title: 'WaveNet: A Generative Model for Raw Audio'
-    url: https://arxiv.org/abs/1609.03499
-  - title: High Fidelity Neural Audio Compression
-    url: https://arxiv.org/abs/2210.13438
-  - title: Speech and Language Processing — authors’ draft
-    url: https://web.stanford.edu/~jurafsky/slp3/
+    - title: "WaveNet: A Generative Model for Raw Audio (van den Oord et al., 2016)"
+      url: https://arxiv.org/abs/1609.03499
+    - title: "Natural TTS Synthesis by Conditioning WaveNet on Mel Spectrogram Predictions (Shen et al., 2018)"
+      url: https://arxiv.org/abs/1712.05884
+    - title: "HiFi-GAN: Generative Adversarial Networks for Efficient and High Fidelity Speech Synthesis (Kong et al., 2020)"
+      url: https://arxiv.org/abs/2010.05646
+    - title: "SoundStream: An End-to-End Neural Audio Codec (Zeghidour et al., 2021)"
+      url: https://arxiv.org/abs/2107.03312
+    - title: "High Fidelity Neural Audio Compression (EnCodec; Défossez et al., 2022)"
+      url: https://arxiv.org/abs/2210.13438
+    - title: "Neural Codec Language Models are Zero-Shot Text to Speech Synthesizers (VALL-E; Wang et al., 2023)"
+      url: https://arxiv.org/abs/2301.02111
+    - title: Speech and Language Processing, 3rd edition draft (Jurafsky & Martin)
+      url: https://web.stanford.edu/~jurafsky/slp3/
 objectives:
-- id: objective.speech-and-audio-generation
-  version: 1-draft
-  statement: Speech and audio generators separate conditioning, intermediate representations, and waveform
-    synthesis; vocoders, codecs, and streaming choices introduce different quality and latency tradeoffs.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - speech-and-audio-generation.base
-  - speech-and-audio-generation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.audio-representations
-  - anyOf:
-    - objective.sequence-to-sequence
+  - id: objective.speech-and-audio-generation
+    version: 2-draft
+    statement: Speech and audio generators separate conditioning, intermediate representations, and waveform synthesis; vocoders, codecs, and streaming choices introduce different quality and latency tradeoffs.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - speech-and-audio-generation.base.v2
+      - speech-and-audio-generation.transfer.v2
+      - speech-and-audio-generation.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.audio-representations
+      - anyOf:
+          - objective.sequence-to-sequence
 scenes:
-- id: speech-and-audio-generation.s1
-  title: Decide what should guide the sound
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.speech-and-audio-generation
-  markdown: '**Conditioning** supplies information that guides generation. Text-to-speech can use a sentence,
-    pronunciation cues, a voice, and a requested style. Other audio tasks may use a sound description or preceding
-    music.
+  - id: speech-and-audio-generation.s1
+    title: Read my note aloud
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.speech-and-audio-generation
+    markdown: |-
+      Jot's next feature runs recognition in reverse: tap a note and hear it read aloud while you drive. **Text-to-speech (TTS)** has to invent everything the text leaves out. "Meet Dr. Lee at 3:30" says nothing about how long each sound lasts, where the pitch rises, or what the voice sounds like.
 
+      Everything the generator is told is its **conditioning**: the text, and often a chosen voice and speaking style. What it must invent includes **prosody**, the rhythm, stress, and pitch of speech. "You finished?" and "You finished." share their words and differ only in prosody.
 
-    **Prosody** is the pattern of timing, stress, and intonation. “You finished?” and “You finished.” use the
-    same words but can sound different. Producing these patterns coherently over time is part of the generation
-    task.'
-  text_mode: '**Conditioning** supplies information that guides generation. Text-to-speech can use a sentence,
-    pronunciation cues, a voice, and a requested style. Other audio tasks may use a sound description or preceding
-    music.
+      Most systems split the job into two stages, joined by a compact representation of sound:
 
+      - **The mel route.** An acoustic model predicts a log-mel spectrogram, the representation from the audio lesson, straight from the text. A **vocoder** then turns the spectrogram into a waveform. Google's Tacotron 2 (2018) worked this way.
+      - **The codec route.** A neural codec turns audio into a short sequence of discrete tokens, and back. A language model generates those tokens, the way a chatbot generates words, and the codec decoder turns them into sound.
 
-    **Prosody** is the pattern of timing, stress, and intonation. “You finished?” and “You finished.” use the
-    same words but can sound different. Producing these patterns coherently over time is part of the generation
-    task.'
-  bridges: []
-- id: speech-and-audio-generation.s2
-  title: Turn an acoustic representation into samples
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speech-and-audio-generation
-  markdown: 'One design predicts an acoustic representation, such as a mel spectrogram. A **vocoder** then
-    turns that representation into waveform samples.
+      Either way, the final stage must produce a very long sequence: 16,000 numbers for every second of speech.
+    bridges: []
+    diagram:
+      caption: Two routes from text to sound. Both end with a decoder that turns a compact representation into waveform samples.
+      description: Text goes to an acoustic model, which predicts a mel spectrogram. A vocoder turns the mel spectrogram into the waveform. On the second route, text goes to an audio language model, which generates codec tokens. The codec decoder turns the tokens into the waveform.
+      nodes:
+        - id: text
+          label: Text + chosen voice
+          col: 0
+          row: 1
+          tone: data
+        - id: acoustic
+          label: Acoustic model
+          col: 1
+          row: 0
+        - id: melspec
+          label: Mel spectrogram
+          note: ~100 frames/s
+          col: 2
+          row: 0
+          tone: data
+        - id: vocoder
+          label: Vocoder
+          note: e.g. WaveNet, HiFi-GAN
+          col: 3
+          row: 0
+          tone: accent
+        - id: audiolm
+          label: Audio language model
+          col: 1
+          row: 2
+        - id: tokens
+          label: Codec tokens
+          note: e.g. 600 per second
+          col: 2
+          row: 2
+          tone: data
+        - id: codecdec
+          label: Codec decoder
+          col: 3
+          row: 2
+          tone: accent
+        - id: wave
+          label: Waveform
+          note: 16,000+ samples/s
+          col: 4
+          row: 1
+          tone: data
+      edges:
+        - from: text
+          to: acoustic
+        - from: acoustic
+          to: melspec
+        - from: melspec
+          to: vocoder
+        - from: vocoder
+          to: wave
+        - from: text
+          to: audiolm
+        - from: audiolm
+          to: tokens
+        - from: tokens
+          to: codecdec
+        - from: codecdec
+          to: wave
+  - id: speech-and-audio-generation.s2
+    title: "WaveNet: one sample at a time"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speech-and-audio-generation
+    markdown: |-
+      In 2016, DeepMind's **WaveNet** (van den Oord et al.) generated raw audio directly, one sample at a time, each predicted from the samples before it:
 
+      $$p(\mathbf{x}) = \prod_{t=1}^{T} p(x_t \mid x_1, \ldots, x_{t-1})$$
 
-    Another route uses a **codec**, short for coder–decoder. Its encoder compresses audio and its decoder reconstructs
-    it. Learned **codec tokens** are compact code choices for audio patterns; they need not correspond to words.
-    A model can generate these codes and decode them into samples.
+      It's the same next-token idea as a language model, where each "token" is one sample. In listening tests, people rated WaveNet's speech more natural than the best systems of the day in both US English and Mandarin.
 
+      The problem is reach. A 16 kHz sample needs context from tens of milliseconds back, which means hundreds of samples. WaveNet stacks **causal convolutions**, which look only at the past, and makes them **dilated**: each layer skips over more of the past than the one below. With a kernel of 2 (each layer combines "now" with one earlier value) and dilations 1, 2, 4, …, 512, one output can see
 
-    Other designs generate waveform values more directly. Each route makes different choices about compression
-    rate, retained detail, and computation.'
-  text_mode: 'One design predicts an acoustic representation, such as a mel spectrogram. A **vocoder** then
-    turns that representation into waveform samples.
+      $$1 + (2 - 1)(1 + 2 + 4 + \cdots + 512) = 1 + 1023 = 1024 \text{ samples}$$
 
+      That's 64 ms at 16 kHz from only 10 layers. Doubling the dilation at each layer doubles the reach, so the **receptive field**, the stretch of input one output can see, grows exponentially with depth. Without dilation, the same 10 layers would see just 11 samples.
 
-    Another route uses a **codec**, short for coder–decoder. Its encoder compresses audio and its decoder reconstructs
-    it. Learned **codec tokens** are compact code choices for audio patterns; they need not correspond to words.
-    A model can generate these codes and decode them into samples.
+      ```python run
+      def receptive_field(kernel, dilations):
+          """Samples one output can see: 1 + (kernel - 1) x sum of dilations."""
+          return 1 + (kernel - 1) * sum(dilations)
 
+      sr = 16000
+      block = [2 ** i for i in range(10)]            # dilations 1, 2, 4, ..., 512
+      for stacks in (1, 2, 3):
+          rf = receptive_field(2, block * stacks)
+          print(f"{stacks} stack(s): {rf:5d} samples = {1000 * rf / sr:6.1f} ms")
 
-    Other designs generate waveform values more directly. Each route makes different choices about compression
-    rate, retained detail, and computation.'
-  bridges: []
-- id: speech-and-audio-generation.s3
-  title: Understand the generation schedule
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speech-and-audio-generation
-  markdown: Autoregressive generation produces successive units conditioned on earlier ones. Diffusion-style
-    or other iterative generators refine a representation through repeated evaluations. Streaming emits usable
-    chunks before the full signal is complete. Chunk boundaries, future context, and decoder buffering can
-    affect smoothness and delay.
-  text_mode: Autoregressive generation produces successive units conditioned on earlier ones. Diffusion-style
-    or other iterative generators refine a representation through repeated evaluations. Streaming emits usable
-    chunks before the full signal is complete. Chunk boundaries, future context, and decoder buffering can
-    affect smoothness and delay.
-  bridges: []
-- id: speech-and-audio-generation.s4
-  title: Evaluate the listening task
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speech-and-audio-generation
-  markdown: 'Measure intelligibility, pronunciation, naturalness, speaker consistency, artifacts, and latency
-    under the intended use. A reference waveform need not be the only valid rendition, so simple sample-wise
-    error can be misleading. Speaker identity and consent also matter when creating or using voice-conditioned
-    systems.
+      # Check by brute force: which past samples can reach one output?
+      reach = {0}                                    # offsets into the past
+      for d in block:                                # kernel 2: "now" and "d steps back"
+          reach = reach | {r + d for r in reach}
+      print("brute force, 1 stack:", len(reach), "distinct past samples")
+      ```
 
+      :::predict WaveNet repeats the 1-to-512 block. How far back can three stacked blocks see?
+      Each block adds 1,023, so $1 + 3 \times 1023 = 3070$ samples, about 192 ms at 16 kHz. That's roughly one syllable. Run the code to check.
+      :::
 
-    Imagine two correct readings of “good morning,” one slightly slower. Their sample-by-sample values differ
-    greatly, even though both are understandable and natural. Listening judgments and task-specific checks
-    help measure what a raw waveform difference misses. Music and sound effects add further goals such as rhythm,
-    continuity and matching a description.'
-  text_mode: 'Measure intelligibility, pronunciation, naturalness, speaker consistency, artifacts, and latency
-    under the intended use. A reference waveform need not be the only valid rendition, so simple sample-wise
-    error can be misleading. Speaker identity and consent also matter when creating or using voice-conditioned
-    systems.
+      The catch is speed. One second of audio takes 16,000 network passes, each waiting for the last. Later vocoders, such as Parallel WaveNet (2017) and HiFi-GAN (2020), learn to produce all the samples for a stretch of spectrogram at once, so a phone can speak faster than real time.
+    bridges: []
+  - id: speech-and-audio-generation.s3
+    title: "Codec tokens: a vocabulary for sound"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speech-and-audio-generation
+    markdown: |-
+      A **neural audio codec** is an encoder and a decoder trained together to squeeze audio down and rebuild it. Google's SoundStream (2021) and Meta's EnCodec (2022) both turn each short frame of audio into a few integers, picked from learned **codebooks**: lists of, say, 1,024 reference vectors. The first codebook picks the vector nearest the frame's encoding. The second picks the vector nearest what's left over, and so on. This stacking is **residual vector quantization**: each extra codebook adds finer detail.
 
+      EnCodec's 24 kHz model makes 75 frames per second. At 6 kbps it uses 8 codebooks per frame, and each index takes 10 bits ($2^{10} = 1024$):
 
-    Imagine two correct readings of “good morning,” one slightly slower. Their sample-by-sample values differ
-    greatly, even though both are understandable and natural. Listening judgments and task-specific checks
-    help measure what a raw waveform difference misses. Music and sound effects add further goals such as rhythm,
-    continuity and matching a description.'
-  bridges: []
-- id: speech-and-audio-generation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.speech-and-audio-generation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Follow what guides generation, which representation is produced, and how it becomes a waveform.
-    Judge intelligibility, naturalness, continuity, and delay according to the listening task.
-- id: speech-and-audio-generation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.speech-and-audio-generation
-  markdown: Follow what guides generation, which representation is produced, and how it becomes a waveform.
-    Judge intelligibility, naturalness, continuity, and delay according to the listening task.
-  text_mode: Follow what guides generation, which representation is produced, and how it becomes a waveform.
-    Judge intelligibility, naturalness, continuity, and delay according to the listening task.
+      | Quantity | Calculation | Result |
+      | --- | --- | ---: |
+      | Tokens per second | $75 \times 8$ | 600 |
+      | Bits per second | $600 \times 10$ | 6,000 |
+      | Raw 16-bit audio at 24 kHz | $24{,}000 \times 16$ | 384,000 |
+
+      That's 64 times smaller. It's also a sequence a transformer can model. AudioLM (Google, 2022) and VALL-E (Microsoft, 2023) generate codec tokens exactly the way a language model generates words. VALL-E treats TTS as predicting codec tokens from text plus a 3-second sample of the target voice. So Jot should clone a user's voice only with that user's recorded consent, and label the audio as generated.
+
+      :::mixup "Codec tokens are like phonemes: each one stands for a speech sound."
+      They're learned for faithful reconstruction, not linguistics. One token might capture a bit of breath noise, room echo, or the brightness of a voice, and the same syllable spoken twice can come out as quite different tokens. That's why codecs also work for music and sound effects.
+      :::
+    bridges: []
+  - id: speech-and-audio-generation.s4
+    title: "Streaming: the first word, fast"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speech-and-audio-generation
+    markdown: |-
+      While you're driving, a two-second silence after tapping "read aloud" feels broken. So Jot **streams**: it generates audio in chunks and starts playing the first chunk while the rest is still being made. Two numbers decide whether that works.
+
+      **Time to first audio** is the wait before any sound. Suppose preparing the text takes 50 ms, and generating a 0.5-second chunk (acoustic model plus vocoder) takes 200 ms. The first sound plays after $50 + 200 = 250$ ms.
+
+      The **real-time factor (RTF)** is generation time divided by audio duration: $200 / 500 = 0.4$. Any RTF below 1 means each next chunk is ready before the current one finishes playing, so playback never stalls.
+
+      :::predict On an older phone, each 0.5 s chunk takes 600 ms. What does the listener hear?
+      RTF = 600 / 500 = 1.2. The first chunk plays after 650 ms, then every later chunk arrives 100 ms after the previous one ends, so the speech stutters with a 100 ms gap before each new chunk. Fixes: a smaller, faster vocoder, or generating on a server.
+      :::
+
+      Smaller chunks mean faster first audio, but each chunk sees less of what comes next. A chunk that ends mid-word has to guess how the word continues, which can cause clicks or pitch jumps at the seams. Systems usually give each chunk a little **lookahead** (the next few words of text) and overlap neighboring chunks so the seams blend. Tune chunk size by listening on the slowest phone you support, not by the average.
+    bridges: []
+  - id: speech-and-audio-generation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.speech-and-audio-generation
+    markdown: A few receptive fields to compute, plus a talking navigation app, a podcast dubbing service, and a music generator, test whether you can trace sound back to how it was made.
+    takeaway: |-
+      Speech generators predict a compact representation, a mel spectrogram or codec tokens, and a decoder turns it into waveform samples. Dilated convolutions widen what each sample can see, and streaming works when the real-time factor stays below 1.
+  - id: speech-and-audio-generation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.speech-and-audio-generation
+    markdown: |-
+      Follow what guides generation, which representation is produced, and how it becomes a waveform. Judge intelligibility, naturalness, continuity, and delay according to the listening task.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - speech-and-audio-generation.s1
-    - speech-and-audio-generation.s2
-    - speech-and-audio-generation.s3
-    - speech-and-audio-generation.s4
-    - speech-and-audio-generation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - speech-and-audio-generation.s1
+        - speech-and-audio-generation.s2
+        - speech-and-audio-generation.s3
+        - speech-and-audio-generation.s4
+        - speech-and-audio-generation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     speech-and-audio-generation.recap: speech-and-audio-generation.check
 assessment_families:
-- id: speech-and-audio-generation.base
-  objective_ref: objective.speech-and-audio-generation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Separate acoustic prediction from waveform synthesis: trace the inputs, operation, and result before
-    choosing.'
-  remediation_scene: speech-and-audio-generation.s2
-  variants:
-  - id: speech-and-audio-generation.base.1
-    prompt: What is a vocoder’s role in a common two-stage TTS system?
-    options:
-    - id: a
-      text: Convert an acoustic representation into waveform audio
-    - id: b
-      text: Choose the text’s spelling only
-    - id: c
-      text: Label every image pixel
-    answer: a
-    feedback: The vocoder synthesizes the audio signal from its input representation.
-  - id: speech-and-audio-generation.base.2
-    prompt: What tradeoff does a learned audio codec introduce?
-    options:
-    - id: b
-      text: A guarantee of lossless sound at every rate
-    - id: c
-      text: Only a change in file name
-    - id: a
-      text: Representation rate or size versus reconstructed quality
-    answer: a
-    feedback: Compression limits and decoder behavior affect retained audio detail.
-- id: speech-and-audio-generation.transfer
-  objective_ref: objective.speech-and-audio-generation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate the listening task: trace the inputs, operation, and result before choosing.'
-  remediation_scene: speech-and-audio-generation.s4
-  variants:
-  - id: speech-and-audio-generation.transfer.1
-    prompt: A streamed voice has artifacts at chunk boundaries. What should diagnosis inspect?
-    options:
-    - id: b
-      text: Only the font used for text
-    - id: c
-      text: A claim that streaming removes all computation
-    - id: a
-      text: Context, buffering, and generation continuity
-    answer: a
-    feedback: Chunked processing changes what neighboring audio information is available.
-  - id: speech-and-audio-generation.transfer.2
-    prompt: Two valid speech renditions use different timing. Is sample-wise waveform equality an adequate
-      naturalness measure?
-    options:
-    - id: c
-      text: Only if the speaker is the same
-    - id: a
-      text: No; perceptually valid outputs can differ sample by sample
-    - id: b
-      text: Yes; all correct speech has one exact waveform
-    answer: a
-    feedback: Generation quality needs task and perceptual evaluation beyond exact sample matching.
+  - id: speech-and-audio-generation.base
+    objective_ref: objective.speech-and-audio-generation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Separate acoustic prediction from waveform synthesis: trace the inputs, operation, and result before choosing.'
+    remediation_scene: speech-and-audio-generation.s2
+    variants:
+      - id: speech-and-audio-generation.base.1
+        prompt: What is a vocoder’s role in a common two-stage TTS system?
+        options:
+          - id: a
+            text: Convert an acoustic representation into waveform audio
+          - id: b
+            text: Choose the text’s spelling only
+          - id: c
+            text: Label every image pixel
+        answer: a
+        feedback: The vocoder synthesizes the audio signal from its input representation.
+        retired: true
+      - id: speech-and-audio-generation.base.2
+        prompt: What tradeoff does a learned audio codec introduce?
+        options:
+          - id: b
+            text: A guarantee of lossless sound at every rate
+          - id: c
+            text: Only a change in file name
+          - id: a
+            text: Representation rate or size versus reconstructed quality
+        answer: a
+        feedback: Compression limits and decoder behavior affect retained audio detail.
+        retired: true
+  - id: speech-and-audio-generation.transfer
+    objective_ref: objective.speech-and-audio-generation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate the listening task: trace the inputs, operation, and result before choosing.'
+    remediation_scene: speech-and-audio-generation.s4
+    variants:
+      - id: speech-and-audio-generation.transfer.1
+        prompt: A streamed voice has artifacts at chunk boundaries. What should diagnosis inspect?
+        options:
+          - id: b
+            text: Only the font used for text
+          - id: c
+            text: A claim that streaming removes all computation
+          - id: a
+            text: Context, buffering, and generation continuity
+        answer: a
+        feedback: Chunked processing changes what neighboring audio information is available.
+        retired: true
+      - id: speech-and-audio-generation.transfer.2
+        prompt: Two valid speech renditions use different timing. Is sample-wise waveform equality an adequate naturalness measure?
+        options:
+          - id: c
+            text: Only if the speaker is the same
+          - id: a
+            text: No; perceptually valid outputs can differ sample by sample
+          - id: b
+            text: Yes; all correct speech has one exact waveform
+        answer: a
+        feedback: Generation quality needs task and perceptual evaluation beyond exact sample matching.
+        retired: true
+  - id: speech-and-audio-generation.base.v2
+    objective_ref: objective.speech-and-audio-generation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Name the stage first (conditioning, compact representation, or waveform decoder), then ask what that stage produces and how fast.
+    remediation_scene: speech-and-audio-generation.s1
+    variants:
+      - id: speech-and-audio-generation.base.v2.1
+        prompt: In a two-stage TTS system, an acoustic model has produced a mel spectrogram. What does the vocoder do next?
+        options:
+          - id: b
+            text: It turns the text into a mel spectrogram with the right prosody
+          - id: a
+            text: It turns the mel spectrogram into waveform samples you can play
+          - id: c
+            text: It compresses the waveform into codec tokens for storage
+        answer: a
+        feedback: The vocoder is the last stage, from spectrogram to samples. Predicting the spectrogram from text is the acoustic model's job, and producing tokens from audio is a codec encoder's.
+      - id: speech-and-audio-generation.base.v2.2
+        prompt: Why was the original WaveNet too slow for real-time use on ordinary hardware?
+        options:
+          - id: a
+            text: It generated each sample from the previous ones, 16,000 passes per second of audio
+          - id: b
+            text: Its dilated convolutions looked at every past sample, so each pass grew longer
+          - id: c
+            text: It first had to transcribe the text into a mel spectrogram at 16,000 frames per second
+        answer: a
+        feedback: Autoregressive generation is sequential; each sample waits for the one before. Dilation keeps each pass's reach fixed (1,024 samples per block), and mel spectrograms run at about 100 frames per second, not 16,000.
+      - id: speech-and-audio-generation.base.v2.3
+        prompt: A codec runs at 75 frames per second with 4 codebooks per frame. What does adding 4 more codebooks do?
+        options:
+          - id: c
+            text: Doubles the frame rate, so each frame covers half the time
+          - id: b
+            text: Doubles the vocabulary size of each codebook to 2,048
+          - id: a
+            text: Adds finer detail to each frame and doubles the token rate
+        answer: a
+        feedback: Each extra codebook in residual vector quantization encodes what the earlier ones left over, so quality rises, and tokens per second go from 300 to 600. The frame rate and each codebook's size stay the same.
+      - id: speech-and-audio-generation.base.v2.4
+        prompt: The same sentence is generated as "You finished?" and "You finished." What is the model varying between the two?
+        options:
+          - id: b
+            text: The conditioning text, which is identical in both cases
+          - id: a
+            text: The prosody, the pattern of pitch, stress, and timing
+          - id: c
+            text: The vocoder's sample rate, which changes the pitch
+        answer: a
+        feedback: Same words, different melody, since a question typically rises in pitch at the end. The text is identical, and changing the sample rate would shift the whole voice's pitch, not shape one phrase.
+  - id: speech-and-audio-generation.transfer.v2
+    objective_ref: objective.speech-and-audio-generation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: For streaming, compare generation time with playback time. For quality problems, find the stage whose output first sounds wrong.
+    remediation_scene: speech-and-audio-generation.s4
+    variants:
+      - id: speech-and-audio-generation.transfer.v2.1
+        prompt: A navigation app streams speech in 0.4-second chunks, and each chunk takes 0.5 seconds to generate on a budget phone. What will drivers hear?
+        options:
+          - id: a
+            text: Stuttering speech, since the real-time factor is above 1
+          - id: b
+            text: Smooth speech that starts late, since only the first chunk waits
+          - id: c
+            text: Smooth speech, since streaming hides the generation time
+        answer: a
+        feedback: RTF = 0.5 / 0.4 = 1.25, so each chunk finishes 0.1 s after the last one ends, and every chunk after the first arrives late. Streaming hides generation time only when the RTF is below 1.
+      - id: speech-and-audio-generation.transfer.v2.2
+        prompt: A streaming voice sounds natural within each chunk but clicks and jumps in pitch every half second. Where should the team look first?
+        options:
+          - id: c
+            text: The text normalization, which may mispronounce some words
+          - id: b
+            text: The vocoder's sample rate, which may be set too low
+          - id: a
+            text: The chunk seams, adding lookahead and overlapping the chunks
+        answer: a
+        feedback: Problems that repeat at the chunk interval point to the seams, where each chunk can't see what follows. Lookahead and overlap-and-blend smooth them. Mispronunciations and a low sample rate would affect the whole signal, not just the boundaries.
+      - id: speech-and-audio-generation.transfer.v2.3
+        prompt: A dubbing startup wants to voice a film in a new language using each actor's own voice, with a VALL-E-style model that needs a 3-second sample. What must happen before release?
+        options:
+          - id: b
+            text: Record longer samples, since 3 seconds is too short to sound natural
+          - id: a
+            text: Get each actor's permission to use their voice, and label the result
+          - id: c
+            text: Switch to a mel spectrogram route, since codecs can't copy voices
+        answer: a
+        feedback: A few seconds of audio is enough to imitate a voice, so the real gate is consent and clear labeling. Codec-token models are exactly the kind that can clone voices, and sample length isn't the blocker.
+      - id: speech-and-audio-generation.transfer.v2.4
+        prompt: A music generator produces codec tokens with a transformer. A user asks why it works for drums and rain sounds, not just singing. What is the best explanation?
+        options:
+          - id: a
+            text: Codec tokens encode any sound pattern, not a set of speech sounds
+          - id: b
+            text: The codec includes a separate phoneme list for each instrument
+          - id: c
+            text: The model converts drum hits into words, then reads them aloud
+        answer: a
+        feedback: Codecs are trained to reconstruct audio faithfully, so their tokens capture whatever patterns occur, including percussion and noise. There is no phoneme list, and nothing is converted to words.
+  - id: speech-and-audio-generation.calc.v2
+    objective_ref: objective.speech-and-audio-generation
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Receptive field = 1 + (kernel − 1) × (sum of all the dilations). To convert samples to milliseconds, divide by the sample rate and multiply by 1,000.
+    remediation_scene: speech-and-audio-generation.s2
+    absolute_tolerance: 0.5
+    variants:
+      - id: speech-and-audio-generation.calc.v2.1
+        prompt: A stack of causal convolutions has kernel size 2 and dilations 1, 2, 4, and 8. How many samples is its receptive field?
+        answer: 16
+        feedback: 1 + (2 − 1) × (1 + 2 + 4 + 8) = 1 + 15 = 16 samples.
+      - id: speech-and-audio-generation.calc.v2.2
+        prompt: A WaveNet-style model repeats the dilation block 1, 2, 4, …, 512 twice, with kernel size 2. How many samples is its receptive field?
+        answer: 2047
+        feedback: Each block's dilations sum to 1,023, so 1 + 2 × 1,023 = 2,047 samples.
+      - id: speech-and-audio-generation.calc.v2.3
+        prompt: A stack of causal convolutions has kernel size 3 and dilations 1, 2, and 4. How many samples is its receptive field?
+        answer: 15
+        feedback: 1 + (3 − 1) × (1 + 2 + 4) = 1 + 2 × 7 = 15 samples. A kernel of 3 reaches two dilation-steps back per layer.
+      - id: speech-and-audio-generation.calc.v2.4
+        prompt: A receptive field of 2,400 samples runs on audio sampled at 24,000 Hz. How many milliseconds of audio does it cover?
+        answer: 100
+        feedback: 2,400 ÷ 24,000 = 0.1 seconds, which is 100 ms.

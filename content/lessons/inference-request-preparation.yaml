@@ -1,192 +1,442 @@
 schema_version: 0.2-draft
 lesson:
   id: inference-request-preparation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Load a compatible model and prepare its exact input
   state: draft
-  summary: Prepare the exact files and input sequence a model expects.
+  summary: Right weights, wrong tokenizer, fluent nonsense. See the exact tokens a chat model reads, and why a long system prompt costs you on every single turn.
   slot: M27.1
   category: learning
   sources:
-  - title: The Llama 3 Herd of Models
-    url: https://arxiv.org/abs/2407.21783
-  - title: Hugging Face chat templating
-    url: https://huggingface.co/docs/transformers/chat_templating
+    - title: The Llama 3 Herd of Models (Llama Team, Meta, 2024)
+      url: https://arxiv.org/abs/2407.21783
+    - title: Hugging Face Transformers documentation, chat templates
+      url: https://huggingface.co/docs/transformers/chat_templating
+    - title: Llama 3 8B Instruct model files and configuration (Meta, on Hugging Face)
+      url: https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct
 objectives:
-- id: objective.inference-request-preparation
-  version: 1-draft
-  statement: Inference preparation connects weights, configuration, tokenizer, templates, and runtime settings;
-    a request must use compatible artifacts and preserve its intended role and modality boundaries.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - inference-request-preparation.base
-  - inference-request-preparation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.base-model-design
-  - anyOf:
-    - objective.training-and-inference
+  - id: objective.inference-request-preparation
+    version: 2-draft
+    statement: Inference preparation connects weights, configuration, tokenizer, templates, and runtime settings; a request must use compatible artifacts and preserve its intended role and modality boundaries.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - inference-request-preparation.base.v2
+      - inference-request-preparation.transfer.v2
+      - inference-request-preparation.calculate
+    prerequisites:
+      - anyOf:
+          - objective.base-model-design
+      - anyOf:
+          - objective.training-and-inference
 scenes:
-- id: inference-request-preparation.s1
-  title: Load an artifact set
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.inference-request-preparation
-  markdown: An **artifact** is a saved piece needed to run a system, such as a weight file, configuration,
-    or tokenizer. Weights need an architecture configuration describing their shapes and operations. The tokenizer
-    supplies token-ID mappings, and the runtime must support the intended precision and kernels. Check artifact
-    identity and compatibility rather than assuming any similarly named files form a working model.
-  text_mode: An **artifact** is a saved piece needed to run a system, such as a weight file, configuration,
-    or tokenizer. Weights need an architecture configuration describing their shapes and operations. The tokenizer
-    supplies token-ID mappings, and the runtime must support the intended precision and kernels. Check artifact
-    identity and compatibility rather than assuming any similarly named files form a working model.
-  bridges: []
-- id: inference-request-preparation.s2
-  title: Render the conversation format
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.inference-request-preparation
-  markdown: A chat template converts roles, messages, tool records, and generation markers into the sequence
-    the model expects. Adding or omitting a special boundary can change behavior. Human-readable conversation
-    text and the exact token sequence are related but distinct interfaces.
-  text_mode: A chat template converts roles, messages, tool records, and generation markers into the sequence
-    the model expects. Adding or omitting a special boundary can change behavior. Human-readable conversation
-    text and the exact token sequence are related but distinct interfaces.
-  bridges: []
-- id: inference-request-preparation.s3
-  title: Validate the request budget
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.inference-request-preparation
-  markdown: 'Count input tokens after templating and modality preprocessing, then reserve an output budget
-    within supported limits. Truncation policies should preserve essential instructions and evidence. A nominal
-    context limit does not guarantee that an arbitrary combination of prompt, output, and concurrent requests
-    fits memory.
+  - id: inference-request-preparation.s1
+    title: Right weights, wrong dictionary
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.inference-request-preparation
+    markdown: |-
+      Fernly sells houseplants online. Its support assistant, Fern, answers questions like "Why is my monstera turning yellow?" The team serves an open model, Llama 3 8B Instruct, on one rented GPU, and we'll follow them through this module. On day one, an engineer loads the new weights but points the loader at the tokenizer folder of the team's old model, Llama 2. Nothing crashes. Fern replies in fluent-looking nonsense.
 
+      A downloaded model is a set of files, often called **artifacts**, and they only work as a matching set:
 
-    Suppose a toy runtime permits 1,000 total token positions. A message uses 700 tokens and its template adds
-    50, leaving at most 250 for generated output under this shared limit. Reserving 300 would exceed it. Count
-    the rendered input, not just the visible words; actual systems may impose separate limits as well.'
-  text_mode: 'Count input tokens after templating and modality preprocessing, then reserve an output budget
-    within supported limits. Truncation policies should preserve essential instructions and evidence. A nominal
-    context limit does not guarantee that an arbitrary combination of prompt, output, and concurrent requests
-    fits memory.
+      | File | What it holds | Llama 3 8B Instruct |
+      | --- | --- | --- |
+      | Weights (`.safetensors`) | The learned numbers | About 8 billion, 16 GB in 16-bit |
+      | Config (`config.json`) | The shapes: layers, heads, widths, vocabulary size | 32 layers, 32 query heads, 8 KV heads, 128,256 tokens |
+      | Tokenizer | The mapping between text and integer IDs, plus special tokens | 128,256 entries |
+      | Chat template | How a list of messages becomes one string | Role headers and an end-of-turn marker |
+      | Generation config | Default stopping and sampling settings | Which tokens end a reply |
 
+      The tokenizer turns text into IDs, and each ID selects one row of the model's embedding table, as in the embeddings lesson. Llama 2's tokenizer has 32,000 entries, so every ID it produces is a valid row in Llama 3's 128,256-row table. It's just the *wrong* row: the model reads a sentence spelled with a scrambled dictionary.
 
-    Suppose a toy runtime permits 1,000 total token positions. A message uses 700 tokens and its template adds
-    50, leaving at most 250 for generated output under this shared limit. Reserving 300 would exceed it. Count
-    the rendered input, not just the visible words; actual systems may impose separate limits as well.'
-  bridges: []
-- id: inference-request-preparation.s4
-  title: Separate reproducible settings
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.inference-request-preparation
-  markdown: Record model revision, template, preprocessing, sampling, stop rules, tools, and relevant runtime
-    versions. A product can change answers through request preparation even with identical weights. Validate
-    a known short request before interpreting a larger serving experiment.
-  text_mode: Record model revision, template, preprocessing, sampling, stop rules, tools, and relevant runtime
-    versions. A product can change answers through request preparation even with identical weights. Validate
-    a known short request before interpreting a larger serving experiment.
-  bridges: []
-- id: inference-request-preparation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.inference-request-preparation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Use compatible weights, configuration, tokenizer, and templates. Count the exact prepared input
-    and reserve enough space for the intended output.
-- id: inference-request-preparation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.inference-request-preparation
-  markdown: Use compatible weights, configuration, tokenizer, and templates. Count the exact prepared input
-    and reserve enough space for the intended output.
-  text_mode: Use compatible weights, configuration, tokenizer, and templates. Count the exact prepared input
-    and reserve enough space for the intended output.
+      So the server now checks two things at startup: the config's `vocab_size` equals the tokenizer's length, and "Hello, Fern" survives encoding and decoding unchanged.
+    bridges: []
+  - id: inference-request-preparation.s2
+    title: What the model actually reads
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.inference-request-preparation
+    markdown: |-
+      Fern's code keeps a conversation as a list of messages, each with a role: `system` for the company's standing instructions, `user` for the customer, `assistant` for Fern. The model never sees that list. A **chat template** flattens it into one string, and for Llama 3 Instruct the result looks like this:
+
+      ```text
+      <|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+      You are Fern, Fernly's plant-care assistant. Be brief and kind.<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+      My monstera has yellow leaves. What should I do?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+      ```
+
+      Each marker in angle brackets is a **special token**: a single vocabulary entry that marks structure rather than standing for text. `<|eot_id|>` means "end of turn". The string ends with an *open* assistant header, which tells the model that the next tokens are its reply. When the model later produces `<|eot_id|>` itself, the server stops generating.
+
+      The model learned these markers during instruction tuning, so it follows them closely. Send the bare question without the template and it may carry on writing more of the customer's message, because nothing says whose turn it is.
+
+      :::mixup "Special tokens are just text, so a customer can't do any harm by typing one."
+      If the tokenizer turns a typed `<|eot_id|>` into the real special token, a customer can end their own turn early and write a fake `system` message after it. Encode user text with special-token parsing turned off, so typed markers become ordinary characters. Only the template itself should produce real role markers.
+      :::
+    diagram:
+      caption: How a conversation becomes model input. The model only ever sees token IDs.
+      description: The message list goes into the chat template, which produces one rendered string with role markers. The tokenizer turns that string into token IDs, which go into the model. The weights and config, loaded at startup, feed the model. The model's reply tokens return to the message list as a new assistant message.
+      nodes:
+        - id: messages
+          label: Message list
+          note: system, user, assistant
+          col: 0
+          row: 0
+          tone: data
+        - id: template
+          label: Chat template
+          note: adds role markers
+          col: 1
+          row: 0
+          tone: accent
+        - id: text
+          label: Rendered string
+          col: 2
+          row: 0
+        - id: tokenizer
+          label: Tokenizer
+          note: text to IDs
+          col: 2
+          row: 1
+          tone: accent
+        - id: model
+          label: Model
+          col: 1
+          row: 1
+        - id: weights
+          label: Weights + config
+          note: must match the tokenizer
+          col: 0
+          row: 2
+          tone: muted
+      edges:
+        - from: messages
+          to: template
+        - from: template
+          to: text
+        - from: text
+          to: tokenizer
+        - from: tokenizer
+          to: model
+          label: IDs
+        - from: weights
+          to: model
+          dashed: true
+        - from: model
+          to: messages
+          label: reply
+    bridges: []
+  - id: inference-request-preparation.s3
+    title: Count the tokens, then the budget
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.inference-request-preparation
+    markdown: |-
+      Llama 3 8B can attend to at most 8,192 token positions, and that limit covers the prompt *and* the reply. Fern reserves 512 positions for its answer, so a prompt can use at most 7,680.
+
+      Count the rendered prompt, not the visible words. In Llama 3's template, `<|begin_of_text|>` appears once, each message adds a four-token header plus one `<|eot_id|>`, and the open assistant header at the end adds four more. So the template costs $1 + 5 \times \text{messages} + 4$ tokens on top of the text.
+
+      ```python run
+      # Token counts the tokenizer reported for each message's text
+      messages = [
+          ("system",    412),   # Fern's instructions and tone guide
+          ("user",       38),   # "My monstera has yellow leaves..."
+          ("assistant", 164),   # Fern's first answer
+          ("user",       27),   # "It's by a north window. Too dark?"
+      ]
+      CONTEXT = 8192      # Llama 3's context length
+      RESERVE = 512       # room kept for the reply
+
+      # Llama 3 template: <|begin_of_text|> once; per message a 4-token header
+      # (<|start_header_id|> role <|end_header_id|> "\n\n") and <|eot_id|>;
+      # then an open assistant header (4 tokens) to start the reply.
+      overhead = 1 + 5 * len(messages) + 4
+      content = sum(n for _, n in messages)
+      prompt = content + overhead
+      print(f"content tokens:  {content}")
+      print(f"template tokens: {overhead}")
+      print(f"prompt tokens:   {prompt}")
+      print(f"room left for retrieved care notes: {CONTEXT - RESERVE - prompt}")
+      ```
+
+      The four messages hold 641 tokens of text, the template adds 25, and 7,014 positions remain for care-guide passages that retrieval might add. Add a fifth message of 50 tokens and watch both the template cost and the remaining room change.
+
+      :::predict A customer pastes a 7,300-token watering log into the conversation above. What should the server cut?
+      The prompt would be 666 + 7,300 + 5 = 7,971 tokens, which is 291 over the 7,680 limit. Keep the system prompt, since it holds the rules, and keep the latest question, since that's what needs answering. Cut from the middle: summarize or trim the log, or drop the oldest turns. Cutting blindly from the start would delete the instructions first.
+      :::
+    bridges: []
+  - id: inference-request-preparation.system-prompt-cost
+    title: The system prompt is paid for on every turn
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.inference-request-preparation
+    markdown: |-
+      The model keeps nothing between requests. To answer turn 3, the server sends the whole conversation again: system prompt, turns 1 and 2, and the new question. So the system prompt is processed on *every* turn.
+
+      Say Fern's system prompt is 600 tokens (605 with its header), each customer message is 60 (65 with markers), and each reply is 200 (205). Turn $n$ sends the 5 fixed template tokens, the system prompt, $n$ customer messages, and $n - 1$ replies:
+
+      | Turn | Prompt tokens | Of which system prompt |
+      | ---: | ---: | ---: |
+      | 1 | 675 | 605 |
+      | 2 | 945 | 605 |
+      | 3 | 1,215 | 605 |
+      | 4 | 1,485 | 605 |
+      | 5 | 1,755 | 605 |
+      | **Total** | **6,075** | **3,025** |
+
+      Half of all the prompt tokens in a five-turn chat are the same 605 system tokens, over and over. At 40,000 conversations a day, that's 121 million repeated tokens out of 243 million.
+
+      Every prompt token costs GPU time before the first word of the reply appears. The team has two levers: write a shorter system prompt, or stop recomputing the parts that never change. The next lesson shows the second lever, called **prefix caching**: the server saves the work it did on the system prompt and reuses it for every request that starts with the same tokens.
+    bridges: []
+  - id: inference-request-preparation.s4
+    title: Pin every piece that shapes the input
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.inference-request-preparation
+    markdown: |-
+      A month later Fernly upgrades to Llama 3.1 8B Instruct. The new chat template adds two lines to the top of every system message: a knowledge-cutoff date and today's date. The weights changed, but so did the input: every prompt grew by about 20 tokens, and a few answers now mention the date.
+
+      Answers can change even when the weights don't, so the team records, for every deployment:
+
+      - the model repository and its exact revision (a commit hash);
+      - the tokenizer and chat-template version;
+      - the generation settings: stop tokens, temperature, maximum reply length;
+      - the serving software's version.
+
+      Then they keep a **golden request**: one fixed conversation, run with greedy decoding, whose rendered token IDs and reply are saved. After any change, they rerun it. If the token IDs differ, the input changed, and they read the diff before blaming the model. That check caught the new date lines in a minute.
+    bridges: []
+  - id: inference-request-preparation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.inference-request-preparation
+    markdown: Mismatched tokenizers, a missing template, a typed special token, token budgets to count, and a costly system prompt test whether you can prepare exactly what a model should read.
+    takeaway: |-
+      A model reads token IDs, not messages: load weights, config, tokenizer, and chat template as one matching set, and count the rendered prompt, including the system prompt resent on every turn.
+  - id: inference-request-preparation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.inference-request-preparation
+    markdown: |-
+      Use compatible weights, configuration, tokenizer, and templates. Count the exact prepared input and reserve enough space for the intended output.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - inference-request-preparation.s1
-    - inference-request-preparation.s2
-    - inference-request-preparation.s3
-    - inference-request-preparation.s4
-    - inference-request-preparation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - inference-request-preparation.s1
+        - inference-request-preparation.s2
+        - inference-request-preparation.s3
+        - inference-request-preparation.system-prompt-cost
+        - inference-request-preparation.s4
+        - inference-request-preparation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     inference-request-preparation.recap: inference-request-preparation.check
 assessment_families:
-- id: inference-request-preparation.base
-  objective_ref: objective.inference-request-preparation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Render the conversation format: trace the inputs, operation, and result before choosing.'
-  remediation_scene: inference-request-preparation.s2
-  variants:
-  - id: inference-request-preparation.base.1
-    prompt: Which artifacts must agree on token-ID meaning?
-    options:
-    - id: a
-      text: Tokenizer and model vocabulary interfaces
-    - id: b
-      text: Only two README files
-    - id: c
-      text: Only GPU driver names
-    answer: a
-    feedback: Token IDs must address the intended learned entries.
-  - id: inference-request-preparation.base.2
-    prompt: Can a chat-template change alter behavior without changing weights?
-    options:
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if training resumes
-    - id: a
-      text: 'Yes'
-    answer: a
-    feedback: The input sequence and boundaries affect predictions.
-- id: inference-request-preparation.transfer
-  objective_ref: objective.inference-request-preparation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Separate reproducible settings: trace the inputs, operation, and result before choosing.'
-  remediation_scene: inference-request-preparation.s4
-  variants:
-  - id: inference-request-preparation.transfer.1
-    prompt: When should input token count be measured for budgeting?
-    options:
-    - id: b
-      text: Only from the raw word count
-    - id: c
-      text: Only from file extension
-    - id: a
-      text: After the actual template and preprocessing
-    answer: a
-    feedback: The model receives the transformed sequence.
-  - id: inference-request-preparation.transfer.2
-    prompt: Does identical weight data guarantee identical product behavior?
-    options:
-    - id: c
-      text: Only if the model is dense
-    - id: a
-      text: No; inputs and execution settings also matter
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Serving configuration is part of the system.
+  - id: inference-request-preparation.base
+    objective_ref: objective.inference-request-preparation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Render the conversation format: trace the inputs, operation, and result before choosing.'
+    remediation_scene: inference-request-preparation.s2
+    variants:
+      - id: inference-request-preparation.base.1
+        prompt: Which artifacts must agree on token-ID meaning?
+        options:
+          - id: a
+            text: Tokenizer and model vocabulary interfaces
+          - id: b
+            text: Only two README files
+          - id: c
+            text: Only GPU driver names
+        answer: a
+        feedback: Token IDs must address the intended learned entries.
+        retired: true
+      - id: inference-request-preparation.base.2
+        prompt: Can a chat-template change alter behavior without changing weights?
+        options:
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if training resumes
+          - id: a
+            text: 'Yes'
+        answer: a
+        feedback: The input sequence and boundaries affect predictions.
+        retired: true
+  - id: inference-request-preparation.transfer
+    objective_ref: objective.inference-request-preparation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Separate reproducible settings: trace the inputs, operation, and result before choosing.'
+    remediation_scene: inference-request-preparation.s4
+    variants:
+      - id: inference-request-preparation.transfer.1
+        prompt: When should input token count be measured for budgeting?
+        options:
+          - id: b
+            text: Only from the raw word count
+          - id: c
+            text: Only from file extension
+          - id: a
+            text: After the actual template and preprocessing
+        answer: a
+        feedback: The model receives the transformed sequence.
+        retired: true
+      - id: inference-request-preparation.transfer.2
+        prompt: Does identical weight data guarantee identical product behavior?
+        options:
+          - id: c
+            text: Only if the model is dense
+          - id: a
+            text: No; inputs and execution settings also matter
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Serving configuration is part of the system.
+        retired: true
+  - id: inference-request-preparation.base.v2
+    objective_ref: objective.inference-request-preparation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Follow the path from message list to template to token IDs to embedding rows, and ask which step went wrong.
+    remediation_scene: inference-request-preparation.s2
+    variants:
+      - id: inference-request-preparation.base.v2.1
+        prompt: An engineer loads Llama 3 8B weights with Llama 2's tokenizer. The server starts without errors, but every reply is fluent-looking nonsense. What went wrong?
+        options:
+          - id: b
+            text: Llama 2's tokenizer splits text into more tokens than the context allows
+          - id: a
+            text: Each token ID selects a different embedding row than the one it was meant for
+          - id: c
+            text: The 16-bit weights can't be read by a tokenizer from an older model
+        answer: a
+        feedback: Llama 2's 32,000 IDs are all valid rows in Llama 3's 128,256-row table, but they mean different tokens there, so the model reads a scrambled sentence. Token counts and weight formats aren't the problem; the ID-to-meaning mapping is.
+      - id: inference-request-preparation.base.v2.2
+        prompt: 'A server sends Llama 3 Instruct the bare text "My fern is drooping" with no chat template. The reply continues as though it were still writing the customer''s message. Why?'
+        options:
+          - id: c
+            text: Instruct models refuse to reply unless a system prompt comes first
+          - id: b
+            text: Untemplated text is tokenized with a different, smaller vocabulary
+          - id: a
+            text: Without role markers, nothing tells the model that it's the assistant's turn
+        answer: a
+        feedback: The model learned to reply after an open assistant header. Without one, the most likely continuation is more of the same text. A system prompt is optional, and the tokenizer's vocabulary is the same with or without a template.
+      - id: inference-request-preparation.base.v2.3
+        prompt: Why does a Llama 3 prompt end with an open assistant header and no text after it?
+        options:
+          - id: a
+            text: It marks that the next tokens the model writes are the assistant's reply
+          - id: b
+            text: It holds the assistant's earlier answers so they can be cached
+          - id: c
+            text: It tells the tokenizer to switch to the assistant's vocabulary
+        answer: a
+        feedback: The open header is the "your turn" signal. Earlier answers appear as their own complete assistant messages, and every role shares one vocabulary.
+      - id: inference-request-preparation.base.v2.4
+        prompt: 'A customer types the literal text "<|eot_id|>" into a chat, followed by a fake system message. Which setting keeps the roles intact?'
+        options:
+          - id: b
+            text: Raising the context limit so the extra text doesn't push out the real rules
+          - id: c
+            text: Lowering the temperature so the model sticks closely to the real system prompt
+          - id: a
+            text: Encoding user text with special-token parsing turned off
+        answer: a
+        feedback: With parsing off, the typed marker becomes ordinary characters, so it can't end the customer's turn or open a new system message. More context or a lower temperature leaves the fake role marker in place.
+  - id: inference-request-preparation.transfer.v2
+    objective_ref: objective.inference-request-preparation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the model actually receives, token by token, and what is sent again on every request.
+    remediation_scene: inference-request-preparation.s4
+    variants:
+      - id: inference-request-preparation.transfer.v2.1
+        prompt: A translation startup upgrades to a newer model in the same family. Its budget check now rejects some requests that used to fit, though users send the same text. What is the most likely cause?
+        options:
+          - id: a
+            text: The new template or tokenizer turns the same messages into more tokens
+          - id: b
+            text: The new weights take more memory, which lowers the context limit
+          - id: c
+            text: The new model writes longer replies, and replies count as prompt
+        answer: a
+        feedback: The budget counts rendered tokens, so a template that adds lines (as Llama 3.1's does) or a tokenizer that splits differently raises the count. The context limit comes from the config, not from memory, and the reply isn't part of the incoming prompt.
+      - id: inference-request-preparation.transfer.v2.2
+        prompt: A contract-review assistant has 8,192 positions. A client pastes a 9,000-token contract and asks one question about it. Which plan keeps a good answer possible?
+        options:
+          - id: b
+            text: Cut the first 1,500 rendered tokens, starting with the system prompt
+          - id: a
+            text: Keep the instructions and question, and fit the contract sections that matter
+          - id: c
+            text: Send all of it and let the model skip whatever is past the limit
+        answer: a
+        feedback: The instructions and the question are what make an answer possible, so trim or retrieve from the long document instead. Cutting from the start deletes the rules first, and a prompt over the limit is either rejected or silently truncated.
+      - id: inference-request-preparation.transfer.v2.3
+        prompt: Two teams get different answers from "the same model" to the same question with greedy decoding. Which record should they compare first?
+        options:
+          - id: c
+            text: The maximum reply length each team allowed
+          - id: b
+            text: The random seed each team set for sampling
+          - id: a
+            text: The rendered prompt token IDs each team sent
+        answer: a
+        feedback: A different template, system prompt, or tokenizer version changes the input, and comparing token IDs shows it at once. Greedy decoding doesn't draw random numbers, so seeds don't matter, and a length limit only cuts a reply short.
+      - id: inference-request-preparation.transfer.v2.4
+        prompt: A recipe app sends a 1,200-token system prompt on every turn of eight-turn conversations, and prompt processing dominates its GPU bill. What is the best first change?
+        options:
+          - id: a
+            text: Shorten the system prompt, or reuse the saved work on it across requests
+          - id: b
+            text: Lower the maximum reply length from 500 tokens to 100 tokens
+          - id: c
+            text: Switch from sampling to greedy decoding to save work per token
+        answer: a
+        feedback: The same 1,200 tokens are processed eight times per conversation, so shrinking them or caching their computation attacks the cost directly. Shorter replies and greedy decoding change the output side, not the repeated prompt.
+  - id: inference-request-preparation.calculate
+    objective_ref: objective.inference-request-preparation
+    task: base
+    response_type: numeric
+    points: 1
+    hint: 'Llama 3''s template costs 1 token at the start, 5 per message (a 4-token header and an end-of-turn marker), and 4 for the open assistant header. The context limit covers prompt plus reply.'
+    remediation_scene: inference-request-preparation.s3
+    absolute_tolerance: 0.5
+    variants:
+      - id: inference-request-preparation.calculate.1
+        prompt: Using Llama 3's template, a request has a system message of 300 text tokens and one user message of 45 text tokens. How many tokens is the rendered prompt?
+        answer: 360
+        feedback: 'The template adds 1 + 5 × 2 + 4 = 15 tokens, so the prompt is 300 + 45 + 15 = 360.'
+      - id: inference-request-preparation.calculate.2
+        prompt: A model's context is 8,192 positions, and a rendered prompt uses 7,500 of them. What is the largest number of reply tokens the server can allow?
+        answer: 692
+        feedback: The limit covers prompt and reply together, so 8,192 − 7,500 = 692 tokens remain for the reply.
+      - id: inference-request-preparation.calculate.3
+        prompt: A system prompt is 500 text tokens, plus 5 template tokens for its header and end marker. It is resent on every turn of a six-turn conversation. How many system-prompt tokens does the model process in total?
+        answer: 3030
+        feedback: Each turn resends all 505 tokens, so 6 × 505 = 3,030.
+      - id: inference-request-preparation.calculate.4
+        prompt: 'In Llama 3''s template, how many template tokens does a conversation of six messages (system, user, assistant, user, assistant, user) add, including the open assistant header at the end?'
+        answer: 35
+        feedback: 1 for the start token, 5 × 6 = 30 for the messages, and 4 for the open assistant header, giving 35.

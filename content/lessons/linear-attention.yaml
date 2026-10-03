@@ -1,215 +1,430 @@
 schema_version: 0.2-draft
 lesson:
   id: linear-attention
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Rearrange attention around a compressed running summary
   state: draft
-  summary: Replace a list of token comparisons with a reusable summary, and inspect the information that compression
-    can lose.
+  summary: What if a transformer kept one running total instead of a list of every past token? Move one pair of brackets and attention turns into an RNN, with a catch.
   slot: M19.3
   category: learning
   sources:
-  - title: 'Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention'
-    url: https://arxiv.org/abs/2006.16236
-  - title: Performer
-    url: https://arxiv.org/abs/2009.14794
+    - title: "Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention (Katharopoulos et al., 2020)"
+      url: https://arxiv.org/abs/2006.16236
+    - title: "Rethinking Attention with Performers (Choromanski et al., 2020)"
+      url: https://arxiv.org/abs/2009.14794
+    - title: "Repeat After Me: Transformers are Better than State Space Models at Copying (Jelassi et al., 2024)"
+      url: https://arxiv.org/abs/2402.01032
 objectives:
-- id: objective.linear-attention
-  version: 1-draft
-  statement: Linear-attention methods replace or approximate the attention kernel so sums can be reassociated;
-    they reduce sequence-length costs under assumptions while changing the representation and its limits.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - linear-attention.base
-  - linear-attention.transfer
-  prerequisites:
-  - anyOf:
-    - objective.attention-motivation
-  - anyOf:
-    - objective.matrices-tensors
+  - id: objective.linear-attention
+    version: 2-draft
+    statement: Linear-attention methods replace or approximate the attention kernel so sums can be reassociated; they reduce sequence-length costs under assumptions while changing the representation and its limits.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - linear-attention.base.v2
+      - linear-attention.transfer.v2
+      - linear-attention.read
+    prerequisites:
+      - anyOf:
+          - objective.attention-motivation
+      - anyOf:
+          - objective.matrices-tensors
 scenes:
-- id: linear-attention.s1
-  title: Start from weighted comparisons
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.linear-attention
-  markdown: 'Standard softmax attention compares a query with permitted keys and uses their scores to mix values.
-    Some **linear-attention** methods instead define a similarity through transformed queries and keys. The
-    transformation is often written φ, read “phi”; it is a function applied to a feature vector.
+  - id: linear-attention.s1
+    title: A running total instead of a growing list
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.linear-attention
+    markdown: |-
+      Our coding assistant is generating token 100,001. With softmax attention, its query must be compared with 100,000 stored keys, in every head of every layer, and the next token needs 100,001. The work per token keeps growing, and so does the cache.
 
+      A shop doesn't recompute its takings by rereading every receipt each time a customer pays. It keeps a running total. Could attention keep a running total too?
 
-    This choice lets the computation group past information into reusable sums. It changes or approximates
-    the similarity rule; it is not simply skipping part of the same softmax calculation. “Linear” here concerns
-    growth with sequence length under fixed dimensions, not a claim that the entire model is a linear function.'
-  text_mode: 'Standard softmax attention compares a query with permitted keys and uses their scores to mix
-    values. Some **linear-attention** methods instead define a similarity through transformed queries and keys.
-    The transformation is often written φ, read “phi”; it is a function applied to a feature vector.
+      Write one query's softmax attention as a weighted average over past tokens $j$:
 
+      $$y = \frac{\sum_j \text{sim}(q, k_j)\, v_j}{\sum_j \text{sim}(q, k_j)}, \qquad \text{sim}(q, k) = \exp\!\big(q \cdot k / \sqrt{d}\big)$$
 
-    This choice lets the computation group past information into reusable sums. It changes or approximates
-    the similarity rule; it is not simply skipping part of the same softmax calculation. “Linear” here concerns
-    growth with sequence length under fixed dimensions, not a claim that the entire model is a linear function.'
-  bridges: []
-- id: linear-attention.s2
-  title: Keep reusable sums
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.linear-attention
-  markdown: 'Start with a positive scalar example: transformed keys are 1 and 2, and values are 2 and 4. Store
-    S = 1 × 2 + 2 × 4 = 10 and z = 1 + 2 = 3. A transformed query of 3 gives output (3 × 10)/(3 × 3) = 10/3.
-    The query cancels in this one-dimensional illustration; richer feature vectors allow different queries
-    to use the summary differently.
+      The exponential ties $q$ and $k_j$ together inside every term, so nothing can be summed before the query arrives. **Linear attention** swaps in a similarity that splits apart: pass the query and the key each through a **feature map** $\varphi$ (a fixed function that turns a vector into another vector with only positive entries), and use the dot product $\varphi(q) \cdot \varphi(k)$ as the similarity. Katharopoulos et al. (2020) used $\varphi(x) = \text{elu}(x) + 1$, which is $x + 1$ for positive entries and $e^x$ for negative ones.
 
+      Once the similarity splits, the key-side work can be done ahead of time, and the next scene shows how.
+    bridges: []
+  - id: linear-attention.s2
+    title: Three queries, one summary
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.linear-attention
+    markdown: |-
+      Take two past tokens with 2-D features (already passed through $\varphi$) and single-number values:
 
-    In a common vector formulation, S adds outer products φ(k)vᵀ and z adds φ(k). The query reads φ(q)ᵀS divided
-    by φ(q)ᵀz, with the method''s numerical safeguards. The superscript T means transpose, changing a column
-    to a row. An **outer product** stores every pairwise product between two vectors. The vectors/matrices
-    bridges explain that operation.
+      | Token | $\varphi(k)$ | $v$ |
+      | --- | --- | ---: |
+      | 1 | [1, 0] | 2 |
+      | 2 | [0, 1] | 4 |
 
+      Build two sums before any query arrives. The **state** $S$ adds up each feature vector times its value: $S = 2 \cdot [1, 0] + 4 \cdot [0, 1] = [2, 4]$. The **normalizer** $z$ adds up the feature vectors: $z = [1, 1]$. A query reads the state with two dot products, $\varphi(q) \cdot S$ divided by $\varphi(q) \cdot z$:
 
-    Each new token updates the sums; their stored size is set by feature and value widths rather than directly
-    by the number of past tokens.'
-  text_mode: 'Start with a positive scalar example: transformed keys are 1 and 2, and values are 2 and 4. Store
-    S = 1 × 2 + 2 × 4 = 10 and z = 1 + 2 = 3. A transformed query of 3 gives output (3 × 10)/(3 × 3) = 10/3.
-    The query cancels in this one-dimensional illustration; richer feature vectors allow different queries
-    to use the summary differently.
+      | Query $\varphi(q)$ | $\varphi(q) \cdot S$ | $\varphi(q) \cdot z$ | Output |
+      | --- | ---: | ---: | ---: |
+      | [1, 0] | 2 | 1 | **2** |
+      | [0, 1] | 4 | 1 | **4** |
+      | [1, 1] | 6 | 2 | **3** |
 
+      One fixed summary, three different answers, and no list of past tokens. Check the last row the long way: query [1, 1] scores 1 against each key, so it averages the values: $(2 + 4)/2 = 3$. Same answer.
 
-    In a common vector formulation, S adds outer products φ(k)vᵀ and z adds φ(k). The query reads φ(q)ᵀS divided
-    by φ(q)ᵀz, with the method''s numerical safeguards. The superscript T means transpose, changing a column
-    to a row. An **outer product** stores every pairwise product between two vectors. The vectors/matrices
-    bridges explain that operation.
+      :::predict A third token arrives with φ(k) = [1, 1] and v = 9. Update S and z. What does query [1, 0] read now?
+      $S = [2, 4] + 9 \cdot [1, 1] = [11, 13]$ and $z = [1, 1] + [1, 1] = [2, 2]$. Query [1, 0] reads $11 / 2 = 5.5$. The long way agrees: it scores 1 with token 1, 0 with token 2, and 1 with token 3, so it averages 2 and 9.
+      :::
 
+      :::papers Linear attention (Katharopoulos et al., 2020)
+      With $d$-dimensional vectors, the value becomes a vector and $S$ becomes a matrix of outer products:
 
-    Each new token updates the sums; their stored size is set by feature and value widths rather than directly
-    by the number of past tokens.'
-  bridges:
-  - matrices-tensors
-- id: linear-attention.s3
-  title: Name the approximation or changed kernel
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.linear-attention
-  markdown: 'A chosen feature map might define a different attention mechanism or approximate a target kernel.
-    Fixed-size summaries compress the past and may struggle with tasks requiring exact item-level retrieval.
-    Linear in sequence length does not mean free: feature dimensions and update costs still matter.'
-  text_mode: 'A chosen feature map might define a different attention mechanism or approximate a target kernel.
-    Fixed-size summaries compress the past and may struggle with tasks requiring exact item-level retrieval.
-    Linear in sequence length does not mean free: feature dimensions and update costs still matter.'
-  bridges: []
-- id: linear-attention.s4
-  title: Evaluate the regime that matters
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.linear-attention
-  markdown: Compare training, prefill, and decode separately, including numerical stability, quality, and long-context
-    behavior. A method with favorable asymptotic growth may lose on small inputs or unsupported hardware. Match
-    the actual task and context distribution when judging the tradeoff.
-  text_mode: Compare training, prefill, and decode separately, including numerical stability, quality, and
-    long-context behavior. A method with favorable asymptotic growth may lose on small inputs or unsupported
-    hardware. Match the actual task and context distribution when judging the tradeoff.
-  bridges: []
-- id: linear-attention.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.linear-attention
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Some attention rules let past information be stored in reusable sums instead of a growing list
-    of comparisons. This saves work under stated assumptions, but the compressed history may lose details a
-    task needs.
-- id: linear-attention.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.linear-attention
-  markdown: Some attention rules let past information be stored in reusable sums instead of a growing list
-    of comparisons. This saves work under stated assumptions, but the compressed history may lose details a
-    task needs.
-  text_mode: Some attention rules let past information be stored in reusable sums instead of a growing list
-    of comparisons. This saves work under stated assumptions, but the compressed history may lose details a
-    task needs.
+      $$y_i = \frac{\varphi(q_i)^\top \sum_{j \le i} \varphi(k_j)\, v_j^\top}{\varphi(q_i)^\top \sum_{j \le i} \varphi(k_j)} = \frac{\varphi(q_i)^\top S_i}{\varphi(q_i)^\top z_i}$$
+
+      In matrix form (ignoring the mask and normalizer) this is $\big(\varphi(Q)\,\varphi(K)^\top\big)V = \varphi(Q)\,\big(\varphi(K)^\top V\big)$. The two orders give identical results because matrix multiplication is associative. The left order builds an $n \times n$ grid and costs about $n^2 d$; the right order builds a $d \times d$ matrix and costs about $n d^2$. For $n = 100{,}000$ and $d = 128$ that is $n/d \approx 780$ times less work.
+      :::
+
+      The program runs the hand example, then checks on random data that the quadratic order and the running-state order agree.
+
+      ```python run
+      import numpy as np
+
+      # 1. The hand example: two tokens, 2-D features, one summary
+      fk = np.array([[1.0, 0.0], [0.0, 1.0]])      # phi(k1), phi(k2)
+      v = np.array([2.0, 4.0])                     # v1, v2
+      S, z = fk.T @ v, fk.sum(axis=0)              # S = [2, 4], z = [1, 1]
+      for q in ([1, 0], [0, 1], [1, 1]):
+          print("query", q, "reads", np.dot(q, S) / np.dot(q, z))
+
+      # 2. Random causal check: quadratic order vs running-state order
+      rng = np.random.default_rng(0)
+      n, d = 6, 4
+      Q, K, V = (rng.standard_normal((n, d)) for _ in range(3))
+      phi = lambda x: np.where(x > 0, x + 1, np.exp(x))   # elu(x) + 1, always positive
+      fQ, fK = phi(Q), phi(K)
+
+      A = np.tril(fQ @ fK.T)                        # n x n grid, future masked
+      quad = (A @ V) / A.sum(axis=1, keepdims=True)
+
+      S, z, lin = np.zeros((d, d)), np.zeros(d), []
+      for t in range(n):                            # left to right, keep only S and z
+          S += np.outer(fK[t], V[t])
+          z += fK[t]
+          lin.append(fQ[t] @ S / (fQ[t] @ z))
+      print(f"largest difference between the two orders: {np.abs(quad - np.array(lin)).max():.1e}")
+      print("state kept:", S.size + z.size, "numbers, however long the sequence")
+      ```
+
+      The difference is about $10^{-16}$, which is floating-point rounding. Change `n` to 60 or 600: the difference stays tiny and the state stays at 20 numbers.
+    bridges:
+      - matrices-tensors
+  - id: linear-attention.s3
+    title: Transformers are RNNs
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.linear-attention
+    markdown: |-
+      Look at the loop in the program. Each step does two things: fold the new token into the state, then let the query read the state.
+
+      $$S_t = S_{t-1} + \varphi(k_t)\, v_t^\top, \qquad z_t = z_{t-1} + \varphi(k_t), \qquad y_t = \frac{\varphi(q_t)^\top S_t}{\varphi(q_t)^\top z_t}$$
+
+      That is a recurrent neural network, exactly the shape you met in module 13's lesson on recurrent networks: a fixed-size hidden state updated once per token. It is why Katharopoulos et al. titled their paper *Transformers are RNNs*. One model now has two ways to run:
+
+      - **Training**, when all tokens are known: use the parallel form, like a transformer.
+      - **Generating**, one token at a time: use the recurrent form, with constant work and memory per token.
+
+      Compare memory per head with head width 128. A softmax KV cache stores $2 \times 128 = 256$ numbers for *every* token, so 25.6 million at 100,000 tokens. The linear-attention state is a $128 \times 128$ matrix plus a 128-number normalizer: 16,512 numbers at 100 tokens or at 100 million. The authors reported generation up to 4,000 times faster than softmax attention on very long sequences.
+    diagram:
+      caption: Causal linear attention run as a recurrence. The state never grows.
+      description: "The previous state S and z feeds an update step. The new token's key feature and value also feed the update step, which adds their outer product to S and the key feature to z. The updated state goes two ways: into the read step, where the new token's query feature computes the output, and back as the previous state for the next token."
+      nodes:
+        - id: prev
+          label: State S, z from token t−1
+          note: fixed size, d × d plus d
+          col: 0
+          row: 1
+          tone: data
+        - id: kv
+          label: New token's φ(k) and v
+          col: 1
+          row: 0
+        - id: update
+          label: "Update: add φ(k)vᵀ and φ(k)"
+          col: 2
+          row: 1
+          tone: accent
+        - id: query
+          label: New token's φ(q)
+          col: 3
+          row: 0
+        - id: read
+          label: "Read: φ(q)ᵀS ÷ φ(q)ᵀz"
+          col: 4
+          row: 1
+        - id: out
+          label: Output y for token t
+          col: 5
+          row: 1
+      edges:
+        - from: prev
+          to: update
+        - from: kv
+          to: update
+        - from: update
+          to: read
+          label: new state
+        - from: query
+          to: read
+        - from: read
+          to: out
+        - from: update
+          to: prev
+          label: carried to token t+1
+          dashed: true
+          bend: -2
+    bridges: []
+  - id: linear-attention.s4
+    title: What the summary forgets
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.linear-attention
+    markdown: |-
+      Go back to the prediction. With two tokens, query [1, 0] read token 1's value, 2, exactly. After token 3 arrived with features [1, 1], the same query read 5.5, a blend of tokens 1 and 3. With 2-D features there are only two clean "slots"; every further key overlaps them. A $d$-dimensional feature map can keep at most about $d$ keys cleanly apart, and a long document has far more than $d$ tokens. Softmax's exponential, by contrast, can put nearly all the weight on one matching key among thousands.
+
+      That is why fixed-state models struggle with exact lookups. Jelassi et al. (2024) found transformers far better than fixed-state models at copying long strings and looking up entries in a phone book given in the prompt. Our coding assistant, asked to repeat an exact 30-character function name from 80,000 tokens back, would be taking that test.
+
+      :::mixup "Linear attention computes softmax attention faster."
+      With $\varphi = \text{elu} + 1$ it computes a *different* attention, so the model must be trained with it; you can't swap it into a trained softmax model and expect the same outputs. Performer (Choromanski et al., 2020) instead uses random features chosen so that $\varphi(q)\cdot\varphi(k)$ *approximates* $\exp(q \cdot k)$ on average. Either way, the running-state trick itself is exact: both orders of multiplication give the same numbers.
+      :::
+
+      So when is it worth it? When sequences are long compared with the head width and the task rewards gist over exact recall: streaming audio, long summaries, generation on memory-limited devices. For 500-token inputs with head width 128, $n/d$ is only about 4, and a well-tuned softmax kernel will likely win. Later designs add a decay factor to the update, $S_t = \gamma S_{t-1} + \dots$, so old entries fade and make room. The state-space lessons that follow develop exactly that idea.
+    bridges: []
+  - id: linear-attention.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.linear-attention
+    markdown: Read outputs from a running state by hand, then judge when linear attention suits a streaming speech model, a tweet classifier, and an exact-lookup task.
+    takeaway: |-
+      Replace exp(q·k) with φ(q)·φ(k) and attention can keep a running state S = Σ φ(k)vᵀ that every query reads in constant time, like an RNN. The fixed-size state is also its limit: keys start to blur together once there are more of them than feature dimensions.
+  - id: linear-attention.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.linear-attention
+    markdown: |-
+      Some attention rules let past information be stored in reusable sums instead of a growing list of comparisons. This saves work under stated assumptions, but the compressed history may lose details a task needs.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - linear-attention.s1
-    - linear-attention.s2
-    - linear-attention.s3
-    - linear-attention.s4
-    - linear-attention.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - linear-attention.s1
+        - linear-attention.s2
+        - linear-attention.s3
+        - linear-attention.s4
+        - linear-attention.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     linear-attention.recap: linear-attention.check
 assessment_families:
-- id: linear-attention.base
-  objective_ref: objective.linear-attention
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Accumulate sufficient intermediate sums: trace the inputs, operation, and result before choosing.'
-  remediation_scene: linear-attention.s2
-  variants:
-  - id: linear-attention.base.1
-    prompt: What allows the multiplication order to change in this formulation?
-    options:
-    - id: b
-      text: Deleting every value vector
-    - id: c
-      text: Sorting token text alphabetically
-    - id: a
-      text: A factorized feature-map similarity
-    answer: a
-    feedback: Factorization allows sums to be accumulated before each query reads them.
-  - id: linear-attention.base.2
-    prompt: Does fixed-size summary state preserve every past item exactly by default?
-    options:
-    - id: c
-      text: Only if the sequence is long
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Compression has representational limits.
-- id: linear-attention.transfer
-  objective_ref: objective.linear-attention
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate the regime that matters: trace the inputs, operation, and result before choosing.'
-  remediation_scene: linear-attention.s4
-  variants:
-  - id: linear-attention.transfer.1
-    prompt: Does linear sequence-length scaling mean constant total work?
-    options:
-    - id: c
-      text: Only at training time
-    - id: a
-      text: No; work still grows with tokens and dimensions
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Linear growth is still growth.
-  - id: linear-attention.transfer.2
-    prompt: Why compare short and long inputs?
-    options:
-    - id: a
-      text: Asymptotic advantages may not dominate overhead at short lengths
-    - id: b
-      text: Complexity is unrelated to runtime
-    - id: c
-      text: Every method has identical overhead
-    answer: a
-    feedback: Operating regime affects measured performance.
+  - id: linear-attention.base
+    objective_ref: objective.linear-attention
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: The trick needs a similarity that splits into a query part times a key part.
+    remediation_scene: linear-attention.s2
+    variants:
+      - id: linear-attention.base.1
+        prompt: What allows the multiplication order to change in this formulation?
+        options:
+          - id: b
+            text: Deleting every value vector
+          - id: c
+            text: Sorting token text alphabetically
+          - id: a
+            text: A factorized feature-map similarity
+        answer: a
+        feedback: Factorization allows sums to be accumulated before each query reads them.
+        retired: true
+      - id: linear-attention.base.2
+        prompt: Does fixed-size summary state preserve every past item exactly by default?
+        options:
+          - id: c
+            text: Only if the sequence is long
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Compression has representational limits.
+        retired: true
+  - id: linear-attention.transfer
+    objective_ref: objective.linear-attention
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Compare the sequence length n with the head width d before expecting a speed-up.
+    remediation_scene: linear-attention.s4
+    variants:
+      - id: linear-attention.transfer.1
+        prompt: Does linear sequence-length scaling mean constant total work?
+        options:
+          - id: c
+            text: Only at training time
+          - id: a
+            text: No; work still grows with tokens and dimensions
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Linear growth is still growth.
+        retired: true
+      - id: linear-attention.transfer.2
+        prompt: Why compare short and long inputs?
+        options:
+          - id: a
+            text: Asymptotic advantages may not dominate overhead at short lengths
+          - id: b
+            text: Complexity is unrelated to runtime
+          - id: c
+            text: Every method has identical overhead
+        answer: a
+        feedback: Operating regime affects measured performance.
+        retired: true
+  - id: linear-attention.base.v2
+    objective_ref: objective.linear-attention
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Follow the two sums: S collects φ(k) times v, z collects φ(k). A query only ever sees those two, never the list of tokens."
+    remediation_scene: linear-attention.s2
+    variants:
+      - id: linear-attention.base.v2.1
+        prompt: Linear attention lets the key-side sums be built before any query arrives. Which change to softmax attention makes that possible?
+        options:
+          - id: b
+            text: Dropping the normalizing denominator so the output is a plain sum
+          - id: a
+            text: Using a similarity φ(q)·φ(k) that splits into a query part and a key part
+          - id: c
+            text: Sorting the keys by similarity so the query reads only the top few
+        answer: a
+        feedback: Once the similarity is a dot product of separate features, Σ (φ(q)·φ(k_j)) v_j equals φ(q)ᵀ Σ φ(k_j)v_jᵀ, and the sum no longer depends on q. The normalizer is kept (as z), and nothing is sorted or dropped.
+      - id: linear-attention.base.v2.2
+        prompt: With 2-D features, keys [1, 0] and [0, 1] let query [1, 0] read token 1's value exactly. After a third key [1, 1] is added, the same query returns a blend. Why?
+        options:
+          - id: c
+            text: The normalizer z overflowed once a third token was added
+          - id: b
+            text: The model drops the oldest token once the state is full
+          - id: a
+            text: A 2-D state has room for only two separate keys, so they overlap
+        answer: a
+        feedback: The new key shares the first feature direction with token 1, so the query now matches both and averages their values. Nothing overflows and nothing is dropped; every token is still in S, just no longer separable.
+      - id: linear-attention.base.v2.3
+        prompt: A causal linear-attention layer has generated 100,000 tokens. What does each head keep in memory to produce the next token?
+        options:
+          - id: a
+            text: A d × d state matrix and a d-length normalizer, the same size at any length
+          - id: b
+            text: The keys and values for all 100,000 tokens, stored at reduced precision
+          - id: c
+            text: The keys and values of the most recent tokens inside a fixed-size window
+        answer: a
+        feedback: The running state S and normalizer z hold everything the layer keeps, and their size depends only on the feature and value widths. A full or windowed KV cache belongs to softmax attention.
+      - id: linear-attention.base.v2.4
+        prompt: Katharopoulos et al. titled their paper "Transformers are RNNs." What does the title refer to?
+        options:
+          - id: c
+            text: Every softmax transformer can be run with a fixed-size hidden state
+          - id: a
+            text: Causal linear attention can be run as a recurrence with state S and z
+          - id: b
+            text: Transformer layers contain LSTM-style gates hidden inside attention
+        answer: a
+        feedback: For linear attention, each token updates S and z and then reads them, which is an RNN. Softmax attention can't be folded into a fixed state this way, and no LSTM gates are involved.
+  - id: linear-attention.transfer.v2
+    objective_ref: objective.linear-attention
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Ask two questions: is n much larger than the head width d, and does the task need one exact item back or the gist of many?"
+    remediation_scene: linear-attention.s4
+    variants:
+      - id: linear-attention.transfer.v2.1
+        prompt: A speech model must caption a live stream that never ends, on a device with fixed memory. How should a linear-attention model run while generating?
+        options:
+          - id: b
+            text: In the quadratic order, recomputing the full grid over the stream at each frame
+          - id: a
+            text: In the recurrent order, updating S and z once per frame and reading them
+          - id: c
+            text: With a softmax layer that caches every key so no frame is ever forgotten
+        answer: a
+        feedback: The recurrent form uses constant work and memory per step, which is exactly what an endless stream needs. The quadratic order grows with the stream, and a full softmax cache eventually runs out of memory.
+      - id: linear-attention.transfer.v2.2
+        prompt: A linear-attention model writes good summaries of 20,000-token logs but can't return an exact order ID that appeared once near the start. What is the most likely cause?
+        options:
+          - id: a
+            text: Its fixed-size state blends many keys, so one exact item is hard to recover
+          - id: c
+            text: Its feature map produced negative similarities that canceled the order ID
+          - id: b
+            text: Its normalizer z grew so large that it rounded every output to zero
+        answer: a
+        feedback: A summary can capture the gist while exact items interfere with each other in the fixed state. The elu+1 feature map is always positive, and dividing by z keeps outputs on the scale of the values.
+      - id: linear-attention.transfer.v2.3
+        prompt: A team plans to replace softmax attention with linear attention in a classifier for 256-token posts, using head width 128, to save compute. What is the likely outcome?
+        options:
+          - id: c
+            text: A large saving, because linear attention is always faster than softmax
+          - id: b
+            text: No change, because the model then runs as an RNN over the post
+          - id: a
+            text: Little saving, because n is only about twice the head width d
+        answer: a
+        feedback: The saving is roughly n/d, here about 2, and a tuned softmax kernel can erase that. Linear attention pays off when n is much larger than d. Running as an RNN is an option for generation, not a reason for a saving here.
+      - id: linear-attention.transfer.v2.4
+        prompt: You want to speed up an already trained softmax model without retraining it from scratch. Which feature map was designed for that kind of goal?
+        options:
+          - id: a
+            text: Performer's random features, which approximate the exp(q·k) similarity
+          - id: b
+            text: The elu(x) + 1 map, which gives the same outputs as softmax attention
+          - id: c
+            text: The identity map φ(x) = x, which keeps the trained dot products intact
+        answer: a
+        feedback: Performer chooses random features so φ(q)·φ(k) approximates the softmax kernel on average. elu+1 defines a different attention that needs its own training, and φ(x) = x gives raw dot products that can go negative, with no exponential at all.
+  - id: linear-attention.read
+    objective_ref: objective.linear-attention
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Build S = Σ v·φ(k) and z = Σ φ(k). Then the output is (φ(q)·S) ÷ (φ(q)·z)."
+    remediation_scene: linear-attention.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: linear-attention.read.1
+        prompt: "Past tokens have features φ(k) = [1, 0], [0, 1], [1, 1] with values 2, 4, 9. What does the query φ(q) = [1, 0] read?"
+        answer: 5.5
+        feedback: "S = [11, 13] and z = [2, 2], so 11 ÷ 2 = 5.5."
+      - id: linear-attention.read.2
+        prompt: "Past tokens have features φ(k) = [1, 0], [0, 1], [1, 1] with values 2, 4, 9. What does the query φ(q) = [1, 1] read?"
+        answer: 6
+        feedback: "S = [11, 13] and z = [2, 2], so 24 ÷ 4 = 6. The long way agrees: the query scores 1, 1, and 2 against the three keys, giving (2 + 4 + 2 × 9) ÷ 4 = 6."
+      - id: linear-attention.read.3
+        prompt: "Past tokens have features φ(k) = [2, 0] and [0, 1] with values 1 and 5. What does the query φ(q) = [1, 1] read? Give two decimal places."
+        answer: 2.33
+        feedback: "S = 1·[2, 0] + 5·[0, 1] = [2, 5] and z = [2, 1]. φ(q)·S = 7 and φ(q)·z = 3, so 7 ÷ 3 ≈ 2.33."
+      - id: linear-attention.read.4
+        prompt: "Past tokens have features φ(k) = [1, 1] and [0, 2] with values 3 and 6. What does the query φ(q) = [0, 1] read?"
+        answer: 5
+        feedback: "S = 3·[1, 1] + 6·[0, 2] = [3, 15] and z = [1, 3]. φ(q)·S = 15 and φ(q)·z = 3, so the output is 5."

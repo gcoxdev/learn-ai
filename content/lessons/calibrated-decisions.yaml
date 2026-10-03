@@ -1,203 +1,348 @@
 schema_version: 0.2-draft
 lesson:
   id: calibrated-decisions
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Turn a probability into a justified action
   state: draft
-  summary: Use a defect probability and a simple cost table to decide whether an inspection is worth doing.
+  summary: When the forecast says 30% rain, does it rain three days in ten? Learn to test whether a model's percentages are honest, and to turn them into decisions with a cost table.
   slot: M06.8
   category: learning
   sources:
-  - title: An Introduction to Statistical Learning — authors’ materials
-    url: https://www.statlearning.com/
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: An Introduction to Statistical Learning — authors’ materials
+      url: https://www.statlearning.com/
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
+    - title: On Calibration of Modern Neural Networks (Guo et al., 2017)
+      url: https://arxiv.org/abs/1706.04599
 objectives:
-- id: objective.calibrated-decisions
-  version: 1-draft
-  statement: Calibration describes agreement between predicted probabilities and outcomes; decision theory
-    combines probabilities with costs, while uncertainty should be checked under the deployment conditions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - calibrated-decisions.base
-  - calibrated-decisions.transfer
-  prerequisites:
-  - anyOf:
-    - objective.bayes-rule
-  - anyOf:
-    - objective.decisions-and-games
+  - id: objective.calibrated-decisions
+    version: 3-draft
+    statement: Check whether predicted probabilities match how often things happen, and combine probabilities with costs to choose an action.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - calibrated-decisions.base.v2
+      - calibrated-decisions.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.bayes-rule
+      - anyOf:
+          - objective.decisions-and-games
 scenes:
-- id: calibrated-decisions.s1
-  title: A probability is not yet an action
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.calibrated-decisions
-  markdown: A quality-control model estimates a 20% defect probability. Whether to inspect depends on the cost
-    of inspection, the cost of missing a defect, and available capacity. The same probability can support different
-    actions under different objectives. A threshold is a decision rule layered on the probability estimate.
-  text_mode: A quality-control model estimates a 20% defect probability. Whether to inspect depends on the
-    cost of inspection, the cost of missing a defect, and available capacity. The same probability can support
-    different actions under different objectives. A threshold is a decision rule layered on the probability
-    estimate.
-  bridges: []
-- id: calibrated-decisions.s2
-  title: Understand calibration
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.calibrated-decisions
-  markdown: Among comparable cases assigned probability 0.7, roughly 70% should have the event if the predictions
-    are calibrated under the evaluation distribution. Calibration concerns groups of predictions, not a guarantee
-    for one case. A model can rank cases well yet have systematically overconfident probabilities.
-  text_mode: Among comparable cases assigned probability 0.7, roughly 70% should have the event if the predictions
-    are calibrated under the evaluation distribution. Calibration concerns groups of predictions, not a guarantee
-    for one case. A model can rank cases well yet have systematically overconfident probabilities.
-  bridges:
-  - decisions-and-games
-- id: calibrated-decisions.s3
-  title: Compare expected costs
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.calibrated-decisions
-  markdown: 'Suppose unnecessary inspection costs 1 and missing a defect costs 9, with correct decisions assigned
-    zero cost in this toy model. At defect probability p, inspecting costs (1 − p) while not inspecting costs
-    9p. Inspect when p exceeds 0.1. Changing costs changes the threshold even with the same model.
+  - id: calibrated-decisions.s1
+    title: Twenty percent chance of a crack. Now what?
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.calibrated-decisions
+    markdown: |-
+      Back at the bracket factory from the Bayes lesson, a new model looks at each bracket and reports the chance that it's cracked. This one says 20%. Do you pull it for inspection or ship it?
 
+      The number alone can't decide. It depends on what each mistake costs. If a shipped crack means a collapsed shelf and a lawsuit, 20% is alarming. If a crack means a slightly wobbly coat hook, 20% might be fine to ship.
 
-    At p = 0.2, the expected costs are 0.8 for inspection and 1.8 for no inspection, so inspect. At the boundary,
-    1 − p = 9p; adding p to both sides gives 1 = 10p and p = 0.1. This toy charges inspection only for a good
-    part. If every inspection instead costs 1 and prevents a defect loss of 9, compare 1 with 9p; the boundary
-    changes to 1/9. Always read the cost table first.'
-  text_mode: 'Suppose unnecessary inspection costs 1 and missing a defect costs 9, with correct decisions assigned
-    zero cost in this toy model. At defect probability p, inspecting costs (1 − p) while not inspecting costs
-    9p. Inspect when p exceeds 0.1. Changing costs changes the threshold even with the same model.
+      So acting on a probability takes two separate questions:
 
+      1. **Is the number honest?** When the model says 20%, are about 20% of those brackets really cracked? That's calibration.
+      2. **What should I do with an honest number?** Weigh the chance of each outcome by what it costs. That's decision theory.
 
-    At p = 0.2, the expected costs are 0.8 for inspection and 1.8 for no inspection, so inspect. At the boundary,
-    1 − p = 9p; adding p to both sides gives 1 = 10p and p = 0.1. This toy charges inspection only for a good
-    part. If every inspection instead costs 1 and prevents a defect loss of 9, compare 1 with 9p; the boundary
-    changes to 1/9. Always read the cost table first.'
-  bridges: []
-- id: calibrated-decisions.s4
-  title: Check the probabilities on new cases
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.calibrated-decisions
-  markdown: '**Recalibration** changes how model scores map to probabilities. Fit that mapping on data reserved
-    from the original model fitting, then check it on a separate evaluation set. Otherwise the same outcomes
-    both adjust and judge the probabilities.
+      This lesson takes them in turn.
+    bridges: []
+  - id: calibrated-decisions.s2
+    title: When the forecaster says 30%
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.calibrated-decisions
+    markdown: |-
+      A forecaster is **calibrated** if, across all the days they say 30% rain, it rains on about 30% of them; across all the 70% days, about 70%; and so on. You can't check one forecast. You check the whole group.
 
+      :::story Weather forecasters invented the scorecard
+      Meteorologists have graded probability forecasts for decades. The Brier score, still a standard measure of probability accuracy, was proposed by Glenn Brier in 1950 for weather forecasts. U.S. National Weather Service rain forecasts are generally found to be well calibrated. Some TV forecasters have been reported to show a "wet bias," saying rain is likelier than it is, since viewers forgive an unneeded umbrella more easily than a soaking.
+      :::
 
-    Inspect relevant groups and changing conditions too. Calibration on yesterday’s cases may not carry over
-    to a new setting. Recalibration need not improve the ranking of cases or recover missing information. If
-    uncertain cases go to human review, also measure the review workload and any failures that remain.'
-  text_mode: '**Recalibration** changes how model scores map to probabilities. Fit that mapping on data reserved
-    from the original model fitting, then check it on a separate evaluation set. Otherwise the same outcomes
-    both adjust and judge the probabilities.
+      To check calibration, sort predictions into buckets by what the model said, then compare with what happened. Plotting "said" against "happened" gives a **reliability diagram**; a calibrated model sits on the diagonal. This program builds the table for an overconfident bracket model:
 
+      ```python run
+      import numpy as np
 
-    Inspect relevant groups and changing conditions too. Calibration on yesterday’s cases may not carry over
-    to a new setting. Recalibration need not improve the ranking of cases or recover missing information. If
-    uncertain cases go to human review, also measure the review workload and any failures that remain.'
-  bridges: []
-- id: calibrated-decisions.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.calibrated-decisions
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Calibration checks whether predicted probabilities match observed frequencies. Choosing an action
-    requires a separate decision about the costs of mistakes.
-- id: calibrated-decisions.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.calibrated-decisions
-  markdown: Calibration checks whether predicted probabilities match observed frequencies. Choosing an action
-    requires a separate decision about the costs of mistakes.
-  text_mode: Calibration checks whether predicted probabilities match observed frequencies. Choosing an action
-    requires a separate decision about the costs of mistakes.
+      rng = np.random.default_rng(0)
+      true_p = rng.beta(1, 4, size=5000)                   # each bracket's real crack chance
+      logit = np.log(true_p / (1 - true_p))
+      stated = 1 / (1 + np.exp(-2 * logit))                # an overconfident model's output
+      cracked = rng.random(5000) < true_p                  # what actually happened
+
+      edges = [0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0]
+      ece = 0.0
+      print("bucket      count  says   happened  gap")
+      for lo, hi in zip(edges, edges[1:]):
+          m = (stated >= lo) & (stated < hi)
+          says, happened = stated[m].mean(), cracked[m].mean()
+          ece += m.mean() * abs(says - happened)
+          print(f"{lo:.1f}-{hi:.1f}  {m.sum():6d}  {says:.2f}   {happened:.2f}     {happened - says:+.2f}")
+      print(f"expected calibration error (ECE) = {ece:.3f}")
+      ```
+
+      The model pushes everything toward the extremes. Brackets it calls 95% cracked are really cracked 72% of the time. Worse, the 3,478 brackets it calls "about 2%" are really cracked 11% of the time. Change `-2 * logit` to `-1 * logit` to make the model honest, and the ECE drops from 0.083 to 0.011.
+
+      :::papers Expected calibration error
+      $$\text{ECE} = \sum_{b} \frac{n_b}{N}\,\big|\,\text{happened}_b - \text{says}_b\,\big|$$
+
+      Each bucket $b$ holds $n_b$ of the $N$ predictions, so big buckets count more. Before rounding, the first row's gap is 0.107 − 0.023 = 0.084, so it contributes $\tfrac{3478}{5000} \times 0.084 \approx 0.06$, most of the 0.083. Guo et al. (2017) showed that modern deep networks tend to be overconfident in exactly this way.
+      :::
+
+      :::mixup "A well-calibrated model is an accurate model."
+      A model that says "1% cracked" for every bracket is perfectly calibrated if 1% really are cracked, and it's useless for finding the cracked ones. Calibration asks whether the numbers are honest; ranking asks whether the model separates cracked from good. Check both.
+      :::
+    bridges:
+      - decisions-and-games
+  - id: calibrated-decisions.s3
+    title: Compare expected costs
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.calibrated-decisions
+    markdown: |-
+      Now suppose the 20% is honest. Line A's cost table counts only the damage from each mistake:
+
+      | Line A | Bracket is good | Bracket is cracked |
+      | --- | ---: | ---: |
+      | Inspect | 1 (wasted inspection) | 0 (crack caught) |
+      | Ship | 0 | 9 (crack reaches a customer) |
+
+      The **expected cost** of an action averages its costs, weighted by the probabilities. At p = 0.2 (chance of a crack):
+
+      - Inspect: 0.8 × 1 + 0.2 × 0 = 0.8
+      - Ship: 0.8 × 0 + 0.2 × 9 = 1.8
+
+      Inspect. Where's the break-even point? Inspecting costs 1 − p and shipping costs 9p, and they're equal when 1 − p = 9p, so p = 0.1. Inspect any bracket above a 10% crack chance.
+
+      :::papers The expected-cost threshold
+      Pick the action $a$ with the lowest expected cost $\sum_y P(y)\,C(a, y)$. With two actions and two outcomes, act (inspect) when
+
+      $$p > p^{*} = \frac{C_{\text{inspect,good}} - C_{\text{ship,good}}}{\big(C_{\text{inspect,good}} - C_{\text{ship,good}}\big) + \big(C_{\text{ship,crack}} - C_{\text{inspect,crack}}\big)}$$
+
+      Line A: $p^{*} = \frac{1 - 0}{(1 - 0) + (9 - 0)} = 0.1$. When correct decisions cost 0, this is just false-alarm cost ÷ (false-alarm cost + miss cost).
+      :::
+
+      This is where calibration pays off. The threshold assumes honest numbers. The overconfident model above called thousands of brackets "2%," so every one would be shipped, yet 11% of them were cracked: above the 0.1 threshold.
+    bridges: []
+  - id: calibrated-decisions.cost-table
+    title: Change the cost table, change the threshold
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.calibrated-decisions
+    markdown: |-
+      Line B uses a slower inspection station. Every inspection costs 2 in labor, whatever it finds. A shipped crack still costs 9.
+
+      | Line B | Bracket is good | Bracket is cracked |
+      | --- | ---: | ---: |
+      | Inspect | 2 | 2 |
+      | Ship | 0 | 9 |
+
+      :::predict Same bracket, same honest p = 0.2. Inspect or ship on Line B?
+      Inspect: 0.8 × 2 + 0.2 × 2 = 2. Ship: 0.2 × 9 = 1.8. Ship! The formula gives $p^{*} = \frac{2 - 0}{(2 - 0) + (9 - 2)} = 2/9 \approx 0.22$, and 0.2 falls just below it.
+      :::
+
+      The model didn't change, and neither did its 20%. Only the costs changed, and the decision flipped. So when someone asks "what threshold should we use?", the answer is never "0.5 by default." Write down the cost table first, then compute it.
+    bridges: []
+  - id: calibrated-decisions.s4
+    title: Fix the numbers on data the model never saw
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.calibrated-decisions
+    markdown: |-
+      An overconfident model can often be repaired without retraining. **Recalibration** learns a simple mapping from the model's scores to honest probabilities. The most common is **temperature scaling**: divide the model's raw scores before they become probabilities (its logits) by one number T, chosen so the probabilities fit a separate set of cases the model didn't train on. For our model, T = 2 would exactly undo the doubling. Dividing every score by the same number keeps the order of the brackets, so the ranking is untouched.
+
+      Use three separate sets of brackets: one to train the model, one to fit T, and one to measure the final ECE. If you fit T and measure ECE on the same brackets, the score will look better than the model really is.
+
+      Finally, recheck after anything changes. A new steel supplier, a new camera, or a new season can shift the crack rate and the model's accuracy. Rebuild the bucket table from recent brackets every so often, and refit T when the gaps grow.
+    bridges: []
+  - id: calibrated-decisions.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.calibrated-decisions
+    markdown: Compute break-even thresholds for fraud checks, umbrellas, and patient recalls, then judge rain forecasts, lopsided models, and a recalibration shortcut.
+    takeaway: |-
+      First check that a model's percentages are honest by comparing what it says with what happens. Then act when the chance is above the threshold set by your cost table, and recompute that threshold whenever the costs change.
+  - id: calibrated-decisions.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.calibrated-decisions
+    markdown: |-
+      Calibration checks whether predicted probabilities match observed frequencies. Choosing an action requires a separate decision about the costs of mistakes.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - calibrated-decisions.s1
-    - calibrated-decisions.s2
-    - calibrated-decisions.s3
-    - calibrated-decisions.s4
-    - calibrated-decisions.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - calibrated-decisions.s1
+        - calibrated-decisions.s2
+        - calibrated-decisions.s3
+        - calibrated-decisions.cost-table
+        - calibrated-decisions.s4
+        - calibrated-decisions.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     calibrated-decisions.recap: calibrated-decisions.check
 assessment_families:
-- id: calibrated-decisions.base
-  objective_ref: objective.calibrated-decisions
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Understand calibration: trace the inputs, operation, and result before choosing.'
-  remediation_scene: calibrated-decisions.s2
-  variants:
-  - id: calibrated-decisions.base.1
-    prompt: Among 100 comparable predictions of 0.6, what outcome count is consistent with calibration in expectation?
-    options:
-    - id: c
-      text: Exactly zero events
-    - id: a
-      text: About 60 events
-    - id: b
-      text: Exactly 100 events guaranteed
-    answer: a
-    feedback: Calibration links probability groups with observed frequencies over relevant samples.
-  - id: calibrated-decisions.base.2
-    prompt: A well-ranked classifier can still be what?
-    options:
-    - id: a
-      text: Poorly calibrated
-    - id: b
-      text: Unable to output a score
-    - id: c
-      text: Automatically optimal for every cost
-    answer: a
-    feedback: Ranking and probability accuracy are distinct properties.
-- id: calibrated-decisions.transfer
-  objective_ref: objective.calibrated-decisions
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Check the conditions behind confidence: trace the inputs, operation, and result before choosing.'
-  remediation_scene: calibrated-decisions.s4
-  variants:
-  - id: calibrated-decisions.transfer.1
-    prompt: False inspection costs 1 and missing a defect costs 4. Under the stated two-action toy costs, inspect
-      above what p?
-    options:
-    - id: a
-      text: '0.2'
-    - id: b
-      text: 0.5 always
-    - id: c
-      text: '0.8'
-    answer: a
-    feedback: Compare 1 − p with 4p; the boundary is p = 1/5.
-  - id: calibrated-decisions.transfer.2
-    prompt: Deployment prevalence and conditions change. What should happen to probability-based decisions?
-    options:
-    - id: b
-      text: Assume old confidence transfers automatically
-    - id: c
-      text: Only change the display color
-    - id: a
-      text: Reevaluate calibration and decision performance under the new conditions
-    answer: a
-    feedback: Both probability quality and action costs are context-dependent.
+  - id: calibrated-decisions.base
+    objective_ref: objective.calibrated-decisions
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Understand calibration: trace the inputs, operation, and result before choosing.'
+    remediation_scene: calibrated-decisions.s2
+    variants:
+      - id: calibrated-decisions.base.1
+        prompt: Among 100 comparable predictions of 0.6, what outcome count is consistent with calibration in expectation?
+        options:
+          - id: c
+            text: Exactly zero events
+          - id: a
+            text: About 60 events
+          - id: b
+            text: Exactly 100 events guaranteed
+        answer: a
+        feedback: Calibration links probability groups with observed frequencies over relevant samples.
+        retired: true
+      - id: calibrated-decisions.base.2
+        prompt: A well-ranked classifier can still be what?
+        options:
+          - id: a
+            text: Poorly calibrated
+          - id: b
+            text: Unable to output a score
+          - id: c
+            text: Automatically optimal for every cost
+        answer: a
+        feedback: Ranking and probability accuracy are distinct properties.
+        retired: true
+  - id: calibrated-decisions.transfer
+    objective_ref: objective.calibrated-decisions
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Check the conditions behind confidence: trace the inputs, operation, and result before choosing.'
+    remediation_scene: calibrated-decisions.s4
+    variants:
+      - id: calibrated-decisions.transfer.1
+        prompt: False inspection costs 1 and missing a defect costs 4. Under the stated two-action toy costs, inspect above what p?
+        options:
+          - id: a
+            text: '0.2'
+          - id: b
+            text: 0.5 always
+          - id: c
+            text: '0.8'
+        answer: a
+        feedback: Compare 1 − p with 4p; the boundary is p = 1/5.
+        retired: true
+      - id: calibrated-decisions.transfer.2
+        prompt: Deployment prevalence and conditions change. What should happen to probability-based decisions?
+        options:
+          - id: b
+            text: Assume old confidence transfers automatically
+          - id: c
+            text: Only change the display color
+          - id: a
+            text: Reevaluate calibration and decision performance under the new conditions
+        answer: a
+        feedback: Both probability quality and action costs are context-dependent.
+        retired: true
+  - id: calibrated-decisions.base.v2
+    objective_ref: objective.calibrated-decisions
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Write the expected cost of each action as a function of p and set them equal. When correct calls cost nothing, the threshold is false-alarm cost ÷ (false-alarm cost + miss cost).
+    remediation_scene: calibrated-decisions.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: calibrated-decisions.base.v2.1
+        prompt: A bank's fraud model gives each payment a fraud probability p. Reviewing a legitimate payment wastes 2; letting a fraudulent one through costs 8; correct calls cost 0. Above what p should a payment be reviewed? Use a decimal to two places.
+        answer: 0.2
+        feedback: Review costs 2(1 − p) and letting it through costs 8p. They're equal when 2 − 2p = 8p, so p = 2/10 = 0.2. Using 0.5 by default would wave through payments with a 20% to 50% fraud chance.
+      - id: calibrated-decisions.base.v2.2
+        prompt: Carrying an umbrella on a dry day costs you 1 (in annoyance); getting soaked without one costs 3; the other outcomes cost 0. Above what rain probability should you carry it? Use a decimal to two places.
+        answer: 0.25
+        feedback: Carrying costs 1 × (1 − p) and not carrying costs 3p. Setting 1 − p = 3p gives p = 1/4 = 0.25. Dividing 1 by 3 gives 0.33, which forgets to add the two costs in the denominator.
+      - id: calibrated-decisions.base.v2.3
+        prompt: A clinic recalls a patient for a follow-up scan when a model's disease probability p is high enough. An unneeded recall costs 1; a missed case costs 19; correct calls cost 0. Above what p should the clinic recall? Use a decimal to two places.
+        answer: 0.05
+        feedback: Recalling costs 1 − p and not recalling costs 19p, equal at p = 1/20 = 0.05. Missing a case is so expensive that even a 5% chance justifies a recall.
+      - id: calibrated-decisions.base.v2.4
+        prompt: An email filter quarantines a message when its spam probability p is high enough. Quarantining a real message costs 3; letting spam into the inbox costs 7; correct calls cost 0. Above what p should it quarantine? Use a decimal to two places.
+        answer: 0.3
+        feedback: Quarantining costs 3(1 − p) and delivering costs 7p. They're equal when 3 − 3p = 7p, so p = 3/10 = 0.3. Blocking real mail costs almost half as much as letting spam through, so the threshold sits well above the 0.05 you'd get if misses cost far more.
+  - id: calibrated-decisions.transfer.v2
+    objective_ref: objective.calibrated-decisions
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Keep two questions apart. Calibration asks whether the stated percentages match what happens; the cost table decides which action a percentage should trigger.
+    remediation_scene: calibrated-decisions.s2
+    variants:
+      - id: calibrated-decisions.transfer.v2.1
+        prompt: On 400 days a forecaster said "30% chance of rain," and it rained on 60 of them. What does this show?
+        options:
+          - id: b
+            text: Well calibrated, since it rained on quite a few of those days
+          - id: c
+            text: Worthless, since it stayed dry on most of the 30% days
+          - id: a
+            text: Too high, since it rained on only 15% of the "30%" days
+        answer: a
+        feedback: 60 of 400 is 15%, half the stated 30%, so these forecasts overstate rain. A 30% forecast should see dry days most of the time, so that alone isn't a failure; the mismatch between 30% and 15% is.
+      - id: calibrated-decisions.transfer.v2.2
+        prompt: Model A ranks cases perfectly but only ever outputs 0.99 or 0.01. Model B outputs 0.3 for every case, and 30% of cases are positive. How do they compare?
+        options:
+          - id: a
+            text: A separates cases but its numbers aren't honest; B is honest but separates nothing
+          - id: b
+            text: A is better in every way, since perfect ranking implies honest probabilities
+          - id: c
+            text: B is better in every way, since calibration is what makes a model accurate
+        answer: a
+        feedback: Calibration and ranking are different properties. B's 0.3 is honest on average but can't tell cases apart; A tells them apart perfectly, but its 0.99 and 0.01 need recalibration before you use them with a cost table.
+        retired: true
+      - id: calibrated-decisions.transfer.v2.3
+        prompt: A clinic's cost of a missed case rises from 9 to 49 after a new treatment deadline. An unneeded recall still costs 1, and the model is unchanged. What happens to the recall threshold?
+        options:
+          - id: c
+            text: It stays at 0.1, because the model's probabilities haven't changed
+          - id: a
+            text: It falls from 0.1 to 0.02, so more patients get recalled
+          - id: b
+            text: It rises from 0.1 to 0.5, since each miss now matters more
+        answer: a
+        feedback: The threshold is 1/(1 + 49) = 0.02, down from 1/(1 + 9) = 0.1. Costlier misses mean you act on weaker evidence. The model's numbers stay the same, but the decision rule built on them must change.
+      - id: calibrated-decisions.transfer.v2.4
+        prompt: A team fits temperature scaling on its validation set, then reports the ECE on that same validation set. What is the problem?
+        options:
+          - id: b
+            text: Temperature scaling reorders the cases, so accuracy drops
+          - id: c
+            text: ECE can't be computed after a model is recalibrated
+          - id: a
+            text: The ECE will look better than it will be on new cases
+        answer: a
+        feedback: T was chosen to fit those exact cases, so measuring on them flatters the result; use a third, untouched set. Temperature scaling divides every score by the same number, so the ranking doesn't change.
+      - id: calibrated-decisions.transfer.v2.5
+        prompt: Model A ranks cases well, but of the cases it calls 90% likely, only 60% turn out positive. Model B says 30% for every case, and 30% of cases are positive. How do they compare?
+        options:
+          - id: b
+            text: B is the better model, since calibration is what makes a model accurate
+          - id: c
+            text: A sorts cases but overstates its confidence; B is honest but sorts nothing
+          - id: a
+            text: A is the better model, since good ranking implies honest probabilities
+        answer: c
+        feedback: Calibration and ranking are different properties. B's 30% matches reality but can't tell cases apart; A tells them apart, but its "90%" comes true only 60% of the time, so recalibrate it before using a cost table. Good ranking doesn't make the numbers honest, and honest numbers don't make a model useful.

@@ -1,200 +1,471 @@
 schema_version: 0.2-draft
 lesson:
   id: robot-sensors-and-frames
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Connect measurements and actions to a physical body
   state: draft
-  summary: Give a robot’s measurements a location, a time, and the right units.
+  summary: A robot's camera sees a mug, and its gripper closes on empty air 7 cm away. Learn the frames, transforms, and timing that make "where" mean the same thing everywhere.
   slot: M30.1
   category: learning
   sources:
-  - title: Modern Robotics — authors’ textbook and resources
-    url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
+    - title: Modern Robotics — authors’ textbook and resources
+      url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
+    - title: "REP 103: Standard Units of Measure and Coordinate Conventions (ROS)"
+      url: https://www.ros.org/reps/rep-0103.html
+    - title: "REP 105: Coordinate Frames for Mobile Platforms (ROS)"
+      url: https://www.ros.org/reps/rep-0105.html
 objectives:
-- id: objective.robot-sensors-and-frames
-  version: 1-draft
-  statement: Robots combine sensors, actuators, and coordinate frames; units, calibration, timing, and body
-    geometry determine how measurements become meaningful actions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - robot-sensors-and-frames.base
-  - robot-sensors-and-frames.transfer
-  prerequisites:
-  - anyOf:
-    - objective.geometry-and-symmetry
+  - id: objective.robot-sensors-and-frames
+    version: 3-draft
+    statement: Explain what a robot's common sensors measure, convert a point between coordinate frames with a rotation and translation, chain transforms in the right order, and spot unit, calibration, and timing errors.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - robot-sensors-and-frames.base.v2
+      - robot-sensors-and-frames.transfer.v2
+      - robot-sensors-and-frames.calculate
+    prerequisites:
+      - anyOf:
+          - objective.geometry-and-symmetry
 scenes:
-- id: robot-sensors-and-frames.s1
-  title: A body constrains action
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.robot-sensors-and-frames
-  markdown: 'A robot''s **sensors** measure properties such as light, distance, acceleration, force, or joint
-    position. A **joint position** is the angle or displacement of a movable connection.
+  - id: robot-sensors-and-frames.s1
+    title: Meet Tidy, and everything it can feel
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.robot-sensors-and-frames
+    markdown: |-
+      Meet Tidy, the robot we'll follow through this module. It clears kitchen tables: a wheeled base drives up, an arm reaches out, and a gripper moves mugs into the dishwasher rack. Tidy's camera spots a mug, the arm reaches, and the gripper closes on empty air 7 cm away. Nothing was broken: two numbers simply meant different things to different parts of the robot.
 
+      First, what can Tidy measure? Its **sensors** are devices that turn a physical quantity into a number:
 
-    Its **actuators** create motion or force. They have limits on speed, travel, and **torque**, the turning
-    effect of a force about an axis.
+      | Sensor | What it measures | Typical weakness |
+      | --- | --- | --- |
+      | Wheel encoder | How far each wheel has turned | Wheels slip, so distance drifts |
+      | Joint encoder | Each **joint position**: the angle of one arm joint | Says nothing about the mug |
+      | IMU (inertial measurement unit) | Acceleration and turning rate | Small biases add up over time |
+      | Lidar | Distances to surfaces, by timing laser pulses | Glass and shiny steel confuse it |
+      | Camera (color or depth) | An image; depth cameras add distance per pixel | Glare and lens distortion |
+      | Wrist force sensor | Push and twist at the gripper | Drifts with temperature |
 
+      Tidy moves through **actuators**: its wheel and joint motors. Each has limits on speed, travel, and **torque**, the turning effect of a force about an axis. That's **embodiment**: a robot acts through one particular body, whose sensors and limits decide what it can perceive and do.
+    bridges: []
+  - id: robot-sensors-and-frames.s2
+    title: Every number lives in a frame
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-sensors-and-frames
+    markdown: |-
+      Tidy's head camera reports the mug at $(0.5, 0.2)$ m. Half a meter from *what*? A **coordinate frame** answers that: an origin plus a set of axes. The camera measures from its lens, the arm plans from the base's center, and the kitchen map uses a corner of the room.
 
-    **Embodiment** means the system acts through this particular body in physical surroundings. Its possible
-    actions depend on that body''s shape, sensors, and mechanical limits.'
-  text_mode: 'A robot''s **sensors** measure properties such as light, distance, acceleration, force, or joint
-    position. A **joint position** is the angle or displacement of a movable connection.
+      The usual robotics convention (used in ROS, the Robot Operating System): $x$ points forward, $y$ points left, and $z$ points up, with distances in meters and angles in radians. A **pose** is a position plus an orientation: where a frame's origin sits and which way its axes point.
 
+      The mug has a correct address in every frame. The bug is handing a camera-frame address to code expecting a base-frame one.
 
-    Its **actuators** create motion or force. They have limits on speed, travel, and **torque**, the turning
-    effect of a force about an axis.
+      :::story A spacecraft lost to a unit
+      In September 1999, NASA's Mars Climate Orbiter came too close to Mars and was lost. One team's ground software reported thruster impulse in pound-force seconds; the navigation software that used those numbers expected newton-seconds, a factor of about 4.45 apart. Every number was right; the units just weren't written on the interface.
+      :::
+    bridges:
+      - geometry-and-symmetry
+  - id: robot-sensors-and-frames.s3
+    title: Rotate first, then shift
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-sensors-and-frames
+    markdown: |-
+      Tidy's head camera sits 0.3 m ahead of the base center and 0.1 m to its left, turned 90° left to watch the counter. It sees the mug at $(0.5, 0.2)$: 0.5 m straight out from the lens, 0.2 m to the lens's left. Where is the mug relative to the base?
 
+      **Step 1: rotate.** Turn the point by the camera's angle, $\theta = 90°$, using $x' = x\cos\theta - y\sin\theta$ and $y' = x\sin\theta + y\cos\theta$. With $\cos 90° = 0$ and $\sin 90° = 1$:
 
-    **Embodiment** means the system acts through this particular body in physical surroundings. Its possible
-    actions depend on that body''s shape, sensors, and mechanical limits.'
-  bridges: []
-- id: robot-sensors-and-frames.s2
-  title: Name the coordinate frame
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robot-sensors-and-frames
-  markdown: 'A point described relative to a camera has different coordinates relative to a robot base or room.
-    A rigid transform combines rotation and translation to convert between frames. Units and axis conventions
-    matter: confusing meters with millimeters can turn a valid numeric command into a dangerous physical displacement.'
-  text_mode: 'A point described relative to a camera has different coordinates relative to a robot base or
-    room. A rigid transform combines rotation and translation to convert between frames. Units and axis conventions
-    matter: confusing meters with millimeters can turn a valid numeric command into a dangerous physical displacement.'
-  bridges:
-  - geometry-and-symmetry
-- id: robot-sensors-and-frames.s3
-  title: Trace a simple translation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robot-sensors-and-frames
-  markdown: If a camera origin is one meter to the right of the robot origin with aligned axes, an object two
-    meters right of the camera lies three meters right of the robot. Rotated axes require rotation as well
-    as translation. State the direction of the transform explicitly.
-  text_mode: If a camera origin is one meter to the right of the robot origin with aligned axes, an object
-    two meters right of the camera lies three meters right of the robot. Rotated axes require rotation as well
-    as translation. State the direction of the transform explicitly.
-  bridges: []
-- id: robot-sensors-and-frames.s4
-  title: Calibrate and synchronize
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robot-sensors-and-frames
-  markdown: 'Sensor bias, lens distortion, mounting offsets, and timestamp differences create systematic errors.
-    A moving robot fusing an old camera frame with a new joint reading can infer the wrong geometry. Calibration
-    and timing checks are prerequisites for reliable higher-level perception and control.
+      $$x' = 0.5 \times 0 - 0.2 \times 1 = -0.2, \qquad y' = 0.5 \times 1 + 0.2 \times 0 = 0.5$$
 
+      **Step 2: shift.** Add where the camera sits: $(-0.2 + 0.3,\; 0.5 + 0.1) = (0.1, 0.6)$.
 
-    Calibration estimates how a sensor’s readings relate to known measurements. If a stationary distance sensor
-    reads 1.02 meters for a reference at 1.00 meter, it has a 0.02-meter error in that test; several distances
-    are needed to check whether one offset explains the problem.'
-  text_mode: 'Sensor bias, lens distortion, mounting offsets, and timestamp differences create systematic errors.
-    A moving robot fusing an old camera frame with a new joint reading can infer the wrong geometry. Calibration
-    and timing checks are prerequisites for reliable higher-level perception and control.
+      The mug is 0.1 m ahead of the base center and 0.6 m to its left. That fits: the camera looks left, so "in front of the lens" means "further left".
 
+      :::predict The camera is re-mounted, turned only 30° left, in the same spot. Same reading (0.5, 0.2). Where is the mug now?
+      With $\cos 30° \approx 0.866$ and $\sin 30° = 0.5$: $x' = 0.433 - 0.1 = 0.333$ and $y' = 0.25 + 0.173 = 0.423$. Adding $(0.3, 0.1)$ gives about $(0.633, 0.523)$: now mostly ahead of the base.
+      :::
 
-    Calibration estimates how a sensor’s readings relate to known measurements. If a stationary distance sensor
-    reads 1.02 meters for a reference at 1.00 meter, it has a 0.02-meter error in that test; several distances
-    are needed to check whether one offset explains the problem.'
-  bridges: []
-- id: robot-sensors-and-frames.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.robot-sensors-and-frames
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A robot needs measurements with the right units, coordinate frames, and timestamps. Calibration
-    connects sensor readings to the physical quantities they describe.
-- id: robot-sensors-and-frames.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.robot-sensors-and-frames
-  markdown: A robot needs measurements with the right units, coordinate frames, and timestamps. Calibration
-    connects sensor readings to the physical quantities they describe.
-  text_mode: A robot needs measurements with the right units, coordinate frames, and timestamps. Calibration
-    connects sensor readings to the physical quantities they describe.
+      :::papers The homogeneous transform
+      Engineers pack the rotation and the shift into one 3 × 3 matrix by giving each point a third coordinate, 1:
+
+      $$\begin{bmatrix} x_B \\ y_B \\ 1 \end{bmatrix} = \underbrace{\begin{bmatrix} \cos\theta & -\sin\theta & t_x \\ \sin\theta & \cos\theta & t_y \\ 0 & 0 & 1 \end{bmatrix}}_{T_{BC}} \begin{bmatrix} x_C \\ y_C \\ 1 \end{bmatrix}$$
+
+      $T_{BC}$ is the camera's pose in the base frame; it takes camera coordinates ($C$) to base coordinates ($B$). Here $\theta = 90°$ and $(t_x, t_y) = (0.3, 0.1)$. In 3-D it becomes a 4 × 4 matrix with a 3 × 3 rotation inside. To go from base to camera, use the inverse $T_{CB} = T_{BC}^{-1}$.
+      :::
+
+      ```python run
+      import numpy as np
+
+      def T(theta_deg, tx, ty):
+          """Homogeneous transform: rotate by theta, then shift by (tx, ty)."""
+          c, s = np.cos(np.radians(theta_deg)), np.sin(np.radians(theta_deg))
+          return np.array([[c, -s, tx],
+                           [s,  c, ty],
+                           [0,  0,  1]])
+
+      # Head camera: 0.3 m ahead and 0.1 m left of the base, turned 90° left
+      T_base_cam = T(90, 0.3, 0.1)
+      mug_cam = np.array([0.5, 0.2, 1])        # (x, y, 1) in the camera frame
+
+      mug_base = T_base_cam @ mug_cam
+      print("mug in base frame:", mug_base[:2].round(3))
+
+      # Going back: the inverse maps base coordinates into the camera frame
+      print("back to camera:   ", (np.linalg.inv(T_base_cam) @ mug_base)[:2].round(3))
+      ```
+
+      Change the 90 to 30 and check the prediction above. Then try −90: the same reading now lands on Tidy's right.
+    bridges: []
+  - id: robot-sensors-and-frames.chain
+    title: "Chain the frames: camera to gripper to base"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-sensors-and-frames
+    markdown: |-
+      For the final approach Tidy uses a wrist camera, which moves with the gripper. Now two transforms stand between camera and base:
+
+      - $T_{GC}$, the camera's pose in the gripper frame. The camera is bolted on, so calibration measures this once: 0.05 m ahead, not rotated.
+      - $T_{BG}$, the gripper's pose in the base frame. It changes whenever the arm moves, so the robot computes it from the joint encoders. Right now: at $(0.6, 0.2)$, turned 90° left.
+
+      The wrist camera sees the mug 0.15 m straight ahead, $p_C = (0.15, 0)$. Work right to left:
+
+      1. Camera → gripper: no rotation, add 0.05 → $p_G = (0.20, 0)$.
+      2. Gripper → base: rotate 90° → $(0, 0.20)$, then add $(0.6, 0.2)$ → $p_B = (0.6, 0.4)$.
+
+      As one product, $p_B = T_{BG}\,T_{GC}\,p_C$. Notice how the inner letters match, $B\underline{G}\,\underline{G}C$, and cancel to $BC$. That's the check engineers use to catch a chain in the wrong order.
+
+      :::mixup "Matrix order doesn't matter much; both transforms get applied either way."
+      Compute $T_{GC}\,T_{BG}\,p_C$ instead and you get $(0.65, 0.35)$, about 7 cm from the true $(0.6, 0.4)$: Tidy's miss from the first scene. Rotations and shifts don't commute, so the order changes the answer.
+      :::
+
+      ```python run
+      import numpy as np
+
+      def T(theta_deg, tx, ty):
+          c, s = np.cos(np.radians(theta_deg)), np.sin(np.radians(theta_deg))
+          return np.array([[c, -s, tx], [s, c, ty], [0, 0, 1]])
+
+      T_base_grip = T(90, 0.6, 0.2)   # gripper pose in the base frame (from the joint encoders)
+      T_grip_cam = T(0, 0.05, 0.0)    # wrist camera pose in the gripper frame (from calibration)
+      mug_cam = np.array([0.15, 0.0, 1])
+
+      T_base_cam = T_base_grip @ T_grip_cam          # inner letters match: base<-grip<-cam
+      print("right order:", (T_base_cam @ mug_cam)[:2].round(3))
+      print("wrong order:", (T_grip_cam @ T_base_grip @ mug_cam)[:2].round(3))
+      ```
+
+      Add one more link: if the base stands at $(2, 1)$ in the kitchen map, facing along the map's $x$-axis, try `T(0, 2, 1) @ T_base_cam @ mug_cam`.
+    diagram:
+      caption: "Tidy's frame chain. Each arrow is one transform; multiplying them carries the mug's address to the room."
+      description: The mug is detected in the wrist camera's image, giving its position in the camera frame. The calibration transform T_GC carries it to the gripper frame. The transform T_BG, computed from the joint angles, carries it to the base frame. The transform T_WB, from localization, carries it to the kitchen's map frame.
+      nodes:
+        - id: mug
+          label: Mug
+          note: seen at (0.15, 0)
+          col: 0
+          row: 0
+          tone: data
+        - id: cam
+          label: Wrist camera frame
+          col: 1
+          row: 0
+        - id: grip
+          label: Gripper frame
+          col: 2
+          row: 0
+        - id: base
+          label: Base frame
+          note: where the arm plans
+          col: 3
+          row: 0
+          tone: accent
+        - id: world
+          label: Kitchen map frame
+          col: 4
+          row: 0
+          tone: muted
+      edges:
+        - from: mug
+          to: cam
+          label: detected in image
+        - from: cam
+          to: grip
+          label: T_GC from calibration
+        - from: grip
+          to: base
+          label: T_BG from joint angles
+        - from: base
+          to: world
+          label: T_WB from localization
+    bridges: []
+  - id: robot-sensors-and-frames.s4
+    title: Right frame, wrong moment
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-sensors-and-frames
+    markdown: |-
+      With the chain in order, two quieter errors remain.
+
+      **Calibration** measures how a sensor's readings relate to the truth, and where each sensor sits on the body. Tidy's distance sensor is tested against known targets:
+
+      | True distance (m) | 1.00 | 2.00 | 3.00 |
+      | --- | ---: | ---: | ---: |
+      | Reading (m) | 1.02 | 2.04 | 3.06 |
+
+      :::predict Is this a fixed offset (subtract 2 cm) or a scale error?
+      A scale error. The error grows with distance, 2, 4, then 6 cm, so every reading is 2% too large: divide by 1.02. A fixed offset would read 1.02, 2.02, 3.02. One test distance can't tell the two apart; three can.
+      :::
+
+      **Timing** is the other trap. Every reading has a timestamp, the moment it describes. Tidy's camera image takes 100 ms to arrive while the base rolls at 0.4 m/s. Combine that old image with the current joint angles and the mug lands $0.4 \times 0.1 = 0.04$ m (4 cm) off. The fix is to use where the camera *was* when the image was taken, so robot software keeps a timestamped history of transforms.
+
+      So when a robot misses, ask in order: right frame, right chain order, right units, right calibration, right moment?
+    bridges: []
+  - id: robot-sensors-and-frames.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.robot-sensors-and-frames
+    markdown: Convert points between rotated frames by hand, then diagnose a drone, a forklift lidar, a drifting sensor, and a unit mix-up.
+    takeaway: |-
+      Every measurement belongs to a frame, a unit, and a moment. To move a point between frames, rotate then shift, and chain transforms so the inner letters match.
+  - id: robot-sensors-and-frames.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.robot-sensors-and-frames
+    markdown: |-
+      A robot needs measurements with the right units, coordinate frames, and timestamps. Calibration connects sensor readings to the physical quantities they describe.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - robot-sensors-and-frames.s1
-    - robot-sensors-and-frames.s2
-    - robot-sensors-and-frames.s3
-    - robot-sensors-and-frames.s4
-    - robot-sensors-and-frames.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - robot-sensors-and-frames.s1
+        - robot-sensors-and-frames.s2
+        - robot-sensors-and-frames.s3
+        - robot-sensors-and-frames.chain
+        - robot-sensors-and-frames.s4
+        - robot-sensors-and-frames.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     robot-sensors-and-frames.recap: robot-sensors-and-frames.check
 assessment_families:
-- id: robot-sensors-and-frames.base
-  objective_ref: objective.robot-sensors-and-frames
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Name the coordinate frame: trace the inputs, operation, and result before choosing.'
-  remediation_scene: robot-sensors-and-frames.s2
-  variants:
-  - id: robot-sensors-and-frames.base.1
-    prompt: Camera origin is 1 m right of robot; object is 2 m right of camera with aligned axes. Robot-relative
-      position?
-    options:
-    - id: a
-      text: 3 m right
-    - id: b
-      text: 1 m right
-    - id: c
-      text: 2 m left
-    answer: a
-    feedback: Add translations under the stated aligned-frame convention.
-  - id: robot-sensors-and-frames.base.2
-    prompt: What does a rigid transform combine?
-    options:
-    - id: b
-      text: Only a class label
-    - id: c
-      text: Only a reward score
-    - id: a
-      text: Rotation and translation
-    answer: a
-    feedback: It maps geometric coordinates between rigid frames.
-- id: robot-sensors-and-frames.transfer
-  objective_ref: objective.robot-sensors-and-frames
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Calibrate and synchronize: trace the inputs, operation, and result before choosing.'
-  remediation_scene: robot-sensors-and-frames.s4
-  variants:
-  - id: robot-sensors-and-frames.transfer.1
-    prompt: Why do timestamps matter in sensor fusion?
-    options:
-    - id: b
-      text: Only logs need ordering
-    - id: c
-      text: Time cannot affect geometry
-    - id: a
-      text: Measurements may describe different physical moments
-    answer: a
-    feedback: Motion makes unsynchronized observations inconsistent.
-  - id: robot-sensors-and-frames.transfer.2
-    prompt: Does a valid numeric command guarantee a valid physical action?
-    options:
-    - id: c
-      text: Only if the model generated it
-    - id: a
-      text: No; units, frames, and actuator limits matter
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Physical meaning depends on the complete interface.
+  - id: robot-sensors-and-frames.base
+    objective_ref: objective.robot-sensors-and-frames
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Name the coordinate frame: trace the inputs, operation, and result before choosing.'
+    remediation_scene: robot-sensors-and-frames.s2
+    variants:
+      - id: robot-sensors-and-frames.base.1
+        prompt: Camera origin is 1 m right of robot; object is 2 m right of camera with aligned axes. Robot-relative position?
+        options:
+          - id: a
+            text: 3 m right
+          - id: b
+            text: 1 m right
+          - id: c
+            text: 2 m left
+        answer: a
+        feedback: Add translations under the stated aligned-frame convention.
+        retired: true
+      - id: robot-sensors-and-frames.base.2
+        prompt: What does a rigid transform combine?
+        options:
+          - id: b
+            text: Only a class label
+          - id: c
+            text: Only a reward score
+          - id: a
+            text: Rotation and translation
+        answer: a
+        feedback: It maps geometric coordinates between rigid frames.
+        retired: true
+  - id: robot-sensors-and-frames.transfer
+    objective_ref: objective.robot-sensors-and-frames
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Calibrate and synchronize: trace the inputs, operation, and result before choosing.'
+    remediation_scene: robot-sensors-and-frames.s4
+    variants:
+      - id: robot-sensors-and-frames.transfer.1
+        prompt: Why do timestamps matter in sensor fusion?
+        options:
+          - id: b
+            text: Only logs need ordering
+          - id: c
+            text: Time cannot affect geometry
+          - id: a
+            text: Measurements may describe different physical moments
+        answer: a
+        feedback: Motion makes unsynchronized observations inconsistent.
+        retired: true
+      - id: robot-sensors-and-frames.transfer.2
+        prompt: Does a valid numeric command guarantee a valid physical action?
+        options:
+          - id: c
+            text: Only if the model generated it
+          - id: a
+            text: No; units, frames, and actuator limits matter
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Physical meaning depends on the complete interface.
+        retired: true
+  - id: robot-sensors-and-frames.base.v2
+    objective_ref: objective.robot-sensors-and-frames
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Read the subscripts: T_BC takes camera (C) coordinates into base (B) coordinates. Rotate by the frame's angle first, then add its position."
+    remediation_scene: robot-sensors-and-frames.s3
+    variants:
+      - id: robot-sensors-and-frames.base.v2.1
+        prompt: A camera sits 0.3 m ahead of a robot's base center, turned 90° to the left. It sees a cup 1 m straight ahead of the lens. Where is the cup in the base frame?
+        options:
+          - id: b
+            text: (1.3, 0), since the two forward distances add
+          - id: c
+            text: (0.3, −1.0), since turning left sends it to the right
+          - id: a
+            text: (0.3, 1.0), since the lens's forward is the base's left
+        answer: a
+        feedback: Rotating (1, 0) by 90° gives (0, 1); adding the camera's position (0.3, 0) gives (0.3, 1.0). Adding distances without rotating treats the camera as if it faced forward, and (0.3, −1.0) rotates the wrong way.
+      - id: robot-sensors-and-frames.base.v2.2
+        prompt: You know T_BC, the camera's pose in the base frame, and you have a target point in base coordinates. You need that point in camera coordinates. What should you apply?
+        options:
+          - id: c
+            text: T_BC itself, since a transform works in both directions
+          - id: a
+            text: The inverse of T_BC, which maps base coordinates to camera ones
+          - id: b
+            text: T_BC with its shift negated but its rotation kept the same
+        answer: a
+        feedback: T_BC maps camera coordinates into the base frame; going the other way needs T_CB = T_BC⁻¹. Just negating the shift is a common half-fix, but the inverse also reverses the rotation and rotates the shift.
+      - id: robot-sensors-and-frames.base.v2.3
+        prompt: A wrist camera sees a screw at p_C. You know T_BG (gripper pose in the base frame) and T_GC (camera pose in the gripper frame). Which expression gives the screw in the base frame?
+        options:
+          - id: b
+            text: T_GC · T_BG · p_C
+          - id: c
+            text: T_BG · p_C + T_GC · p_C
+          - id: a
+            text: T_BG · T_GC · p_C
+        answer: a
+        feedback: Work right to left, camera → gripper → base, and check that inner letters match (B G · G C). Reversing the order applies the gripper's rotation and shift before the camera offset, which misplaces the point; adding the two products isn't a transform at all.
+      - id: robot-sensors-and-frames.base.v2.4
+        prompt: Why do robot engineers write a 2-D point (x, y) as (x, y, 1) before applying a 3 × 3 transform?
+        options:
+          - id: a
+            text: So one matrix product can do both the rotation and the shift
+          - id: b
+            text: So the extra entry can record that the units are meters
+          - id: c
+            text: So the extra entry can hold the sensor's confidence in the point
+        answer: a
+        feedback: The appended 1 multiplies the translation column, so a single matrix rotates and shifts, and chains of frames become chains of matrix products. Units and confidence are tracked separately; the 1 is purely a bookkeeping trick.
+  - id: robot-sensors-and-frames.transfer.v2
+    objective_ref: objective.robot-sensors-and-frames
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Ask which fact about the measurement is wrong or missing: its frame, its units, its calibration, or the moment it describes."
+    remediation_scene: robot-sensors-and-frames.s4
+    variants:
+      - id: robot-sensors-and-frames.transfer.v2.1
+        prompt: A delivery drone flying at 5 m/s combines a camera image taken 80 ms ago with its current GPS position. The landing pad consistently appears about 0.4 m behind where it really is. What is the most likely cause?
+        options:
+          - id: b
+            text: Lens distortion that bends the pad's image toward the edges
+          - id: a
+            text: The image shows where the drone was 80 ms earlier
+          - id: c
+            text: The GPS reports position in feet rather than in meters
+        answer: a
+        feedback: 5 m/s × 0.08 s = 0.4 m, exactly the offset, and it points along the direction of travel. That's a timing error, fixed by using the drone's pose at the image's timestamp. Distortion wouldn't track speed, and a feet/meters mix-up would scale everything by about 3.3.
+        retired: true
+      - id: robot-sensors-and-frames.transfer.v2.2
+        prompt: An ultrasonic sensor on a vacuum robot reads 0.53, 1.03, and 1.53 m for walls at 0.50, 1.00, and 1.50 m. How should the readings be corrected?
+        options:
+          - id: a
+            text: Subtract 0.03 m from every reading
+          - id: c
+            text: Divide every reading by 1.06
+          - id: b
+            text: Average several readings to cancel the noise
+        answer: a
+        feedback: The error is 3 cm at every distance, so it's a fixed offset. A scale error would grow with distance; dividing by 1.06 fits the first reading but overcorrects the far ones. Averaging removes random noise, not a consistent bias.
+      - id: robot-sensors-and-frames.transfer.v2.3
+        prompt: A forklift's lidar is mounted at the rear, 1 m behind the base center, facing backward (turned 180°). It reports an obstacle 2 m straight ahead of the lidar. Where is the obstacle relative to the base?
+        options:
+          - id: b
+            text: 1 m ahead of the base center
+          - id: c
+            text: 2 m behind the base center
+          - id: a
+            text: 3 m behind the base center
+        answer: a
+        feedback: Rotating (2, 0) by 180° gives (−2, 0); adding the lidar's position (−1, 0) gives (−3, 0), 3 m behind. "1 m ahead" forgets the rotation, and "2 m behind" rotates but forgets the mounting offset.
+      - id: robot-sensors-and-frames.transfer.v2.4
+        prompt: A planning module outputs gripper targets in millimeters, such as 250. The arm's driver expects meters, and a test run commands a move to 250. Which fix addresses the cause?
+        options:
+          - id: c
+            text: Lower the arm's speed limit so a bad target moves it slowly
+          - id: b
+            text: Collect more planning examples so it learns to give meters
+          - id: a
+            text: Label units at the interface and convert where the modules meet
+        answer: a
+        feedback: The numbers are right in their own units; the interface lost the units, as with the Mars Climate Orbiter. Converting at the boundary (and rejecting targets outside the workspace) fixes the cause. A speed limit only slows the crash, and retraining doesn't change which unit the driver expects.
+      - id: robot-sensors-and-frames.transfer.v2.5
+        prompt: A delivery drone flying forward at 5 m/s combines a camera image taken 80 ms ago with its current GPS position. The landing pad consistently comes out about 0.4 m further ahead, along its flight direction, than it really is. What is the most likely cause?
+        options:
+          - id: c
+            text: The GPS reports position in feet rather than in meters
+          - id: b
+            text: Lens distortion that bends the pad's image toward the edges
+          - id: a
+            text: The image saw the pad from where the drone was 80 ms ago
+        answer: a
+        feedback: 5 m/s × 0.08 s = 0.4 m, exactly the offset, and it points along the flight direction because the pad's offset was measured from an older, earlier spot. That's a timing error, fixed by using the drone's pose at the image's timestamp. Distortion wouldn't track speed, and a feet/meters mix-up would scale everything by about 3.3.
+  - id: robot-sensors-and-frames.calculate
+    objective_ref: objective.robot-sensors-and-frames
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Rotate first: x′ = x cos θ − y sin θ and y′ = x sin θ + y cos θ. Then add the position of the sensor's frame."
+    remediation_scene: robot-sensors-and-frames.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: robot-sensors-and-frames.calculate.1
+        prompt: A camera is turned 90° left and sits at (0.2, 0) m in the base frame. It sees a point at (0.3, 0.1) m in its own frame. What is the point's x-coordinate in the base frame, in meters?
+        answer: 0.1
+        feedback: "Rotating by 90°: x′ = 0.3 × 0 − 0.1 × 1 = −0.1. Adding the camera's x position: −0.1 + 0.2 = 0.1 m."
+      - id: robot-sensors-and-frames.calculate.2
+        prompt: A sensor is turned 180° and sits at (1.0, 0.5) m in the base frame. It sees a point at (0.4, 0.2) m in its own frame. What is the point's x-coordinate in the base frame, in meters?
+        answer: 0.6
+        feedback: "Rotating by 180° flips both signs: (−0.4, −0.2). Adding (1.0, 0.5) gives (0.6, 0.3), so x = 0.6 m."
+      - id: robot-sensors-and-frames.calculate.3
+        prompt: A lidar at the base origin is turned 30° left. It sees a wall point 2 m straight ahead, at (2, 0) in its own frame. What is the point's y-coordinate in the base frame, in meters?
+        answer: 1
+        feedback: "y′ = x sin 30° + y cos 30° = 2 × 0.5 + 0 = 1.0 m. There's no shift to add, since the lidar sits at the origin."
+      - id: robot-sensors-and-frames.calculate.4
+        prompt: A camera is turned 60° left and sits at (0.5, 0) m in the base frame. It sees a point at (1, 0) m in its own frame. What is the point's x-coordinate in the base frame, in meters?
+        answer: 1
+        feedback: "x′ = 1 × cos 60° − 0 = 0.5. Adding the camera's x position: 0.5 + 0.5 = 1.0 m."
+      - id: robot-sensors-and-frames.calculate.5
+        prompt: A side camera is turned 90° to the right (θ = −90°) and sits at (0, 0.2) m in the base frame. It sees a point 0.5 m straight ahead, at (0.5, 0) in its own frame. What is the point's y-coordinate in the base frame, in meters?
+        answer: -0.3
+        feedback: "y′ = 0.5 × sin(−90°) + 0 = −0.5. Adding the camera's y position: −0.5 + 0.2 = −0.3 m, so the point is 0.3 m to the robot's right."

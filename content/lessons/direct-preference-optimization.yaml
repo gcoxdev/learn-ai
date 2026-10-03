@@ -1,207 +1,362 @@
 schema_version: 0.2-draft
 lesson:
   id: direct-preference-optimization
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Train on preference pairs without a separate online reward loop
   state: draft
-  summary: Use stored preference pairs to train a model relative to a reference, without confusing that training
-    with answer selection at runtime.
+  summary: RLHF juggles four models and a sampling loop. DPO gets the same kind of result from one line of loss and two models, because the assistant turns out to be its own reward model.
   slot: M20.6
   category: learning
   sources:
-  - title: Direct Preference Optimization
-    url: https://arxiv.org/abs/2305.18290
+    - title: "Direct Preference Optimization: Your Language Model is Secretly a Reward Model (Rafailov et al., 2023)"
+      url: https://arxiv.org/abs/2305.18290
+    - title: "Zephyr: Direct Distillation of LM Alignment (Tunstall et al., 2023)"
+      url: https://arxiv.org/abs/2310.16944
+    - title: "The Llama 3 Herd of Models (Llama Team, Meta, 2024)"
+      url: https://arxiv.org/abs/2407.21783
 objectives:
-- id: objective.direct-preference-optimization
-  version: 1-draft
-  statement: DPO adjusts chosen-versus-rejected response likelihoods relative to a reference model using a
-    preference loss; its assumptions and data coverage still constrain resulting behavior.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - direct-preference-optimization.base
-  - direct-preference-optimization.transfer
-  prerequisites:
-  - anyOf:
-    - objective.preferences-and-reward-models
-  - anyOf:
-    - objective.rlhf-and-kl-control
+  - id: objective.direct-preference-optimization
+    version: 2-draft
+    statement: DPO adjusts chosen-versus-rejected response likelihoods relative to a reference model using a preference loss; its assumptions and data coverage still constrain resulting behavior.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - direct-preference-optimization.base.v2
+      - direct-preference-optimization.transfer.v2
+      - direct-preference-optimization.calculate
+    prerequisites:
+      - anyOf:
+          - objective.preferences-and-reward-models
+      - anyOf:
+          - objective.rlhf-and-kl-control
 scenes:
-- id: direct-preference-optimization.s1
-  title: Start with a pair and a reference
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.direct-preference-optimization
-  markdown: '**Direct preference optimization**, or **DPO**, trains on pairs of answers to the same prompt:
-    one preferred and one rejected. In its basic setup, it also uses a fixed **reference model** for comparison.
+  - id: direct-preference-optimization.s1
+    title: The assistant is secretly a reward model
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.direct-preference-optimization
+    markdown: |-
+      Ferncliff's RLHF run worked, but it was a juggling act: four models in memory, fresh answers generated every round, and a β that needed constant watching. In 2023, Rafailov and colleagues at Stanford showed a shortcut, **direct preference optimization (DPO)**, that trains straight from the preference pairs with just two models: the policy being trained and the frozen reference.
 
+      The key step is a piece of algebra. The RLHF objective from the last lesson, reward minus β times KL, has a known best answer: the ideal policy takes the reference model's probabilities and boosts each answer in proportion to $e^{r/\beta}$. Run that backwards and any policy defines a reward:
 
-    For each answer, DPO measures how the training model''s likelihood compares with the reference''s likelihood.
-    **Log likelihood** is the logarithm of the probability assigned to a response under the chosen token-scoring
-    rule. The loss encourages a larger difference, or margin, in favor of the preferred answer after accounting
-    for the reference.
+      $$\hat r(x, y) = \beta \ln \frac{\pi(y \mid x)}{\pi_{\text{ref}}(y \mid x)}$$
 
+      This **implicit reward** is β times how much more likely the policy makes an answer than the reference did. (The exact formula has one more term, but it depends only on the prompt, and it cancels as soon as you compare two answers to the same prompt.)
 
-    This formulation connects a model of preferences with an objective that penalizes departure from the reference
-    using KL divergence. The next example makes the relative comparison concrete.'
-  text_mode: '**Direct preference optimization**, or **DPO**, trains on pairs of answers to the same prompt:
-    one preferred and one rejected. In its basic setup, it also uses a fixed **reference model** for comparison.
+      Now plug the implicit reward into the Bradley–Terry loss from the reward-model lesson. You get a loss written entirely in terms of the policy's own probabilities. There's no separate reward model to train, no answers to generate during training, and no PPO. DPO is a supervised-style loss over the stored pairs, run much like SFT, plus one forward pass through the frozen reference for each answer.
+    bridges: []
+  - id: direct-preference-optimization.s2
+    title: Work the DPO loss on one pair
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.direct-preference-optimization
+    markdown: |-
+      Take one of Ferncliff's pairs. For "Can I get my bike back by Saturday?", the chosen answer $y_w$ says "call your shop to confirm" and the rejected $y_l$ promises Saturday. A sequence's log-probability is the sum of its tokens' log-probabilities, so it's a large negative number.
 
+      | | Policy $\ln \pi$ | Reference $\ln \pi_{\text{ref}}$ | Log ratio | Implicit reward ($\beta = 0.1$) |
+      | --- | ---: | ---: | ---: | ---: |
+      | Chosen $y_w$ | −12.0 | −13.0 | +1.0 | +0.10 |
+      | Rejected $y_l$ | −15.0 | −14.5 | −0.5 | −0.05 |
 
-    For each answer, DPO measures how the training model''s likelihood compares with the reference''s likelihood.
-    **Log likelihood** is the logarithm of the probability assigned to a response under the chosen token-scoring
-    rule. The loss encourages a larger difference, or margin, in favor of the preferred answer after accounting
-    for the reference.
+      The margin between the implicit rewards is $0.10 - (-0.05) = 0.15$. Bradley–Terry turns it into a probability, $\sigma(0.15) = 0.537$, and the loss is $-\ln 0.537 = 0.621$. At the very start of training, the policy *is* the reference, so both log ratios are 0, the margin is 0, and the loss is $-\ln 0.5 = 0.693$. Training has lowered it by making the chosen answer relatively more likely and the rejected one relatively less.
 
+      :::papers The DPO loss
+      $$\mathcal{L}_{\text{DPO}} = -\,\mathbb{E}_{(x,\, y_w,\, y_l)}\left[\ln \sigma\!\left(\beta \ln \frac{\pi_\theta(y_w \mid x)}{\pi_{\text{ref}}(y_w \mid x)} - \beta \ln \frac{\pi_\theta(y_l \mid x)}{\pi_{\text{ref}}(y_l \mid x)}\right)\right]$$
 
-    This formulation connects a model of preferences with an objective that penalizes departure from the reference
-    using KL divergence. The next example makes the relative comparison concrete.'
-  bridges: []
-- id: direct-preference-optimization.s2
-  title: Read the margin direction
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.direct-preference-optimization
-  markdown: 'If the policy has increased the preferred response’s likelihood relative to the reference more
-    than the rejected response’s likelihood, the preference margin rises. This is a relative comparison, not
-    simply a requirement that every preferred sequence’s absolute probability must rise on every update.
+      $x$ is the prompt, $y_w$ and $y_l$ the chosen and rejected answers, $\pi_\theta$ the policy, and $\pi_{\text{ref}}$ the frozen SFT model. In our pair, the first term inside $\sigma$ is $0.1 \times 1.0$, the second is $0.1 \times (-0.5)$, and the loss is 0.621. The gradient weights each pair by $\sigma(-\text{margin})$, so pairs the model still gets wrong push hardest. The DPO paper typically used $\beta = 0.1$, and found DPO matched or beat PPO-based RLHF on its sentiment, summarization, and dialogue tests.
+      :::
 
+      ```python run
+      import numpy as np
 
-    Suppose the policy-to-reference likelihood ratio is 2 for the preferred response and 0.5 for the rejected
-    one. Their relative ratio is 2/0.5 = 4, giving log margin ln 4 before the stated scale factor. Ratios 0.8
-    and 0.2 give the same margin although both absolute probabilities fell relative to the reference. That
-    is why the objective is a relative comparison.'
-  text_mode: 'If the policy has increased the preferred response’s likelihood relative to the reference more
-    than the rejected response’s likelihood, the preference margin rises. This is a relative comparison, not
-    simply a requirement that every preferred sequence’s absolute probability must rise on every update.
+      def dpo_loss(logp_w, ref_w, logp_l, ref_l, beta=0.1):
+          reward_w = beta * (logp_w - ref_w)       # implicit reward of the chosen answer
+          reward_l = beta * (logp_l - ref_l)       # implicit reward of the rejected answer
+          margin = reward_w - reward_l
+          loss = -np.log(1 / (1 + np.exp(-margin)))
+          return reward_w, reward_l, loss
 
+      cases = {
+          "start (policy = reference)": (-13.0, -13.0, -14.5, -14.5),
+          "after some training":        (-12.0, -13.0, -15.0, -14.5),
+          "both answers less likely":   (-13.5, -13.0, -16.5, -14.5),
+      }
+      for name, logps in cases.items():
+          rw, rl, loss = dpo_loss(*logps)
+          print(f"{name:27s} rewards {rw:+.2f} / {rl:+.2f}   loss {loss:.3f}")
+      ```
 
-    Suppose the policy-to-reference likelihood ratio is 2 for the preferred response and 0.5 for the rejected
-    one. Their relative ratio is 2/0.5 = 4, giving log margin ln 4 before the stated scale factor. Ratios 0.8
-    and 0.2 give the same margin although both absolute probabilities fell relative to the reference. That
-    is why the objective is a relative comparison.'
-  bridges: []
-- id: direct-preference-optimization.s3
-  title: Understand what the training loop omits
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.direct-preference-optimization
-  markdown: The basic offline DPO setup trains directly on stored preference pairs without fitting a separate
-    explicit reward model and running PPO rollouts for every update. Variants may refresh data online or change
-    the loss. DPO remains parameter training, not a decoding-time choice between two displayed answers.
-  text_mode: The basic offline DPO setup trains directly on stored preference pairs without fitting a separate
-    explicit reward model and running PPO rollouts for every update. Variants may refresh data online or change
-    the loss. DPO remains parameter training, not a decoding-time choice between two displayed answers.
-  bridges: []
-- id: direct-preference-optimization.s4
-  title: Check the preference distribution
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.direct-preference-optimization
-  markdown: Biased pairs, weak rejected examples, response-length effects, and out-of-distribution prompts
-    can limit results. Tune and report the reference, regularization scale, masking, and evaluation. Easier
-    optimization does not establish that preferences perfectly represent truth, safety, or every user’s needs.
-  text_mode: Biased pairs, weak rejected examples, response-length effects, and out-of-distribution prompts
-    can limit results. Tune and report the reference, regularization scale, masking, and evaluation. Easier
-    optimization does not establish that preferences perfectly represent truth, safety, or every user’s needs.
-  bridges: []
-- id: direct-preference-optimization.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.direct-preference-optimization
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: DPO trains directly on preferred and rejected answers, comparing their likelihoods with a reference
-    model. Its results still depend on the quality and coverage of those preferences.
-- id: direct-preference-optimization.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.direct-preference-optimization
-  markdown: DPO trains directly on preferred and rejected answers, comparing their likelihoods with a reference
-    model. Its results still depend on the quality and coverage of those preferences.
-  text_mode: DPO trains directly on preferred and rejected answers, comparing their likelihoods with a reference
-    model. Its results still depend on the quality and coverage of those preferences.
+      Try `beta=0.5`: the same log ratios now give a margin of 0.75 and a loss of 0.387. A larger β makes each unit of drift from the reference count for more.
+    bridges: []
+  - id: direct-preference-optimization.s3
+    title: The winner can lose probability too
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.direct-preference-optimization
+    markdown: |-
+      Look at the code's third case. The chosen answer's log-probability *fell*, from −13.0 to −13.5. The rejected answer fell further, from −14.5 to −16.5. The log ratios are −0.5 and −2.0, so the margin is $0.1 \times (-0.5) - 0.1 \times (-2.0) = 0.15$, exactly as before, and the loss is the same 0.621.
+
+      :::predict Which of these changes would lower the loss: raising the chosen answer's log-probability by 1, or lowering the rejected one's by 1?
+      Both, equally. Each widens the gap between the log ratios by 1, which raises the margin by $\beta \times 1 = 0.1$. DPO only sees the *difference*, so it doesn't care which answer moves.
+      :::
+
+      :::mixup "DPO makes the chosen answers more likely."
+      It makes them more likely *relative to the rejected answers*. Practitioners often see both log-probabilities fall during DPO training, with the rejected ones falling faster. The probability that leaves both goes to other answers, which may or may not be good ones. So measure the answers the trained model actually writes, not just the loss.
+      :::
+
+      DPO is still training: it changes the weights once, before deployment. It is not a runtime trick that generates two answers and picks the better one; that is best-of-n selection, which is in the next lesson.
+    bridges: []
+  - id: direct-preference-optimization.s4
+    title: What DPO gives up for its simplicity
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.direct-preference-optimization
+    markdown: |-
+      | | RLHF with PPO | DPO |
+      | --- | --- | --- |
+      | Models in memory | Policy, reference, reward, value | Policy, reference |
+      | Generates new answers while training | Yes, every round | No, uses the stored pairs |
+      | Separate reward model | Trained first | None; the reward is implicit |
+      | Main knob | β, plus PPO settings | β |
+
+      The second row is both DPO's strength and its weakness. RLHF's policy writes new answers and gets feedback on its *own* current behavior, including its new mistakes. DPO learns only from pairs collected earlier. If Ferncliff's pairs came from the SFT model, then once DPO shifts the assistant's style, it's being judged on answers it no longer writes.
+
+      The common fix is **iterative DPO**: train, generate fresh pairs from the new model, have them judged, and train again. Meta's Llama 3 (2024) post-training ran several rounds of SFT followed by DPO in this spirit. Zephyr-7B (2023) was an early open model trained with DPO, using preference labels produced by GPT-4 (the UltraFeedback dataset) rather than by people.
+
+      For Ferncliff, the practical plan is simple. Run DPO on the 5,000 pairs starting from the SFT model with $\beta = 0.1$, generate new answers to held-out questions, and compare them with the SFT model's answers before switching over.
+    bridges: []
+  - id: direct-preference-optimization.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.direct-preference-optimization
+    markdown: Compute DPO losses from log-probabilities, then decide what DPO needs and what goes wrong for a legal-writing tool, a game studio, and a team with stale pairs.
+    takeaway: |-
+      DPO turns the policy into its own reward model, β × ln(π/π_ref), and trains with the Bradley–Terry loss on stored pairs: no reward model, no sampling, no PPO. It only cares about the chosen-versus-rejected gap, so check what the trained model actually writes.
+  - id: direct-preference-optimization.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.direct-preference-optimization
+    markdown: |-
+      DPO trains directly on preferred and rejected answers, comparing their likelihoods with a reference model. Its results still depend on the quality and coverage of those preferences.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - direct-preference-optimization.s1
-    - direct-preference-optimization.s2
-    - direct-preference-optimization.s3
-    - direct-preference-optimization.s4
-    - direct-preference-optimization.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - direct-preference-optimization.s1
+        - direct-preference-optimization.s2
+        - direct-preference-optimization.s3
+        - direct-preference-optimization.s4
+        - direct-preference-optimization.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     direct-preference-optimization.recap: direct-preference-optimization.check
 assessment_families:
-- id: direct-preference-optimization.base
-  objective_ref: objective.direct-preference-optimization
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Read the margin direction: trace the inputs, operation, and result before choosing.'
-  remediation_scene: direct-preference-optimization.s2
-  variants:
-  - id: direct-preference-optimization.base.1
-    prompt: What does basic DPO consume?
-    options:
-    - id: b
-      text: Only unscored random token IDs
-    - id: c
-      text: Only accelerator telemetry
-    - id: a
-      text: Prompt, preferred/rejected response pairs, and a reference comparison
-    answer: a
-    feedback: The loss is defined on preference comparisons.
-  - id: direct-preference-optimization.base.2
-    prompt: Must every preferred sequence’s absolute probability increase at every update?
-    options:
-    - id: c
-      text: Only when the response is short
-    - id: a
-      text: No; the objective is a relative preference comparison
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Relative margins and absolute probabilities are different quantities.
-- id: direct-preference-optimization.transfer
-  objective_ref: objective.direct-preference-optimization
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Check the preference distribution: trace the inputs, operation, and result before choosing.'
-  remediation_scene: direct-preference-optimization.s4
-  variants:
-  - id: direct-preference-optimization.transfer.1
-    prompt: Does basic offline DPO require a separately fitted explicit reward model?
-    options:
-    - id: c
-      text: Only if there are two responses
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: It directly optimizes a preference loss under its formulation.
-  - id: direct-preference-optimization.transfer.2
-    prompt: Does DPO remove bias from the preference dataset automatically?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if a reference is frozen
-    answer: a
-    feedback: The training signal retains the data’s coverage and judgment limitations.
+  - id: direct-preference-optimization.base
+    objective_ref: objective.direct-preference-optimization
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Read the margin direction: trace the inputs, operation, and result before choosing.'
+    remediation_scene: direct-preference-optimization.s2
+    variants:
+      - id: direct-preference-optimization.base.1
+        prompt: What does basic DPO consume?
+        options:
+          - id: b
+            text: Only unscored random token IDs
+          - id: c
+            text: Only accelerator telemetry
+          - id: a
+            text: Prompt, preferred/rejected response pairs, and a reference comparison
+        answer: a
+        feedback: The loss is defined on preference comparisons.
+        retired: true
+      - id: direct-preference-optimization.base.2
+        prompt: Must every preferred sequence’s absolute probability increase at every update?
+        options:
+          - id: c
+            text: Only when the response is short
+          - id: a
+            text: No; the objective is a relative preference comparison
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Relative margins and absolute probabilities are different quantities.
+        retired: true
+  - id: direct-preference-optimization.transfer
+    objective_ref: objective.direct-preference-optimization
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Check the preference distribution: trace the inputs, operation, and result before choosing.'
+    remediation_scene: direct-preference-optimization.s4
+    variants:
+      - id: direct-preference-optimization.transfer.1
+        prompt: Does basic offline DPO require a separately fitted explicit reward model?
+        options:
+          - id: c
+            text: Only if there are two responses
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: It directly optimizes a preference loss under its formulation.
+        retired: true
+      - id: direct-preference-optimization.transfer.2
+        prompt: Does DPO remove bias from the preference dataset automatically?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if a reference is frozen
+        answer: a
+        feedback: The training signal retains the data’s coverage and judgment limitations.
+        retired: true
+  - id: direct-preference-optimization.base.v2
+    objective_ref: objective.direct-preference-optimization
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Everything in DPO goes through the implicit reward β × ln(π / π_ref). The loss only sees the chosen answer's implicit reward minus the rejected one's."
+    remediation_scene: direct-preference-optimization.s2
+    variants:
+      - id: direct-preference-optimization.base.v2.1
+        prompt: "At the first step of DPO training the policy is an exact copy of the reference model. What is the loss on every pair?"
+        options:
+          - id: b
+            text: 0, since the policy hasn't made any mistakes yet
+          - id: c
+            text: It depends on how long the chosen answer is
+          - id: a
+            text: ln 2 ≈ 0.693, since the margin is 0
+        answer: a
+        feedback: Both log ratios are 0, so the margin is 0, σ(0) = 0.5, and the loss is −ln 0.5 ≈ 0.693 for every pair. Answer length changes the log-probabilities, but they cancel against the identical reference.
+      - id: direct-preference-optimization.base.v2.2
+        prompt: "Why doesn't DPO need a separately trained reward model?"
+        options:
+          - id: a
+            text: The policy's log ratio to the reference acts as the reward
+          - id: c
+            text: It reuses the reward model trained during the SFT stage
+          - id: b
+            text: It asks the reference model to score each of the answers
+        answer: a
+        feedback: DPO rewrites the reward as β ln(π/π_ref), so the policy is its own reward model. SFT doesn't train a reward model, and the reference model only provides the baseline probabilities, not a score.
+      - id: direct-preference-optimization.base.v2.3
+        prompt: "During DPO, a pair's chosen answer goes from log-probability −20 to −21 while the rejected answer goes from −22 to −25. The reference is unchanged. What happened to this pair's loss?"
+        options:
+          - id: c
+            text: It rose, since the chosen answer became less likely
+          - id: a
+            text: It fell, since the gap between the log ratios widened by 2
+          - id: b
+            text: It stayed the same, since both answers moved the same way
+        answer: a
+        feedback: The chosen log ratio moved by −1 and the rejected one by −3, so their difference grew by 2 and the margin grew by 2β. DPO rewards the relative gap, even when both answers lose probability.
+      - id: direct-preference-optimization.base.v2.4
+        prompt: "What does DPO need during training that SFT does not?"
+        options:
+          - id: b
+            text: Fresh answers generated by the policy during training
+          - id: a
+            text: A rejected answer for each prompt and a frozen reference model
+          - id: c
+            text: A reward model's score for each stored answer pair
+        answer: a
+        feedback: DPO's loss compares a chosen and a rejected answer, each measured against the reference model. It uses stored pairs, so it generates nothing during training, and it needs no reward model.
+  - id: direct-preference-optimization.transfer.v2
+    objective_ref: objective.direct-preference-optimization
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: DPO learns only from pairs collected earlier. Ask whose answers those pairs contain and whether the trained model still writes answers like them.
+    remediation_scene: direct-preference-optimization.s4
+    variants:
+      - id: direct-preference-optimization.transfer.v2.1
+        prompt: "A legal-writing startup has 20,000 judged pairs and a single GPU that can hold only two copies of its model. Which preference method fits?"
+        options:
+          - id: a
+            text: DPO, which needs only the policy and a frozen reference
+          - id: b
+            text: RLHF with PPO, since pairs must first train a reward model
+          - id: c
+            text: Neither, since preference tuning always needs four models
+        answer: a
+        feedback: DPO trains from the pairs with two models in memory. PPO-based RLHF needs the policy, reference, reward, and value models, which won't fit. Not every method needs four.
+      - id: direct-preference-optimization.transfer.v2.2
+        prompt: "A game studio collected its preference pairs from an early SFT model. After three DPO epochs, the new model's style has changed a lot, and further training stops helping. What is the best next step?"
+        options:
+          - id: c
+            text: Train more epochs on the same pairs with a smaller β
+          - id: b
+            text: Switch the reference model to the newest checkpoint and continue
+          - id: a
+            text: Generate answers from the new model, get them judged, and train again
+        answer: a
+        feedback: The old pairs describe answers the model no longer writes. Fresh pairs from the current model, as in iterative DPO, give feedback on its actual behavior. More epochs on stale pairs mostly overfit them, and swapping the reference alone adds no new judgments.
+      - id: direct-preference-optimization.transfer.v2.3
+        prompt: "After DPO, a team notices the loss is very low but the model's answers are sometimes worse than the SFT model's, with odd phrasings no one ever wrote. What explains this?"
+        options:
+          - id: b
+            text: The loss must have a bug, since low loss means better answers
+          - id: a
+            text: DPO widened the gap by pushing both answers down, freeing probability for other text
+          - id: c
+            text: The reference model drifted along with the policy during training
+        answer: a
+        feedback: DPO's loss only needs chosen above rejected. If both lose probability, the freed probability goes to other answers, possibly odd ones. The reference is frozen, and a low loss doesn't show the answers themselves are good.
+      - id: direct-preference-optimization.transfer.v2.4
+        prompt: "A team runs DPO twice on the same pairs, once with β = 0.05 and once with β = 0.5. Which run is likely to stay closer to the SFT model's behavior?"
+        options:
+          - id: a
+            text: β = 0.5, since each unit of drift counts more in the margin
+          - id: c
+            text: β = 0.05, since a smaller β means smaller updates to the weights
+          - id: b
+            text: Both the same, since β cancels between the two log ratios
+        answer: a
+        feedback: β plays the same role as RLHF's KL coefficient. A larger β reaches a given margin with less drift, so the policy moves less; a small β lets it drift further. β scales both log ratios but doesn't cancel, since it multiplies their difference.
+  - id: direct-preference-optimization.calculate
+    objective_ref: objective.direct-preference-optimization
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "For each answer, log ratio = ln π − ln π_ref. Margin = β × (chosen log ratio − rejected log ratio). Loss = −ln σ(margin)."
+    remediation_scene: direct-preference-optimization.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: direct-preference-optimization.calculate.1
+        prompt: "With β = 0.1, the chosen answer's log ratio ln(π/π_ref) is +2.0 and the rejected answer's is −1.0. What is the DPO loss for this pair?"
+        answer: 0.554
+        feedback: The margin is 0.1 × (2.0 − (−1.0)) = 0.3. σ(0.3) ≈ 0.574, and −ln 0.574 ≈ 0.554.
+      - id: direct-preference-optimization.calculate.2
+        prompt: "With β = 0.1, the policy gives both answers exactly the same log-probabilities as the reference model. What is the DPO loss for this pair?"
+        answer: 0.693
+        feedback: Both log ratios are 0, so the margin is 0, σ(0) = 0.5, and the loss is −ln 0.5 ≈ 0.693.
+      - id: direct-preference-optimization.calculate.3
+        prompt: "With β = 0.5, the chosen answer's log ratio is +0.4 and the rejected answer's is +1.2. What is the DPO loss for this pair?"
+        answer: 0.913
+        feedback: The margin is 0.5 × (0.4 − 1.2) = −0.4, because the rejected answer gained more. σ(−0.4) ≈ 0.401, and −ln 0.401 ≈ 0.913, above ln 2.
+      - id: direct-preference-optimization.calculate.4
+        prompt: "With β = 0.2: the chosen answer has ln π = −20 and ln π_ref = −22; the rejected answer has ln π = −25 and ln π_ref = −24. What is the DPO loss?"
+        answer: 0.437
+        feedback: The log ratios are +2 and −1, so the margin is 0.2 × 3 = 0.6. σ(0.6) ≈ 0.646, and −ln 0.646 ≈ 0.437.
+      - id: direct-preference-optimization.calculate.5
+        prompt: "With β = 0.1: the chosen answer has ln π = −8.0 and ln π_ref = −8.5; the rejected answer has ln π = −9.0 and ln π_ref = −10.0. What is the DPO loss?"
+        answer: 0.718
+        feedback: The log ratios are +0.5 and +1.0, so the margin is 0.1 × (0.5 − 1.0) = −0.05. σ(−0.05) ≈ 0.4875, and −ln 0.4875 ≈ 0.718.

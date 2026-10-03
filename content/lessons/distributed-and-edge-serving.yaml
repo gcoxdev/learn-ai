@@ -1,196 +1,439 @@
 schema_version: 0.2-draft
 lesson:
   id: distributed-and-edge-serving
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Place model computation where memory and latency allow it
   state: draft
-  summary: Decide where computation should live when one device is not enough.
+  summary: A 70B model won't fit on one GPU, and a phone has a few gigabytes to spare. Decide when to split a model, when to copy it, and when to shrink it onto the device.
   slot: M27.7
   category: learning
   sources:
-  - title: The Llama 3 Herd of Models
-    url: https://arxiv.org/abs/2407.21783
-  - title: DeepSeek-V3 Technical Report
-    url: https://arxiv.org/abs/2412.19437
-  - title: FlexGen
-    url: https://arxiv.org/abs/2303.06865
+    - title: The Llama 3 Herd of Models (Llama Team, Meta, 2024), section on inference
+      url: https://arxiv.org/abs/2407.21783
+    - title: "Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism (Shoeybi et al., 2019)"
+      url: https://arxiv.org/abs/1909.08053
+    - title: Efficiently Scaling Transformer Inference (Pope et al., 2022)
+      url: https://arxiv.org/abs/2211.05102
+    - title: "FlexGen: High-Throughput Generative Inference of Large Language Models with a Single GPU (Sheng et al., 2023)"
+      url: https://arxiv.org/abs/2303.06865
 objectives:
-- id: objective.distributed-and-edge-serving
-  version: 1-draft
-  statement: Distributed, offloaded, and edge inference trade memory capacity, communication, privacy boundaries,
-    and latency; model placement must match the hardware topology and request workload.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - distributed-and-edge-serving.base
-  - distributed-and-edge-serving.transfer
-  prerequisites:
-  - anyOf:
-    - objective.serving-expert-models
-  - anyOf:
-    - objective.model-parallel-training
-  - anyOf:
-    - objective.quantization-pruning-and-compression
+  - id: objective.distributed-and-edge-serving
+    version: 2-draft
+    statement: Distributed, offloaded, and edge inference trade memory capacity, communication, privacy boundaries, and latency; model placement must match the hardware topology and request workload.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - distributed-and-edge-serving.base.v2
+      - distributed-and-edge-serving.transfer.v2
+      - distributed-and-edge-serving.placement
+    prerequisites:
+      - anyOf:
+          - objective.serving-expert-models
+      - anyOf:
+          - objective.model-parallel-training
+      - anyOf:
+          - objective.quantization-pruning-and-compression
 scenes:
-- id: distributed-and-edge-serving.s1
-  title: Split a model or replicate a service
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.distributed-and-edge-serving
-  markdown: 'Model parallelism divides one request’s computation across devices; replicas serve different requests
-    with copies of the model. Combining both can improve capacity and throughput. The distinction matters when
-    interpreting whether additional devices accelerate one user or support more concurrent users.
+  - id: distributed-and-edge-serving.s1
+    title: Split to fit, copy to scale
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.distributed-and-edge-serving
+    markdown: |-
+      Fern is a hit, and two teams want more. The plant-doctor team wants a bigger model, Llama 3.1 70B, for tricky diagnoses. The mobile team wants Fern to spot leaf problems from photos in the greenhouse, *without* an internet connection.
 
+      The 70B model needs 70 billion × 2 bytes = 140 GB in 16-bit, and an A100 holds 80 GB. There are two ways to use more GPUs, and they solve different problems:
 
-    If one model needs 12 GB for weights, copying it to two 8 GB devices does not make either copy fit. Splitting
-    the weights across those devices might make it fit, but computation must now cross their connection and
-    additional memory is still needed. Replication becomes useful when each replica already fits and there
-    are several requests to serve. An edge device is a device near the user or sensor, such as a phone or local
-    computer.'
-  text_mode: 'Model parallelism divides one request’s computation across devices; replicas serve different
-    requests with copies of the model. Combining both can improve capacity and throughput. The distinction
-    matters when interpreting whether additional devices accelerate one user or support more concurrent users.
+      | | **Replicas** | **Model parallelism** |
+      | --- | --- | --- |
+      | What each GPU holds | A full copy of the model | A slice of one copy |
+      | Each request uses | One GPU | Several GPUs at once |
+      | Helps with | More customers at a time | A model too big for one GPU, and faster tokens |
+      | Costs | Nothing extra per request | Communication between GPUs on every token |
 
+      The 70B model must be split. An **edge device**, such as a phone or a laptop, is the opposite problem: one small device, one user, and a model that must shrink to fit.
 
-    If one model needs 12 GB for weights, copying it to two 8 GB devices does not make either copy fit. Splitting
-    the weights across those devices might make it fit, but computation must now cross their connection and
-    additional memory is still needed. Replication becomes useful when each replica already fits and there
-    are several requests to serve. An edge device is a device near the user or sensor, such as a phone or local
-    computer.'
-  bridges: []
-- id: distributed-and-edge-serving.s2
-  title: Count communication on the request path
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.distributed-and-edge-serving
-  markdown: Tensor-parallel layers may communicate repeatedly; pipeline stages transfer activations; experts
-    dispatch tokens. Slow links can dominate small decode steps. Placement near fast interconnects and suitable
-    batching helps only when it matches the actual transfer pattern.
-  text_mode: Tensor-parallel layers may communicate repeatedly; pipeline stages transfer activations; experts
-    dispatch tokens. Slow links can dominate small decode steps. Placement near fast interconnects and suitable
-    batching helps only when it matches the actual transfer pattern.
-  bridges: []
-- id: distributed-and-edge-serving.s3
-  title: Move computation to constrained devices
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.distributed-and-edge-serving
-  markdown: Edge devices have limits on memory, power, thermal behavior, and supported kernels. Quantization
-    and smaller models can help, while offloading to CPU or storage adds transfer costs. Local execution can
-    keep some data on device, but privacy still depends on logging, synchronization, and the surrounding application.
-  text_mode: Edge devices have limits on memory, power, thermal behavior, and supported kernels. Quantization
-    and smaller models can help, while offloading to CPU or storage adds transfer costs. Local execution can
-    keep some data on device, but privacy still depends on logging, synchronization, and the surrounding application.
-  bridges: []
-- id: distributed-and-edge-serving.s4
-  title: Compare a complete operating scenario
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.distributed-and-edge-serving
-  markdown: Evaluate cold load, warm latency, sustained throughput, battery or power behavior where relevant,
-    network failure, and model quality. A benchmark from a cooled server does not predict a phone’s sustained
-    performance. Document what remains local and what crosses a service boundary.
-  text_mode: Evaluate cold load, warm latency, sustained throughput, battery or power behavior where relevant,
-    network failure, and model quality. A benchmark from a cooled server does not predict a phone’s sustained
-    performance. Document what remains local and what crosses a service boundary.
-  bridges: []
-- id: distributed-and-edge-serving.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.distributed-and-edge-serving
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Splitting a model can make it fit; replicating a model can serve more requests. Count communication,
-    extra memory, and device limits when choosing where to run it.
-- id: distributed-and-edge-serving.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.distributed-and-edge-serving
-  markdown: Splitting a model can make it fit; replicating a model can serve more requests. Count communication,
-    extra memory, and device limits when choosing where to run it.
-  text_mode: Splitting a model can make it fit; replicating a model can serve more requests. Count communication,
-    extra memory, and device limits when choosing where to run it.
+      :::mixup "Four GPUs make every reply four times faster."
+      Four replicas of the 8B model make no reply faster: each customer still gets one GPU's 125 tokens per second, and four times as many customers get it. Splitting one copy does speed up each token, but communication takes a cut, as the next scene measures.
+      :::
+    bridges: []
+  - id: distributed-and-edge-serving.s2
+    title: Tensor parallelism splits every layer
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.distributed-and-edge-serving
+    markdown: |-
+      The lesson on splitting models across devices showed Megatron-LM's **tensor parallelism**: each GPU holds a slice of every weight matrix, computes its part of each layer, and an **all-reduce** (every GPU sends its partial result and receives the sum) combines the parts. For decoding this has a bonus: each GPU reads only *its* slice of the weights, and all of them read at once. Four GPUs read 140 GB as four 35 GB reads in parallel.
+
+      The price is two all-reduces per layer for every token: one after attention and one after the MLP. Llama 3.1 70B has 80 layers, so that's 160 all-reduces per token. Each moves just one 8,192-number vector per token, 16 KB in 16-bit, so bandwidth barely matters. What matters is latency: each all-reduce makes every GPU wait for the others. Assume 10 µs each over **NVLink**, NVIDIA's fast GPU-to-GPU link inside one machine:
+
+      ```python run
+      GPU_GB, BW = 80, 2.0e12        # A100 80 GB: memory and bandwidth
+      ALLREDUCE = 10e-6              # assumed time for one small all-reduce over NVLink
+
+      def plan(name, params, layers, gpus, bytes_per_weight=2):
+          per_gpu = params * bytes_per_weight / gpus / 1e9          # GB of weights per GPU
+          if per_gpu >= GPU_GB:
+              print(f"{name:9} on {gpus} GPU(s): {per_gpu:5.1f} GB each, does not fit")
+              return
+          read = per_gpu * 1e9 / BW                                 # every GPU reads its slice at once
+          comm = 2 * layers * ALLREDUCE if gpus > 1 else 0          # two all-reduces per layer
+          step = read + comm
+          print(f"{name:9} on {gpus} GPU(s): {per_gpu:5.1f} GB each, {GPU_GB - per_gpu:4.1f} GB left,"
+                f" {step * 1e3:5.2f} ms/token ({comm * 1e3:.1f} comm) = {1 / step:4.0f} tokens/s")
+
+      plan("Llama 8B", 8e9, 32, 1)
+      for n in [1, 2, 4, 8]:
+          plan("Llama 70B", 70e9, 80, n)
+      ```
+
+      Two GPUs fit the weights but leave only 10 GB each for KV caches. Four GPUs give 52 tokens per second with 45 GB each to spare, a sensible choice for Fern. Eight reach 97 tokens per second, and communication is now 1.6 of 10.35 ms, a sixth of every step. Change `ALLREDUCE` to `100e-6`, closer to a hop between machines over an ordinary network: the eight-GPU plan drops to 40 tokens per second, with communication taking two-thirds of every step. That's why tensor parallelism stays inside one NVLink-connected machine.
+    diagram:
+      caption: Tensor-parallel decoding on four GPUs. Each GPU reads a quarter of the weights; all-reduces join the parts.
+      description: The new token's vector is sent to four GPUs. Each GPU holds a quarter of every layer's weights, 35 GB, and computes its part of the layer. An all-reduce over NVLink sums the four partial results and gives every GPU the full output, which feeds the next layer. This happens twice per layer, 160 times per token for an 80-layer model.
+      nodes:
+        - id: token
+          label: New token's vector
+          col: 1
+          row: 0
+          tone: data
+        - id: g1
+          label: GPU 1
+          note: 35 GB slice
+          col: 0
+          row: 1
+          tone: accent
+        - id: g2
+          label: GPU 2
+          note: 35 GB slice
+          col: 1
+          row: 1
+          tone: accent
+        - id: g3
+          label: GPU 3
+          note: 35 GB slice
+          col: 2
+          row: 1
+          tone: accent
+        - id: g4
+          label: GPU 4
+          note: 35 GB slice
+          col: 3
+          row: 1
+          tone: accent
+        - id: reduce
+          label: All-reduce over NVLink
+          note: 2 per layer, 160 per token
+          col: 1
+          row: 2
+          tone: warn
+        - id: next
+          label: Next layer
+          col: 3
+          row: 2
+      edges:
+        - from: token
+          to: g1
+        - from: token
+          to: g2
+        - from: token
+          to: g3
+        - from: token
+          to: g4
+        - from: g1
+          to: reduce
+        - from: g2
+          to: reduce
+        - from: g3
+          to: reduce
+        - from: g4
+          to: reduce
+        - from: reduce
+          to: next
+          label: full output
+    bridges: []
+  - id: distributed-and-edge-serving.pipeline
+    title: Pipeline stages for models that outgrow a machine
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.distributed-and-edge-serving
+    markdown: |-
+      Llama 3.1 405B needs 810 GB in 16-bit, more than a whole machine of eight 80 GB GPUs. Meta's Llama 3 paper describes how they served it in BF16: 16 GPUs on two machines, with tensor parallelism *inside* each machine over NVLink and **pipeline parallelism** *between* them. Machine 1 holds the first half of the layers, machine 2 the second half, and only the activations at the boundary cross the slower network: one 16,384-number vector per token, 32 KB.
+
+      Pipelining lets a model fit, but it doesn't make one request faster: each token still passes through every layer in turn. Servers keep both stages busy with several requests in flight, like the microbatches of a training pipeline. The same paper also describes FP8 quantization of the 405B model, which, at about 1 byte per weight, lets it fit on one machine.
+
+      :::predict Why not use pipeline parallelism across Fern's four GPUs instead of tensor parallelism, since it needs so little communication?
+      Because Fern needs speed per customer. With four pipeline stages, each token visits the four GPUs one after another, and each reads its 35 GB in turn, so a token takes about as long as on one giant GPU: roughly 70 ms, about 14 tokens per second. Tensor parallelism has all four read at once, which is how it reaches 52.
+      :::
+    bridges: []
+  - id: distributed-and-edge-serving.s3
+    title: Fit a model into a phone
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.distributed-and-edge-serving
+    markdown: |-
+      The greenhouse feature runs on the customer's phone. A phone with 8 GB of RAM shares it with the operating system and every other app, so the model gets perhaps 2–3 GB. Meta released Llama 3.2 1B and 3B in 2024 with this use in mind. The 3B model in int4 with group-wise scales needs about 3.2 billion × 4.125 bits ≈ 1.65 GB, a little more if its embedding table stays in 16 bits.
+
+      The GPU arithmetic still applies. If the phone's memory delivers around 50 GB/s (a rough figure; phones vary), each decode step takes about 1.65 GB ÷ 50 GB/s ≈ 33 ms: about 30 tokens per second, fine for reading. Prefill is where phones struggle, since their compute is far below a data-center GPU's, so keep on-device prompts short.
+
+      Two limits don't show up in a quick demo:
+
+      - **Battery.** Every token reads the whole model from memory, and moving bytes costs energy, so long answers take a visible bite out of the battery.
+      - **Heat.** Sustained generation warms the chip, and the phone lowers its clock speed to cool down. A model that runs at 30 tokens per second for the first minute may run noticeably slower after five.
+
+      Running on the device keeps photos off Fernly's servers, but check its logs, crash reports, and cloud sync too: any of them can carry the same data away.
+    bridges: []
+  - id: distributed-and-edge-serving.s4
+    title: Put each feature where it fits
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.distributed-and-edge-serving
+    markdown: |-
+      Fernly's team lays out the three placements side by side:
+
+      | | Phone, 3B int4 | One GPU, 8B bf16 | Four GPUs, 70B, tensor parallel |
+      | --- | --- | --- | --- |
+      | Works offline | Yes | No | No |
+      | Photos leave the phone | No | Yes | Yes |
+      | Tokens per second, one user | about 30, falling as it heats | 125 | 52 |
+      | Hardware per copy | the customer's phone | 1 GPU | 4 GPUs |
+      | Quality on their test set | lowest | good | best on hard diagnoses |
+
+      They ship all three. Offline leaf checks run on the phone and hand off to the server when a connection returns. Everyday chat stays on 8B replicas, one more per GPU as traffic grows. Questions the 8B model marks as uncertain go to one 70B copy split across four GPUs. Copy a model to serve more people, split it when it doesn't fit, and shrink it when it has to travel.
+    bridges: []
+  - id: distributed-and-edge-serving.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.distributed-and-edge-serving
+    markdown: Per-GPU memory and per-token timings to compute, then a hospital tablet, a traffic spike, a private journal app, and a cross-machine split test whether you can place a model on the right hardware.
+    takeaway: |-
+      Copy a model to serve more users; split it with tensor parallelism inside a machine to fit it and speed up each token; add pipeline stages across machines for the largest models; shrink it to run on a device, and test there for heat and battery.
+  - id: distributed-and-edge-serving.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.distributed-and-edge-serving
+    markdown: |-
+      Splitting a model can make it fit; replicating a model can serve more requests. Count communication, extra memory, and device limits when choosing where to run it.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - distributed-and-edge-serving.s1
-    - distributed-and-edge-serving.s2
-    - distributed-and-edge-serving.s3
-    - distributed-and-edge-serving.s4
-    - distributed-and-edge-serving.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - distributed-and-edge-serving.s1
+        - distributed-and-edge-serving.s2
+        - distributed-and-edge-serving.pipeline
+        - distributed-and-edge-serving.s3
+        - distributed-and-edge-serving.s4
+        - distributed-and-edge-serving.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     distributed-and-edge-serving.recap: distributed-and-edge-serving.check
 assessment_families:
-- id: distributed-and-edge-serving.base
-  objective_ref: objective.distributed-and-edge-serving
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Count communication on the request path: trace the inputs, operation, and result before choosing.'
-  remediation_scene: distributed-and-edge-serving.s2
-  variants:
-  - id: distributed-and-edge-serving.base.1
-    prompt: Do more service replicas necessarily accelerate one request?
-    options:
-    - id: c
-      text: Only if weights are identical
-    - id: a
-      text: No; they often increase concurrent capacity
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Replication and splitting a request solve different scaling problems.
-  - id: distributed-and-edge-serving.base.2
-    prompt: Why can decode be sensitive to interconnect latency?
-    options:
-    - id: a
-      text: Small sequential steps may repeatedly wait on communication
-    - id: b
-      text: No data ever move during decode
-    - id: c
-      text: Only pretraining uses communication
-    answer: a
-    feedback: Dependencies can put transfers on the critical path.
-- id: distributed-and-edge-serving.transfer
-  objective_ref: objective.distributed-and-edge-serving
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compare a complete operating scenario: trace the inputs, operation, and result before choosing.'
-  remediation_scene: distributed-and-edge-serving.s4
-  variants:
-  - id: distributed-and-edge-serving.transfer.1
-    prompt: Does local inference alone prove complete application privacy?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the model is quantized
-    answer: a
-    feedback: Other data flows and logs still matter.
-  - id: distributed-and-edge-serving.transfer.2
-    prompt: Why test sustained edge performance?
-    options:
-    - id: b
-      text: One cold request proves every workload
-    - id: c
-      text: Only file size matters
-    - id: a
-      text: Thermal and power limits can change runtime over time
-    answer: a
-    feedback: Device operating conditions affect repeated execution.
+  - id: distributed-and-edge-serving.base
+    objective_ref: objective.distributed-and-edge-serving
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Count communication on the request path: trace the inputs, operation, and result before choosing.'
+    remediation_scene: distributed-and-edge-serving.s2
+    variants:
+      - id: distributed-and-edge-serving.base.1
+        retired: true
+        prompt: Do more service replicas necessarily accelerate one request?
+        options:
+          - id: c
+            text: Only if weights are identical
+          - id: a
+            text: No; they often increase concurrent capacity
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Replication and splitting a request solve different scaling problems.
+      - id: distributed-and-edge-serving.base.2
+        retired: true
+        prompt: Why can decode be sensitive to interconnect latency?
+        options:
+          - id: a
+            text: Small sequential steps may repeatedly wait on communication
+          - id: b
+            text: No data ever move during decode
+          - id: c
+            text: Only pretraining uses communication
+        answer: a
+        feedback: Dependencies can put transfers on the critical path.
+  - id: distributed-and-edge-serving.transfer
+    objective_ref: objective.distributed-and-edge-serving
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compare a complete operating scenario: trace the inputs, operation, and result before choosing.'
+    remediation_scene: distributed-and-edge-serving.s4
+    variants:
+      - id: distributed-and-edge-serving.transfer.1
+        retired: true
+        prompt: Does local inference alone prove complete application privacy?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the model is quantized
+        answer: a
+        feedback: Other data flows and logs still matter.
+      - id: distributed-and-edge-serving.transfer.2
+        retired: true
+        prompt: Why test sustained edge performance?
+        options:
+          - id: b
+            text: One cold request proves every workload
+          - id: c
+            text: Only file size matters
+          - id: a
+            text: Thermal and power limits can change runtime over time
+        answer: a
+        feedback: Device operating conditions affect repeated execution.
+  - id: distributed-and-edge-serving.base.v2
+    objective_ref: objective.distributed-and-edge-serving
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Replicas multiply customers; tensor parallelism makes every GPU read a slice at once but adds all-reduces; pipeline stages let a model fit but pass each token through them in turn.
+    remediation_scene: distributed-and-edge-serving.s2
+    variants:
+      - id: distributed-and-edge-serving.base.v2.1
+        prompt: Fernly copies its 8B model onto four GPUs as four separate replicas. What improves?
+        options:
+          - id: b
+            text: Each customer's token speed, by about four times
+          - id: a
+            text: How many customers it can serve at the same time
+          - id: c
+            text: The size of the largest model it can now run
+        answer: a
+        feedback: Each request still runs on one GPU at one GPU's speed, so replicas add capacity, not per-token speed. Since every GPU must hold a whole copy, the largest runnable model doesn't change either.
+      - id: distributed-and-edge-serving.base.v2.2
+        prompt: Why does tensor parallelism make each decode step faster for a single user?
+        options:
+          - id: a
+            text: Each GPU reads only its slice of the weights, and they all read at once
+          - id: b
+            text: Each GPU generates a different token of the reply at the same moment
+          - id: c
+            text: The all-reduces supply the weights, so less is read from memory
+        answer: a
+        feedback: Decode time is set by bytes read, and splitting every matrix divides the bytes each GPU reads per step. Tokens are still made one after another, and all-reduces move small activation vectors, not weights.
+      - id: distributed-and-edge-serving.base.v2.3
+        prompt: Why do teams keep tensor parallelism inside one machine whose GPUs are linked by NVLink?
+        options:
+          - id: c
+            text: Tensor-parallel GPUs must share a single pool of memory to work
+          - id: b
+            text: Pipeline stages can't run on GPUs that sit in the same machine
+          - id: a
+            text: Every token needs two all-reduces per layer, so slow links pile up delay
+        answer: a
+        feedback: With 160 all-reduces per token for an 80-layer model, even a small delay on each one adds up to most of the step. Each GPU keeps its own memory, and pipelines can run inside one machine too.
+      - id: distributed-and-edge-serving.base.v2.4
+        prompt: A 405B model runs as two pipeline stages on two machines. For a single user, how does its time per token compare with one imaginary machine big enough to hold the whole model?
+        options:
+          - id: b
+            text: About half, since two machines work on each token at once
+          - id: a
+            text: About the same, plus a short hop between the machines
+          - id: c
+            text: About double, since each token must cross the network twice
+        answer: a
+        feedback: A token passes through stage 1 and then stage 2, so the per-token work is the same as on one machine, plus one small transfer of the boundary activations. Pipelining helps a model fit, and keeps stages busy with several requests, but doesn't split one token's work.
+  - id: distributed-and-edge-serving.transfer.v2
+    objective_ref: objective.distributed-and-edge-serving
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask whether the problem is fitting the model, serving more users, speeding up each token, or living within a device's heat, battery, and privacy limits.
+    remediation_scene: distributed-and-edge-serving.s4
+    variants:
+      - id: distributed-and-edge-serving.transfer.v2.1
+        prompt: A hospital runs a speech-to-text model on tablets so audio never leaves the building. The model fits and runs fast in a two-minute demo. What should the team test next?
+        options:
+          - id: a
+            text: Its speed after 20 minutes of steady use, once the tablet warms up
+          - id: b
+            text: Whether its speed matches the same model on a cooled server GPU
+          - id: c
+            text: Whether the model file is the same size as the server version
+        answer: a
+        feedback: Sustained work heats a mobile chip, and the device slows itself down, so a short demo overstates real speed. A server benchmark says nothing about the tablet, and file size was already known to fit.
+      - id: distributed-and-edge-serving.transfer.v2.2
+        prompt: A translation company's 70B model runs tensor-parallel on 8 GPUs to meet its latency target. Traffic doubles. Which change keeps latency and doubles capacity?
+        options:
+          - id: b
+            text: Split the same single copy across 16 GPUs with tensor parallelism
+          - id: c
+            text: Rearrange the 8 GPUs into a pipeline of 8 stages, one per GPU
+          - id: a
+            text: Add a second 8-GPU copy of the model and balance traffic between them
+        answer: a
+        feedback: A second replica serves twice the requests at the same per-token speed. Going to 16-way tensor parallelism mostly adds all-reduce time, and an 8-stage pipeline would make each token visit the GPUs one after another.
+      - id: distributed-and-edge-serving.transfer.v2.3
+        prompt: A journaling app moves its model onto the phone so that entries stay private. What still needs a privacy review?
+        options:
+          - id: c
+            text: The quantization method, which could leak entries into the scales
+          - id: a
+            text: Logs, crash reports, and sync that could carry entries off the phone
+          - id: b
+            text: The model's weights, which could absorb entries as they are typed
+        answer: a
+        feedback: Local inference keeps the computation on the device, but the rest of the app can still send text away. Weights and scales are fixed during use and don't store what users type.
+      - id: distributed-and-edge-serving.transfer.v2.4
+        prompt: A startup splits a 70B model with tensor parallelism across GPUs in two separate cloud machines connected by ordinary networking. Tokens come out slowly. What is a better layout?
+        options:
+          - id: a
+            text: Tensor parallelism inside each machine, and pipeline stages between them
+          - id: b
+            text: A higher tensor-parallel degree, to spread the traffic more thinly
+          - id: c
+            text: Fewer all-reduces, by giving each GPU a bigger share of the KV cache
+        answer: a
+        feedback: Each of the many per-token all-reduces pays the slow network's latency. Pipelining across machines sends one small activation per boundary per token instead. More tensor-parallel GPUs would add even more waiting, and cache size doesn't change how many all-reduces a layer needs.
+  - id: distributed-and-edge-serving.placement
+    objective_ref: objective.distributed-and-edge-serving
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Weight bytes = parameters × bytes per weight; tensor parallelism divides them by the number of GPUs. Time per token ≈ bytes per GPU ÷ bandwidth, plus two all-reduces per layer.
+    remediation_scene: distributed-and-edge-serving.s2
+    absolute_tolerance: 0.05
+    variants:
+      - id: distributed-and-edge-serving.placement.1
+        prompt: A 70-billion-parameter model in 16-bit is split four ways with tensor parallelism. How many GB of weights does each GPU hold?
+        answer: 35
+        feedback: 70 billion × 2 bytes = 140 GB, and 140 ÷ 4 = 35 GB per GPU.
+      - id: distributed-and-edge-serving.placement.2
+        prompt: A 70B model in 16-bit is split eight ways, and each GPU reads its slice at 2 TB/s. Ignoring communication, how many milliseconds does each decode step take?
+        answer: 8.75
+        feedback: 140 GB ÷ 8 = 17.5 GB per GPU, and 17.5 GB ÷ 2,000 GB/s = 8.75 ms.
+      - id: distributed-and-edge-serving.placement.3
+        prompt: A tensor-parallel model has 80 layers, needs two all-reduces per layer for each token, and each all-reduce takes 10 µs. How many milliseconds of communication does each token add?
+        answer: 1.6
+        feedback: 80 × 2 = 160 all-reduces, and 160 × 10 µs = 1,600 µs = 1.6 ms.
+      - id: distributed-and-edge-serving.placement.4
+        prompt: A 405-billion-parameter model is stored in 16-bit. How many GB do its weights take?
+        answer: 810
+        feedback: 405 billion × 2 bytes = 810 GB, more than a machine of eight 80 GB GPUs holds.
+      - id: distributed-and-edge-serving.placement.5
+        prompt: A 3-billion-parameter model is stored at exactly 4 bits per weight on a phone. How many GB does it take?
+        answer: 1.5
+        feedback: 3 billion × 0.5 bytes = 1.5 GB. Group-wise scales would add a little more.

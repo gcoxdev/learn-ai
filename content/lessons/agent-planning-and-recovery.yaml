@@ -1,196 +1,458 @@
 schema_version: 0.2-draft
 lesson:
   id: agent-planning-and-recovery
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Turn a plan into checked execution with recovery paths
   state: draft
-  summary: Build a plan whose steps have evidence of success and a way to recover.
+  summary: Rua Nova is sold out and the cheap fare just vanished. Watch Wayfarer retry, replan, undo a hotel hold, and know when to hand the decision back.
   slot: M25.3
   category: learning
   sources:
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
-  - title: ReAct
-    url: https://arxiv.org/abs/2210.03629
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
+    - title: ReAct
+      url: https://arxiv.org/abs/2210.03629
+    - title: Sagas (Garcia-Molina & Salem, SIGMOD 1987)
+      url: https://dl.acm.org/doi/10.1145/38713.38742
+    - title: Exponential Backoff and Jitter (Marc Brooker, AWS Architecture Blog, 2015)
+      url: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
 objectives:
-- id: objective.agent-planning-and-recovery
-  version: 1-draft
-  statement: Agent planning decomposes objectives into dependent actions, while execution monitoring verifies
-    results and revises the plan when assumptions fail.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - agent-planning-and-recovery.base
-  - agent-planning-and-recovery.transfer
-  prerequisites:
-  - anyOf:
-    - objective.tool-contracts-and-state
-  - anyOf:
-    - objective.classical-planning
+  - id: objective.agent-planning-and-recovery
+    version: 2-draft
+    statement: Agent planning decomposes objectives into dependent actions, while execution monitoring verifies results and revises the plan when assumptions fail.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - agent-planning-and-recovery.base.v2
+      - agent-planning-and-recovery.transfer.v2
+      - agent-planning-and-recovery.calculate
+    prerequisites:
+      - anyOf:
+          - objective.tool-contracts-and-state
+      - anyOf:
+          - objective.classical-planning
 scenes:
-- id: agent-planning-and-recovery.s1
-  title: Write preconditions and completion evidence
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.agent-planning-and-recovery
-  markdown: A step such as compare prices needs identified items, compatible units, and current observations.
-    Its completion condition is a supported comparison, not merely a tool call. Explicit prerequisites reveal
-    which tasks can run independently and which must wait.
-  text_mode: A step such as compare prices needs identified items, compatible units, and current observations.
-    Its completion condition is a supported comparison, not merely a tool call. Explicit prerequisites reveal
-    which tasks can run independently and which must wait.
-  bridges: []
-- id: agent-planning-and-recovery.s2
-  title: Use a dependency graph
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.agent-planning-and-recovery
-  markdown: If steps A and B independently gather two records and step C compares them, A and B can overlap
-    but C depends on both. Shared mutable resources can introduce additional constraints. Parallel execution
-    saves time only when coordination and resource costs remain manageable.
-  text_mode: If steps A and B independently gather two records and step C compares them, A and B can overlap
-    but C depends on both. Shared mutable resources can introduce additional constraints. Parallel execution
-    saves time only when coordination and resource costs remain manageable.
-  bridges: []
-- id: agent-planning-and-recovery.s3
-  title: Detect failures at boundaries
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.agent-planning-and-recovery
-  markdown: After each consequential step, inspect returned evidence and relevant state. If a lookup fails,
-    decide whether another source, corrected identifier, or user information can resolve it. Repeating an unchanged
-    action without new evidence can create loops rather than progress.
-  text_mode: After each consequential step, inspect returned evidence and relevant state. If a lookup fails,
-    decide whether another source, corrected identifier, or user information can resolve it. Repeating an unchanged
-    action without new evidence can create loops rather than progress.
-  bridges: []
-- id: agent-planning-and-recovery.s4
-  title: Recover without hiding uncertainty
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.agent-planning-and-recovery
-  markdown: 'Save **checkpoints**, records of known progress, so recovery can start from what actually happened.
-    Where possible, use **idempotent operations**: repeating them has the same intended effect. “Set the label
-    to blue” is idempotent; “add one point” is not.
+  - id: agent-planning-and-recovery.s1
+    title: What "done" looks like, step by step
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.agent-planning-and-recovery
+    markdown: |-
+      A traveler asks Wayfarer: *"Get me to the Lisbon conference, July 10 to 12. Flight and hotel, under \$500 all in."* Before calling any tool, Wayfarer writes a plan that says, for every step, what must be true before it starts and what will prove it finished:
 
+      | Step | Needs first | Done when |
+      | --- | --- | --- |
+      | Search flights | City and dates | A fare with a price and flight number |
+      | Search hotels | City, dates, venue address | A hotel within a 15-minute walk |
+      | Budget check | A chosen flight and hotel | Flight + 2 nights ≤ \$500 |
+      | Hold hotel | Budget check passed | The hotel returns a hold reference |
+      | Book flight | Hotel held | The airline returns a ticket number |
+      | Email itinerary | Hold reference, ticket number | The email service returns a message ID |
 
-    A **compensating action** tries to counter a completed effect, such as releasing a reservation when a later
-    step fails. It may not restore everything: time has passed, and another person may already have seen the
-    change.
+      The middle column lists **preconditions**, the same idea as the STRIPS action contracts that moved Shakey's box in the classical planning lesson. The right column is **completion evidence**: something observable in the world that shows the step worked.
 
+      :::mixup "A step is done once its tool has been called."
+      Calling `book_flight` is an attempt; the step is done when a ticket number comes back. If the plan only checked "tool called," a lost reply or a sold-out fare would pass as success, and the itinerary would go out for a flight that doesn't exist.
+      :::
+    bridges: []
+  - id: agent-planning-and-recovery.s2
+    title: Draw the plan as a graph, and find the slow path
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.agent-planning-and-recovery
+    markdown: |-
+      As a list, the plan looks strictly one-after-another. Its preconditions say otherwise: the two searches need nothing from each other, so they can run at the same time, while the budget check needs both. A plan drawn with an arrow wherever one step needs another's result is a **dependency graph**.
 
-    Record results that remain unknown. If a necessary assumption fails, stop work that depends on it and revise
-    the plan using the current state.'
-  text_mode: 'Save **checkpoints**, records of known progress, so recovery can start from what actually happened.
-    Where possible, use **idempotent operations**: repeating them has the same intended effect. “Set the label
-    to blue” is idempotent; “add one point” is not.
+      Now add the step times shown in the diagram below. Run in order, that's 4 + 6 + 1 + 3 + 5 + 1 = 20 s. With the searches in parallel, the budget check waits only for the slower one: 6 + 1 + 3 + 5 + 1 = 16 s. The longest chain of dependent steps, here the one through the hotel search, is the **critical path**, and it sets the total time.
 
+      :::predict The airline's search gets twice as fast, from 4 s to 2 s. How much sooner does the plan finish?
+      Not at all. The hotel search is on the critical path, so the budget check still starts at 6 s and the total stays 16 s. Speeding up the *hotel* search to 3 s would help: the check would start at 4 s, and the total would drop to 14 s.
+      :::
 
-    A **compensating action** tries to counter a completed effect, such as releasing a reservation when a later
-    step fails. It may not restore everything: time has passed, and another person may already have seen the
-    change.
+      Why hold the hotel before booking the flight, rather than both at once? That's about recovery, coming up shortly.
+    diagram:
+      caption: Wayfarer's plan as a dependency graph. The two searches run side by side; everything after the budget check runs in order.
+      description: The request starts both the flight search (4 seconds) and the hotel search (6 seconds). Both searches feed the budget check (1 second). If it passes, Wayfarer holds the hotel (3 seconds), which returns a hold reference. Then it books the flight (5 seconds), which returns a ticket number. Finally it emails the itinerary (1 second).
+      nodes:
+        - id: request
+          label: Trip request
+          col: 0
+          row: 1
+        - id: flights
+          label: Search flights
+          note: 4 s
+          col: 1
+          row: 0
+          tone: data
+        - id: hotels
+          label: Search hotels
+          note: 6 s (critical path)
+          col: 1
+          row: 2
+          tone: data
+        - id: budget
+          label: Budget check
+          note: 1 s, needs both results
+          col: 2
+          row: 1
+          tone: accent
+        - id: hold
+          label: Hold hotel
+          note: 3 s, free to cancel
+          col: 3
+          row: 1
+        - id: book
+          label: Book flight
+          note: 5 s, non-refundable
+          col: 4
+          row: 1
+          tone: warn
+        - id: email
+          label: Email itinerary
+          note: 1 s
+          col: 5
+          row: 1
+      edges:
+        - from: request
+          to: flights
+        - from: request
+          to: hotels
+        - from: flights
+          to: budget
+        - from: hotels
+          to: budget
+        - from: budget
+          to: hold
+          label: passed
+        - from: hold
+          to: book
+          label: hold ref
+        - from: book
+          to: email
+          label: ticket
+    bridges: []
+  - id: agent-planning-and-recovery.s3
+    title: Retry the busy, replan around the sold out
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.agent-planning-and-recovery
+    markdown: |-
+      Failures come in two kinds, and they need opposite responses.
 
+      - A **transient failure** is likely to clear up by itself: "service busy," "rate limited," a timeout. Retry, but not instantly, because a busy service hammered with retries stays busy. **Exponential backoff** waits 1 s, then 2 s, then 4 s, doubling each time (plus a little randomness, called *jitter*, so a thousand clients don't retry in the same instant). Retry bookings only with the previous lesson's idempotency key.
+      - A **permanent failure** won't change if you ask again: "sold out," "card declined." The plan must change: pick a fallback, check its preconditions again, and rebuild the remaining steps from the current state. That rebuilding is **replanning**.
 
-    Record results that remain unknown. If a necessary assumption fails, stop work that depends on it and revise
-    the plan using the current state.'
-  bridges: []
-- id: agent-planning-and-recovery.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.agent-planning-and-recovery
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A plan sets out dependencies and evidence of completion. Execution checks those results and revises
-    the plan when conditions change.
-- id: agent-planning-and-recovery.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.agent-planning-and-recovery
-  markdown: A plan sets out dependencies and evidence of completion. Execution checks those results and revises
-    the plan when conditions change.
-  text_mode: A plan sets out dependencies and evidence of completion. Execution checks those results and revises
-    the plan when conditions change.
+      This executor runs Wayfarer's hotel step against a scripted hotel service: Rua Nova answers "busy" twice, then "sold out."
+
+      ```python run
+      HOTELS = [("Rua Nova", 131), ("Casa Azul", 158), ("Hotel Tejo", 240)]  # search results, best first
+      FLIGHT, NIGHTS, BUDGET = 148, 2, 500
+
+      # Scripted replies from the hotel service, so every run is the same.
+      replies = {"Rua Nova": ["busy", "busy", "sold out"], "Casa Azul": ["held"], "Hotel Tejo": ["held"]}
+
+      def hold_room(hotel):
+          return replies[hotel].pop(0) if replies[hotel] else "busy"
+
+      def hold_with_retries(hotel, max_tries=4):
+          wait = 1
+          for attempt in range(1, max_tries + 1):
+              reply = hold_room(hotel)
+              print(f"  attempt {attempt}: {reply}")
+              if reply != "busy":              # "held" or a permanent failure: stop retrying
+                  return reply
+              if attempt < max_tries:
+                  print(f"  busy -> wait {wait}s, then retry")
+                  wait *= 2                    # exponential backoff: 1, 2, 4, ...
+          return "gave up"
+
+      for hotel, price in HOTELS:
+          total = FLIGHT + NIGHTS * price      # precondition for booking: the trip fits the budget
+          if total > BUDGET:
+              print(f"skip {hotel}: trip would cost ${total}, over ${BUDGET}")
+              continue
+          print(f"plan: hold {hotel} (trip total ${total})")
+          result = hold_with_retries(hotel)
+          if result == "held":
+              print(f"DONE: {hotel} is held; next step: book the flight")
+              break
+          print(f"  {hotel} {result}: replan with the next hotel")
+      else:
+          print("ESCALATE: nothing fits; ask the traveler about budget or dates")
+      ```
+
+      Two backoff waits, then "sold out" ends the retries. Wayfarer falls back to Casa Azul, reruns the budget check (\$464, fine), and holds it. Now change `BUDGET` to 400: every hotel fails the precondition, so the executor escalates instead of booking a trip the traveler can't afford. Then set Casa Azul's replies to `[]` (always busy) to watch the retry limit run out. (In a real agent, the model usually does the replanning, reading "sold out" as an observation; a fixed rule plays that part here.)
+    bridges: []
+  - id: agent-planning-and-recovery.s4
+    title: Undo in reverse order
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.agent-planning-and-recovery
+    markdown: |-
+      Casa Azul is held. Then `book_flight` fails: the \$148 fare has sold out, and the cheapest left is \$390, bringing the trip to \$706. If the trip is off, Wayfarer needs a **compensating action**: a new action that cancels out an earlier one's effect. For a hold, that means releasing it. Compensations differ in cost:
+
+      | Step | Compensating action | What it costs |
+      | --- | --- | --- |
+      | Hold hotel | Release the hold | Nothing, within 24 hours |
+      | Book flight | Cancel the ticket | A non-refundable fare is lost |
+      | Email itinerary | Send a correction | The traveler may already have read it |
+
+      That's why the plan holds the hotel *before* buying the ticket: cheap-to-undo steps first, the hardest-to-undo step last, so a late failure costs little.
+
+      :::papers Sagas
+      Garcia-Molina and Salem (1987) named this pattern the **saga**. A long task is split into steps $T_1, T_2, \dots, T_n$, and each step $T_i$ gets a compensating step $C_i$. Either every step succeeds, or, when step $T_k$ fails, the steps already completed are compensated in reverse order:
+
+      $$T_1, T_2, \dots, T_{k-1}, \ \text{fail at } T_k, \ C_{k-1}, \dots, C_2, C_1$$
+
+      For Wayfarer, $T_1$ is the hotel hold and $T_2$ the flight booking. $T_2$ fails, so $k = 2$ and the only compensation is $C_1$: release the hold. Sagas were invented for databases; the pattern now appears wherever one task spans several independent services.
+      :::
+    bridges: []
+  - id: agent-planning-and-recovery.escalate
+    title: Stop, and hand the traveler a decision
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.agent-planning-and-recovery
+    markdown: |-
+      Some failures shouldn't be fixed by more retries or a cleverer plan, because the decision belongs to the person. Wayfarer stops and escalates when:
+
+      - a retry limit, or the loop's step limit, runs out;
+      - the same failure repeats with no new information;
+      - a condition the *traveler* set, like the budget, can't be met.
+
+      An escalation hands over the state and the choices, not just an apology. Here is Wayfarer's, after the flight failure:
+
+      > The \$148 fare sold out. The cheapest flight now is \$390, which makes the trip \$706, over your \$500 budget. Casa Azul is on hold for you, free to cancel until 18:00, and nothing has been charged. Options: (A) book the \$390 flight anyway, \$706 in total; (B) take the 19:40 flight for \$205, \$521 in total; (C) cancel everything. If I haven't heard from you by 17:00, I'll release the hold.
+
+      It says what failed, where each step stands, what each option costs, and a default that's cheap to undo. The traveler can decide in ten seconds, and the plan knows exactly where to resume.
+  - id: agent-planning-and-recovery.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.agent-planning-and-recovery
+    markdown: Wayfarer's Lisbon plan, then a moving company, a research agent, and a ticket-buying saga test whether you can time a plan, sort failures, and undo steps in the right order.
+    takeaway: |-
+      A plan says what each step needs and what proves it's done. Retry transient failures with backoff, replan around permanent ones, compensate finished steps in reverse, and escalate when the choice is the person's.
+  - id: agent-planning-and-recovery.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.agent-planning-and-recovery
+    markdown: |-
+      A plan sets out dependencies and evidence of completion. Execution checks those results and revises the plan when conditions change.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - agent-planning-and-recovery.s1
-    - agent-planning-and-recovery.s2
-    - agent-planning-and-recovery.s3
-    - agent-planning-and-recovery.s4
-    - agent-planning-and-recovery.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - agent-planning-and-recovery.s1
+        - agent-planning-and-recovery.s2
+        - agent-planning-and-recovery.s3
+        - agent-planning-and-recovery.s4
+        - agent-planning-and-recovery.escalate
+        - agent-planning-and-recovery.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     agent-planning-and-recovery.recap: agent-planning-and-recovery.check
 assessment_families:
-- id: agent-planning-and-recovery.base
-  objective_ref: objective.agent-planning-and-recovery
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Use a dependency graph: trace the inputs, operation, and result before choosing.'
-  remediation_scene: agent-planning-and-recovery.s2
-  variants:
-  - id: agent-planning-and-recovery.base.1
-    prompt: A and B gather independent records; C compares both. What can overlap?
-    options:
-    - id: b
-      text: C before either record exists
-    - id: c
-      text: Every step regardless of dependencies
-    - id: a
-      text: A and B
-    answer: a
-    feedback: C requires both inputs.
-  - id: agent-planning-and-recovery.base.2
-    prompt: What proves a comparison step complete?
-    options:
-    - id: c
-      text: Only that a plan was written
-    - id: a
-      text: A result supported by the required evidence
-    - id: b
-      text: Only that a tool was called
-    answer: a
-    feedback: Completion conditions should match the task outcome.
-- id: agent-planning-and-recovery.transfer
-  objective_ref: objective.agent-planning-and-recovery
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Recover without hiding uncertainty: trace the inputs, operation, and result before choosing.'
-  remediation_scene: agent-planning-and-recovery.s4
-  variants:
-  - id: agent-planning-and-recovery.transfer.1
-    prompt: What makes repeating a failed lookup potentially useful?
-    options:
-    - id: c
-      text: Only increasing the retry counter
-    - id: a
-      text: A changed input, source, or relevant condition
-    - id: b
-      text: An unchanged loop with no new evidence
-    answer: a
-    feedback: Retries should address a plausible failure cause.
-  - id: agent-planning-and-recovery.transfer.2
-    prompt: Can every external action be undone exactly?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if an agent logs it
-    answer: a
-    feedback: Recovery capabilities depend on the operation’s actual effects.
+  - id: agent-planning-and-recovery.base
+    objective_ref: objective.agent-planning-and-recovery
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Use a dependency graph: trace the inputs, operation, and result before choosing.'
+    remediation_scene: agent-planning-and-recovery.s2
+    variants:
+      - id: agent-planning-and-recovery.base.1
+        prompt: A and B gather independent records; C compares both. What can overlap?
+        options:
+          - id: b
+            text: C before either record exists
+          - id: c
+            text: Every step regardless of dependencies
+          - id: a
+            text: A and B
+        answer: a
+        feedback: C requires both inputs.
+        retired: true
+      - id: agent-planning-and-recovery.base.2
+        prompt: What proves a comparison step complete?
+        options:
+          - id: c
+            text: Only that a plan was written
+          - id: a
+            text: A result supported by the required evidence
+          - id: b
+            text: Only that a tool was called
+        answer: a
+        feedback: Completion conditions should match the task outcome.
+        retired: true
+  - id: agent-planning-and-recovery.transfer
+    objective_ref: objective.agent-planning-and-recovery
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Recover without hiding uncertainty: trace the inputs, operation, and result before choosing.'
+    remediation_scene: agent-planning-and-recovery.s4
+    variants:
+      - id: agent-planning-and-recovery.transfer.1
+        prompt: What makes repeating a failed lookup potentially useful?
+        options:
+          - id: c
+            text: Only increasing the retry counter
+          - id: a
+            text: A changed input, source, or relevant condition
+          - id: b
+            text: An unchanged loop with no new evidence
+        answer: a
+        feedback: Retries should address a plausible failure cause.
+        retired: true
+      - id: agent-planning-and-recovery.transfer.2
+        prompt: Can every external action be undone exactly?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if an agent logs it
+        answer: a
+        feedback: Recovery capabilities depend on the operation’s actual effects.
+        retired: true
+  - id: agent-planning-and-recovery.base.v2
+    objective_ref: objective.agent-planning-and-recovery
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: For each step, ask what it needs before it can start, what observable result proves it finished, and whether its failure would change if you simply asked again.
+    remediation_scene: agent-planning-and-recovery.s3
+    variants:
+      - id: agent-planning-and-recovery.base.v2.1
+        prompt: Wayfarer starts its flight search (4 s) and hotel search (6 s) at the same moment. The budget check needs both results. When can the budget check start?
+        options:
+          - id: c
+            text: After 4 s, as soon as the first results arrive
+          - id: b
+            text: After 6 s, once the slower search has finished
+          - id: a
+            text: After 10 s, since the searches share one plan
+        answer: b
+        feedback: The budget check depends on both searches, so it waits for the slower one, at 6 s. Starting at 4 s would check a trip with no hotel price, and 10 s is what you'd get only if the searches ran one after the other.
+      - id: agent-planning-and-recovery.base.v2.2
+        prompt: Which of these is the right completion evidence for Wayfarer's "hold hotel" step?
+        options:
+          - id: a
+            text: The hotel service returns a hold reference for the room
+          - id: b
+            text: The model writes that the room is now safely on hold
+          - id: c
+            text: The hold_room tool was called with valid arguments
+        answer: a
+        feedback: Completion evidence is something the world returns, here the hotel's hold reference. A valid call is only an attempt that may time out or be refused, and the model's sentence is a claim, not an observation.
+      - id: agent-planning-and-recovery.base.v2.3
+        prompt: The hotel service answers Wayfarer's hold request with "busy, try again" for Rua Nova and "sold out" for Hotel Tejo. What should the executor do with each?
+        options:
+          - id: b
+            text: Retry both at once, until the loop's step limit is reached
+          - id: c
+            text: Treat both as final, and escalate to the traveler right away
+          - id: a
+            text: Retry the busy one after a growing wait; replan around the sold-out one
+        answer: a
+        feedback: Busy is transient, so a retry with backoff is likely to work. Sold out is permanent, so asking again wastes time and the plan must change. Treating both the same either burns the step limit or gives up on a room that was about to become available.
+      - id: agent-planning-and-recovery.base.v2.4
+        prompt: A longer Wayfarer saga has T1 = reserve a rental car, T2 = hold hotel, T3 = book flight. T1 and T2 succeed, then T3 fails for good. Which compensations run, in what order?
+        options:
+          - id: c
+            text: C1 then C2, undoing in the order the steps were done
+          - id: a
+            text: C2 then C1, undoing the latest completed step first
+          - id: b
+            text: C3, then C2, then C1, including the step that failed
+        answer: a
+        feedback: Only completed steps need compensating, and they're undone in reverse order, so the hotel hold is released before the car is cancelled. The failed flight booking never took effect, so there's no C3 to run.
+  - id: agent-planning-and-recovery.transfer.v2
+    objective_ref: objective.agent-planning-and-recovery
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask which step would be hardest to undo, and whether trying again would bring any new information.
+    remediation_scene: agent-planning-and-recovery.s4
+    variants:
+      - id: agent-planning-and-recovery.transfer.v2.1
+        prompt: A moving agent must reserve a truck (free to cancel) and pay a non-refundable deposit to a crew of movers. Either could fail. In what order should it do them?
+        options:
+          - id: b
+            text: Pay the movers' deposit first, so the crew is secured early
+          - id: a
+            text: Reserve the truck first, and pay the non-refundable deposit last
+          - id: c
+            text: Do both at the same moment, to finish the plan sooner
+        answer: a
+        feedback: Put cheap-to-undo steps first. If the deposit then fails, releasing the truck costs nothing; if the deposit came first and the truck failed, the money would be lost. Running both at once saves seconds but risks the same loss.
+      - id: agent-planning-and-recovery.transfer.v2.2
+        prompt: A research agent runs the same web search 12 times and gets "no results" every time, until its step limit ends the run. What should its executor have done?
+        options:
+          - id: c
+            text: Retry with exponential backoff, so each wait is longer
+          - id: b
+            text: Raise the step limit so that more retries fit in the run
+          - id: a
+            text: Change the query or source, or report that it found nothing
+        answer: a
+        feedback: '"No results" is a permanent answer to that exact query, so repeating it adds no information. Backoff helps with busy services, not with an answer that won''t change, and a higher limit just wastes more calls.'
+      - id: agent-planning-and-recovery.transfer.v2.3
+        prompt: A photo-printing agent marks "upload 40 photos" as done because the upload tool returned without an error. The print shop's order page lists 38 photos. What was wrong with the plan?
+        options:
+          - id: a
+            text: Its completion evidence should have been the order showing all 40
+          - id: b
+            text: Its upload step should have been run in parallel with checkout
+          - id: c
+            text: Its precondition for uploading should have included a retry limit
+        answer: a
+        feedback: A quiet return from a tool is not the outcome the step exists for. Checking the order page against the expected count would have caught the 2 missing photos before checkout. Parallelism and retry limits don't address what "done" means.
+      - id: agent-planning-and-recovery.transfer.v2.4
+        prompt: A concert agent has held two seats and charged the card when the ticket office says the show is cancelled. Which message to the user fits the lesson best?
+        options:
+          - id: b
+            text: '"Something went wrong. Please try again later."'
+          - id: c
+            text: '"The show is cancelled; I will keep trying to buy the tickets."'
+          - id: a
+            text: '"The show is cancelled. I refunded the charge and released the seats."'
+        answer: a
+        feedback: A cancelled show is a permanent failure, so the agent compensates the completed steps (refund, then release) and reports the resulting state. A vague apology hides what happened, and retrying can't fix a cancelled show.
+  - id: agent-planning-and-recovery.calculate
+    objective_ref: objective.agent-planning-and-recovery
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Steps that run in parallel finish when the slowest of them does. Add the times along the longest chain of dependent steps.
+    remediation_scene: agent-planning-and-recovery.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: agent-planning-and-recovery.calculate.1
+        prompt: 'A plan runs a flight search (5 s) and a hotel search (8 s) in parallel, then a budget check (1 s), a hotel hold (3 s), and a flight booking (4 s), in order. How many seconds does the whole plan take?'
+        answer: 16
+        feedback: The budget check starts when the slower search ends, at 8 s. Then 8 + 1 + 3 + 4 = 16 seconds.
+      - id: agent-planning-and-recovery.calculate.2
+        prompt: 'A plan runs three searches in parallel: flights (4 s), hotels (6 s), and car rental (5 s). Then it runs a budget check (2 s) and a booking step (3 s). How many seconds does it take in total?'
+        answer: 11
+        feedback: The slowest search takes 6 s, so the budget check starts then, and 6 + 2 + 3 = 11 seconds.
+      - id: agent-planning-and-recovery.calculate.3
+        prompt: 'Wayfarer''s plan: flight search (4 s) and hotel search (6 s) in parallel, then budget check (1 s), hold (3 s), flight booking (5 s), and email (1 s). The hotel search is sped up to 3 s. How many seconds does the plan now take?'
+        answer: 14
+        feedback: The flight search (4 s) is now the slower search, so the budget check starts at 4 s, and 4 + 1 + 3 + 5 + 1 = 14 seconds.
+      - id: agent-planning-and-recovery.calculate.4
+        prompt: 'A flight search takes 3 s and a hotel search takes 7 s, and both must finish before a 2 s budget check. How many seconds are saved by running the two searches in parallel rather than one after the other?'
+        answer: 3
+        feedback: One after the other, the check starts at 3 + 7 = 10 s; in parallel, at 7 s. The saving is the shorter search's time, 3 seconds.

@@ -1,188 +1,427 @@
 schema_version: 0.2-draft
 lesson:
   id: hybrid-search-and-reranking
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Improve candidate retrieval and rank the useful evidence
   state: draft
-  summary: Combine word search and meaning search, then examine the strongest candidates.
+  summary: Keyword search nails "KB-220" but misses "money back"; vector search does the opposite. Rewrite the question, fuse both result lists, and let a careful reranker pick the winners.
   slot: M26.4
   category: learning
   sources:
-  - title: Introduction to Information Retrieval — authors’ online edition
-    url: https://nlp.stanford.edu/IR-book/
-  - title: Passage Re-ranking with BERT
-    url: https://arxiv.org/abs/1901.04085
+    - title: Reciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods (Cormack, Clarke & Büttcher, 2009)
+      url: https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf
+    - title: Passage Re-ranking with BERT (Nogueira & Cho, 2019)
+      url: https://arxiv.org/abs/1901.04085
+    - title: Precise Zero-Shot Dense Retrieval without Relevance Labels (Gao et al., 2022)
+      url: https://arxiv.org/abs/2212.10496
+    - title: Introduction to Information Retrieval — authors’ online edition
+      url: https://nlp.stanford.edu/IR-book/
 objectives:
-- id: objective.hybrid-search-and-reranking
-  version: 1-draft
-  statement: Query rewriting, lexical/dense fusion, and reranking address different retrieval failures; evaluate
-    each stage with relevance judgments and resource budgets.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - hybrid-search-and-reranking.base
-  - hybrid-search-and-reranking.transfer
-  prerequisites:
-  - anyOf:
-    - objective.retrieval-ingestion-and-chunking
+  - id: objective.hybrid-search-and-reranking
+    version: 2-draft
+    statement: Query rewriting, lexical/dense fusion, and reranking address different retrieval failures; evaluate each stage with relevance judgments and resource budgets.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - hybrid-search-and-reranking.base.v2
+      - hybrid-search-and-reranking.transfer.v2
+      - hybrid-search-and-reranking.calc
+    prerequisites:
+      - anyOf:
+          - objective.retrieval-ingestion-and-chunking
 scenes:
-- id: hybrid-search-and-reranking.s1
-  title: Clarify the search intent
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.hybrid-search-and-reranking
-  markdown: A query rewrite can expand abbreviations, add context, or split a compound question into subqueries.
-    It can also introduce assumptions that were absent from the request. Preserve the original need and compare
-    retrieved evidence, especially for names, dates, and exact identifiers.
-  text_mode: A query rewrite can expand abbreviations, add context, or split a compound question into subqueries.
-    It can also introduce assumptions that were absent from the request. Preserve the original need and compare
-    retrieved evidence, especially for names, dates, and exact identifiers.
-  bridges: []
-- id: hybrid-search-and-reranking.s2
-  title: Combine complementary candidates
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.hybrid-search-and-reranking
-  markdown: 'Hybrid search combines lexical and dense results through a defined scoring or rank-fusion method.
-    Lexical matching can help exact terms while embeddings find related wording. Raw scores from different
-    systems may have incompatible scales, so naive addition needs justification or calibration.
+  - id: hybrid-search-and-reranking.s1
+    title: Money back for what?
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.hybrid-search-and-reranking
+    markdown: |-
+      A Sprocket customer writes: *"I opened the KB-220 charger but it doesn't fit my 2021 bike."* The assistant replies. Then the customer asks: *"Can I get my money back?"*
 
+      Search that last message on its own and you get the refunds page, which explains how long refunds take. Nothing about chargers, fit, or opened items, because none of that is in the words "Can I get my money back?"
 
-    One simple rank-fusion rule adds 1/(k + rank) for each list containing a document, where k is a chosen
-    constant. With toy k = 10, a document ranked first in one list and third in another scores 1/11 + 1/13,
-    about 0.168. A document appearing only in second place scores 1/12, about 0.083. This uses positions rather
-    than mixing incompatible raw similarity scores. The best k and method still depend on the task.'
-  text_mode: 'Hybrid search combines lexical and dense results through a defined scoring or rank-fusion method.
-    Lexical matching can help exact terms while embeddings find related wording. Raw scores from different
-    systems may have incompatible scales, so naive addition needs justification or calibration.
+      **Query rewriting** turns the user's message into a better search query before retrieval runs. Usually a language model does it, with the conversation as input. Here it would produce a standalone query: *refund for an opened KB-220 charger that doesn't fit a 2021 bike*. Other common rewrites:
 
+      - **Split** a two-part question ("Do you ship to Canada and how much?") into two searches.
+      - **Expand** shorthand ("KB220", "e-bike batt") into the forms the documents use.
+      - **Write a hypothetical answer** and search with that. HyDE (Gao et al., 2022) does this: an answer-shaped text often sits closer to real answers in vector space than a short question does.
 
-    One simple rank-fusion rule adds 1/(k + rank) for each list containing a document, where k is a chosen
-    constant. With toy k = 10, a document ranked first in one list and third in another scores 1/11 + 1/13,
-    about 0.168. A document appearing only in second place scores 1/12, about 0.083. This uses positions rather
-    than mixing incompatible raw similarity scores. The best k and method still depend on the task.'
-  bridges: []
-- id: hybrid-search-and-reranking.s3
-  title: Rerank a smaller set jointly
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.hybrid-search-and-reranking
-  markdown: A cross-encoder can read a query and candidate passage together to score relevance more richly
-    than independent embeddings. Applying it only to a candidate set limits cost. It cannot recover a relevant
-    passage never supplied to that stage unless the system explicitly performs another retrieval.
-  text_mode: A cross-encoder can read a query and candidate passage together to score relevance more richly
-    than independent embeddings. Applying it only to a candidate set limits cost. It cannot recover a relevant
-    passage never supplied to that stage unless the system explicitly performs another retrieval.
-  bridges: []
-- id: hybrid-search-and-reranking.s4
-  title: Measure stage-level and final quality
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.hybrid-search-and-reranking
-  markdown: Recall at k asks whether relevant items appear among k candidates; rank-sensitive measures reward
-    useful ordering. Inspect query slices, latency, and downstream answer quality. Better retrieval metrics
-    help only to the extent that the selected relevance definition matches the application’s evidence needs.
-  text_mode: Recall at k asks whether relevant items appear among k candidates; rank-sensitive measures reward
-    useful ordering. Inspect query slices, latency, and downstream answer quality. Better retrieval metrics
-    help only to the extent that the selected relevance definition matches the application’s evidence needs.
-  bridges: []
-- id: hybrid-search-and-reranking.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.hybrid-search-and-reranking
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Hybrid search combines candidate lists; reranking examines selected candidates more closely. A
-    reranker cannot choose useful evidence that never reached it.
-- id: hybrid-search-and-reranking.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.hybrid-search-and-reranking
-  markdown: Hybrid search combines candidate lists; reranking examines selected candidates more closely. A
-    reranker cannot choose useful evidence that never reached it.
-  text_mode: Hybrid search combines candidate lists; reranking examines selected candidates more closely. A
-    reranker cannot choose useful evidence that never reached it.
+      A rewriter can also invent. If it produces *refund for an unused KB-220 charger bought within 30 days*, it has quietly added two facts the customer never said. A good safeguard is to search with the original message too and merge both result lists.
+    bridges: []
+  - id: hybrid-search-and-reranking.s2
+    title: Two searches, two blind spots
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.hybrid-search-and-reranking
+    markdown: |-
+      Run the rewritten query through both kinds of search from the earlier lessons. Sprocket's help center has grown a few more pages:
+
+      | Rank | BM25 (keywords) | Dense (meaning) |
+      | ---: | --- | --- |
+      | 1 | chargers | refunds |
+      | 2 | returns | returns |
+      | 3 | charger-faults | warranty |
+      | 4 | battery | chargers |
+      | 5 | shipping | charger-faults |
+
+      BM25 locks onto the exact code "KB-220" and puts the compatibility page first. Dense search sees a question about getting money back and puts the refunds page first, but to an encoder "KB-220" looks much like any charger code. Each list has something the other lacks. Searching both and combining them is **hybrid search**.
+
+      The obvious way to combine them, adding the scores, fails. BM25 scores have no fixed range and grow with the number of query words; cosine scores stay between −1 and 1. Added together, BM25 would decide almost everything. You could rescale each list, but there's a simpler idea: ignore the scores and combine the *ranks*.
+    diagram:
+      caption: Hybrid retrieval. Two searches run on the rewritten query, their ranked lists are fused, and a reranker orders the best candidates.
+      description: The user's message goes to a query rewriter. The rewritten query goes to both BM25 keyword search and dense vector search. Both ranked lists go to reciprocal rank fusion, which produces about 20 candidates. A cross-encoder reranker scores those candidates and passes the top 3 chunks on to the answer step.
+      nodes:
+        - id: message
+          label: User message
+          col: 0
+          row: 1
+        - id: rewrite
+          label: Query rewriter
+          note: standalone query
+          col: 1
+          row: 1
+          tone: accent
+        - id: bm25
+          label: BM25 search
+          note: exact words and codes
+          col: 2
+          row: 0
+          tone: data
+        - id: dense
+          label: Dense search
+          note: meaning and paraphrase
+          col: 2
+          row: 2
+          tone: data
+        - id: fuse
+          label: Rank fusion (RRF)
+          note: about 20 candidates
+          col: 3
+          row: 1
+          tone: accent
+        - id: rerank
+          label: Cross-encoder reranker
+          note: reads query + chunk together
+          col: 4
+          row: 1
+          tone: warn
+        - id: top
+          label: Top 3 chunks
+          col: 5
+          row: 1
+      edges:
+        - from: message
+          to: rewrite
+        - from: rewrite
+          to: bm25
+        - from: rewrite
+          to: dense
+        - from: bm25
+          to: fuse
+          label: ranked list
+        - from: dense
+          to: fuse
+          label: ranked list
+        - from: fuse
+          to: rerank
+        - from: rerank
+          to: top
+    bridges: []
+  - id: hybrid-search-and-reranking.rrf
+    title: Fuse the ranks, not the scores
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.hybrid-search-and-reranking
+    markdown: |-
+      **Reciprocal rank fusion (RRF)** gives each document a small amount of credit from every list it appears in, more for a higher rank, and adds the credits up.
+
+      :::papers Reciprocal rank fusion (Cormack, Clarke & Büttcher, 2009)
+      $$\text{RRF}(d) = \sum_{\text{lists } r} \frac{1}{k + \text{rank}_r(d)}$$
+
+      $\text{rank}_r(d)$ is document $d$'s position in list $r$ (1 for the top). A document missing from a list gets nothing from it. The paper used $k = 60$, and that is still the usual default.
+      :::
+
+      Work it for our table. *returns* is 2nd in both lists: $\frac{1}{62} + \frac{1}{62} = 0.01613 + 0.01613 \approx 0.0323$. *chargers* is 1st and 4th: $\frac{1}{61} + \frac{1}{64} = 0.01639 + 0.01563 \approx 0.0320$. *refunds* is 1st in the dense list only: $\frac{1}{61} \approx 0.0164$. Two solid second places beat a first place paired with a fourth, and easily beat a lone first place.
+
+      ```python run
+      bm25  = ["chargers", "returns", "charger-faults", "battery", "shipping"]
+      dense = ["refunds", "returns", "warranty", "chargers", "charger-faults"]
+
+      def rrf(ranked_lists, k=60):
+          scores = {}
+          for ranking in ranked_lists:
+              for rank, doc in enumerate(ranking, start=1):
+                  scores[doc] = scores.get(doc, 0) + 1 / (k + rank)
+          return sorted(scores.items(), key=lambda pair: -pair[1])
+
+      for doc, score in rrf([bm25, dense]):
+          print(f"{doc:15} {score:.4f}")
+      ```
+
+      :::predict Change k=60 to k=0 and rerun. What happens at the top?
+      With $k = 0$, first place is worth 1/1 = 1 and second place only 1/2. Now chargers (1 + 1/4 = 1.25) jumps ahead, and returns ties refunds at 1.00. A small $k$ lets a single first place dominate; a large $k$ rewards documents that do well in several lists.
+      :::
+    bridges: []
+  - id: hybrid-search-and-reranking.s3
+    title: Read the short list carefully
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.hybrid-search-and-reranking
+    markdown: |-
+      Fusion gives a good short list, but its order still comes from fast, rough signals. A **reranker** reorders the short list with a slower, more careful model, usually a cross-encoder from the dense-retrieval lesson: it reads the query and each chunk *together* and outputs one relevance score. Nogueira and Cho (2019) showed that a BERT cross-encoder reranking BM25's top candidates beat the previous best systems on the MS MARCO passage-ranking benchmark by a wide margin.
+
+      Say the cross-encoder scores the top 5 fused chunks: returns 0.91, chargers 0.84, refunds 0.62, charger-faults 0.08, warranty 0.05. The troubleshooting page, which RRF ranked 3rd because it shares the word "charger", drops out. The top 3 now cover exactly what the customer needs: the return rule, the compatibility facts, and how refunds are paid.
+
+      The cost is why it runs last. Scoring 20 candidates means 20 model runs, which is fine. Scoring a million documents per question would not be.
+
+      :::mixup "The reranker will fix whatever retrieval misses."
+      A reranker can only reorder what it's given. If the page that answers the question ranked 150th in both searches and you rerank the top 20, it never gets a chance. When the answer is missing from the candidates, fix the query, the indexes, or the candidate depth.
+      :::
+    bridges: []
+  - id: hybrid-search-and-reranking.s4
+    title: Measure each stage on its own
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.hybrid-search-and-reranking
+    markdown: |-
+      Each stage has its own job, so give each its own number. Sprocket writes 50 test questions and marks the chunk that answers each one.
+
+      | Stage | Question it answers | Result |
+      | --- | --- | --- |
+      | Candidates (fused top 20) | Is the right chunk anywhere in the short list? | 46 of 50: recall@20 = 0.92 |
+      | After reranking (top 3) | Did it end up where the answer step will see it? | 43 of 50: recall@3 = 0.86 |
+
+      Read the gaps separately. The 4 questions missing at the candidate stage are retrieval problems: rewriting, indexes, or chunking. No reranker can help them. The 3 questions lost between 20 and 3 are ranking problems: the right chunk was there, and the reranker pushed it down. Also time each stage. If reranking 20 chunks takes 300 ms and the whole answer must arrive within a second, that sets how deep you can rerank.
+    bridges: []
+  - id: hybrid-search-and-reranking.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.hybrid-search-and-reranking
+    markdown: A pharmacy search, a runaway query rewriter, a slow reranker, and several RRF calculations test whether you can match each retrieval failure to the stage that fixes it.
+    takeaway: |-
+      Rewrite the question so it stands alone, run keyword and meaning-based search, fuse their ranks with RRF, and rerank the short list with a model that reads query and chunk together. A reranker can only choose among the candidates it receives.
+  - id: hybrid-search-and-reranking.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.hybrid-search-and-reranking
+    markdown: |-
+      Hybrid search combines candidate lists; reranking examines selected candidates more closely. A reranker cannot choose useful evidence that never reached it.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - hybrid-search-and-reranking.s1
-    - hybrid-search-and-reranking.s2
-    - hybrid-search-and-reranking.s3
-    - hybrid-search-and-reranking.s4
-    - hybrid-search-and-reranking.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - hybrid-search-and-reranking.s1
+        - hybrid-search-and-reranking.s2
+        - hybrid-search-and-reranking.rrf
+        - hybrid-search-and-reranking.s3
+        - hybrid-search-and-reranking.s4
+        - hybrid-search-and-reranking.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     hybrid-search-and-reranking.recap: hybrid-search-and-reranking.check
 assessment_families:
-- id: hybrid-search-and-reranking.base
-  objective_ref: objective.hybrid-search-and-reranking
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Combine complementary candidates: trace the inputs, operation, and result before choosing.'
-  remediation_scene: hybrid-search-and-reranking.s2
-  variants:
-  - id: hybrid-search-and-reranking.base.1
-    prompt: Why can naive addition of lexical and dense scores be problematic?
-    options:
-    - id: a
-      text: Their scales may be incompatible
-    - id: b
-      text: Both always have identical meanings
-    - id: c
-      text: Only one can return documents
-    answer: a
-    feedback: Score fusion needs a defined normalization or ranking rule.
-  - id: hybrid-search-and-reranking.base.2
-    prompt: Can a reranker select a document absent from its candidates?
-    options:
-    - id: b
-      text: Yes by definition
-    - id: c
-      text: Only if its name is known
-    - id: a
-      text: No, without another retrieval step
-    answer: a
-    feedback: Reranking operates on the supplied set.
-- id: hybrid-search-and-reranking.transfer
-  objective_ref: objective.hybrid-search-and-reranking
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Measure stage-level and final quality: trace the inputs, operation, and result before choosing.'
-  remediation_scene: hybrid-search-and-reranking.s4
-  variants:
-  - id: hybrid-search-and-reranking.transfer.1
-    prompt: What does recall at k measure in retrieval?
-    options:
-    - id: b
-      text: Only response fluency
-    - id: c
-      text: Only index file size
-    - id: a
-      text: Coverage of relevant items among the first k results under the definition
-    answer: a
-    feedback: It evaluates candidate coverage.
-  - id: hybrid-search-and-reranking.transfer.2
-    prompt: A rewrite adds an unsupported date. What risk follows?
-    options:
-    - id: c
-      text: It changes nothing semantically
-    - id: a
-      text: It may steer retrieval away from the actual question
-    - id: b
-      text: It guarantees better specificity
-    answer: a
-    feedback: Query assumptions affect candidate evidence.
+  - id: hybrid-search-and-reranking.base
+    objective_ref: objective.hybrid-search-and-reranking
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Combine complementary candidates: trace the inputs, operation, and result before choosing.'
+    remediation_scene: hybrid-search-and-reranking.s2
+    variants:
+      - id: hybrid-search-and-reranking.base.1
+        prompt: Why can naive addition of lexical and dense scores be problematic?
+        options:
+          - id: a
+            text: Their scales may be incompatible
+          - id: b
+            text: Both always have identical meanings
+          - id: c
+            text: Only one can return documents
+        answer: a
+        feedback: Score fusion needs a defined normalization or ranking rule.
+        retired: true
+      - id: hybrid-search-and-reranking.base.2
+        prompt: Can a reranker select a document absent from its candidates?
+        options:
+          - id: b
+            text: Yes by definition
+          - id: c
+            text: Only if its name is known
+          - id: a
+            text: No, without another retrieval step
+        answer: a
+        feedback: Reranking operates on the supplied set.
+        retired: true
+  - id: hybrid-search-and-reranking.transfer
+    objective_ref: objective.hybrid-search-and-reranking
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Measure stage-level and final quality: trace the inputs, operation, and result before choosing.'
+    remediation_scene: hybrid-search-and-reranking.s4
+    variants:
+      - id: hybrid-search-and-reranking.transfer.1
+        prompt: What does recall at k measure in retrieval?
+        options:
+          - id: b
+            text: Only response fluency
+          - id: c
+            text: Only index file size
+          - id: a
+            text: Coverage of relevant items among the first k results under the definition
+        answer: a
+        feedback: It evaluates candidate coverage.
+        retired: true
+      - id: hybrid-search-and-reranking.transfer.2
+        prompt: A rewrite adds an unsupported date. What risk follows?
+        options:
+          - id: c
+            text: It changes nothing semantically
+          - id: a
+            text: It may steer retrieval away from the actual question
+          - id: b
+            text: It guarantees better specificity
+        answer: a
+        feedback: Query assumptions affect candidate evidence.
+        retired: true
+  - id: hybrid-search-and-reranking.base.v2
+    objective_ref: objective.hybrid-search-and-reranking
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Rewriting changes what is searched for, fusion decides which candidates make the short list, and reranking only reorders that list.
+    remediation_scene: hybrid-search-and-reranking.rrf
+    variants:
+      - id: hybrid-search-and-reranking.base.v2.1
+        prompt: For one query, BM25 scores run from 2 to 14 and cosine scores from 0.2 to 0.9. Why is adding the two scores a poor way to merge the lists?
+        options:
+          - id: b
+            text: Cosine scores are less accurate, so they add noise to the total
+          - id: c
+            text: Scores are slower to add than ranks, so the merge takes longer
+          - id: a
+            text: The scales differ, so the BM25 score would decide almost every ranking
+        answer: a
+        feedback: A BM25 gap of several points swamps any cosine difference below 1, so the sum is effectively BM25 alone. Rank fusion sidesteps the scales. Neither score is simply less accurate, and speed isn't the issue.
+      - id: hybrid-search-and-reranking.base.v2.2
+        prompt: With RRF and k = 60, page X is 1st in the keyword list and absent from the dense list. Page Y is 3rd in both lists. Which ranks higher after fusion?
+        options:
+          - id: a
+            text: Page Y, because two moderate ranks add up to more than one top rank
+          - id: b
+            text: Page X, because a first place always outweighs a pair of third places
+          - id: c
+            text: They tie, because both pages earn their credit from their best rank
+        answer: a
+        feedback: X scores 1/61 ≈ 0.0164; Y scores 2 × 1/63 ≈ 0.0317. With k = 60 the gap between 1st and 3rd place is tiny, so appearing in both lists matters more.
+      - id: hybrid-search-and-reranking.base.v2.3
+        prompt: The chunk that answers a question is ranked 150th by both searches. The system reranks the fused top 20 with a strong cross-encoder. What happens to that chunk?
+        options:
+          - id: c
+            text: The cross-encoder spots it and moves it into the top 3
+          - id: a
+            text: It never reaches the cross-encoder, so it can't be chosen
+          - id: b
+            text: It is added to the top 20 because its reranker score is high
+        answer: a
+        feedback: The reranker scores only the candidates it's handed. To rescue this chunk you'd fix the query or indexes, or rerank deeper. Nothing scores the chunk at all unless it's among the 20.
+      - id: hybrid-search-and-reranking.base.v2.4
+        prompt: 'A user asks "Does the KB-220 fit 2024 models?", gets an answer, then types "What about the KB-110?" What should be searched for the follow-up?'
+        options:
+          - id: b
+            text: '"What about the KB-110?" exactly as typed, to avoid adding anything'
+          - id: c
+            text: The full conversation so far, pasted in as one long query
+          - id: a
+            text: A standalone rewrite such as "Does the KB-110 charger fit 2024 models?"
+        answer: a
+        feedback: The follow-up only makes sense with the earlier question, so a rewrite makes it standalone without adding new facts. Searching "What about the KB-110?" loses what's being asked; pasting the whole conversation drags in unrelated words.
+  - id: hybrid-search-and-reranking.transfer.v2
+    objective_ref: objective.hybrid-search-and-reranking
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Locate the failure first. Was the right item missing from the candidates, present but ranked low, or searched for with the wrong query?
+    remediation_scene: hybrid-search-and-reranking.s4
+    variants:
+      - id: hybrid-search-and-reranking.transfer.v2.1
+        prompt: A pharmacy uses only vector search. Searching "amoxicillin 500 mg" ranks the 250 mg leaflet first. What change targets this?
+        options:
+          - id: a
+            text: Add a keyword search lane and fuse its ranks with the vector results
+          - id: b
+            text: Rerank the top 5 vector results with a cross-encoder model
+          - id: c
+            text: Rewrite the query into a longer description of the drug
+        answer: a
+        feedback: Exact strengths and codes are where keyword search is strongest, and fusion lets it lift the exact match. A reranker would help only if the 500 mg leaflet is already in the top 5, and a longer description blurs the number further.
+      - id: hybrid-search-and-reranking.transfer.v2.2
+        prompt: 'A ticketing assistant rewrites "Is the show refundable?" as "refund policy for concerts in 2023". The user meant a 2026 theatre show. What should the design add?'
+        options:
+          - id: c
+            text: A larger rewriting model that makes fewer spelling mistakes
+          - id: a
+            text: A check that rewrites add no facts, plus a search on the original message
+          - id: b
+            text: A reranker that promotes the most recent pages in each result list
+        answer: a
+        feedback: The rewriter invented a year and a genre. Searching the original message too, and checking rewrites for added facts, limits the damage. A recency boost wouldn't undo the wrong genre, and spelling isn't the problem.
+      - id: hybrid-search-and-reranking.transfer.v2.3
+        prompt: A legal search reranks the top 1,000 fused results with a cross-encoder, and each answer takes 20 seconds. The right document is almost always in the top 50. What is the sensible change?
+        options:
+          - id: b
+            text: Drop the reranker and return the fused list directly
+          - id: a
+            text: Rerank only the top 50, since the answers are already there
+          - id: c
+            text: Replace RRF with score addition so fewer results need reranking
+        answer: a
+        feedback: Recall@50 is already high, so reranking 950 extra candidates buys almost nothing and costs about 20 times the work. Dropping the reranker loses its careful ordering, and score addition doesn't reduce the candidate count.
+      - id: hybrid-search-and-reranking.transfer.v2.4
+        prompt: A support search finds the right article in its top 50 candidates for 95% of test questions, but in the final top 3 for only 70%. Where should the team work first?
+        options:
+          - id: c
+            text: The indexes, since articles are missing from the candidate list
+          - id: b
+            text: The query rewriter, since the questions must be ambiguous
+          - id: a
+            text: The reranking stage, since good articles are there but pushed down
+        answer: a
+        feedback: The candidates contain the answer 95% of the time, so most losses happen when the short list is ordered. Index and rewriter fixes target the 5% missing from the candidates.
+  - id: hybrid-search-and-reranking.calc
+    objective_ref: objective.hybrid-search-and-reranking
+    task: base
+    response_type: numeric
+    points: 1
+    hint: RRF adds 1 / (60 + rank) for every list the document appears in. Lists that don't contain it add nothing.
+    remediation_scene: hybrid-search-and-reranking.rrf
+    variants:
+      - id: hybrid-search-and-reranking.calc.1
+        prompt: Using RRF with k = 60, a document is ranked 1st in the keyword list and 3rd in the dense list. What is its fused score? Give four decimal places.
+        answer: 0.0323
+        feedback: 1/61 + 1/63 = 0.01639 + 0.01587 = 0.0323.
+      - id: hybrid-search-and-reranking.calc.2
+        prompt: Using RRF with k = 60, a document is ranked 2nd in the dense list and doesn't appear in the keyword list. What is its fused score? Give four decimal places.
+        answer: 0.0161
+        feedback: Only one list contributes, so the score is 1/62 = 0.0161.
+      - id: hybrid-search-and-reranking.calc.3
+        prompt: Using RRF with k = 60, a document is ranked 4th in the keyword list and 5th in the dense list. What is its fused score? Give four decimal places.
+        answer: 0.031
+        feedback: 1/64 + 1/65 = 0.01563 + 0.01538 = 0.0310.
+      - id: hybrid-search-and-reranking.calc.4
+        prompt: Using RRF with k = 60, three searches rank a document 1st, 10th, and 2nd. What is its fused score? Give four decimal places.
+        answer: 0.0468
+        feedback: 1/61 + 1/70 + 1/62 = 0.01639 + 0.01429 + 0.01613 = 0.0468.
+    absolute_tolerance: 0.0001

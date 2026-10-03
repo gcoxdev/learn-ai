@@ -4,254 +4,297 @@ lesson:
   version: 0.3.0-draft
   title: Follow a token through a mixture of experts
   state: draft
-  summary: Select two expert subnetworks and calculate how their results combine.
+  summary: Some of the biggest language models use only a small slice of themselves for each word. Pick two "experts," blend their answers, and see what the trick costs.
   slot: A01
   category: advanced
   sources:
-  - title: DeepSeek-V3 Technical Report
-    url: https://arxiv.org/abs/2412.19437
+    - title: "Mixtral of Experts (Jiang et al., 2024)"
+      url: https://arxiv.org/abs/2401.04088
+    - title: "DeepSeek-V3 Technical Report (DeepSeek-AI, 2024)"
+      url: https://arxiv.org/abs/2412.19437
 objectives:
-- id: objective.experts
-  version: 1-draft
-  statement: In a sparse MoE layer, a router selects expert subnetworks and combines their outputs; active
-    computation differs from total parameter storage.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - experts.base
-  - experts.transfer
-  prerequisites:
-  - anyOf:
-    - objective.backpropagation
-  - anyOf:
-    - objective.functions
+  - id: objective.experts
+    version: 2-draft
+    statement: In a sparse MoE layer, a router selects expert subnetworks and combines their outputs; active computation differs from total parameter storage.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - experts.base.v2
+      - experts.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.backpropagation
+      - anyOf:
+          - objective.functions
 scenes:
-- id: experts.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.experts
-  text_mode: 'A **mixture-of-experts layer**, or **MoE layer**, selects among learned subnetworks called **experts**.
-    An expert is a numerical computation, not a person or a guaranteed subject specialist.
+  - id: experts.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.experts
+    title: A big model that uses a small slice at a time
+    markdown: |-
+      Mixtral 8x7B, released in December 2023, stores about 47 billion numbers (its parameters). Yet for each word it reads, it uses only about 13 billion of them. How?
 
+      Some of its layers hold several small neural networks side by side, called **experts**. Next to them sits a tiny network called the **router**. For each word, the router scores the experts and picks the best two; only those two run. This design is called a **mixture of experts**, or **MoE**.
 
-    A **router** scores which experts should process a token''s current vector. In a transformer, an MoE layer
-    can replace a feed-forward sublayer, the part that transforms each token vector through learned operations.
-    Other shared parts of the block still run.
+      Despite the name, an expert is just a block of learned numbers, not a specialist that knows a subject. Every word in a sentence gets its own choice, so "The" and "cat" can go to different experts.
+  - id: experts.s2
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.experts
+    title: Pick two experts and blend them
+    markdown: |-
+      Say the router gives four experts the scores 0.55, 0.25, 0.15, and 0.05 (they add up to 1). **Top-2 selection** keeps the two largest: experts 1 and 2.
 
+      Their scores add up to only 0.80, so we rescale them to add up to 1 again:
 
-    This routes work inside a network. An application sending whole requests to separate chat models is a different
-    kind of routing.'
-  title: Sparse computation inside a network
-  markdown: 'A **mixture-of-experts layer**, or **MoE layer**, selects among learned subnetworks called **experts**.
-    An expert is a numerical computation, not a person or a guaranteed subject specialist.
+      - Expert 1: 0.55 ÷ 0.80 = 0.6875
+      - Expert 2: 0.25 ÷ 0.80 = 0.3125
 
+      If expert 1 outputs [2, 0] and expert 2 outputs [0, 4], the blend weights each one and adds matching positions:
 
-    A **router** scores which experts should process a token''s current vector. In a transformer, an MoE layer
-    can replace a feed-forward sublayer, the part that transforms each token vector through learned operations.
-    Other shared parts of the block still run.
+      - First: 0.6875 × 2 + 0.3125 × 0 = 1.375
+      - Second: 0.6875 × 0 + 0.3125 × 4 = 1.25
 
+      The result, [1.375, 1.25], moves on through the network. Try top-1 in the playground: only expert 1 runs, and the output is simply [2, 0].
+    simulation: moe
+    bridges:
+      - vectors
+      - probability
+  - id: experts.s3
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.experts
+    title: Resting experts still take up room
+    markdown: |-
+      Running 2 of 8 experts saves arithmetic, but the other 6 can't be thrown away. The next word might need any of them.
 
-    This routes work inside a network. An application sending whole requests to separate chat models is a different
-    kind of routing.'
-- id: experts.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.experts
-  text_mode: 'Suppose a router assigns probabilities [0.55, 0.25, 0.15, 0.05] to four experts. **Top-two selection**
-    chooses the first two.
+      | Mixtral 8x7B | Amount |
+      | --- | ---: |
+      | Parameters stored | about 47 billion |
+      | Parameters used per word | about 13 billion |
+      | Memory for weights (2 bytes each) | about 93 GB |
 
+      So Mixtral does about as much work per word as a 13-billion-parameter model but needs the memory of a 47-billion-parameter one.
+  - id: experts.s4
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.experts
+    title: Routing creates new jobs
+    markdown: |-
+      A router can play favorites. If most words in a batch pick the same expert, that expert becomes a traffic jam while others sit idle. Training adds a small nudge that spreads the work more evenly.
 
-    For this example, normalize only their selected weights. Their total is 0.80, giving shares 0.55/0.80 =
-    0.6875 and 0.25/0.80 = 0.3125.
-
-
-    If the selected expert outputs are [2, 0] and [0, 4], combine matching coordinates:
-
-
-    - First: 0.6875 × 2 + 0.3125 × 0 = 1.375.
-
-    - Second: 0.6875 × 0 + 0.3125 × 4 = 1.25.
-
-
-    The result is [1.375, 1.25]. This is a constructed example; real routing conventions vary.'
-  title: Trace four experts and a top-two router
-  markdown: 'Suppose a router assigns probabilities [0.55, 0.25, 0.15, 0.05] to four experts. **Top-two selection**
-    chooses the first two.
-
-
-    For this example, normalize only their selected weights. Their total is 0.80, giving shares 0.55/0.80 =
-    0.6875 and 0.25/0.80 = 0.3125.
-
-
-    If the selected expert outputs are [2, 0] and [0, 4], combine matching coordinates:
-
-
-    - First: 0.6875 × 2 + 0.3125 × 0 = 1.375.
-
-    - Second: 0.6875 × 0 + 0.3125 × 4 = 1.25.
-
-
-    The result is [1.375, 1.25]. This is a constructed example; real routing conventions vary.'
-  simulation: moe
-  bridges:
-  - vectors
-  - probability
-- id: experts.s3
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.experts
-  text_mode: 'Only selected experts may compute for a token, but the other expert weights still need to exist
-    somewhere. Memory use, data movement and shared layers all affect cost.
-
-
-    More total parameters do not directly tell you the work performed for one token or the response latency
-    on a particular machine.'
-  title: Active is not the same as stored
-  markdown: 'Only selected experts may compute for a token, but the other expert weights still need to exist
-    somewhere. Memory use, data movement and shared layers all affect cost.
-
-
-    More total parameters do not directly tell you the work performed for one token or the response latency
-    on a particular machine.'
-- id: experts.s4
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.experts
-  text_mode: 'A batch can send many tokens to one expert and few to another. Implementations address load balance,
-    capacity, communication and placement in different ways. Shared experts and routing policies further change
-    the calculation.
-
-
-    Do not assume every expert develops a clear human-named specialty. That is a hypothesis to investigate,
-    not a property guaranteed by the architecture.'
-  title: Routing creates systems work
-  markdown: 'A batch can send many tokens to one expert and few to another. Implementations address load balance,
-    capacity, communication and placement in different ways. Shared experts and routing policies further change
-    the calculation.
-
-
-    Do not assume every expert develops a clear human-named specialty. That is a hypothesis to investigate,
-    not a property guaranteed by the architecture.'
-- id: experts.s5
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.experts
-  text_mode: 'You have traced expert selection and the weighted combination of expert outputs. The full MoE
-    lessons build on this with router learning, load balancing, distributed execution, and training and inference
-    costs.
-
-
-    This preview''s checks are practice only and do not award path credit. The full expert-system lessons have
-    their own checks.'
-  title: A focused advanced preview
-  markdown: 'You have traced expert selection and the weighted combination of expert outputs. The full MoE
-    lessons build on this with router learning, load balancing, distributed execution, and training and inference
-    costs.
-
-
-    This preview''s checks are practice only and do not award path credit. The full expert-system lessons have
-    their own checks.'
-- id: experts.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.experts
-  markdown: Try these examples as practice. This advanced preview does not award path credit; the full expert-system
-    lessons have their own checks.
-  text_mode: Try these examples as practice. This advanced preview does not award path credit; the full expert-system
-    lessons have their own checks.
-  takeaway: A sparse MoE layer selects expert subnetworks and combines their outputs. Work activated for one
-    token differs from the storage needed for all experts.
-- id: experts.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.experts
-  markdown: A sparse MoE layer selects expert subnetworks and combines their outputs. Work activated for one
-    token differs from the storage needed for all experts.
-  text_mode: A sparse MoE layer selects expert subnetworks and combines their outputs. Work activated for one
-    token differs from the storage needed for all experts.
+      Experts also don't divide up subjects the way their name suggests. When the Mixtral team checked, experts were chosen in similar proportions for biology abstracts, philosophy papers, and arXiv papers; the patterns they found looked more like grammar and code layout than topics.
+  - id: experts.s5
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.experts
+    title: Where to go next
+    markdown: |-
+      You've now seen the core move: score the experts, keep the top few, rescale, and blend. The mixture-of-experts module takes each piece further, from how routers learn and how thousands of words are sorted to their experts, to keeping loads even and fitting these models on real hardware.
+  - id: experts.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.experts
+    markdown: |-
+      A few quick questions: what the router picks, how to rescale two scores, and what idle experts still cost.
+    takeaway: |-
+      A router picks a few experts for each word and blends their outputs. That saves work per word, but every expert still has to be stored.
+  - id: experts.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.experts
+    markdown: |-
+      A sparse MoE layer selects expert subnetworks and combines their outputs. Work activated for one token differs from the storage needed for all experts.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - experts.s1
-    - experts.s2
-    - experts.s3
-    - experts.s4
-    - experts.s5
-    - experts.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - experts.s1
+        - experts.s2
+        - experts.s3
+        - experts.s4
+        - experts.s5
+        - experts.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     experts.recap: experts.check
 assessment_families:
-- id: experts.base
-  objective_ref: objective.experts
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: In a sparse MoE layer, a router selects expert subnetworks and combines their outputs; active computation
-    differs from total parameter storage.
-  variants:
-  - id: experts.base.1
-    prompt: In this MoE example, what does top-two routing choose?
-    options:
-    - id: a
-      text: Two whole chat applications for every conversation.
-    - id: b
-      text: Only two parameters in the entire model.
-    - id: correct
-      text: Two expert subnetworks for a token’s computation.
-    answer: correct
-    feedback: Two expert subnetworks for a token’s computation.
-  - id: experts.base.2
-    prompt: What is 0.55 divided by the selected total 0.55+0.25?
-    options:
-    - id: b
-      text: '0.8'
-    - id: correct
-      text: '0.6875'
-    - id: a
-      text: '0.55'
-    answer: correct
-    feedback: The selected total is 0.8. Renormalizing gives 0.55/0.8 = 0.6875.
-- id: experts.transfer
-  objective_ref: objective.experts
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: In a sparse MoE layer, a router selects expert subnetworks and combines their outputs; active computation
-    differs from total parameter storage.
-  variants:
-  - id: experts.transfer.1
-    prompt: Experts not selected for one token are inactive in its expert computation. What follows about storage?
-    options:
-    - id: b
-      text: Total model memory must equal active parameter count.
-    - id: correct
-      text: Their weights can still require storage.
-    - id: a
-      text: Their weights no longer exist.
-    answer: correct
-    feedback: Their weights can still require storage.
-  - id: experts.transfer.2
-    prompt: A batch routes most tokens to one expert. What should you consider?
-    options:
-    - id: correct
-      text: Load imbalance, capacity and communication behavior.
-    - id: a
-      text: Only the total number of expert names.
-    - id: b
-      text: A guarantee that expert specialties are human-readable.
-    answer: correct
-    feedback: Load imbalance, capacity and communication behavior.
+  - id: experts.base
+    objective_ref: objective.experts
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: In a sparse MoE layer, a router selects expert subnetworks and combines their outputs; active computation differs from total parameter storage.
+    variants:
+      - id: experts.base.1
+        prompt: In this MoE example, what does top-two routing choose?
+        options:
+          - id: a
+            text: Two whole chat applications for every conversation.
+          - id: b
+            text: Only two parameters in the entire model.
+          - id: correct
+            text: Two expert subnetworks for a token’s computation.
+        answer: correct
+        feedback: Two expert subnetworks for a token’s computation.
+        retired: true
+      - id: experts.base.2
+        prompt: What is 0.55 divided by the selected total 0.55+0.25?
+        options:
+          - id: b
+            text: '0.8'
+          - id: correct
+            text: '0.6875'
+          - id: a
+            text: '0.55'
+        answer: correct
+        feedback: The selected total is 0.8. Renormalizing gives 0.55/0.8 = 0.6875.
+        retired: true
+  - id: experts.transfer
+    objective_ref: objective.experts
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: In a sparse MoE layer, a router selects expert subnetworks and combines their outputs; active computation differs from total parameter storage.
+    variants:
+      - id: experts.transfer.1
+        prompt: Experts not selected for one token are inactive in its expert computation. What follows about storage?
+        options:
+          - id: b
+            text: Total model memory must equal active parameter count.
+          - id: correct
+            text: Their weights can still require storage.
+          - id: a
+            text: Their weights no longer exist.
+        answer: correct
+        feedback: Their weights can still require storage.
+        retired: true
+      - id: experts.transfer.2
+        prompt: A batch routes most tokens to one expert. What should you consider?
+        options:
+          - id: correct
+            text: Load imbalance, capacity and communication behavior.
+          - id: a
+            text: Only the total number of expert names.
+          - id: b
+            text: A guarantee that expert specialties are human-readable.
+        answer: correct
+        feedback: Load imbalance, capacity and communication behavior.
+        retired: true
+  - id: experts.base.v2
+    objective_ref: objective.experts
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Follow the steps in order. The router scores the experts, keeps the top ones, rescales their scores to add up to 1, and blends their outputs.
+    remediation_scene: experts.s2
+    variants:
+      - id: experts.base.v2.1
+        prompt: In an MoE layer with top-2 routing, what does the router choose for each word?
+        options:
+          - id: b
+            text: Two separate chatbots to write the whole reply
+          - id: a
+            text: Two of the layer's small expert networks
+          - id: c
+            text: Two numbers inside one shared network
+        answer: a
+        feedback: The router picks two expert networks inside the layer, and it chooses again for every word. It doesn't hand the conversation to separate chatbots, and each expert has many numbers, not one.
+      - id: experts.base.v2.2
+        prompt: A router keeps two experts with scores 0.6 and 0.2. After rescaling so the kept scores add up to 1, what weight does the first expert get?
+        options:
+          - id: c
+            text: '0.6'
+          - id: b
+            text: '0.3'
+          - id: a
+            text: '0.75'
+        answer: a
+        feedback: The kept scores add up to 0.8, and 0.6 ÷ 0.8 = 0.75. Leaving it at 0.6 skips the rescaling, and 0.3 comes from dividing by the number of experts instead of their total.
+      - id: experts.base.v2.3
+        prompt: Two experts with weights 0.5 and 0.5 output [4, 0] and [0, 2]. What does the layer pass on?
+        options:
+          - id: a
+            text: '[2, 1]'
+          - id: c
+            text: '[4, 0]'
+          - id: b
+            text: '[4, 0, 0, 2]'
+        answer: a
+        feedback: 0.5 × 4 + 0.5 × 0 = 2 and 0.5 × 0 + 0.5 × 2 = 1. Keeping only one output ignores the second expert, and joining the lists end to end isn't how the blend works.
+      - id: experts.base.v2.4
+        prompt: In one sentence, the word "The" goes to experts 2 and 5, and the word "cat" goes to experts 1 and 5. Why can they differ?
+        options:
+          - id: c
+            text: Each sentence is split in two, one half per expert group
+          - id: a
+            text: The router makes a fresh choice for every single word
+          - id: b
+            text: Expert 1 has learned to handle words about animals
+        answer: a
+        feedback: Routing happens word by word, so words in one sentence can take different experts. Real experts don't sort words by topic; one choice like this says nothing about animals.
+  - id: experts.transfer.v2
+    objective_ref: objective.experts
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Separate what an MoE stores (every expert) from what it runs for one word (just the chosen few), and remember that experts aren't subject specialists.
+    remediation_scene: experts.s3
+    variants:
+      - id: experts.transfer.v2.1
+        prompt: A friend says, "Mixtral only uses 13 billion parameters per word, so it needs as much memory as a 13-billion-parameter model." What is the best reply?
+        options:
+          - id: b
+            text: Right, since the resting experts are deleted after training
+          - id: a
+            text: It needs memory for all 47 billion, since any word may pick any expert
+          - id: c
+            text: It needs less, since each word uses a quarter of the experts
+        answer: a
+        feedback: The work per word is 13B-sized, but every expert has to stay loaded because the router picks afresh for each word. That's about 93 GB at 2 bytes per parameter.
+      - id: experts.transfer.v2.2
+        prompt: An engineer notices that one expert receives 60% of the words in a batch while the others sit mostly idle. What is the main problem?
+        options:
+          - id: c
+            text: The busy expert must be the smartest, so the rest are wasted
+          - id: b
+            text: The other experts will be deleted, shrinking the model
+          - id: a
+            text: The busy expert becomes a bottleneck that slows the layer
+        answer: a
+        feedback: Uneven loads mean one expert does most of the work while the layer waits for it, so training adds a nudge to spread words out. Being picked often doesn't make an expert "smarter," and idle experts aren't deleted.
+      - id: experts.transfer.v2.3
+        prompt: A news article says a model has "a biology expert and a law expert." Based on Mixtral's routing study, how should you read that claim?
+        options:
+          - id: a
+            text: Skeptically, since experts tend to follow grammar more than topics
+          - id: b
+            text: As true, since the name means each one studies a subject
+          - id: c
+            text: As true, since routers sort each document by its topic
+        answer: a
+        feedback: Mixtral's experts were chosen in similar proportions across biology, philosophy, and arXiv papers, and the patterns found were more like grammar and code layout. A claim about topic experts needs evidence.
+      - id: experts.transfer.v2.4
+        prompt: A team switches its MoE from picking 2 experts per word to picking 4, with the same experts. What happens?
+        options:
+          - id: b
+            text: The model stores twice as many expert networks
+          - id: a
+            text: Each word needs about twice the expert work
+          - id: c
+            text: Each word needs half the expert work, since it's shared
+        answer: a
+        feedback: Running 4 experts instead of 2 doubles the expert work per word. The stored experts are the same ones, so memory for weights doesn't change.

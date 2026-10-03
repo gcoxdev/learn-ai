@@ -1,212 +1,379 @@
 schema_version: 0.2-draft
 lesson:
   id: mixed-precision-training
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Spend numerical precision where it is needed
   state: draft
-  summary: Use different number formats deliberately, and trace why a scaled gradient must be unscaled before
-    an update.
+  summary: Store a gradient of 1 × 10⁻⁹ in fp16 and it becomes exactly zero. See how bits split between range and precision, and how loss scaling rescues small gradients.
   slot: M17.6
   category: learning
   sources:
-  - title: Mixed Precision Training
-    url: https://arxiv.org/abs/1710.03740
-  - title: DeepSeek-V3 Technical Report
-    url: https://arxiv.org/abs/2412.19437
+    - title: "Mixed Precision Training (Micikevicius et al., 2017)"
+      url: https://arxiv.org/abs/1710.03740
+    - title: "A Study of BFLOAT16 for Deep Learning Training (Kalamkar et al., 2019)"
+      url: https://arxiv.org/abs/1905.12322
+    - title: "FP8 Formats for Deep Learning (Micikevicius et al., 2022)"
+      url: https://arxiv.org/abs/2209.05433
+    - title: PyTorch automatic mixed precision and GradScaler documentation
+      url: https://docs.pytorch.org/docs/stable/amp.html
+    - title: DeepSeek-V3 Technical Report
+      url: https://arxiv.org/abs/2412.19437
 objectives:
-- id: objective.mixed-precision-training
-  version: 1-draft
-  statement: Mixed precision uses different number formats for selected tensors and operations; scaling, accumulation,
-    and stability checks protect training while reducing storage or increasing throughput.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - mixed-precision-training.base
-  - mixed-precision-training.transfer
-  prerequisites:
-  - anyOf:
-    - objective.numerical-computing
-  - anyOf:
-    - objective.stable-training
+  - id: objective.mixed-precision-training
+    version: 3-draft
+    statement: Mixed precision uses different number formats for selected tensors and operations; scaling, accumulation, and stability checks protect training while reducing storage or increasing throughput.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - mixed-precision-training.base.v2
+      - mixed-precision-training.transfer.v2
+      - mixed-precision-training.calculate
+    prerequisites:
+      - anyOf:
+          - objective.numerical-computing
+      - anyOf:
+          - objective.stable-training
 scenes:
-- id: mixed-precision-training.s1
-  title: Separate numerical range from precision
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.mixed-precision-training
-  markdown: 'A floating-point number resembles scientific notation: a sign, an exponent setting its magnitude,
-    and significant digits stored in the **significand**. **Range** asks how large or small a number can be;
-    **precision** asks how finely nearby numbers can be distinguished.
+  - id: mixed-precision-training.s1
+    title: Bits for range, bits for precision
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.mixed-precision-training
+    markdown: |-
+      Late in training, many of the team's gradients are tiny. A gradient of 4 × 10⁻⁸ is small but meaningful. Store it in fp16, a 16-bit format, and it comes back as 6 × 10⁻⁸, 50% too big. A gradient of 1 × 10⁻⁹ comes back as exactly 0. Yet a 16-bit format is what makes the A100 reach 312 TFLOP/s. Which 16 bits you pick matters.
 
+      A floating-point number is scientific notation in binary: a sign, an **exponent** that sets the scale (the "× 2⁻²⁰" part), and a **mantissa** that holds the significant digits. Exponent bits buy **range**, how large and how small a number can be. Mantissa bits buy **precision**, how close two neighboring numbers are. Here are the formats training uses, including **BF16** ("brain float", a 16-bit format from Google Brain) and two 8-bit FP8 formats:
 
-    Formats divide their bits among these parts differently. Even two formats with the same bit count can behave
-    differently under overflow, underflow, or rounding. Fewer bits can save memory, but we need to decide which
-    calculations can tolerate the change.'
-  text_mode: 'A floating-point number resembles scientific notation: a sign, an exponent setting its magnitude,
-    and significant digits stored in the **significand**. **Range** asks how large or small a number can be;
-    **precision** asks how finely nearby numbers can be distinguished.
+      | Format | Exponent bits | Mantissa bits | Largest value | Smallest normal value | Gap just above 1 |
+      | --- | ---: | ---: | ---: | ---: | ---: |
+      | FP32 | 8 | 23 | 3.4 × 10³⁸ | 1.2 × 10⁻³⁸ | 1.2 × 10⁻⁷ |
+      | FP16 | 5 | 10 | 65,504 | 6.1 × 10⁻⁵ | 9.8 × 10⁻⁴ |
+      | BF16 | 8 | 7 | 3.4 × 10³⁸ | 1.2 × 10⁻³⁸ | 7.8 × 10⁻³ |
+      | FP8 E4M3 | 4 | 3 | 448 | 1.6 × 10⁻² | 0.125 |
+      | FP8 E5M2 | 5 | 2 | 57,344 | 6.1 × 10⁻⁵ | 0.25 |
 
+      Each has one sign bit too. FP16 can go a little below its smallest normal value using reduced-precision *subnormal* numbers, down to about 6 × 10⁻⁸. That's why 4 × 10⁻⁸ became 6 × 10⁻⁸ and 1 × 10⁻⁹ vanished. BF16 keeps FP32's 8 exponent bits and so its full range, but has only 7 mantissa bits. The number-format table in the lesson on stable training showed the same trade.
 
-    Formats divide their bits among these parts differently. Even two formats with the same bit count can behave
-    differently under overflow, underflow, or rounding. Fewer bits can save memory, but we need to decide which
-    calculations can tolerate the change.'
-  bridges: []
-- id: mixed-precision-training.s2
-  title: Mix formats across the computation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.mixed-precision-training
-  markdown: A recipe may store some weights and activations in a lower precision while accumulating sums or
-    maintaining optimizer state in higher precision. Multiplying low-precision inputs does not imply that every
-    intermediate and update uses that same format. Hardware support and kernel design determine actual throughput.
-  text_mode: A recipe may store some weights and activations in a lower precision while accumulating sums or
-    maintaining optimizer state in higher precision. Multiplying low-precision inputs does not imply that every
-    intermediate and update uses that same format. Hardware support and kernel design determine actual throughput.
-  bridges:
-  - numerical-computing
-- id: mixed-precision-training.s3
-  title: Scale carefully, then undo it
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.mixed-precision-training
-  markdown: 'Loss scaling multiplies a loss before backward computation to keep some small gradients representable,
-    then unscales gradients before the optimizer update. Dynamic schemes detect nonfinite values and adjust
-    scale. Scaling does not cure every instability or restore information already lost through quantization.
+      :::mixup "BF16 is a more precise version of FP16."
+      It's the other way round. BF16 has fewer mantissa bits (7 vs 10), so it's *less* precise, but its range is vastly wider. Large-model training mostly picked BF16 because running out of range is fatal, while losing a few digits usually isn't.
+      :::
+    bridges: []
+  - id: mixed-precision-training.s2
+    title: Mix formats across the computation
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mixed-precision-training
+    markdown: |-
+      "Mixed" means each tensor gets the format its job needs:
 
+      | Data | Format | Why |
+      | --- | --- | --- |
+      | Matmul inputs (weights, activations) | BF16 or FP16 | Half the bytes and fast tensor cores |
+      | Sums inside each matmul | FP32 | Adding thousands of products loses digits in 16 bits |
+      | Master weights, Adam $m$ and $v$ | FP32 | Updates are tiny compared with the weights |
+      | Softmax, normalization, loss | Often FP32 | Exponentials and sums over many values |
 
-    Suppose a true gradient is 0.0001 and the loss is scaled by 1,000. The backward result becomes 0.1 under
-    the corresponding arithmetic. Divide by 1,000 before the optimizer uses it to recover 0.0001. Forgetting
-    this **unscaling** multiplies the intended update by 1,000. If a result became infinity, division afterward
-    cannot recover the lost finite value.'
-  text_mode: 'Loss scaling multiplies a loss before backward computation to keep some small gradients representable,
-    then unscales gradients before the optimizer update. Dynamic schemes detect nonfinite values and adjust
-    scale. Scaling does not cure every instability or restore information already lost through quantization.
+      The master copy exists because of the "gap just above 1" column. A weight of 1.0 in FP16 has neighbors about 0.001 apart. Add an update of 0.0001 and the result rounds straight back to 1.0. Do that a thousand times and the weight never moves, though it should have reached 1.1. In FP32 the gap is about 10⁻⁷, so every update counts. This is why the budget in the lesson on training memory includes a 4-byte master copy.
+    bridges:
+      - numerical-computing
+  - id: mixed-precision-training.s3
+    title: Scale the loss up, then scale the gradients down
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mixed-precision-training
+    markdown: |-
+      FP16's tiny range is the problem, but gradients are linear in the loss. Multiply the loss by a **loss scale** $S$ before the backward pass, and every gradient comes out $S$ times larger, lifted clear of the underflow zone. Before the optimizer step, divide by $S$ in FP32 to get the true gradients back.
 
+      :::papers Mixed Precision Training (Micikevicius et al., 2017)
+      The recipe had three parts: keep an FP32 master copy of the weights, accumulate FP16 products into FP32, and scale the loss:
 
-    Suppose a true gradient is 0.0001 and the loss is scaled by 1,000. The backward result becomes 0.1 under
-    the corresponding arithmetic. Divide by 1,000 before the optimizer uses it to recover 0.0001. Forgetting
-    this **unscaling** multiplies the intended update by 1,000. If a result became infinity, division afterward
-    cannot recover the lost finite value.'
-  bridges: []
-- id: mixed-precision-training.s4
-  title: Compare against a stable reference
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.mixed-precision-training
-  markdown: 'Monitor nonfinite values, gradient distributions, loss trajectories, and held-out quality. Low-bit
-    formats such as FP8 require recipe-specific scaling and accumulation choices. A single successful forward
-    pass does not establish stable long-run training, especially after a distribution or learning-rate change.
+      $$\nabla_\theta (S \cdot \mathcal{L}) = S \cdot \nabla_\theta \mathcal{L}, \qquad g_{\text{true}} = \frac{g_{\text{fp16}}}{S}$$
 
+      With $S = 2^{16} = 65{,}536$, a gradient of 1 × 10⁻⁹ becomes 6.6 × 10⁻⁵, just above FP16's smallest normal value.
+      :::
 
-    FP8 names eight-bit floating-point formats, not one universal recipe. FP16 and BF16 are both sixteen-bit
-    formats with different range/precision tradeoffs. State the actual formats, accumulators and scale handling
-    before comparing quality or speed.'
-  text_mode: 'Monitor nonfinite values, gradient distributions, loss trajectories, and held-out quality. Low-bit
-    formats such as FP8 require recipe-specific scaling and accumulation choices. A single successful forward
-    pass does not establish stable long-run training, especially after a distribution or learning-rate change.
+      ```python run
+      import numpy as np
 
+      grads = np.array([3e-3, 2e-5, 4e-8, 1e-9])      # true gradients (fp32)
+      print("fp16 as-is:    ", grads.astype(np.float16))  # small ones distort or vanish
 
-    FP8 names eight-bit floating-point formats, not one universal recipe. FP16 and BF16 are both sixteen-bit
-    formats with different range/precision tradeoffs. State the actual formats, accumulators and scale handling
-    before comparing quality or speed.'
-  bridges: []
-- id: mixed-precision-training.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.mixed-precision-training
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Mixed precision uses different number formats where they are useful. Track storage, accumulation,
-    and gradient scaling separately, and compare training behavior against a stable reference.
-- id: mixed-precision-training.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.mixed-precision-training
-  markdown: Mixed precision uses different number formats where they are useful. Track storage, accumulation,
-    and gradient scaling separately, and compare training behavior against a stable reference.
-  text_mode: Mixed precision uses different number formats where they are useful. Track storage, accumulation,
-    and gradient scaling separately, and compare training behavior against a stable reference.
+      S = np.float32(2**16)                            # loss scale 65,536
+      scaled = (grads * S).astype(np.float16)          # backward pass in fp16
+      print("scaled in fp16:", scaled)
+      print("unscaled fp32: ", scaled.astype(np.float32) / S)   # unscale in fp32
+
+      with np.errstate(over="ignore"):                 # fp16 tops out at 65,504
+          print("3e-3 x 2**25 in fp16:", np.float16(3e-3 * 2**25))
+
+      # Why an fp32 master copy: tiny updates vanish next to a weight of 1.0
+      w16, w32 = np.float16(1.0), np.float32(1.0)
+      for _ in range(1000):
+          w16 = np.float16(w16 + np.float16(1e-4))
+          w32 = np.float32(w32 + np.float32(1e-4))
+      print("1.0 + 1000 updates of 1e-4:  fp16 ->", w16, "  fp32 ->", w32)
+      ```
+
+      All four gradients survive the round trip within 0.1%. Try `S = np.float32(2**4)` and watch 1 × 10⁻⁹ vanish again: scaled, it is only 1.6 × 10⁻⁸, less than half of FP16's smallest subnormal (about 6 × 10⁻⁸), so it rounds to 0.
+
+      :::predict What goes wrong if the scale is too big?
+      The largest gradients overflow. 0.003 × 2²⁵ ≈ 100,000, beyond FP16's 65,504, so it becomes infinity, as the program shows. **Dynamic loss scaling** handles both ends: if any gradient is infinite or NaN, skip this update and halve $S$; after a long run of clean steps, double it. PyTorch's `GradScaler` starts at 65,536 and tries doubling after 2,000 clean steps.
+      :::
+
+      BF16 has FP32's range, so BF16 training usually needs no loss scaling at all. That's the main reason the team trains in BF16.
+    bridges: []
+  - id: mixed-precision-training.s4
+    title: FP8, and checking against a reference
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mixed-precision-training
+    markdown: |-
+      NVIDIA's H100 added FP8 tensor cores, which double the matmul rate again and halve the bytes once more. With just 8 bits, one format can't serve everything, so the FP8 proposal (Micikevicius et al., 2022) defined two: **E4M3** (more precision, maximum 448) for weights and activations, and **E5M2** (more range) for gradients.
+
+      Even E5M2's range is narrow, so every FP8 tensor carries its own scale factor, chosen from the tensor's recent largest values. DeepSeek-V3 (2024) went further and trained largely in FP8, with a separate scale for each small block of each tensor, so one outlier can't ruin the scale for its neighbors. Sums still accumulate at higher precision.
+
+      Before trusting a lower-precision recipe on a long run, compare it with a trusted one. Run a few thousand steps in both BF16 and the new format, then compare loss curves, gradient norms, and counts of infinite or NaN values step by step. If the curves separate, find the first layer whose values overflow or underflow.
+    bridges: []
+  - id: mixed-precision-training.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.mixed-precision-training
+    markdown: Loss scales to pick, spacing to compute, a BF16 switch, a forgotten unscale, and an FP8 gradient problem test whether you can tell which bits a calculation is short of.
+    takeaway: |-
+      Exponent bits give range and mantissa bits give precision. Run the matmuls in 16 or 8 bits, keep master weights and sums in FP32, and scale the loss when FP16's narrow range would flush small gradients to zero.
+  - id: mixed-precision-training.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.mixed-precision-training
+    markdown: |-
+      Mixed precision uses different number formats where they are useful. Track storage, accumulation, and gradient scaling separately, and compare training behavior against a stable reference.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - mixed-precision-training.s1
-    - mixed-precision-training.s2
-    - mixed-precision-training.s3
-    - mixed-precision-training.s4
-    - mixed-precision-training.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - mixed-precision-training.s1
+        - mixed-precision-training.s2
+        - mixed-precision-training.s3
+        - mixed-precision-training.s4
+        - mixed-precision-training.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     mixed-precision-training.recap: mixed-precision-training.check
 assessment_families:
-- id: mixed-precision-training.base
-  objective_ref: objective.mixed-precision-training
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Mix formats across the computation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: mixed-precision-training.s2
-  variants:
-  - id: mixed-precision-training.base.1
-    prompt: What does exponent capacity mainly affect?
-    options:
-    - id: b
-      text: Dataset language count
-    - id: c
-      text: The number of neural layers
-    - id: a
-      text: Representable magnitude range
-    answer: a
-    feedback: Range differs from significand precision.
-  - id: mixed-precision-training.base.2
-    prompt: Must low-precision multiplication use low-precision accumulation?
-    options:
-    - id: c
-      text: Only in inference
-    - id: a
-      text: No; accumulation may use a higher precision
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Mixed precision assigns formats to distinct operations.
-- id: mixed-precision-training.transfer
-  objective_ref: objective.mixed-precision-training
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compare against a stable reference: trace the inputs, operation, and result before choosing.'
-  remediation_scene: mixed-precision-training.s4
-  variants:
-  - id: mixed-precision-training.transfer.1
-    prompt: Why unscale gradients before updating parameters?
-    options:
-    - id: c
-      text: To increase the vocabulary
-    - id: a
-      text: To restore the intended update magnitude
-    - id: b
-      text: To erase every rounding error
-    answer: a
-    feedback: Loss scaling changes gradient scale and must be accounted for.
-  - id: mixed-precision-training.transfer.2
-    prompt: One batch runs without NaNs. Does that validate a long mixed-precision run?
-    options:
-    - id: a
-      text: No; monitor sustained stability and quality
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if loss is below one
-    answer: a
-    feedback: Numerical behavior can change across training conditions.
+  - id: mixed-precision-training.base
+    objective_ref: objective.mixed-precision-training
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Mix formats across the computation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: mixed-precision-training.s2
+    variants:
+      - id: mixed-precision-training.base.1
+        prompt: What does exponent capacity mainly affect?
+        options:
+          - id: b
+            text: Dataset language count
+          - id: c
+            text: The number of neural layers
+          - id: a
+            text: Representable magnitude range
+        answer: a
+        feedback: Range differs from significand precision.
+        retired: true
+      - id: mixed-precision-training.base.2
+        prompt: Must low-precision multiplication use low-precision accumulation?
+        options:
+          - id: c
+            text: Only in inference
+          - id: a
+            text: No; accumulation may use a higher precision
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Mixed precision assigns formats to distinct operations.
+        retired: true
+  - id: mixed-precision-training.transfer
+    objective_ref: objective.mixed-precision-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compare against a stable reference: trace the inputs, operation, and result before choosing.'
+    remediation_scene: mixed-precision-training.s4
+    variants:
+      - id: mixed-precision-training.transfer.1
+        prompt: Why unscale gradients before updating parameters?
+        options:
+          - id: c
+            text: To increase the vocabulary
+          - id: a
+            text: To restore the intended update magnitude
+          - id: b
+            text: To erase every rounding error
+        answer: a
+        feedback: Loss scaling changes gradient scale and must be accounted for.
+        retired: true
+      - id: mixed-precision-training.transfer.2
+        prompt: One batch runs without NaNs. Does that validate a long mixed-precision run?
+        options:
+          - id: a
+            text: No; monitor sustained stability and quality
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if loss is below one
+        answer: a
+        feedback: Numerical behavior can change across training conditions.
+        retired: true
+  - id: mixed-precision-training.base.v2
+    objective_ref: objective.mixed-precision-training
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask whether the value is too big or too small for the format (an exponent problem) or too close to its neighbors to tell apart (a mantissa problem).
+    remediation_scene: mixed-precision-training.s1
+    variants:
+      - id: mixed-precision-training.base.v2.1
+        prompt: Which 16-bit format keeps FP32's full exponent range but has only 7 mantissa bits?
+        options:
+          - id: b
+            text: FP16
+          - id: a
+            text: BF16
+          - id: c
+            text: FP8 E5M2
+        answer: a
+        feedback: BF16 keeps FP32's 8 exponent bits and trims the mantissa to 7. FP16 has 5 exponent and 10 mantissa bits; E5M2 is an 8-bit format.
+      - id: mixed-precision-training.base.v2.2
+        prompt: A gradient of 1 × 10⁻⁹ becomes exactly 0 when stored in FP16. Which limit of FP16 causes this?
+        options:
+          - id: a
+            text: Its 5 exponent bits can't reach numbers that small
+          - id: b
+            text: Its 10 mantissa bits can't hold that many digits
+          - id: c
+            text: Its single sign bit rounds tiny values toward zero
+        answer: a
+        feedback: How small a number can get is set by the exponent. FP16 bottoms out near 6 × 10⁻⁸ even with subnormals, so 10⁻⁹ underflows. The mantissa controls spacing between neighbors, not the smallest magnitude.
+      - id: mixed-precision-training.base.v2.3
+        prompt: Why keep an FP32 master copy of the weights when the forward and backward passes run in BF16?
+        options:
+          - id: c
+            text: BF16 can't represent weights with an absolute value above 1
+          - id: b
+            text: GPUs can't run an optimizer update on BF16 tensors at all
+          - id: a
+            text: Small updates round away when added to much larger BF16 weights
+        answer: a
+        feedback: Near 1.0, BF16 values are about 0.008 apart, so an update of 0.0001 rounds straight back to the old weight. FP32's spacing, about 10⁻⁷, lets every update land. BF16 handles large values fine.
+      - id: mixed-precision-training.base.v2.4
+        prompt: With dynamic loss scaling at a scale of 65,536, the FP16 gradients contain an infinity. What does the scaler do?
+        options:
+          - id: b
+            text: Clip the infinite values to 65,504 and apply the update
+          - id: a
+            text: Skip this update and halve the scale for the next step
+          - id: c
+            text: Double the scale so the small gradients stay representable
+        answer: a
+        feedback: An infinity means the scale is too high and this step's gradients are unusable, so the step is skipped and the scale halved. Clipping would apply a corrupted gradient, and doubling makes the overflow worse.
+  - id: mixed-precision-training.transfer.v2
+    objective_ref: objective.mixed-precision-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Place the numbers involved on the format's range (largest and smallest values) and spacing, then ask which step of the recipe protects that end.
+    remediation_scene: mixed-precision-training.s3
+    variants:
+      - id: mixed-precision-training.transfer.v2.1
+        prompt: A team moves from FP16 with loss scaling to BF16 and removes the loss scaler entirely. Why is that usually safe?
+        options:
+          - id: a
+            text: BF16 shares FP32's exponent range, so small gradients don't underflow
+          - id: b
+            text: BF16 has more mantissa bits, so gradients are stored more precisely
+          - id: c
+            text: BF16 kernels scale the loss internally without needing any settings
+        answer: a
+        feedback: Loss scaling exists to lift gradients out of FP16's underflow zone. BF16's 8 exponent bits reach about 10⁻³⁸, so that zone isn't a problem. BF16 actually has fewer mantissa bits than FP16.
+      - id: mixed-precision-training.transfer.v2.2
+        prompt: In an FP16 model, some activations briefly reach 80,000 during a loss spike. What happens to them?
+        options:
+          - id: c
+            text: They keep their size but lose a few digits of precision
+          - id: b
+            text: They are clamped to 65,504 and training carries on normally
+          - id: a
+            text: They overflow to infinity, which soon produces NaNs downstream
+        answer: a
+        feedback: FP16's largest value is 65,504; anything larger rounds to infinity, and infinity minus infinity or zero times infinity gives NaN. Standard casts don't clamp.
+      - id: mixed-precision-training.transfer.v2.3
+        prompt: A team using plain SGD scales the loss by 1,024 but forgets to unscale the gradients before the update. What happens?
+        options:
+          - id: b
+            text: Nothing, since the scale cancels out during the backward pass
+          - id: a
+            text: Every update is 1,024 times too large, likely causing divergence
+          - id: c
+            text: Every update is 1,024 times too small, so training barely moves
+        answer: a
+        feedback: Scaling the loss scales every gradient by 1,024, and SGD's step is proportional to the gradient, so the effective learning rate jumps 1,024-fold. The scale only disappears if you divide it out.
+      - id: mixed-precision-training.transfer.v2.4
+        prompt: A team stores gradients in FP8 E4M3 with one scale factor per tensor. Values span 10⁻⁷ to 10⁻¹, and the tiny ones vanish. Which change follows standard FP8 practice?
+        options:
+          - id: c
+            text: Raise the learning rate so the tiny gradients have a larger effect
+          - id: b
+            text: Lower the scale factor so the largest gradients are never clipped
+          - id: a
+            text: Use the wider-range E5M2 for gradients, with finer-grained scales
+        answer: a
+        feedback: E5M2 trades a mantissa bit for range, which is why the FP8 proposal assigns it to gradients, and per-block scales keep one large value from setting the scale for everything. Lowering the scale pushes small values further into underflow.
+  - id: mixed-precision-training.calculate
+    objective_ref: objective.mixed-precision-training
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "A format with m mantissa bits has neighbors 2⁻ᵐ apart just above 1, and that gap doubles each time the value doubles. Unscaling divides by the loss scale; FP16 overflows above 65,504."
+    remediation_scene: mixed-precision-training.s3
+    absolute_tolerance: 0.0001
+    variants:
+      - id: mixed-precision-training.calculate.1
+        prompt: The largest gradient in a model is 0.5, and FP16's largest value is 65,504. What is the largest power-of-two exponent k such that a loss scale of 2ᵏ doesn't overflow that gradient?
+        answer: 17
+        feedback: 0.5 × 2¹⁶ = 32,768 fits, but 0.5 × 2¹⁷ = 65,536 is just above 65,504 and overflows, so the largest safe k is 16.
+        retired: true
+      - id: mixed-precision-training.calculate.2
+        prompt: With a loss scale of 1,024, a gradient reads 5.12 in FP16. What is the true gradient?
+        answer: 0.005
+        feedback: Divide by the scale in FP32, 5.12 ÷ 1,024 = 0.005.
+      - id: mixed-precision-training.calculate.3
+        prompt: BF16 has 7 mantissa bits, so neighboring values just above 1 are 2⁻⁷ apart. How far apart are neighboring BF16 values just above 256?
+        answer: 2
+        feedback: "256 = 2⁸, so the gap grows by a factor of 2⁸, giving 2⁻⁷ × 2⁸ = 2. In BF16, 256 + 1 rounds back to 256."
+      - id: mixed-precision-training.calculate.4
+        prompt: FP16 neighbors just above 1 are about 0.000977 apart. You add an update of 0.0003 to a weight of 1.0 in FP16. What value is stored?
+        answer: 1
+        feedback: 1.0003 is closer to 1.0 than to the next FP16 value, 1.000977, so it rounds back to 1.0. The update is lost, which is why master weights stay in FP32.
+      - id: mixed-precision-training.calculate.5
+        prompt: FP8 E4M3 has 3 mantissa bits. How far apart are its neighboring values just above 1?
+        answer: 0.125
+        feedback: 2⁻³ = 0.125, so E4M3 can represent 1, 1.125, 1.25, and so on, but nothing in between.
+      - id: mixed-precision-training.calculate.6
+        prompt: How many GB of memory does storing a 7-billion-parameter model's weights in FP8 instead of BF16 save?
+        answer: 7
+        feedback: BF16 is 2 bytes per weight (14 GB) and FP8 is 1 byte (7 GB), a saving of 7 GB.
+      - id: mixed-precision-training.calculate.7
+        prompt: The largest gradient in a model is about 3, and FP16's largest value is 65,504. What is the largest whole number k for which a loss scale of 2ᵏ keeps that gradient finite in FP16?
+        answer: 14
+        feedback: 3 × 2¹⁴ = 49,152 fits under 65,504, but 3 × 2¹⁵ = 98,304 overflows to infinity. So k = 14; one doubling more and the scaler would have to skip the step and halve the scale.

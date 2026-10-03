@@ -4,208 +4,342 @@ lesson:
   version: 0.3.0-draft
   title: Serve sparse models under real traffic
   state: draft
-  summary: Serve routed models under real request patterns and balance memory, batching efficiency, and user
-    waiting time.
+  summary: Mixtral does a 13B model's arithmetic but needs a 47B model's memory, and at batch 16 it reads almost every expert on every step. Work out when MoE serving is cheap, and when it isn't.
   slot: M18.8
   category: learning
   sources:
-  - title: Sparsely-Gated Mixture-of-Experts
-    url: https://arxiv.org/abs/1701.06538
-  - title: Switch Transformers
-    url: https://arxiv.org/abs/2101.03961
-  - title: DeepSeek-V3 Technical Report
-    url: https://arxiv.org/abs/2412.19437
+    - title: "Mixtral of Experts (Jiang et al., 2024)"
+      url: https://arxiv.org/abs/2401.04088
+    - title: "DeepSeek-V3 Technical Report (DeepSeek-AI, 2024)"
+      url: https://arxiv.org/abs/2412.19437
+    - title: "Fast Inference of Mixture-of-Experts Language Models with Offloading (Eliseev & Mazur, 2023)"
+      url: https://arxiv.org/abs/2312.17238
+    - title: "Switch Transformers (Fedus, Zoph & Shazeer, 2021)"
+      url: https://arxiv.org/abs/2101.03961
 objectives:
-- id: objective.serving-expert-models
-  version: 1-draft
-  statement: MoE serving must manage resident capacity, token routing, load imbalance, expert batching, and
-    transfers; measure prompt processing and decoding under realistic traffic and quality constraints.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - serving-expert-models.base
-  - serving-expert-models.transfer
-  prerequisites:
-  - anyOf:
-    - objective.moe-gradients-and-communication
-  - anyOf:
-    - objective.compute-and-bandwidth
+  - id: objective.serving-expert-models
+    version: 2-draft
+    statement: MoE serving must manage resident capacity, token routing, load imbalance, expert batching, and transfers; measure prompt processing and decoding under realistic traffic and quality constraints.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - serving-expert-models.base.v2
+      - serving-expert-models.transfer.v2
+      - serving-expert-models.calculate
+    prerequisites:
+      - anyOf:
+          - objective.moe-gradients-and-communication
+      - anyOf:
+          - objective.compute-and-bandwidth
 scenes:
-- id: serving-expert-models.s1
-  title: Place the complete usable model
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.serving-expert-models
-  markdown: 'Experts may be spread across devices, replicated selectively, or loaded through a hierarchy of
-    memory tiers. Placement determines which routes require communication. A model that runs only a few experts
-    per token can still need substantial total weight memory and fast links between devices.
+  - id: serving-expert-models.s1
+    title: Every expert has to be ready
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.serving-expert-models
+    markdown: |-
+      You want to run Mixtral 8x7B for a small team. Each token uses about 12.9B parameters, so it should cost about as much as a 13B model to serve. Right?
 
+      The arithmetic is 13B-sized. The memory isn't. The router picks experts one layer at a time, as each token arrives, so the server can't know in advance which experts the next token will need. Every expert must sit in fast GPU memory, or be **resident**, all the time.
 
-    **Resident** weights are already available in the memory used for execution. An **interconnect** is the
-    communication link between devices. A route that loads missing weights or crosses a slow link can take
-    longer than one whose expert is already nearby, even if their mathematical work is similar.'
-  text_mode: 'Experts may be spread across devices, replicated selectively, or loaded through a hierarchy of
-    memory tiers. Placement determines which routes require communication. A model that runs only a few experts
-    per token can still need substantial total weight memory and fast links between devices.
+      | | Dense 13B | Mixtral 8x7B |
+      | --- | ---: | ---: |
+      | Arithmetic per token (≈ 2 × active) | 26 GFLOPs | 26 GFLOPs |
+      | Weights resident at 2 bytes each | 26 GB | 93 GB |
+      | Fits on one 80 GB GPU? | Yes | No |
 
+      Mixtral needs two 80 GB GPUs, or **quantization**: storing each weight in fewer bits. At 4 bits (half a byte) per weight, 46.7B parameters take about 23 GB. The Mixtral paper says it plainly: inference compute follows the active parameters, but serving memory follows the total.
 
-    **Resident** weights are already available in the memory used for execution. An **interconnect** is the
-    communication link between devices. A route that loads missing weights or crosses a slow link can take
-    longer than one whose expert is already nearby, even if their mathematical work is similar.'
-  bridges: []
-- id: serving-expert-models.s2
-  title: Batch assignments without hiding latency
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.serving-expert-models
-  markdown: 'Combining tokens destined for the same expert creates larger matrix operations. Waiting longer
-    to form those batches may improve throughput but delay individual users. Prompt processing and one-token-at-a-time
-    decoding produce different assignment volumes, so one batch policy may not suit both phases.
+      :::mixup "Only 2 of 8 experts run, so the other 6 can stay on disk until they're needed."
+      "Until they're needed" is every few milliseconds. Each token in each of 32 layers can pick a different pair, and loading an expert from disk takes far longer than running it. Keeping experts elsewhere can work, but only with careful caching, as the last section shows.
+      :::
+    bridges: []
+  - id: serving-expert-models.s2
+    title: Batching wakes up more experts
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.serving-expert-models
+    markdown: |-
+      When a model generates text one token at a time, each step is usually limited by how fast the GPU can *read weights* from memory, not by arithmetic, as the compute and bandwidth lesson in module 17 showed. So count bytes read per step.
 
+      With one user, a step reads only the 2 chosen experts per layer: about 25.8 GB. Serve a batch of users together, and their tokens pick different experts. If each token picks 2 of 8 at random, the chance that a given expert is untouched by $B$ tokens is $(6/8)^B$, so the share of experts in use is $1 - (6/8)^B$.
 
-    Suppose waiting 10 milliseconds lets an expert process 20 tokens together instead of one. That may increase
-    tokens per second, called **throughput**, but the first token waited longer. **Latency** is the delay for
-    an individual request or token. Larger batches can improve one measure while worsening the other.'
-  text_mode: 'Combining tokens destined for the same expert creates larger matrix operations. Waiting longer
-    to form those batches may improve throughput but delay individual users. Prompt processing and one-token-at-a-time
-    decoding produce different assignment volumes, so one batch policy may not suit both phases.
+      ```python run
+      N, k, layers = 8, 2, 32                  # Mixtral: 8 experts, top-2, 32 layers
+      expert_gb = 176_160_768 * layers * 2 / 1e9   # one expert slot in every layer, bf16
+      shared_gb = 1_605_636_096 * 2 / 1e9          # attention, embeddings, norms, routers
+      bandwidth = 2000                             # GB/s the GPUs read from memory (assumed)
 
+      print(" batch  experts used  GB read/step  GB per token  ms/step")
+      for B in [1, 2, 4, 8, 16, 64]:
+          used = 1 - (1 - k / N) ** B          # expected share of experts any token picks
+          read = shared_gb + N * expert_gb * used
+          print(f"{B:6} {used:12.0%} {read:13.1f} {read / B:13.1f} {1000 * read / bandwidth:8.1f}")
+      ```
 
-    Suppose waiting 10 milliseconds lets an expert process 20 tokens together instead of one. That may increase
-    tokens per second, called **throughput**, but the first token waited longer. **Latency** is the delay for
-    an individual request or token. Larger batches can improve one measure while worsening the other.'
-  bridges: []
-- id: serving-expert-models.s3
-  title: Handle a hot expert
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.serving-expert-models
-  markdown: 'Suppose normal traffic spreads evenly, then a specialized workload sends half the assignments
-    to one expert. That expert can become a tail-latency bottleneck. Replication, placement changes, or scheduling
-    may help, but their memory cost and output-equivalence assumptions must be checked.
+      :::predict Before running it, guess the share of experts in use at batch 4.
+      $1 - 0.75^4 \approx 68\%$. By batch 16 it's 99%: nearly every expert is read on every step, and the MoE's weight traffic looks like a dense 47B model's. The good news is in the "GB per token" column. That traffic is shared by 16 tokens, so each costs 5.8 GB instead of 25.8.
+      :::
 
+      Batching raises **throughput**, the tokens produced per second across all users. But a step at batch 16 takes about 46 ms instead of 13 ms, so each user waits longer between tokens: **latency** rises. MoE sharpens this trade-off, because small batches get the "13B" speed and large batches pay for almost the whole model on every step. (The code assumes independent, evenly spread routing; real tokens are often correlated, which helps a little.)
+    bridges: []
+  - id: serving-expert-models.s3
+    title: Handle a hot expert
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.serving-expert-models
+    markdown: |-
+      Large deployments spread experts across many GPUs, one expert per GPU or a few each, with all-to-alls as in the previous lesson. Now the capacity lesson's problem returns in production. If a burst of code-heavy requests sends three times the usual share to one expert, that GPU becomes the slowest step in every layer, and every request routed through it waits.
 
-    **Tail latency** describes the slow end of request delays, such as a high percentile. One hot expert can
-    delay the requests routed to it while average utilization across devices still looks modest. Test the actual
-    mix of requests, not only an evenly balanced benchmark.'
-  text_mode: 'Suppose normal traffic spreads evenly, then a specialized workload sends half the assignments
-    to one expert. That expert can become a tail-latency bottleneck. Replication, placement changes, or scheduling
-    may help, but their memory cost and output-equivalence assumptions must be checked.
+      This shows up in **tail latency**, the delay seen by the slowest requests, often reported as the 99th percentile. Average GPU use can look calm while the tail is terrible.
 
+      DeepSeek-V3's deployment shows one fix. For decoding, each GPU in a 320-GPU unit hosts a single expert, and extra GPUs hold **redundant experts**: copies of the most heavily loaded ones, so their traffic can be split. The set of copies is chosen from live load statistics and updated periodically. The cost is memory for the duplicates.
+    bridges: []
+  - id: serving-expert-models.s4
+    title: Offload experts when memory runs short
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.serving-expert-models
+    markdown: |-
+      What if you have a single 16 GB consumer GPU? **Expert offloading** keeps most experts in ordinary CPU memory and copies each one to the GPU when a token needs it.
 
-    **Tail latency** describes the slow end of request delays, such as a high percentile. One hot expert can
-    delay the requests routed to it while average utilization across devices still looks modest. Test the actual
-    mix of requests, not only an evenly balanced benchmark.'
-  bridges: []
-- id: serving-expert-models.s4
-  title: Report the operating point
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.serving-expert-models
-  markdown: Compare quality, concurrency, prompt/output lengths, time to first token, inter-token latency,
-    throughput, memory, and hardware. Include overflow or approximation policies. A sparse model’s attractive
-    active count is a starting point for measurement, not a guarantee of inexpensive single-user deployment.
-  text_mode: Compare quality, concurrency, prompt/output lengths, time to first token, inter-token latency,
-    throughput, memory, and hardware. Include overflow or approximation policies. A sparse model’s attractive
-    active count is a starting point for measurement, not a guarantee of inexpensive single-user deployment.
-  bridges: []
-- id: serving-expert-models.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.serving-expert-models
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Sparse computation still needs expert weights, routing, batching, and transfers. Measure prompt
-    processing and decoding with the traffic patterns and waiting times that users will experience.
-- id: serving-expert-models.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.serving-expert-models
-  markdown: Sparse computation still needs expert weights, routing, batching, and transfers. Measure prompt
-    processing and decoding with the traffic patterns and waiting times that users will experience.
-  text_mode: Sparse computation still needs expert weights, routing, batching, and transfers. Measure prompt
-    processing and decoding with the traffic patterns and waiting times that users will experience.
+      Work the cost. One Mixtral expert in one layer has 176M weights. At 4 bits that's about 88 MB. Over a PCIe link moving, say, 25 GB/s, one copy takes $88 / 25{,}000 \approx 3.5$ ms. A token uses 2 experts in each of 32 layers, so if every expert had to be fetched, one token would wait $64 \times 3.5 \approx 225$ ms just for copying.
+
+      Two facts make offloading workable. First, keep a **cache** of recently used experts on the GPU: the Mixtral authors observed that consecutive tokens often go to the same experts, so many lookups hit the cache. Second, guess the next layer's experts early and start copying before they're needed. Eliseev and Mazur (2023) combined these ideas with mixed quantization to run Mixtral 8x7B on desktop hardware and free-tier Google Colab.
+
+      Whatever you choose, report the operating point along with the speed: batch size and number of users, prompt and output lengths, hardware, quantization, time to the first token, and time between tokens. "500 tokens per second" means nothing without them.
+    bridges: []
+  - id: serving-expert-models.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.serving-expert-models
+    markdown: Size memory for new MoE models, predict how batching wakes up experts, and choose fixes for a laptop deployment, a hot expert, and two incomparable speed claims.
+    takeaway: |-
+      An MoE's arithmetic follows its active parameters, but its memory follows the total, and bigger batches read more of the experts. Serve it by planning memory, batching, hot experts, and offloading together.
+  - id: serving-expert-models.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.serving-expert-models
+    markdown: |-
+      Sparse computation still needs expert weights, routing, batching, and transfers. Measure prompt processing and decoding with the traffic patterns and waiting times that users will experience.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - serving-expert-models.s1
-    - serving-expert-models.s2
-    - serving-expert-models.s3
-    - serving-expert-models.s4
-    - serving-expert-models.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - serving-expert-models.s1
+        - serving-expert-models.s2
+        - serving-expert-models.s3
+        - serving-expert-models.s4
+        - serving-expert-models.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     serving-expert-models.recap: serving-expert-models.check
 assessment_families:
-- id: serving-expert-models.base
-  objective_ref: objective.serving-expert-models
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Batch assignments without hiding latency: trace the inputs, operation, and result before choosing.'
-  remediation_scene: serving-expert-models.s2
-  variants:
-  - id: serving-expert-models.base.1
-    prompt: Why can a low-active-count MoE still need much memory?
-    options:
-    - id: c
-      text: Routing deletes unused weights permanently
-    - id: a
-      text: Many experts must remain available across routes
-    - id: b
-      text: Active count includes no computation
-    answer: a
-    feedback: Total usable capacity differs from per-token execution.
-  - id: serving-expert-models.base.2
-    prompt: What tradeoff can waiting for larger expert batches create?
-    options:
-    - id: a
-      text: Better throughput but higher request latency
-    - id: b
-      text: Guaranteed lower latency in every case
-    - id: c
-      text: No scheduling effect
-    answer: a
-    feedback: Batch formation time affects users.
-- id: serving-expert-models.transfer
-  objective_ref: objective.serving-expert-models
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Report the operating point: trace the inputs, operation, and result before choosing.'
-  remediation_scene: serving-expert-models.s4
-  variants:
-  - id: serving-expert-models.transfer.1
-    prompt: A domain shift overloads one expert. Which metric can expose the user impact?
-    options:
-    - id: a
-      text: Tail latency alongside expert load
-    - id: b
-      text: Only average parameter count
-    - id: c
-      text: Only tokenizer size
-    answer: a
-    feedback: Concentrated work can delay a subset of requests disproportionately.
-  - id: serving-expert-models.transfer.2
-    prompt: What makes two serving speed reports comparable?
-    options:
-    - id: b
-      text: Model names alone
-    - id: c
-      text: One peak tokens-per-second number
-    - id: a
-      text: Matched workload, hardware, quality, and measurement definitions
-    answer: a
-    feedback: Serving performance is conditional on its operating point.
+  - id: serving-expert-models.base
+    objective_ref: objective.serving-expert-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Batch assignments without hiding latency: trace the inputs, operation, and result before choosing.'
+    remediation_scene: serving-expert-models.s2
+    variants:
+      - id: serving-expert-models.base.1
+        prompt: Why can a low-active-count MoE still need much memory?
+        options:
+          - id: c
+            text: Routing deletes unused weights permanently
+          - id: a
+            text: Many experts must remain available across routes
+          - id: b
+            text: Active count includes no computation
+        answer: a
+        feedback: Total usable capacity differs from per-token execution.
+        retired: true
+      - id: serving-expert-models.base.2
+        prompt: What tradeoff can waiting for larger expert batches create?
+        options:
+          - id: a
+            text: Better throughput but higher request latency
+          - id: b
+            text: Guaranteed lower latency in every case
+          - id: c
+            text: No scheduling effect
+        answer: a
+        feedback: Batch formation time affects users.
+        retired: true
+  - id: serving-expert-models.transfer
+    objective_ref: objective.serving-expert-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Report the operating point: trace the inputs, operation, and result before choosing.'
+    remediation_scene: serving-expert-models.s4
+    variants:
+      - id: serving-expert-models.transfer.1
+        prompt: A domain shift overloads one expert. Which metric can expose the user impact?
+        options:
+          - id: a
+            text: Tail latency alongside expert load
+          - id: b
+            text: Only average parameter count
+          - id: c
+            text: Only tokenizer size
+        answer: a
+        feedback: Concentrated work can delay a subset of requests disproportionately.
+        retired: true
+      - id: serving-expert-models.transfer.2
+        prompt: What makes two serving speed reports comparable?
+        options:
+          - id: b
+            text: Model names alone
+          - id: c
+            text: One peak tokens-per-second number
+          - id: a
+            text: Matched workload, hardware, quality, and measurement definitions
+        answer: a
+        feedback: Serving performance is conditional on its operating point.
+        retired: true
+  - id: serving-expert-models.base.v2
+    objective_ref: objective.serving-expert-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Keep memory and work apart. Memory must hold every expert, work per token follows the active ones, and in a batch the experts read per step depend on how many different experts the batch's tokens pick.
+    remediation_scene: serving-expert-models.s2
+    variants:
+      - id: serving-expert-models.base.v2.1
+        prompt: Only 2 of Mixtral's 8 experts run for each token. Why must a server keep all 8 in GPU memory?
+        options:
+          - id: b
+            text: The router needs each expert's weights to compute its scores
+          - id: c
+            text: The experts share weight matrices, so none can be removed
+          - id: a
+            text: The next token, in any layer, may pick any of the 8 experts
+        answer: a
+        feedback: Routing happens token by token and layer by layer, so there's no telling in advance which experts will be needed. The router uses its own small matrix, not the experts' weights, and each expert has separate weights.
+      - id: serving-expert-models.base.v2.2
+        prompt: At batch 1, a Mixtral decode step reads about 25.8 GB of weights; at batch 16 it reads about 92.5 GB. Why is batch 16 still the more efficient choice for total throughput?
+        options:
+          - id: a
+            text: The 92.5 GB is shared by 16 tokens, about 5.8 GB per token
+          - id: c
+            text: At batch 16 the router skips experts to keep traffic down
+          - id: b
+            text: Larger batches make each expert's weights smaller to read
+        answer: a
+        feedback: Decoding is limited by reading weights, and a batch shares one read among all its tokens. More distinct experts get read, but each read serves many tokens. The router doesn't skip experts for traffic, and weight sizes don't change.
+      - id: serving-expert-models.base.v2.3
+        prompt: A server waits to collect a batch of 32 requests instead of 8 before each decode step. What is the most likely effect?
+        options:
+          - id: b
+            text: Lower latency for each user, since experts are read less often
+          - id: a
+            text: More tokens per second overall, but more waiting for each user
+          - id: c
+            text: No change, since each token still uses 2 experts per layer
+        answer: a
+        feedback: Bigger batches share weight reads, raising throughput, but each step takes longer and requests wait to be batched, so latency rises. The per-token expert count doesn't settle the step time.
+      - id: serving-expert-models.base.v2.4
+        prompt: What does a 99th-percentile latency of 900 ms tell you about an MoE service?
+        options:
+          - id: c
+            text: The average request took about 900 ms to complete
+          - id: b
+            text: About 99% of requests took roughly 900 ms each
+          - id: a
+            text: 1% of requests took longer than 900 ms
+        answer: a
+        feedback: The 99th percentile marks the slow tail, the delay that 99% of requests beat. A hot expert often shows up here first, while the average looks fine.
+  - id: serving-expert-models.transfer.v2
+    objective_ref: objective.serving-expert-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name the bottleneck first (memory, a hot expert, copying time, or an unmatched comparison), then pick the fix aimed at it.
+    remediation_scene: serving-expert-models.s4
+    variants:
+      - id: serving-expert-models.transfer.v2.1
+        prompt: A developer wants to run Mixtral 8x7B on a laptop GPU with 24 GB of memory. Which plan could work?
+        options:
+          - id: b
+            text: Keep 2 experts per layer on the GPU and delete the other 6
+          - id: c
+            text: Load it in 2-byte weights, since 12.9B active needs 25.8 GB
+          - id: a
+            text: Quantize to about 4 bits, or offload experts with a GPU cache
+        answer: a
+        feedback: At 4 bits the 46.7B weights take about 23 GB, and offloading keeps most experts in CPU memory. Deleting experts breaks the model for tokens that route to them, and 2-byte weights need 93 GB, not 25.8.
+      - id: serving-expert-models.transfer.v2.2
+        prompt: During a code-heavy hour, one expert in a large MoE deployment receives three times its usual traffic, and 99th-percentile latency doubles. Which fix targets this?
+        options:
+          - id: a
+            text: Host a copy of the hot expert on another GPU and split its load
+          - id: c
+            text: Drop tokens that are routed to the hot expert during busy hours
+          - id: b
+            text: Switch the whole model to top-1 routing during busy hours
+        answer: a
+        feedback: A redundant copy, as in DeepSeek-V3's deployment, spreads the hot expert's work without changing the model's output. Dropping tokens or changing k changes the answers the model gives.
+      - id: serving-expert-models.transfer.v2.3
+        prompt: 'Vendor A reports "5,000 tokens/s" for an MoE model at batch 256; vendor B reports "40 tokens/s" at batch 1 on different GPUs. What can you conclude?'
+        options:
+          - id: c
+            text: A's setup is 125 times faster, so it should be chosen
+          - id: a
+            text: Little yet; batch, hardware, lengths, and latency must match
+          - id: b
+            text: B is better, since single-user speed is what really counts
+        answer: a
+        feedback: Throughput at batch 256 and single-stream speed at batch 1 measure different things on different hardware. Compare at the same operating point, with time to first token and time between tokens.
+      - id: serving-expert-models.transfer.v2.4
+        prompt: A user runs an MoE model with expert offloading. The first sentences of a long answer come out slowly, then generation speeds up. What is the most likely reason?
+        options:
+          - id: b
+            text: The router learns during the conversation to prefer cached experts
+          - id: a
+            text: The GPU cache fills with the experts this text keeps using
+          - id: c
+            text: Quantization error shrinks as the answer grows longer
+        answer: a
+        feedback: Consecutive tokens often reuse experts, so once the cache holds them, fewer copies over PCIe are needed. Routers don't learn during inference, and quantization error doesn't change with length.
+  - id: serving-expert-models.calculate
+    objective_ref: objective.serving-expert-models
+    task: base
+    response_type: numeric
+    points: 1
+    hint: With independent, even routing, the share of experts in use is 1 − (1 − k/N)^B. Memory is total parameters × bytes per weight; copy time is size ÷ bandwidth.
+    remediation_scene: serving-expert-models.s2
+    absolute_tolerance: 0.002
+    variants:
+      - id: serving-expert-models.calculate.1
+        prompt: A layer has 8 experts and top-2 routing. With 4 tokens in the batch, each picking 2 experts independently and evenly, what is the expected share of experts in use? Answer as a decimal.
+        answer: 0.68359375
+        feedback: Each expert is skipped by one token with probability 6/8 = 0.75, and by all 4 with 0.75⁴ ≈ 0.316. So about 1 − 0.316 = 0.684 of the experts are in use.
+      - id: serving-expert-models.calculate.2
+        prompt: A layer has 8 experts and top-2 routing. With 2 tokens in the batch, each picking 2 experts independently and evenly, what is the expected share of experts in use? Answer as a decimal.
+        answer: 0.4375
+        feedback: 1 − 0.75² = 1 − 0.5625 = 0.4375. Two tokens already wake up almost half the experts.
+      - id: serving-expert-models.calculate.3
+        prompt: A layer has 16 experts and top-2 routing. With 8 tokens in the batch, each picking 2 experts independently and evenly, what is the expected share of experts in use? Answer as a decimal.
+        answer: 0.65639
+        feedback: Each token skips a given expert with probability 14/16 = 0.875, and 0.875⁸ ≈ 0.344, so about 0.656 of the experts are in use.
+      - id: serving-expert-models.calculate.4
+        prompt: Mixtral has 46.7 billion parameters. How many gigabytes do its weights take when quantized to 4 bits (half a byte) per weight?
+        answer: 23.35
+        feedback: 46.7B × 0.5 bytes = 23.35 GB, small enough for a 24 GB GPU, with little room left for the KV cache.
+      - id: serving-expert-models.calculate.5
+        prompt: An offloaded expert takes 88 MB, and the link to the GPU moves 25 GB/s (25,000 MB/s). How many milliseconds does one copy take?
+        answer: 3.52
+        feedback: 88 ÷ 25,000 = 0.00352 s = 3.52 ms. A token that missed the cache in all 64 of its expert uses would wait about 225 ms.

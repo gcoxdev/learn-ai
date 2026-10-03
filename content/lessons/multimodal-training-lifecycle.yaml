@@ -1,196 +1,449 @@
 schema_version: 0.2-draft
 lesson:
   id: multimodal-training-lifecycle
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Train alignment, generation, and instruction behavior across modalities
   state: draft
-  summary: Track what changes at each stage of training a multimodal assistant.
+  summary: LLaVA's first stage trains just 0.3% of the model's weights, and it works. Walk through the stages that turn two separate models into one assistant.
   slot: M23.5
   category: learning
   sources:
-  - title: LLaVA
-    url: https://arxiv.org/abs/2304.08485
-  - title: The Llama 3 Herd of Models
-    url: https://arxiv.org/abs/2407.21783
-  - title: Flamingo
-    url: https://arxiv.org/abs/2204.14198
+    - title: "Visual Instruction Tuning (LLaVA; Liu, Li, Wu & Lee, 2023)"
+      url: https://arxiv.org/abs/2304.08485
+    - title: "Improved Baselines with Visual Instruction Tuning (LLaVA-1.5; Liu, Li, Li & Lee, 2023)"
+      url: https://arxiv.org/abs/2310.03744
+    - title: "Aligning Large Multimodal Models with Factually Augmented RLHF (LLaVA-RLHF; Sun et al., 2023)"
+      url: https://arxiv.org/abs/2309.14525
+    - title: "Flamingo: a Visual Language Model for Few-Shot Learning (Alayrac et al., 2022)"
+      url: https://arxiv.org/abs/2204.14198
+    - title: The Llama 3 Herd of Models
+      url: https://arxiv.org/abs/2407.21783
 objectives:
-- id: objective.multimodal-training-lifecycle
-  version: 1-draft
-  statement: Multimodal training combines data pairing, modality objectives, interface adaptation, and instruction
-    or preference stages; record frozen components, loss masks, and cross-modal evaluation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - multimodal-training-lifecycle.base
-  - multimodal-training-lifecycle.transfer
-  prerequisites:
-  - anyOf:
-    - objective.modality-tokenization
-  - anyOf:
-    - objective.posttraining-evaluation
+  - id: objective.multimodal-training-lifecycle
+    version: 3-draft
+    statement: Multimodal training combines data pairing, modality objectives, interface adaptation, and instruction or preference stages; record frozen components, loss masks, and cross-modal evaluation.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - multimodal-training-lifecycle.base.v2
+      - multimodal-training-lifecycle.transfer.v2
+      - multimodal-training-lifecycle.calculate
+    prerequisites:
+      - anyOf:
+          - objective.modality-tokenization
+      - anyOf:
+          - objective.posttraining-evaluation
 scenes:
-- id: multimodal-training-lifecycle.s1
-  title: Inventory every training signal
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.multimodal-training-lifecycle
-  markdown: Paired image-text data can train alignment, interleaved documents can train conditioned prediction,
-    and visual instructions can train requested responses. Audio and video add timing and transcript issues.
-    These data sources supervise different behaviors even when one final system exposes a single chat interface.
-  text_mode: Paired image-text data can train alignment, interleaved documents can train conditioned prediction,
-    and visual instructions can train requested responses. Audio and video add timing and transcript issues.
-    These data sources supervise different behaviors even when one final system exposes a single chat interface.
-  bridges: []
-- id: multimodal-training-lifecycle.s2
-  title: Specify updated components and losses
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.multimodal-training-lifecycle
-  markdown: 'A recipe may freeze a vision encoder, train a projector, then update a language model with selected
-    multimodal examples. Another jointly trains encoders. For each stage, record loss targets, masking, mixture
-    weights, and preprocessing so apparent model changes can be traced to their actual cause.
+  - id: multimodal-training-lifecycle.s1
+    title: Four kinds of data, four different lessons
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.multimodal-training-lifecycle
+    markdown: |-
+      Lumen's team has two finished models: CLIP's vision encoder, which knows what things look like, and a 7-billion-parameter chat model, which knows how to talk. They want one assistant that answers Amara's questions about photos. Gluing the two together with an untrained projector gives nonsense, because the chat model has never seen visual tokens.
 
+      Each kind of training data teaches a different lesson:
 
-    For a toy question about a pictured apple, the image supplies evidence and the response “red” supplies
-    a target. A loss mask can score the response token while skipping the question tokens. “Frozen” means a
-    component’s weights stay fixed during that stage, even though it still performs computation. Training only
-    the projector changes the connection; training the language model too changes how it uses that connection.
-    Record both choices before comparing results.'
-  text_mode: 'A recipe may freeze a vision encoder, train a projector, then update a language model with selected
-    multimodal examples. Another jointly trains encoders. For each stage, record loss targets, masking, mixture
-    weights, and preprocessing so apparent model changes can be traced to their actual cause.
+      | Data | Example | What it teaches |
+      | --- | --- | --- |
+      | Caption pairs | Photo + "a red mug on a desk" | What visual tokens mean, in the language model's terms |
+      | Visual instructions | Photo + "What's written on the mug?" + a full answer | How to follow a request about an image |
+      | Preference pairs | Photo + a grounded answer marked better than a made-up one | Which of two plausible answers to prefer |
+      | Text-only chats | Ordinary conversations with no image | Keep the language skills the chat model already had |
 
+      One chat window hides all of this. The training recipe is a sequence of **stages**, each with its own data, its own loss, and its own choice of which weights may change.
+    bridges: []
+  - id: multimodal-training-lifecycle.s2
+    title: Freeze most, train the bridge, then open up
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.multimodal-training-lifecycle
+    markdown: |-
+      LLaVA (Liu et al., 2023) set the pattern many open VLMs follow. A **frozen** component still runs in every forward pass; its weights just don't change.
 
-    For a toy question about a pictured apple, the image supplies evidence and the response “red” supplies
-    a target. A loss mask can score the response token while skipping the question tokens. “Frozen” means a
-    component’s weights stay fixed during that stage, even though it still performs computation. Training only
-    the projector changes the connection; training the language model too changes how it uses that connection.
-    Record both choices before comparing results.'
-  bridges: []
-- id: multimodal-training-lifecycle.s3
-  title: Curate cross-modal consistency
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.multimodal-training-lifecycle
-  markdown: A caption saying two objects when the image contains three provides conflicting supervision. Synthetic
-    instructions may repeat a teacher’s visual mistakes. Check alignment, annotation specificity, consent/provenance
-    records, and train-test overlap across both media and text; hashing only captions does not detect every
-    leaked image.
-  text_mode: A caption saying two objects when the image contains three provides conflicting supervision. Synthetic
-    instructions may repeat a teacher’s visual mistakes. Check alignment, annotation specificity, consent/provenance
-    records, and train-test overlap across both media and text; hashing only captions does not detect every
-    leaked image.
-  bridges: []
-- id: multimodal-training-lifecycle.s4
-  title: Evaluate stage gains and retention
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.multimodal-training-lifecycle
-  markdown: Measure text-only skills, visual grounding, audio quality, instruction following, and appropriate
-    abstention after each relevant stage. Preference judges can favor eloquence over correct perception. Include
-    examples where the requested information is absent so the system must recognize its evidence limits.
-  text_mode: Measure text-only skills, visual grounding, audio quality, instruction following, and appropriate
-    abstention after each relevant stage. Preference judges can favor eloquence over correct perception. Include
-    examples where the requested information is absent so the system must recognize its evidence limits.
-  bridges: []
-- id: multimodal-training-lifecycle.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.multimodal-training-lifecycle
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: For each training stage, identify the data, the scored targets, and the components that change.
-    Then test both new multimodal behavior and skills the system should retain.
-- id: multimodal-training-lifecycle.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.multimodal-training-lifecycle
-  markdown: For each training stage, identify the data, the scored targets, and the components that change.
-    Then test both new multimodal behavior and skills the system should retain.
-  text_mode: For each training stage, identify the data, the scored targets, and the components that change.
-    Then test both new multimodal behavior and skills the system should retain.
+      | Stage | Data | Vision encoder | Projector | Language model |
+      | --- | --- | --- | --- | --- |
+      | 1. Feature alignment | 595,000 captioned images | frozen | **trained** | frozen |
+      | 2. Visual instruction tuning | 158,000 instruction examples | frozen | **trained** | **trained** |
+      | 3. Preference or safety tuning (later work) | preference pairs | frozen | varies | **trained** |
+
+      Stage 1 is cheap and safe. With both big models frozen, only the projector moves (about 21 million weights for LLaVA-1.5's two-layer version with a 7B model; the original LLaVA used a single linear layer), so nothing the big models know can be damaged. Stage 2 opens up the language model so it learns to *use* visual tokens in conversation. LLaVA's 158,000 instructions were written by a text-only GPT-4, given each COCO photo's captions and object boxes and asked to write conversations about them.
+
+      ```python run
+      params = {"vision encoder": 304e6, "projector": 21e6, "language model": 7.0e9}
+      stages = {"1 align": ["projector"],
+                "2 instruct": ["projector", "language model"]}
+      total = sum(params.values())
+      for stage, trained in stages.items():
+          n = sum(params[p] for p in trained)
+          print(f"stage {stage:<10} trains {n / 1e6:>6,.0f}M of {total / 1e6:,.0f}M ({n / total:.2%})")
+
+      # One stage-2 example: 576 image tokens, a 25-token question, a 12-token answer.
+      roles = ["image"] * 576 + ["question"] * 25 + ["answer"] * 12
+      scored = [r == "answer" for r in roles]      # which positions count
+      print("positions:", len(roles), "| scored by the loss:", sum(scored),
+            f"({sum(scored) / len(roles):.1%})")
+      ```
+
+      With LLaVA-1.5-7B's sizes, stage 1 trains 0.29% of the weights and stage 2 trains 95.85%. The program's second part shows the **loss mask**: of 613 positions in one example, only the 12 answer tokens are scored. The model is trained to answer, not to predict the image or the question.
+
+      :::papers The stage-2 objective
+      $$\mathcal{L} = -\sum_{t \in \text{answer}} \log p_\theta\big(y_t \mid \text{image}, \text{question}, y_{<t}\big)$$
+
+      This is supervised fine-tuning's next-token loss, summed over answer positions only: 12 terms here, not 613. $\theta$ is the trainable weights: the projector in stage 1, the projector plus the language model in stage 2.
+      :::
+
+      Try changing the answer from 12 tokens to 120. Longer answers carry more of the training signal, one reason detailed-description data shapes a model's style so strongly.
+    diagram:
+      caption: LLaVA-style training stages. The muted vision encoder stays frozen throughout.
+      description: Captioned images (595K pairs) feed stage 1, which trains only the projector while the vision encoder and language model stay frozen. An arrow labeled "aligned projector" carries stage 1's result into stage 2. Visual instructions (158K examples) also feed stage 2, which trains the projector and the language model. A dashed arrow from the vision encoder, frozen throughout, also feeds stage 2. Stage 2 then leads to stage 3, preference and safety tuning, where grounded answers are preferred over made-up ones.
+      nodes:
+        - id: caps
+          label: Captioned images
+          note: 595K pairs
+          col: 0
+          row: 0
+          tone: data
+        - id: s1
+          label: "Stage 1: train projector"
+          note: encoder + language model frozen
+          col: 1
+          row: 0
+          tone: accent
+        - id: inst
+          label: Visual instructions
+          note: 158K examples
+          col: 0
+          row: 1
+          tone: data
+        - id: s2
+          label: "Stage 2: projector + language model"
+          note: encoder still frozen
+          col: 2
+          row: 1
+          tone: accent
+        - id: s3
+          label: "Stage 3: preferences, safety"
+          note: grounded beats made-up
+          col: 3
+          row: 1
+        - id: enc
+          label: Vision encoder
+          note: frozen throughout
+          col: 1
+          row: 2
+          tone: muted
+      edges:
+        - from: caps
+          to: s1
+        - from: s1
+          to: s2
+          label: aligned projector
+        - from: inst
+          to: s2
+        - from: enc
+          to: s2
+          dashed: true
+        - from: s2
+          to: s3
+    bridges: []
+  - id: multimodal-training-lifecycle.s3
+    title: The mixture decides what the model forgets
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.multimodal-training-lifecycle
+    markdown: |-
+      Stage 2 updates billions of language-model weights on image conversations. Whatever the mixture leaves out can fade. Suppose Lumen's team runs stage 2 two ways and measures after each:
+
+      | Stage-2 mixture | Photo questions | Text-only chat quality | Answer length on photo questions |
+      | --- | ---: | ---: | --- |
+      | 100% visual instructions | 71% | 58% (was 66% before stage 2) | often one word |
+      | 85% visual + 15% text-only chats | 70% | 65% | full sentences |
+
+      Two things went wrong in the first run. Text skills slipped: **catastrophic forgetting**, where training on new data overwrites what old data taught. And answers got terse, because much of the visual data came from academic question-answering sets with one-word answers. LLaVA-1.5 met the same issue. It tagged those examples with a short instruction ("Answer the question using a single word or phrase") so the model learned when to be brief, and it mixed in text-only conversations.
+
+      :::mixup "Just add more visual data and the model can only get better."
+      Every mixture is a trade. Skills you stop practicing fade, and a style repeated in thousands of examples becomes the default. Set the proportions on purpose and measure text-only skills after every stage.
+      :::
+
+      Quality matters as much as proportion. A caption saying "two dogs" over a photo of three teaches miscounting, and synthetic instructions repeat their generator's mistakes. Test photos can also leak into training under different captions, so check for duplicate *images*, not just duplicate text.
+    bridges: []
+  - id: multimodal-training-lifecycle.s5
+    title: Teach it to prefer what's in the picture
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.multimodal-training-lifecycle
+    markdown: |-
+      After stage 2, Lumen describes Amara's desk photo: "A laptop, a coffee mug, and a pair of glasses." There are no glasses; desks often have them, so the language model filled them in. This is **object hallucination**, and instruction tuning alone doesn't remove it. Long, detailed answers can even encourage it.
+
+      The fix borrows the post-training module's tools. Build preference pairs for the same photo and question:
+
+      - **Chosen:** "A laptop and a coffee mug."
+      - **Rejected:** "A laptop, a coffee mug, and a pair of glasses."
+
+      Then train with a reward model and RLHF, or directly with DPO (both from the post-training module). The trap: a reward model that can't check answers against the image rewards the more detailed, fluent one, and the policy learns to pad. LLaVA-RLHF (Sun et al., 2023) hit this *reward hacking* even with a vision-language reward model. Their fix, *Factually Augmented RLHF*, gives the reward model extra facts about the image, such as its human-written captions, while it scores.
+
+      The same stage handles image-specific safety rules. Lumen should read a medicine label but not guess a stranger's name from their face, so for a face photo, "I can describe what the person is wearing" beats a guessed name.
+    bridges: []
+  - id: multimodal-training-lifecycle.s4
+    title: Check each stage before starting the next
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.multimodal-training-lifecycle
+    markdown: |-
+      Each stage can fix one thing and break another, so Lumen's team runs the same checks after every stage:
+
+      | After stage | Captioning | Photo questions | Text-only chat | Hallucinated objects | Declines when the photo can't answer |
+      | --- | ---: | ---: | ---: | ---: | ---: |
+      | 1 (projector only) | fair | poor | unchanged | many | rarely |
+      | 2 (instructions) | good | good | slightly lower | some | rarely |
+      | 3 (preferences) | good | good | about the same | few | often |
+
+      The last column needs photos where the answer isn't visible ("What's the expiry date?" with the date cropped off). A model that always answers confidently looks great on answerable questions and fails every one of these.
+
+      When a number moves, the stage table tells you where to look: which data was added, which weights were unfrozen, which tokens were scored. For Amara, the last column matters most: a confidently wrong dose is worse than "I can't read that; try moving closer."
+    bridges: []
+  - id: multimodal-training-lifecycle.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.multimodal-training-lifecycle
+    markdown: Parameter counts to work out, plus a chart reader, a medical-image assistant, and a recipe bot, test whether you can plan the stages and diagnose what each one changed.
+    takeaway: |-
+      Train the small projector first with both big models frozen, then unfreeze the language model for visual instructions, then tune preferences against hallucination. For each stage, know the data, the scored tokens, and the weights that change, and re-check text skills every time.
+  - id: multimodal-training-lifecycle.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.multimodal-training-lifecycle
+    markdown: |-
+      For each training stage, identify the data, the scored targets, and the components that change. Then test both new multimodal behavior and skills the system should retain.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - multimodal-training-lifecycle.s1
-    - multimodal-training-lifecycle.s2
-    - multimodal-training-lifecycle.s3
-    - multimodal-training-lifecycle.s4
-    - multimodal-training-lifecycle.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - multimodal-training-lifecycle.s1
+        - multimodal-training-lifecycle.s2
+        - multimodal-training-lifecycle.s3
+        - multimodal-training-lifecycle.s5
+        - multimodal-training-lifecycle.s4
+        - multimodal-training-lifecycle.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     multimodal-training-lifecycle.recap: multimodal-training-lifecycle.check
 assessment_families:
-- id: multimodal-training-lifecycle.base
-  objective_ref: objective.multimodal-training-lifecycle
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Specify updated components and losses: trace the inputs, operation, and result before choosing.'
-  remediation_scene: multimodal-training-lifecycle.s2
-  variants:
-  - id: multimodal-training-lifecycle.base.1
-    prompt: Does one chat interface imply one training objective?
-    options:
-    - id: c
-      text: Only for multimodal systems
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Several stages and modalities can support one product interface.
-  - id: multimodal-training-lifecycle.base.2
-    prompt: What should be recorded when a projector trains but the vision encoder stays frozen?
-    options:
-    - id: a
-      text: Which components update and which remain fixed
-    - id: b
-      text: Only the final response title
-    - id: c
-      text: That all weights changed equally
-    answer: a
-    feedback: Component-level state explains the adaptation.
-- id: multimodal-training-lifecycle.transfer
-  objective_ref: objective.multimodal-training-lifecycle
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate stage gains and retention: trace the inputs, operation, and result before choosing.'
-  remediation_scene: multimodal-training-lifecycle.s4
-  variants:
-  - id: multimodal-training-lifecycle.transfer.1
-    prompt: Why check image overlap as well as caption overlap?
-    options:
-    - id: a
-      text: The same visual test evidence can leak with different text
-    - id: b
-      text: Captions uniquely identify every image
-    - id: c
-      text: Only text can contaminate evaluation
-    answer: a
-    feedback: Leakage can occur through either modality.
-  - id: multimodal-training-lifecycle.transfer.2
-    prompt: A judge prefers a fluent but visually wrong answer. What is exposed?
-    options:
-    - id: b
-      text: Proof that the image is wrong
-    - id: c
-      text: Guaranteed successful perception
-    - id: a
-      text: A mismatch between judging preference and grounding quality
-    answer: a
-    feedback: Evaluation needs direct checks of visual evidence.
+  - id: multimodal-training-lifecycle.base
+    objective_ref: objective.multimodal-training-lifecycle
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Specify updated components and losses: trace the inputs, operation, and result before choosing.'
+    remediation_scene: multimodal-training-lifecycle.s2
+    variants:
+      - id: multimodal-training-lifecycle.base.1
+        prompt: Does one chat interface imply one training objective?
+        options:
+          - id: c
+            text: Only for multimodal systems
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Several stages and modalities can support one product interface.
+        retired: true
+      - id: multimodal-training-lifecycle.base.2
+        prompt: What should be recorded when a projector trains but the vision encoder stays frozen?
+        options:
+          - id: a
+            text: Which components update and which remain fixed
+          - id: b
+            text: Only the final response title
+          - id: c
+            text: That all weights changed equally
+        answer: a
+        feedback: Component-level state explains the adaptation.
+        retired: true
+  - id: multimodal-training-lifecycle.transfer
+    objective_ref: objective.multimodal-training-lifecycle
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate stage gains and retention: trace the inputs, operation, and result before choosing.'
+    remediation_scene: multimodal-training-lifecycle.s4
+    variants:
+      - id: multimodal-training-lifecycle.transfer.1
+        prompt: Why check image overlap as well as caption overlap?
+        options:
+          - id: a
+            text: The same visual test evidence can leak with different text
+          - id: b
+            text: Captions uniquely identify every image
+          - id: c
+            text: Only text can contaminate evaluation
+        answer: a
+        feedback: Leakage can occur through either modality.
+        retired: true
+      - id: multimodal-training-lifecycle.transfer.2
+        prompt: A judge prefers a fluent but visually wrong answer. What is exposed?
+        options:
+          - id: b
+            text: Proof that the image is wrong
+          - id: c
+            text: Guaranteed successful perception
+          - id: a
+            text: A mismatch between judging preference and grounding quality
+        answer: a
+        feedback: Evaluation needs direct checks of visual evidence.
+        retired: true
+  - id: multimodal-training-lifecycle.base.v2
+    objective_ref: objective.multimodal-training-lifecycle
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: For each stage, list three things - the data, the tokens the loss scores, and which weights are allowed to change.
+    remediation_scene: multimodal-training-lifecycle.s2
+    variants:
+      - id: multimodal-training-lifecycle.base.v2.1
+        prompt: In LLaVA's first stage, the vision encoder and language model are frozen and only the projector trains on captioned images. Why start this way?
+        options:
+          - id: b
+            text: Frozen models skip the forward pass, so training runs much faster
+          - id: a
+            text: The small projector learns to map features without disturbing either model
+          - id: c
+            text: Captions are too short to train anything larger than a projector
+        answer: a
+        feedback: With about 21 million trainable weights, the bridge learns what visual features mean in the language model's terms while both pretrained models stay intact. Frozen models still run forward; only their weights don't update.
+      - id: multimodal-training-lifecycle.base.v2.2
+        prompt: A stage-2 training example has 576 image tokens, a 30-token question, and a 15-token answer. Under the usual loss mask, which positions contribute to the loss?
+        options:
+          - id: c
+            text: All 621 positions, so the model also learns to predict the image
+          - id: b
+            text: The 45 question and answer tokens, since both are text
+          - id: a
+            text: Only the 15 answer tokens
+        answer: a
+        feedback: The loss scores the response, so the model learns to answer rather than to predict the question or the image. Scoring the question would train it to imitate users' questions.
+      - id: multimodal-training-lifecycle.base.v2.3
+        prompt: What does it mean that the vision encoder is frozen during stage 2?
+        options:
+          - id: a
+            text: It still processes every image, but its weights don't change
+          - id: b
+            text: Its features are computed once and the image is then discarded
+          - id: c
+            text: It's removed, and the projector reads raw image patches instead
+        answer: a
+        feedback: Frozen components run in the forward pass as usual; gradients just don't update them. (Caching features in advance is a possible speed-up, but that's a separate choice, not what "frozen" means.)
+      - id: multimodal-training-lifecycle.base.v2.4
+        prompt: After stage 2 on visual data only, a VLM's answers to plain text questions get worse. Which change to stage 2 targets this most directly?
+        options:
+          - id: b
+            text: Train stage 1 for longer before starting stage 2
+          - id: c
+            text: Unfreeze the vision encoder so it can share the load
+          - id: a
+            text: Mix text-only conversations into the stage-2 data
+        answer: a
+        feedback: This is catastrophic forgetting. Language skills fade when stage 2 stops practicing them. Stage 1 doesn't touch the language model, and the vision encoder has no role in text-only questions.
+  - id: multimodal-training-lifecycle.transfer.v2
+    objective_ref: objective.multimodal-training-lifecycle
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Match the symptom to the stage that caused it - a data mixture, a missing preference signal, or a judge that can't see the image.
+    remediation_scene: multimodal-training-lifecycle.s5
+    variants:
+      - id: multimodal-training-lifecycle.transfer.v2.1
+        prompt: A chart-reading VLM, trained heavily on a dataset with one-word answers, now replies "Yes." to "Explain this trend". What is the best fix?
+        options:
+          - id: c
+            text: Freeze the language model so it keeps its original answer style
+          - id: a
+            text: Tag the short-answer examples with an instruction to answer briefly
+          - id: b
+            text: Remove the short-answer dataset and lose its visual skills too
+        answer: a
+        feedback: Tagging tells the model when brevity is wanted, so it keeps both the skill and its normal style, as LLaVA-1.5 did. Freezing the language model would block learning to use images at all, and removing the data throws away useful supervision.
+        retired: true
+      - id: multimodal-training-lifecycle.transfer.v2.2
+        prompt: A radiology assistant's reward model reads only the answer text. After RLHF, reports get longer and mention findings that aren't in the scans. Why?
+        options:
+          - id: a
+            text: The reward model can't check answers against the image, so fluent detail wins
+          - id: b
+            text: RLHF always makes answers longer, whether or not images are involved
+          - id: c
+            text: The vision encoder was frozen, so the model couldn't see the scans
+        answer: a
+        feedback: A text-only judge can't tell grounded from invented findings, so the policy learns that detail pays. Giving the reward model facts about the image is the Factually Augmented RLHF fix. A frozen encoder still sees the scans.
+      - id: multimodal-training-lifecycle.transfer.v2.3
+        prompt: A team reports that its new VLM scores 20 points higher on a photo-question benchmark. Later they find many test photos in the training set under different captions. What check would have caught this?
+        options:
+          - id: b
+            text: Comparing the captions of test and training examples for exact matches
+          - id: c
+            text: Measuring accuracy on the benchmark again with a different random seed
+          - id: a
+            text: Searching for near-duplicate images between the test and training sets
+        answer: a
+        feedback: The leak came through the images, with new text around them, so only an image-level duplicate search finds it. Caption matching misses rewritten captions, and a new seed reruns the same leaked test.
+      - id: multimodal-training-lifecycle.transfer.v2.4
+        prompt: A recipe bot looks at a fridge photo and lists "milk, eggs, butter" when only eggs are visible. Which training data targets this most directly?
+        options:
+          - id: c
+            text: More captioned photos of fridges for stage 1
+          - id: b
+            text: More text-only cooking conversations for stage 2
+          - id: a
+            text: Pairs preferring the eggs-only list over the padded list
+        answer: a
+        feedback: This is object hallucination from language habits, since fridges often hold milk and butter. Preference pairs directly teach "only what's visible" over the fluent, padded answer. More captions or text chats don't penalize invented items.
+      - id: multimodal-training-lifecycle.transfer.v2.5
+        prompt: A chart-reading VLM was fine-tuned on a mix that includes a large chart dataset with one-word answers. It now replies "Yes." to "Explain this trend." What is the best fix?
+        options:
+          - id: b
+            text: Drop the one-word chart dataset from the stage-2 mixture
+          - id: c
+            text: Freeze the language model so it keeps its original answer style
+          - id: a
+            text: Tag the one-word examples with an instruction to answer briefly
+        answer: a
+        feedback: Tagging tells the model when brevity is wanted, so it keeps the chart skills and its normal style, as LLaVA-1.5 did. Dropping the dataset throws away the chart-reading practice it gave, and freezing the language model would stop it learning to use images at all.
+  - id: multimodal-training-lifecycle.calculate
+    objective_ref: objective.multimodal-training-lifecycle
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Add up the weights that are allowed to change in this stage, divide by the total across all components, and multiply by 100.
+    remediation_scene: multimodal-training-lifecycle.s2
+    absolute_tolerance: 0.02
+    variants:
+      - id: multimodal-training-lifecycle.calculate.1
+        prompt: A VLM has a 300M-parameter vision encoder, a 20M projector, and a 7,000M language model. Stage 1 trains only the projector. What percentage of all parameters is trained? Give two decimals.
+        answer: 0.27
+        feedback: The total is 300 + 20 + 7,000 = 7,320M, and 20 ÷ 7,320 = 0.00273, or 0.27%.
+      - id: multimodal-training-lifecycle.calculate.2
+        prompt: The same VLM (300M encoder, 20M projector, 7,000M language model) trains the projector and the language model in stage 2. What percentage is trained? Give two decimals.
+        answer: 95.9
+        feedback: 20 + 7,000 = 7,020M trainable out of 7,320M, and 7,020 ÷ 7,320 = 95.90%.
+      - id: multimodal-training-lifecycle.calculate.3
+        prompt: The same VLM (300M encoder, 20M projector, 7,000M language model) instead trains the projector plus 40M of LoRA adapters added to the frozen language model. Counting the adapters in the total, what percentage is trained? Give two decimals.
+        answer: 0.82
+        feedback: Trainable = 20 + 40 = 60M. Total = 7,320 + 40 = 7,360M. 60 ÷ 7,360 = 0.82%.
+      - id: multimodal-training-lifecycle.calculate.4
+        prompt: A larger VLM has a 400M vision encoder, a 10M projector, and a 13,000M language model. Stage 1 trains only the projector. What percentage is trained? Give two decimals.
+        answer: 0.07
+        feedback: The total is 13,410M, and 10 ÷ 13,410 = 0.00075, or 0.07%.

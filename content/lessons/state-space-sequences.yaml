@@ -1,219 +1,429 @@
 schema_version: 0.2-draft
 lesson:
   id: state-space-sequences
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Represent a sequence through an evolving hidden state
   state: draft
-  summary: Carry a compact sequence state forward and unpack the weighted history it represents.
+  summary: A warm room remembers every burst of its heater, fading as it goes. That same idea, written as three small matrices, runs both as an RNN and as a convolution, and it grew into S4 and Mamba.
   slot: M19.4
   category: learning
   sources:
-  - title: Efficiently Modeling Long Sequences with Structured State Spaces
-    url: https://arxiv.org/abs/2111.00396
+    - title: "Efficiently Modeling Long Sequences with Structured State Spaces (Gu, Goel & Ré, 2021)"
+      url: https://arxiv.org/abs/2111.00396
+    - title: "HiPPO: Recurrent Memory with Optimal Polynomial Projections (Gu et al., 2020)"
+      url: https://arxiv.org/abs/2008.07669
+    - title: "Mamba: Linear-Time Sequence Modeling with Selective State Spaces (Gu & Dao, 2023)"
+      url: https://arxiv.org/abs/2312.00752
 objectives:
-- id: objective.state-space-sequences
-  version: 1-draft
-  statement: State-space sequence models update a latent state and read outputs from it; continuous-to-discrete
-    choices, stable dynamics, and structured computation determine their practical behavior.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - state-space-sequences.base
-  - state-space-sequences.transfer
-  prerequisites:
-  - anyOf:
-    - objective.recurrent-networks
-  - anyOf:
-    - objective.dynamics-and-noise
+  - id: objective.state-space-sequences
+    version: 2-draft
+    statement: State-space sequence models update a latent state and read outputs from it; continuous-to-discrete choices, stable dynamics, and structured computation determine their practical behavior.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - state-space-sequences.base.v2
+      - state-space-sequences.transfer.v2
+      - state-space-sequences.kernel
+    prerequisites:
+      - anyOf:
+          - objective.recurrent-networks
+      - anyOf:
+          - objective.dynamics-and-noise
 scenes:
-- id: state-space-sequences.s1
-  title: Update a compact memory
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.state-space-sequences
-  markdown: 'Let x be the current input, h the hidden state, and y the output. The index t counts time steps.
-    A simple state-space model updates the state and reads an output using:
+  - id: state-space-sequences.s1
+    title: A room that remembers the heater
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.state-space-sequences
+    markdown: |-
+      A heater in a cold room runs in short bursts. Each minute, the room keeps half of the extra warmth it had and gains whatever the heater just added. The thermometer never sees the bursts, only the room. Yet the reading carries a fading memory of every burst there has ever been.
 
+      That is a **state-space model (SSM)**. At each step $t$ it takes an input $x_t$ (the heater), updates a hidden state $h_t$ (the room's extra warmth), and reads an output $y_t$ (the thermometer):
 
-    h_t = A h_previous + B x_t
+      $$h_t = A\,h_{t-1} + B\,x_t, \qquad y_t = C\,h_t\;(+\,D\,x_t)$$
 
+      - $A$ decides how much of the old state survives each step (here 0.5).
+      - $B$ decides how the new input enters the state (here 1).
+      - $C$ decides how the state is read out (here 1).
+      - $D$ is an optional shortcut straight from input to output; we'll set it to 0.
 
-    y_t = C h_t + D x_t
+      In a real model, $h_t$ is a vector of $N$ numbers, $A$ is an $N \times N$ matrix, and each of $A$, $B$, $C$ is learned. You met this shape in module 13's lesson on recurrent networks. The difference is that there is no nonlinearity inside the update, and that one choice unlocks everything in the rest of this lesson.
+    diagram:
+      caption: One step of a state-space model. The state loops back through A.
+      description: "The input x_t passes through B into the state h_t. The previous state h_t−1 passes through A into the same state, where the two are added. The state passes through C to the output y_t, and it also becomes the previous state for the next step."
+      nodes:
+        - id: x
+          label: Input x_t
+          note: heater burst
+          col: 0
+          row: 1
+          tone: data
+        - id: b
+          label: × B
+          col: 1
+          row: 1
+        - id: h
+          label: State h_t
+          note: A·h_t−1 + B·x_t
+          col: 2
+          row: 1
+          tone: accent
+        - id: c
+          label: × C
+          col: 3
+          row: 1
+        - id: y
+          label: Output y_t
+          note: thermometer
+          col: 4
+          row: 1
+          tone: data
+        - id: a
+          label: × A
+          note: applied to h_t−1
+          col: 2
+          row: 0
+      edges:
+        - from: x
+          to: b
+        - from: b
+          to: h
+        - from: a
+          to: h
+        - from: h
+          to: c
+        - from: c
+          to: y
+        - from: h
+          to: a
+          label: next step
+          dashed: true
+          bend: -2
+    bridges: []
+  - id: state-space-sequences.s2
+    title: Trace the fading memory
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.state-space-sequences
+    markdown: |-
+      Take $A = 0.5$, $B = 1$, $C = 1$, a starting state of 0, and heater bursts $x = 2, 0, 0$:
 
+      | Step | $x_t$ | $h_t = 0.5\,h_{t-1} + x_t$ | $y_t$ |
+      | ---: | ---: | --- | ---: |
+      | 1 | 2 | $0.5 \times 0 + 2 = 2$ | 2 |
+      | 2 | 0 | $0.5 \times 2 + 0 = 1$ | 1 |
+      | 3 | 0 | $0.5 \times 1 + 0 = 0.5$ | 0.5 |
 
-    A controls how the old state carries forward; B controls how the new input enters. C reads the state, while
-    D permits a direct input contribution. These are matrices in the general case. The next example uses ordinary
-    numbers so we can calculate each step by hand.'
-  text_mode: 'Let x be the current input, h the hidden state, and y the output. The index t counts time steps.
-    A simple state-space model updates the state and reads an output using:
+      The burst fades by half each step. $A$ sets the memory's **timescale**: with $A = 0.9$ the same burst would still be worth $2 \times 0.9^{10} \approx 0.70$ ten steps later; with $A = 0.1$ it has shrunk to 0.02 after just two.
 
+      :::predict What happens with A = 1.1 and the same single burst of 2?
+      The state *grows*: 2, 2.2, 2.42, … After 50 steps it is $2 \times 1.1^{49} \approx 213$. Any $|A| > 1$ makes the system unstable, so a single input echoes louder forever. For a matrix $A$, the rule is that every eigenvalue must have size below 1.
+      :::
 
-    h_t = A h_previous + B x_t
+      A vector state can hold several timescales at once. With $A = \text{diag}(0.5, 0.9)$, one number forgets fast and one slowly, like a room with thin curtains and thick walls.
+    bridges:
+      - dynamics-and-noise
+  - id: state-space-sequences.s3
+    title: Unroll the loop into a convolution
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.state-space-sequences
+    markdown: |-
+      Substitute the update into itself, starting from $h_0 = 0$:
 
+      $$h_1 = Bx_1, \quad h_2 = ABx_1 + Bx_2, \quad h_3 = A^2Bx_1 + ABx_2 + Bx_3$$
 
-    y_t = C h_t + D x_t
+      Multiply by $C$ and the output is a weighted sum of past inputs, where the weight depends only on *how long ago* each input arrived:
 
+      $$y_t = \sum_{j \le t} K_{t-j}\, x_j, \qquad K = \big(CB,\; CAB,\; CA^2B,\; CA^3B,\; \dots\big)$$
 
-    A controls how the old state carries forward; B controls how the new input enters. C reads the state, while
-    D permits a direct input contribution. These are matrices in the general case. The next example uses ordinary
-    numbers so we can calculate each step by hand.'
-  bridges: []
-- id: state-space-sequences.s2
-  title: Trace scalar dynamics
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.state-space-sequences
-  markdown: Let h_t = 0.5 h_previous + x_t with initial state zero and inputs two, zero, zero. States become
-    two, one, and one-half. The older input decays. Different dynamics can retain information longer or become
-    unstable; learned parameters must support the useful timescales.
-  text_mode: Let h_t = 0.5 h_previous + x_t with initial state zero and inputs two, zero, zero. States become
-    two, one, and one-half. The older input decays. Different dynamics can retain information longer or become
-    unstable; learned parameters must support the useful timescales.
-  bridges:
-  - dynamics-and-noise
-- id: state-space-sequences.s3
-  title: Unpack the state into a weighted history
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.state-space-sequences
-  markdown: '**Time-invariant** means the same linear coefficients apply at every step. Starting from zero,
-    substitute the toy rule into itself: h₂ = 0.5x₁ + x₂, then h₃ = 0.25x₁ + 0.5x₂ + x₃. Earlier inputs contribute
-    through repeated factors.
+      That weighted sum is a **convolution**, and $K$ is its **kernel**. In the heater example, $K = (1, 0.5, 0.25, 0.125, \dots)$, and $y_3 = 0.25 \times 2 + 0.5 \times 0 + 1 \times 0 = 0.5$, matching the table.
 
+      This works because $A$, $B$, and $C$ are the same at every step. Such a system is called **linear time-invariant (LTI)**. The program checks the two views on a two-number state with $A = \text{diag}(0.5, 0.9)$, so $K_k = 0.5^k + 0.9^k$:
 
-    For a linear time-invariant system with suitable initial-state handling, this weighted history can be computed
-    as a convolution over earlier inputs. That allows a parallel training calculation, while recurrence updates
-    one state at a time during inference. Structured matrices can make either form more efficient.'
-  text_mode: '**Time-invariant** means the same linear coefficients apply at every step. Starting from zero,
-    substitute the toy rule into itself: h₂ = 0.5x₁ + x₂, then h₃ = 0.25x₁ + 0.5x₂ + x₃. Earlier inputs contribute
-    through repeated factors.
+      ```python run
+      import numpy as np
 
+      A = np.diag([0.5, 0.9])            # two state numbers: a fast fade and a slow fade
+      B = np.array([1.0, 1.0])           # each input enters both
+      C = np.array([1.0, 1.0])           # the output adds them up
+      x = np.array([2.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+      n = len(x)
 
-    For a linear time-invariant system with suitable initial-state handling, this weighted history can be computed
-    as a convolution over earlier inputs. That allows a parallel training calculation, while recurrence updates
-    one state at a time during inference. Structured matrices can make either form more efficient.'
-  bridges: []
-- id: state-space-sequences.s4
-  title: Discretize with care
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.state-space-sequences
-  markdown: 'Some models begin from continuous-time dynamics and choose a step size and discretization rule.
-    The resulting recurrence determines numerical stability and timescale interpretation. A state-space model’s
-    compact memory differs from attention’s explicit token cache, with consequences for retrieval and long-context
-    tasks.
+      # Recurrent view: carry the state forward one step at a time
+      h, y_rec = np.zeros(2), []
+      for t in range(n):
+          h = A @ h + B * x[t]
+          y_rec.append(C @ h)
 
+      # Convolution view: build the kernel K_k = C A^k B, then slide it over the inputs
+      K = np.array([C @ np.linalg.matrix_power(A, k) @ B for k in range(n)])
+      y_conv = [sum(K[t - j] * x[j] for j in range(t + 1)) for t in range(n)]
 
-    **Discretization** turns a continuously changing mathematical state into updates at distinct time steps.
-    The dynamics-and-noise bridge introduces this idea. A larger time step may make the numerical approximation
-    less accurate or unstable, even when the continuous equation looks well behaved.'
-  text_mode: 'Some models begin from continuous-time dynamics and choose a step size and discretization rule.
-    The resulting recurrence determines numerical stability and timescale interpretation. A state-space model’s
-    compact memory differs from attention’s explicit token cache, with consequences for retrieval and long-context
-    tasks.
+      print("kernel K      :", np.round(K, 4))
+      print("recurrent  y  :", np.round(y_rec, 4))
+      print("convolution y :", np.round(y_conv, 4))
+      ```
 
+      Both rows print 4, 2.8, 2.12, 3.708, 2.8372, 2.3035. Change `A` to `np.diag([0.5, 1.2])` and watch the kernel grow instead of fade.
 
-    **Discretization** turns a continuously changing mathematical state into updates at distinct time steps.
-    The dynamics-and-noise bridge introduces this idea. A larger time step may make the numerical approximation
-    less accurate or unstable, even when the continuous equation looks well behaved.'
-  bridges: []
-- id: state-space-sequences.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.state-space-sequences
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A state-space model carries a compact state forward and reads outputs from it. Its update rule
-    determines which parts of the past remain available and whether the dynamics stay stable.
-- id: state-space-sequences.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.state-space-sequences
-  markdown: A state-space model carries a compact state forward and reads outputs from it. Its update rule
-    determines which parts of the past remain available and whether the dynamics stay stable.
-  text_mode: A state-space model carries a compact state forward and reads outputs from it. Its update rule
-    determines which parts of the past remain available and whether the dynamics stay stable.
+      :::mixup "The recurrence and the convolution are two different models."
+      They are one model computed two ways. Training, where the whole sequence is known, uses the convolution: every output at once, in parallel, and fast with the FFT (the fast Fourier transform, a standard trick for computing long convolutions quickly). Generation uses the recurrence: one state update per new token, with constant memory, like linear attention's running state.
+      :::
+    bridges: []
+  - id: state-space-sequences.s4
+    title: From continuous time to S4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.state-space-sequences
+    markdown: |-
+      Modern SSMs start from a continuous-time system, $h'(t) = a\,h(t) + b\,x(t)$, and choose a step size $\Delta$ to turn it into the step-by-step update. Doing that conversion is called **discretization**. One standard rule (the "zero-order hold") gives $\bar{A} = e^{\Delta a}$.
+
+      Take $a = -1$. A step of $\Delta = 0.1$ gives $\bar{A} = e^{-0.1} \approx 0.905$, a slow fade per step. A step of $\Delta = 1$ gives $\bar{A} = e^{-1} \approx 0.368$, a fast one. The memory in *time* is the same; only the steps are cut differently. And as long as $a < 0$, $e^{\Delta a}$ stays below 1 for any $\Delta$, so learning $a$ as a negative number keeps the model stable automatically.
+
+      :::papers S4: Structured State Spaces (Gu, Goel & Ré, 2021)
+      S4 made this idea work for long sequences with three choices:
+
+      1. **Start $A$ from the HiPPO matrix** (Gu et al., 2020), designed so the state keeps a compressed summary of the *whole* input history rather than a quickly fading one.
+      2. **Discretize** with a learned step $\Delta$ (S4 used the bilinear rule; for $a = -1$, $\Delta = 0.1$ it gives $0.9048$, almost the same as $e^{-0.1}$).
+      3. **Give $A$ a special structure**, "normal plus low-rank", so the long kernel $K$ can be computed quickly instead of by multiplying $A$ thousands of times.
+
+      S4 was the first model to solve Path-X, a task from the Long Range Arena benchmark with sequences of 16,384 steps that every earlier model had failed.
+      :::
+
+      One limit remains, and it sets up the next lesson. Because the kernel depends only on distance, an LTI model weighs "the word three tokens ago" the same way whether that word is a password or "um". Asked to copy the token that follows a marker placed at a random position, it has no way to decide *what* to keep. Mamba fixes that by letting the input change the update.
+    bridges: []
+  - id: state-space-sequences.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.state-space-sequences
+    markdown: Compute kernel entries and outputs by hand, then apply the SSM view to an electricity forecast, a sensor whose sampling rate changes, and a model generating audio.
+    takeaway: |-
+      A state-space model updates h_t = A h_{t−1} + B x_t and reads y_t = C h_t. With fixed A, B, C it is also a convolution with kernel (CB, CAB, CA²B, …), so it trains in parallel and generates with constant memory.
+  - id: state-space-sequences.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.state-space-sequences
+    markdown: |-
+      A state-space model carries a compact state forward and reads outputs from it. Its update rule determines which parts of the past remain available and whether the dynamics stay stable.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - state-space-sequences.s1
-    - state-space-sequences.s2
-    - state-space-sequences.s3
-    - state-space-sequences.s4
-    - state-space-sequences.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - state-space-sequences.s1
+        - state-space-sequences.s2
+        - state-space-sequences.s3
+        - state-space-sequences.s4
+        - state-space-sequences.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     state-space-sequences.recap: state-space-sequences.check
 assessment_families:
-- id: state-space-sequences.base
-  objective_ref: objective.state-space-sequences
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace scalar dynamics: trace the inputs, operation, and result before choosing.'
-  remediation_scene: state-space-sequences.s2
-  variants:
-  - id: state-space-sequences.base.1
-    prompt: For h_t = 0.5 h_previous + x_t, h_previous = 2 and x_t = 0 give what?
-    options:
-    - id: c
-      text: '0'
-    - id: a
-      text: '1'
-    - id: b
-      text: '2'
-    answer: a
-    feedback: The previous state is halved and no new input is added.
-  - id: state-space-sequences.base.2
-    prompt: What does the latent state represent?
-    options:
-    - id: a
-      text: A learned summary updated over the sequence
-    - id: b
-      text: An exact mandatory copy of all tokens
-    - id: c
-      text: Only the next token ID
-    answer: a
-    feedback: State provides recurrent memory.
-- id: state-space-sequences.transfer
-  objective_ref: objective.state-space-sequences
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Discretize with care: trace the inputs, operation, and result before choosing.'
-  remediation_scene: state-space-sequences.s4
-  variants:
-  - id: state-space-sequences.transfer.1
-    prompt: When can recurrence be expressed through a fixed convolution kernel?
-    options:
-    - id: a
-      text: Under linear time-invariant assumptions with appropriate initial-state handling
-    - id: b
-      text: For every nonlinear input-dependent recurrence unchanged
-    - id: c
-      text: Only without any inputs
-    answer: a
-    feedback: The equivalence relies on the system’s structure.
-  - id: state-space-sequences.transfer.2
-    prompt: Why does discretization matter?
-    options:
-    - id: b
-      text: It only renames matrices
-    - id: c
-      text: It guarantees perfect memory
-    - id: a
-      text: It affects the actual update and its stability
-    answer: a
-    feedback: Continuous equations require a concrete discrete implementation.
+  - id: state-space-sequences.base
+    objective_ref: objective.state-space-sequences
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Multiply the old state by A, then add B times the new input.
+    remediation_scene: state-space-sequences.s2
+    variants:
+      - id: state-space-sequences.base.1
+        prompt: For h_t = 0.5 h_previous + x_t, h_previous = 2 and x_t = 0 give what?
+        options:
+          - id: c
+            text: '0'
+          - id: a
+            text: '1'
+          - id: b
+            text: '2'
+        answer: a
+        feedback: The previous state is halved and no new input is added.
+        retired: true
+      - id: state-space-sequences.base.2
+        prompt: What does the latent state represent?
+        options:
+          - id: a
+            text: A learned summary updated over the sequence
+          - id: b
+            text: An exact mandatory copy of all tokens
+          - id: c
+            text: Only the next token ID
+        answer: a
+        feedback: State provides recurrent memory.
+        retired: true
+  - id: state-space-sequences.transfer
+    objective_ref: objective.state-space-sequences
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: The convolution view needs the same A, B, and C at every step.
+    remediation_scene: state-space-sequences.s4
+    variants:
+      - id: state-space-sequences.transfer.1
+        prompt: When can recurrence be expressed through a fixed convolution kernel?
+        options:
+          - id: a
+            text: Under linear time-invariant assumptions with appropriate initial-state handling
+          - id: b
+            text: For every nonlinear input-dependent recurrence unchanged
+          - id: c
+            text: Only without any inputs
+        answer: a
+        feedback: The equivalence relies on the system’s structure.
+        retired: true
+      - id: state-space-sequences.transfer.2
+        prompt: Why does discretization matter?
+        options:
+          - id: b
+            text: It only renames matrices
+          - id: c
+            text: It guarantees perfect memory
+          - id: a
+            text: It affects the actual update and its stability
+        answer: a
+        feedback: Continuous equations require a concrete discrete implementation.
+        retired: true
+  - id: state-space-sequences.base.v2
+    objective_ref: objective.state-space-sequences
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Give each letter its job: A carries the old state forward, B lets the input in, C reads the state out. The kernel entry K_k is the effect of an input k steps ago."
+    remediation_scene: state-space-sequences.s3
+    variants:
+      - id: state-space-sequences.base.v2.1
+        prompt: In h_t = A h_{t−1} + B x_t and y_t = C h_t, which part sets how long an input keeps affecting later outputs?
+        options:
+          - id: b
+            text: B, because it sets how strongly each new input enters the state
+          - id: a
+            text: A, because it sets how much of the old state survives each step
+          - id: c
+            text: C, because it sets how much of the state reaches each output
+        answer: a
+        feedback: Every step multiplies the old state by A, so A decides how quickly an input fades. B and C scale an input's effect up or down but don't change how fast it decays.
+      - id: state-space-sequences.base.v2.2
+        prompt: A scalar SSM has A = 1.2, B = 1, C = 1. It receives one input of 1, then only zeros. What happens to the output?
+        options:
+          - id: c
+            text: It stays at 1, since no new input arrives to change it
+          - id: b
+            text: It fades toward 0, since later inputs are all zero
+          - id: a
+            text: It grows by 20% every step and never settles
+        answer: a
+        feedback: Each step multiplies the state by 1.2, giving 1, 1.2, 1.44, … An SSM is stable only when |A| < 1 (every eigenvalue, for a matrix). It would stay constant at A = 1 and fade for |A| < 1.
+      - id: state-space-sequences.base.v2.3
+        prompt: Why can a linear time-invariant SSM be trained as a convolution over the whole sequence at once?
+        options:
+          - id: a
+            text: With the same A, B, C at every step, an input's effect depends only on how long ago it arrived
+          - id: b
+            text: The state is reset to zero at every step, so each output depends on one input only
+          - id: c
+            text: The kernel is learned as a separate set of weights, independent of A, B, and C
+        answer: a
+        feedback: Unrolling gives y_t = Σ K_{t−j} x_j with K_k = C A^k B, one fixed kernel slid over the inputs. The state is carried forward, not reset, and the kernel is computed from A, B, C rather than learned separately.
+      - id: state-space-sequences.base.v2.4
+        prompt: In the kernel K = (CB, CAB, CA²B, …), what does the entry CA²B tell you?
+        options:
+          - id: b
+            text: How the output two steps from now will depend on today's input only
+          - id: c
+            text: What the state holds after exactly two inputs have been received
+          - id: a
+            text: How much an input from two steps ago contributes to the current output
+        answer: a
+        feedback: The input entered through B, was carried two steps by A twice, and was read out by C. It is a weight on the past, not a prediction or a state value.
+  - id: state-space-sequences.transfer.v2
+    objective_ref: objective.state-space-sequences
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide which view fits (recurrence for step-by-step use, convolution for whole sequences), and what A or Δ controls.
+    remediation_scene: state-space-sequences.s4
+    variants:
+      - id: state-space-sequences.transfer.v2.1
+        prompt: An electricity forecaster must track both an hourly rhythm and a slow weekly trend. Which SSM state design fits?
+        options:
+          - id: a
+            text: A vector state whose A has both fast-fading and slow-fading entries
+          - id: b
+            text: A single state number with A close to 0, so it reacts quickly
+          - id: c
+            text: A single state number with a larger C, so its output is stronger
+        answer: a
+        feedback: Each entry of a diagonal A sets one timescale, so fast and slow entries can track both rhythms. One number has only one timescale, and C changes the output's size, not its memory.
+      - id: state-space-sequences.transfer.v2.2
+        prompt: An SSM is built from h′(t) = −h(t) + x(t) with zero-order hold. Its sensor used to report once per second (Δ = 1); now it reports ten times per second. What is the new per-step factor Ā?
+        options:
+          - id: b
+            text: About 0.037, since the step shrank tenfold
+          - id: a
+            text: About 0.905, since Ā = e^(−0.1)
+          - id: c
+            text: About 0.368, since a never changed
+        answer: a
+        feedback: Ā = e^(Δa) = e^(−0.1) ≈ 0.905. Each step now fades less, but there are ten per second, so the memory in seconds is unchanged. 0.368 is the old Δ = 1 value.
+      - id: state-space-sequences.transfer.v2.3
+        prompt: A task shows a long stream of random symbols, then asks the model to repeat the symbol that followed a marker, where the marker appears at a random position. Why does an LTI SSM struggle?
+        options:
+          - id: c
+            text: Its state is too small to hold even one symbol from the stream
+          - id: b
+            text: Its kernel cannot reach inputs more than a few steps back
+          - id: a
+            text: Its weights depend only on distance, so it can't decide what to keep
+        answer: a
+        feedback: An LTI kernel treats "the input 50 steps ago" the same whatever that input was, so it can't store the post-marker symbol specially. With a slow A it reaches far back, and one symbol fits easily; the problem is choosing, which Mamba's selection addresses.
+      - id: state-space-sequences.transfer.v2.4
+        prompt: A trained S4-style model now generates audio one sample at a time. Which way of running it is efficient?
+        options:
+          - id: a
+            text: Update the state once per sample with the recurrence
+          - id: b
+            text: Recompute the convolution over the whole history at each step
+          - id: c
+            text: Cache each past sample's key and value, like a transformer
+        answer: a
+        feedback: The recurrence costs the same at every step and keeps only the state. Redoing the convolution over the growing history wastes work, and an SSM has no keys and values to cache.
+  - id: state-space-sequences.kernel
+    objective_ref: objective.state-space-sequences
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "K_k = C × A^k × B. For an output, multiply each past input by the kernel entry for its distance and add them up."
+    remediation_scene: state-space-sequences.s3
+    absolute_tolerance: 0.001
+    variants:
+      - id: state-space-sequences.kernel.1
+        prompt: A scalar SSM has A = 0.5, B = 1, C = 1. What is the kernel entry K₃ = C A³ B?
+        answer: 0.125
+        feedback: "0.5³ = 0.125, times B = 1 and C = 1."
+      - id: state-space-sequences.kernel.2
+        prompt: A scalar SSM has A = 0.8, B = 2, C = 0.5. What is the kernel entry K₂ = C A² B?
+        answer: 0.64
+        feedback: "0.5 × 0.8² × 2 = 0.5 × 0.64 × 2 = 0.64."
+      - id: state-space-sequences.kernel.3
+        prompt: An SSM has A = diag(0.5, 0.9), B = [1, 1], C = [1, 1]. What is the kernel entry K₂ = C A² B?
+        answer: 1.06
+        feedback: "Each state number contributes its own term: 0.5² + 0.9² = 0.25 + 0.81 = 1.06."
+      - id: state-space-sequences.kernel.4
+        prompt: A scalar SSM has A = 0.9, B = 1, C = 2, and starts at zero. Inputs are x₁ = 1, x₂ = 0, x₃ = 3. What is the output y₃?
+        answer: 7.62
+        feedback: "The kernel is K = (2, 1.8, 1.62). y₃ = K₂x₁ + K₁x₂ + K₀x₃ = 1.62 × 1 + 1.8 × 0 + 2 × 3 = 7.62."
+      - id: state-space-sequences.kernel.5
+        prompt: A scalar SSM has A = 0.5, B = 4, C = 1, and starts at zero. Inputs are x₁ = 1, x₂ = 1. What is the output y₂?
+        answer: 6
+        feedback: "K = (4, 2, …). y₂ = K₁x₁ + K₀x₂ = 2 + 4 = 6. The recurrence agrees: h₁ = 4, h₂ = 0.5 × 4 + 4 = 6."

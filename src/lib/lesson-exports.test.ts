@@ -28,15 +28,16 @@ describe("project review worksheets", () => {
       `Objective version: ${objective.id} — ${objective.version}`,
     );
     expect(result).not.toContain("Lesson version:");
-    expect(result).toContain(
-      "Self-review or ask a peer to score four criteria from 0–2",
-    );
-    expect(result).toContain(
-      "counts and arithmetic; preserved versions; fixed and fair comparison; honest scope",
-    );
-    expect(result.indexOf("### Freeze a small test")).toBeLessThan(
-      result.indexOf("### Present the artifact"),
-    );
+    // Authored teaching scenes appear in route order (titles are Markdown-escaped).
+    const plain = result.replace(/\\(.)/g, "$1");
+    const positions = project.routes.core
+      .map((id) => project.scenes.find((scene) => scene.id === id)!)
+      .filter((scene) => !["assessment", "question", "recap"].includes(scene.type))
+      .map((scene) => plain.indexOf(`### ${scene.title}`));
+    expect(positions.length).toBeGreaterThan(2);
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    expect(plain).toMatch(/rubric/i);
     expect(result).toContain("I kept two checkpoint tables.");
     expect(result).toContain("counts.csv and comparison.pdf");
     expect(result).toContain("Is the comparison fair?");
@@ -52,11 +53,12 @@ describe("project review worksheets", () => {
     "includes the actual reading sequence for $id, without quiz payloads",
     (lesson) => {
       const result = createProjectReview(lesson, curriculum, emptyDraft);
+      const plain = result.replace(/\\(.)/g, "$1");
       for (const id of [...lesson.routes.core, ...lesson.routes.mathematics]) {
         const scene = lesson.scenes.find((scene) => scene.id === id)!;
         if (["assessment", "question", "recap"].includes(scene.type)) continue;
-        // Plain titles currently contain no Markdown formatting characters.
-        expect(result).toContain(scene.title);
+        // Titles are Markdown-escaped in the export; compare the unescaped text.
+        expect(plain).toContain(scene.title);
       }
       expect(result).toContain("Evidence inspected:");
       expect(result).not.toContain('"answers"');

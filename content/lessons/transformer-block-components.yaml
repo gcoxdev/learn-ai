@@ -1,222 +1,523 @@
 schema_version: 0.2-draft
 lesson:
   id: transformer-block-components
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Separate mixing across tokens from transforming one token
   state: draft
-  summary: Separate attention’s mixing across positions from the per-position calculations and shortcuts inside
-    a transformer block.
+  summary: "Every transformer layer repeats one small recipe: normalize, attend, add; normalize, MLP, add. Trace it with real numbers and count the 7 million weights in each GPT-2 layer."
   slot: M15.6
   category: learning
   sources:
-  - title: The Llama 3 Herd of Models
-    url: https://arxiv.org/abs/2407.21783
-  - title: GLU Variants Improve Transformer
-    url: https://arxiv.org/abs/2002.05202
+    - title: "Attention Is All You Need, sections 3.1 and 3.3 (Vaswani et al., 2017)"
+      url: https://arxiv.org/abs/1706.03762
+    - title: "Language Models are Unsupervised Multitask Learners (GPT-2; Radford et al., 2019)"
+      url: https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf
+    - title: "On Layer Normalization in the Transformer Architecture (Xiong et al., 2020)"
+      url: https://arxiv.org/abs/2002.04745
+    - title: "Root Mean Square Layer Normalization (Zhang & Sennrich, 2019)"
+      url: https://arxiv.org/abs/1910.07467
+    - title: "GLU Variants Improve Transformer (Shazeer, 2020)"
+      url: https://arxiv.org/abs/2002.05202
+    - title: "A Mathematical Framework for Transformer Circuits (Elhage et al., 2021)"
+      url: https://transformer-circuits.pub/2021/framework/index.html
+    - title: "LLaMA: Open and Efficient Foundation Language Models (Touvron et al., 2023)"
+      url: https://arxiv.org/abs/2302.13971
+    - title: The Llama 3 Herd of Models
+      url: https://arxiv.org/abs/2407.21783
 objectives:
-- id: objective.transformer-block-components
-  version: 1-draft
-  statement: Transformer blocks combine attention, position-wise feed-forward computation, residual additions,
-    and normalization; gated activations and placement conventions change the exact computation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - transformer-block-components.base
-  - transformer-block-components.transfer
-  prerequisites:
-  - anyOf:
-    - objective.multi-head-attention
-  - anyOf:
-    - objective.residuals-normalization-dropout
+  - id: objective.transformer-block-components
+    version: 2-draft
+    statement: Transformer blocks combine attention, position-wise feed-forward computation, residual additions, and normalization; gated activations and placement conventions change the exact computation.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - transformer-block-components.base.v2
+      - transformer-block-components.transfer.v2
+      - transformer-block-components.calculate
+    prerequisites:
+      - anyOf:
+          - objective.multi-head-attention
+      - anyOf:
+          - objective.residuals-normalization-dropout
 scenes:
-- id: transformer-block-components.s1
-  title: Mix across positions, then transform each one
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.transformer-block-components
-  markdown: 'Attention mixes information across the positions it may use. A **position-wise feed-forward**
-    sublayer then applies the same learned rule separately to each token’s current vector. **Feed-forward**
-    means the calculation follows its transformations without carrying a recurrent state between positions.
+  - id: transformer-block-components.s1
+    title: A shared scratchpad called the residual stream
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.transformer-block-components
+    markdown: |-
+      In GPT-2 small, each token is a vector of 768 numbers that passes through 12 identical blocks. No block ever replaces that vector. Each one reads it, computes an update, and *adds* the update back, the residual connection $y = x + F(x)$ from the residuals lesson. Researchers call this running vector the **residual stream**: a shared scratchpad that every block reads from and writes to.
 
+      Each block makes two additions, from two different sublayers:
 
-    The token’s vector already contains context from earlier mixing. The sublayer can transform that context,
-    but does not directly read another position or create a new attention matrix. These two kinds of operation
-    therefore do different jobs in the block.'
-  text_mode: 'Attention mixes information across the positions it may use. A **position-wise feed-forward**
-    sublayer then applies the same learned rule separately to each token’s current vector. **Feed-forward**
-    means the calculation follows its transformations without carrying a recurrent state between positions.
+      1. **Attention** moves information *between* positions: "are" pulls in facts about "keys".
+      2. The **MLP** (multilayer perceptron, also called the feed-forward sublayer) then works on each position *by itself*, applying the same small network to every token's vector. It can't see other tokens; whatever it knows about them arrived through attention.
 
+      Modern models normalize the stream just before each sublayer. This is the **pre-norm** block, used by GPT-2 and most later models:
 
-    The token’s vector already contains context from earlier mixing. The sublayer can transform that context,
-    but does not directly read another position or create a new attention matrix. These two kinds of operation
-    therefore do different jobs in the block.'
-  bridges: []
-- id: transformer-block-components.s2
-  title: Follow two branches through a gate
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-block-components
-  markdown: 'A gated feed-forward design projects one input along two branches, applies an activation to one,
-    multiplies matching coordinates across the branches, and projects the result back.
+      $$x \leftarrow x + \text{Attention}(\text{Norm}(x)), \qquad x \leftarrow x + \text{MLP}(\text{Norm}(x))$$
 
+      :::mixup "The MLP mixes information between tokens too."
+      It doesn't. The MLP sees one token's vector at a time. Only attention moves information across positions. Remove attention and every token would be processed in isolation, however many MLPs you stacked.
+      :::
+    diagram:
+      caption: A pre-norm transformer block. The residual stream runs straight through; each sublayer reads a normalized copy and adds its update.
+      description: The residual stream x enters on the left. One copy goes through a norm and then multi-head attention; the attention output is added back to the stream at the first add. The stream continues to a second norm and the MLP, whose output is added back at the second add. The stream then leaves the block, unchanged in shape. The skip arrows carry x directly to each add.
+      nodes:
+        - id: xin
+          label: Residual stream in
+          note: T × d_model
+          col: 0
+          row: 1
+          tone: data
+        - id: ln1
+          label: Norm
+          col: 1
+          row: 0
+          tone: muted
+        - id: attn
+          label: Multi-head attention
+          note: mixes across positions
+          col: 2
+          row: 0
+          tone: accent
+        - id: add1
+          label: Add
+          col: 2
+          row: 1
+        - id: ln2
+          label: Norm
+          col: 3
+          row: 0
+          tone: muted
+        - id: mlp
+          label: MLP
+          note: each position alone, 4× wide
+          col: 4
+          row: 0
+          tone: accent
+        - id: add2
+          label: Add
+          col: 4
+          row: 1
+        - id: xout
+          label: Residual stream out
+          note: same shape
+          col: 5
+          row: 1
+          tone: data
+      edges:
+        - from: xin
+          to: ln1
+        - from: ln1
+          to: attn
+        - from: attn
+          to: add1
+        - from: xin
+          to: add1
+          label: skip
+        - from: add1
+          to: ln2
+        - from: ln2
+          to: mlp
+        - from: mlp
+          to: add2
+        - from: add1
+          to: add2
+          label: skip
+        - from: add2
+          to: xout
+    bridges:
+      - residuals-normalization-dropout
+  - id: transformer-block-components.s3
+    title: Where the norm goes, and which norm
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-block-components
+    markdown: |-
+      The 2017 transformer normalized *after* each addition, $x \leftarrow \text{Norm}(x + F(x))$, called **post-norm**. GPT-2 moved the norm to the start of each branch and added one final norm after the last block. Xiong and colleagues (2020) showed why this matters: with pre-norm the untouched stream gives gradients a clean path, so deep models train stably, often without the careful learning-rate warm-up post-norm needs.
 
-    **SiLU** is the activation z × sigmoid(z), where sigmoid maps a score to the range 0 to 1. **SwiGLU** uses
-    SiLU on one branch before the multiplication. If the transformed gate is [0.5, 2] and the other branch
-    is [4, −1], their elementwise product is [2, −2].
+      Which norm? The residuals lesson's **LayerNorm** subtracts the mean and divides by the standard deviation. **RMSNorm** (Zhang and Sennrich, 2019) skips the mean and divides by the root mean square:
 
+      $$\text{LayerNorm}(x) = \gamma \odot \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} + \beta \qquad\qquad \text{RMSNorm}(x) = \gamma \odot \frac{x}{\sqrt{\tfrac{1}{d}\sum_i x_i^2 + \epsilon}}$$
 
-    This gate scales features; it is not a normalized probability distribution over tokens or experts.'
-  text_mode: 'A gated feed-forward design projects one input along two branches, applies an activation to one,
-    multiplies matching coordinates across the branches, and projects the result back.
+      Take $x = [1, 3]$ with $\gamma = 1$, $\beta = 0$, and tiny $\epsilon$:
 
+      | | Step | Result |
+      | --- | --- | --- |
+      | LayerNorm | mean 2, variance 1: $([1, 3] - 2) / 1$ | $[-1,\ 1]$ |
+      | RMSNorm | $\sqrt{(1 + 9)/2} = \sqrt{5} \approx 2.236$: $[1, 3] / 2.236$ | $[0.447,\ 1.342]$ |
 
-    **SiLU** is the activation z × sigmoid(z), where sigmoid maps a score to the range 0 to 1. **SwiGLU** uses
-    SiLU on one branch before the multiplication. If the transformed gate is [0.5, 2] and the other branch
-    is [4, −1], their elementwise product is [2, −2].
+      RMSNorm keeps the vector's direction and only fixes its size. It's a little cheaper and works about as well; LLaMA and many later models use it.
+  - id: transformer-block-components.s2
+    title: "The MLP: widen, bend, narrow"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-block-components
+    markdown: |-
+      The classic MLP widens each token's vector to 4 times its size, applies a nonlinearity, and narrows it back:
 
+      $$\text{MLP}(x) = \text{GELU}(x W_1 + b_1)\, W_2 + b_2 \qquad W_1: d \times 4d, \quad W_2: 4d \times d$$
 
-    This gate scales features; it is not a normalized probability distribution over tokens or experts.'
-  bridges:
-  - matrices-tensors
-- id: transformer-block-components.s3
-  title: Add the update and check the normalization rule
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-block-components
-  markdown: 'A **residual addition** combines an incoming representation with a computed update. Normalization
-    may occur before or after a sublayer, depending on the design.
+      In GPT-2 small that's 768 → 3,072 → 768. The original transformer used ReLU; GPT-2 uses GELU, a smooth cousin of ReLU.
 
+      Many recent models use **SwiGLU** instead (Shazeer, 2020). It computes two widened copies of $x$ and lets one *gate* the other, entry by entry:
 
-    **Layer normalization** subtracts a mean and rescales. Common **RMSNorm** rescales without subtracting
-    the mean. RMS means **root mean square**: square the entries, average them, and take the square root. For
-    [1, 3], the RMS is √5, giving [1/√5, 3/√5] after division. Both entries remain positive.
+      $$\text{SwiGLU}(x) = \big(\text{SiLU}(x W) \odot x V\big)\, W_2, \qquad \text{SiLU}(z) = z \cdot \sigma(z)$$
 
+      $\sigma$ is the sigmoid, which squeezes any number into 0 to 1, and $\odot$ means multiply matching entries. Suppose the gate branch $xW$ gives $[2, -1]$ and the other branch $xV$ gives $[1, 3]$:
 
-    The practical formula also includes learned gains and a small **stabilizer** to avoid problematic division
-    near zero. Check that exact formula and the order of operations when tracing a real block.'
-  text_mode: 'A **residual addition** combines an incoming representation with a computed update. Normalization
-    may occur before or after a sublayer, depending on the design.
+      - $\text{SiLU}(2) = 2 \times 0.881 = 1.762$, and $\text{SiLU}(-1) = -1 \times 0.269 = -0.269$.
+      - Gate times branch: $[1.762 \times 1,\ -0.269 \times 3] = [1.762,\ -0.807]$.
 
+      The positive gate lets its entry through almost at full strength; the negative one nearly shuts its entry off. Then $W_2$ narrows the result back to $d$. SwiGLU has three matrices instead of two, so models shrink its hidden width to about $\tfrac{8}{3}d$ to keep the same number of weights. LLaMA-7B, with $d = 4096$, uses 11,008.
+    bridges:
+      - matrices-tensors
+      - nonlinearity
+  - id: transformer-block-components.params
+    title: Count the weights, about 12·d² per block
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-block-components
+    markdown: |-
+      Add up one block, ignoring the small biases and norm gains:
 
-    **Layer normalization** subtracts a mean and rescales. Common **RMSNorm** rescales without subtracting
-    the mean. RMS means **root mean square**: square the entries, average them, and take the square root. For
-    [1, 3], the RMS is √5, giving [1/√5, 3/√5] after division. Both entries remain positive.
+      | Part | Matrices | Weights |
+      | --- | --- | --- |
+      | Attention | $W_Q, W_K, W_V, W_O$, each $d \times d$ | $4d^2$ |
+      | MLP | $W_1$: $d \times 4d$, and $W_2$: $4d \times d$ | $8d^2$ |
+      | Whole block | | $12d^2$ |
 
+      For GPT-2 small, $12 \times 768^2 = 7{,}077{,}888$. Two-thirds of every block is MLP.
 
-    The practical formula also includes learned gains and a small **stabilizer** to avoid problematic division
-    near zero. Check that exact formula and the order of operations when tracing a real block.'
-  bridges: []
-- id: transformer-block-components.s4
-  title: Inspect a real block before tracing it
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-block-components
-  markdown: Draw the order of normalization, projection, activation, gating, attention, and residual addition
-    from the implementation or report. Check widths and data types. Architecture labels alone do not settle
-    these details. A whole block can preserve input-output shape while doing substantially different internal
-    computation.
-  text_mode: Draw the order of normalization, projection, activation, gating, attention, and residual addition
-    from the implementation or report. Check widths and data types. Architecture labels alone do not settle
-    these details. A whole block can preserve input-output shape while doing substantially different internal
-    computation.
-  bridges: []
-- id: transformer-block-components.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-block-components
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Attention mixes across tokens; the feed-forward sublayer transforms each token’s current features.
-    Residual and normalization rules connect these operations, and their exact order depends on the design.
-- id: transformer-block-components.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.transformer-block-components
-  markdown: Attention mixes across tokens; the feed-forward sublayer transforms each token’s current features.
-    Residual and normalization rules connect these operations, and their exact order depends on the design.
-  text_mode: Attention mixes across tokens; the feed-forward sublayer transforms each token’s current features.
-    Residual and normalization rules connect these operations, and their exact order depends on the design.
+      :::predict GPT-2 small is called a "124M" model, but 12 blocks × 7.08M is only about 85M. Where's the rest?
+      Mostly in the token embedding table: 50,257 tokens × 768 = 38.6M. GPT-2 reuses the same table to turn the final vectors back into vocabulary scores, so it's counted once. Add 786K for the 1,024 learned positions and the small biases and norms, and you land on 124,439,808.
+      :::
+
+      ```python run
+      n_layer, d, vocab, n_ctx = 12, 768, 50257, 1024     # GPT-2 small
+
+      attn = 4 * d * d + 4 * d            # W_Q, W_K, W_V, W_O and their biases
+      mlp = 2 * d * (4 * d) + 4 * d + d   # d -> 4d -> d, with biases
+      norms = 2 * (2 * d)                 # two LayerNorms: gain and shift each
+      block = attn + mlp + norms
+      print(f"one block:        {block:>12,}   (12·d² = {12 * d * d:,})")
+
+      tokens = vocab * d                  # token embeddings, reused as the unembedding
+      positions = n_ctx * d               # learned position vectors
+      final_norm = 2 * d
+      total = tokens + positions + n_layer * block + final_norm
+      print(f"token embeddings: {tokens:>12,}")
+      print(f"position table:   {positions:>12,}")
+      print(f"{n_layer} blocks:        {n_layer * block:>12,}")
+      print(f"total:            {total:>12,}")
+      ```
+
+      Try GPT-2 medium: 24 layers with $d = 1024$ gives about 355M. Notice how fast the blocks overtake the embedding table as $d$ grows, since blocks scale with $d^2$ and the table only with $d$.
+  - id: transformer-block-components.s4
+    title: Read a real model's recipe
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-block-components
+    markdown: |-
+      Two models can both be "decoder-only transformers" and still differ inside every block. Compare GPT-2 (2019) with LLaMA (2023):
+
+      | Choice | GPT-2 | LLaMA |
+      | --- | --- | --- |
+      | Norm placement | Pre-norm, plus a final norm | Pre-norm, plus a final norm |
+      | Norm type | LayerNorm | RMSNorm |
+      | MLP | GELU, $4d$ wide | SwiGLU, about $\tfrac{8}{3}d$ wide |
+      | Positions | Learned table | RoPE |
+
+      Both blocks take a $T \times d$ stream in and put a $T \times d$ stream out, so a diagram of shapes alone can't tell them apart. When you trace a model, read its config file or code for these four choices first. Then every number you compute will match the real thing.
+  - id: transformer-block-components.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-block-components
+    markdown: Weight counts for new model sizes, an RMSNorm to compute, and a few training runs where a block choice made the difference.
+    takeaway: |-
+      A block adds two updates to the residual stream: attention, which mixes across positions, then a per-token MLP, each reading a normalized copy of the stream. Together they hold about 12·d² weights.
+  - id: transformer-block-components.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.transformer-block-components
+    markdown: |-
+      Attention mixes across tokens; the feed-forward sublayer transforms each token’s current features. Residual and normalization rules connect these operations, and their exact order depends on the design.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - transformer-block-components.s1
-    - transformer-block-components.s2
-    - transformer-block-components.s3
-    - transformer-block-components.s4
-    - transformer-block-components.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - transformer-block-components.s1
+        - transformer-block-components.s3
+        - transformer-block-components.s2
+        - transformer-block-components.params
+        - transformer-block-components.s4
+        - transformer-block-components.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     transformer-block-components.recap: transformer-block-components.check
 assessment_families:
-- id: transformer-block-components.base
-  objective_ref: objective.transformer-block-components
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Follow a gated feed-forward path: trace the inputs, operation, and result before choosing.'
-  remediation_scene: transformer-block-components.s2
-  variants:
-  - id: transformer-block-components.base.1
-    prompt: Which standard sublayer directly mixes information across token positions?
-    options:
-    - id: b
-      text: A purely position-wise feed-forward map
-    - id: c
-      text: Only a learned scalar gain
-    - id: a
-      text: Attention
-    answer: a
-    feedback: Attention combines values from permitted positions.
-  - id: transformer-block-components.base.2
-    prompt: What does a gated feed-forward design multiply?
-    options:
-    - id: c
-      text: Every output probability by zero
-    - id: a
-      text: Two transformed feature paths coordinate by coordinate
-    - id: b
-      text: Only token IDs as vocabulary labels
-    answer: a
-    feedback: The gate modulates features within the position-wise computation.
-- id: transformer-block-components.transfer
-  objective_ref: objective.transformer-block-components
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Inspect a real block before tracing it: trace the inputs, operation, and result before choosing.'
-  remediation_scene: transformer-block-components.s4
-  variants:
-  - id: transformer-block-components.transfer.1
-    prompt: Is a SwiGLU gate automatically a softmax probability over experts?
-    options:
-    - id: c
-      text: Only if the hidden width is large
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Feature gating and expert routing are different mechanisms.
-  - id: transformer-block-components.transfer.2
-    prompt: Two blocks have identical outer shapes. Does that imply identical normalization order?
-    options:
-    - id: a
-      text: No; inspect the architecture
-    - id: b
-      text: Yes; shapes determine every operation
-    - id: c
-      text: Only in a decoder
-    answer: a
-    feedback: Shape compatibility does not specify the computation graph.
+  - id: transformer-block-components.base
+    objective_ref: objective.transformer-block-components
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Follow a gated feed-forward path: trace the inputs, operation, and result before choosing.'
+    remediation_scene: transformer-block-components.s2
+    variants:
+      - id: transformer-block-components.base.1
+        prompt: Which standard sublayer directly mixes information across token positions?
+        options:
+          - id: b
+            text: A purely position-wise feed-forward map
+          - id: c
+            text: Only a learned scalar gain
+          - id: a
+            text: Attention
+        answer: a
+        feedback: Attention combines values from permitted positions.
+        retired: true
+      - id: transformer-block-components.base.2
+        prompt: What does a gated feed-forward design multiply?
+        options:
+          - id: c
+            text: Every output probability by zero
+          - id: a
+            text: Two transformed feature paths coordinate by coordinate
+          - id: b
+            text: Only token IDs as vocabulary labels
+        answer: a
+        feedback: The gate modulates features within the position-wise computation.
+        retired: true
+  - id: transformer-block-components.transfer
+    objective_ref: objective.transformer-block-components
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Inspect a real block before tracing it: trace the inputs, operation, and result before choosing.'
+    remediation_scene: transformer-block-components.s4
+    variants:
+      - id: transformer-block-components.transfer.1
+        prompt: Is a SwiGLU gate automatically a softmax probability over experts?
+        options:
+          - id: c
+            text: Only if the hidden width is large
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Feature gating and expert routing are different mechanisms.
+        retired: true
+      - id: transformer-block-components.transfer.2
+        prompt: Two blocks have identical outer shapes. Does that imply identical normalization order?
+        options:
+          - id: a
+            text: No; inspect the architecture
+          - id: b
+            text: Yes; shapes determine every operation
+          - id: c
+            text: Only in a decoder
+        answer: a
+        feedback: Shape compatibility does not specify the computation graph.
+        retired: true
+  - id: transformer-block-components.base.v2
+    objective_ref: objective.transformer-block-components
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Write out the pre-norm block, x ← x + Attention(Norm(x)) then x ← x + MLP(Norm(x)), and ask which piece does the job in the question.'
+    remediation_scene: transformer-block-components.s1
+    variants:
+      - id: transformer-block-components.base.v2.1
+        prompt: In "the keys to the cabinet are rusty", the vector for "are" needs to learn that its subject is plural. Which part of a block can carry that information over from "keys"?
+        options:
+          - id: b
+            text: The MLP, since it is the widest part of the block
+          - id: c
+            text: The norm, since it rescales every position together
+          - id: a
+            text: Attention, since it mixes values across positions
+        answer: a
+        feedback: Only attention moves information between positions. The MLP is wide but sees one token at a time, and each norm works on one token's vector alone.
+      - id: transformer-block-components.base.v2.2
+        prompt: Which line describes one pre-norm attention sublayer?
+        options:
+          - id: a
+            text: x ← x + Attention(Norm(x))
+          - id: b
+            text: x ← Norm(x + Attention(x))
+          - id: c
+            text: x ← x + Norm(Attention(x))
+        answer: a
+        feedback: Pre-norm normalizes the copy that goes into the sublayer and leaves the stream itself untouched. Norm(x + Attention(x)) is the 2017 post-norm layout.
+      - id: transformer-block-components.base.v2.3
+        prompt: What does RMSNorm (with gain 1) output for the vector [3, 4]?
+        options:
+          - id: c
+            text: '[0.6, 0.8]'
+          - id: a
+            text: '[0.849, 1.131]'
+          - id: b
+            text: '[−1, 1]'
+        answer: a
+        feedback: The root mean square is √((9 + 16)/2) = √12.5 ≈ 3.536, and [3, 4] / 3.536 ≈ [0.849, 1.131]. [−1, 1] is LayerNorm, which subtracts the mean, and [0.6, 0.8] divides by the length 5 instead of the root mean square.
+      - id: transformer-block-components.base.v2.4
+        prompt: In a SwiGLU MLP, the gate branch gives [2, −1] and the other branch gives [1, 3]. What is multiplied, entry by entry, before W_2?
+        options:
+          - id: b
+            text: '[2, −1] times [1, 3], giving [2, −3]'
+          - id: a
+            text: SiLU of [2, −1] times [1, 3], giving [1.762, −0.807]
+          - id: c
+            text: SiLU of both branches, giving [1.288, −0.769]
+        answer: a
+        feedback: Only the gate branch goes through SiLU, and then it multiplies the other branch entry by entry. Skipping SiLU loses the gating, and applying it to both branches changes the second one too.
+  - id: transformer-block-components.transfer.v2
+    objective_ref: objective.transformer-block-components
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Think about the residual stream as a highway that every block adds to. Ask what keeps flowing when one sublayer changes, and where the norm sits relative to the addition.
+    remediation_scene: transformer-block-components.s3
+    variants:
+      - id: transformer-block-components.transfer.v2.1
+        prompt: A team training a 48-layer post-norm transformer sees the loss blow up in the first few hundred steps unless they use a long learning-rate warm-up. Which architecture change most directly targets this?
+        options:
+          - id: a
+            text: Move each norm to the start of its branch (pre-norm) and add a final norm
+          - id: b
+            text: Remove the residual connections so the norms control every layer's scale
+          - id: c
+            text: Switch the MLP from GELU to SwiGLU so the updates are gated
+        answer: a
+        feedback: Pre-norm leaves a clean residual path for gradients, which is what made deep transformers train stably with little or no warm-up. Removing residuals makes depth harder, and SwiGLU changes the MLP, not stability of the stack.
+      - id: transformer-block-components.transfer.v2.2
+        prompt: A researcher zeroes out the MLP output of block 7 in a 12-block model. The text gets somewhat worse but stays fluent. What best explains why it doesn't collapse?
+        options:
+          - id: c
+            text: Attention in block 7 recomputes whatever the MLP would have added
+          - id: b
+            text: The norm after block 7 rescales the stream back to its old values
+          - id: a
+            text: The residual stream still carries everything written before block 7
+        answer: a
+        feedback: Each block only adds an update, so removing one update leaves the rest of the stream intact for later blocks. Attention doesn't imitate the MLP, and a norm can't restore information that was never added.
+      - id: transformer-block-components.transfer.v2.3
+        prompt: A model with d = 3072 has a GELU MLP of hidden width 12,288. You switch to SwiGLU and want the same number of MLP weights. What hidden width should you use?
+        options:
+          - id: b
+            text: 12,288, the same width as before
+          - id: a
+            text: 8,192, about 8/3 of d
+          - id: c
+            text: 6,144, twice d
+        answer: a
+        feedback: The GELU MLP has 2 × 3072 × 12288 = 8d² weights. SwiGLU has three d × h matrices, so 3dh = 8d² gives h = 8d/3 = 8,192. Keeping 12,288 would add 50% more weights.
+      - id: transformer-block-components.transfer.v2.4
+        prompt: A model card lists "RMSNorm, pre-norm, SwiGLU, RoPE". Another lists "LayerNorm, pre-norm, GELU, learned positions". Both map a T × 4096 stream to a T × 4096 stream. What can you conclude?
+        options:
+          - id: c
+            text: Their blocks compute the same function, since the shapes match
+          - id: a
+            text: Their blocks compute different things despite identical shapes
+          - id: b
+            text: The first model must be larger, since SwiGLU adds a third matrix
+        answer: a
+        feedback: Shapes say nothing about which norm, activation, or position method runs inside. SwiGLU does add a matrix, but its hidden width is usually shrunk to keep the weight count the same.
+  - id: transformer-block-components.calculate
+    objective_ref: objective.transformer-block-components
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Attention has four d × d matrices (4d²). The classic MLP has one d × 4d matrix and one 4d × d matrix (8d²). Ignore biases and norms.
+    remediation_scene: transformer-block-components.params
+    variants:
+      - id: transformer-block-components.calculate.1
+        prompt: A transformer block has d = 512 and a classic 4× MLP. Record the attention weights (Q, K, V, O) and the MLP weights, ignoring biases and norms.
+        answers:
+          attn: 1048576
+          mlp: 2097152
+        reason_answer: b
+        reason_options:
+          - id: a
+            text: The MLP is one d × 4d matrix, so it has 4d² weights, the same as attention.
+          - id: b
+            text: The MLP has a d × 4d and a 4d × d matrix, so it has 8d², twice attention's 4d².
+          - id: c
+            text: The MLP works on one token at a time, so it has only d² weights.
+        feedback: Attention is 4 × 512² = 1,048,576 and the MLP is 8 × 512² = 2,097,152, for 12d² = 3,145,728 in the block. Forgetting the narrowing matrix W_2 halves the MLP count.
+      - id: transformer-block-components.calculate.2
+        prompt: GPT-2 medium has d = 1024 and a classic 4× MLP. Record the attention weights (Q, K, V, O) and the MLP weights in one block, ignoring biases and norms.
+        answers:
+          attn: 4194304
+          mlp: 8388608
+        reason_answer: c
+        reason_options:
+          - id: a
+            text: The MLP works on one token at a time, so it has only d² weights.
+          - id: b
+            text: The MLP is one d × 4d matrix, so it has 4d² weights, the same as attention.
+          - id: c
+            text: The MLP has a d × 4d and a 4d × d matrix, so it has 8d², twice attention's 4d².
+        feedback: Attention is 4 × 1024² = 4,194,304 and the MLP is 8 × 1024² = 8,388,608. Working per token affects which inputs the MLP sees, not how many weights it has.
+      - id: transformer-block-components.calculate.3
+        prompt: A block has d = 2048 and a classic 4× MLP. Record the attention weights (Q, K, V, O) and the MLP weights, ignoring biases and norms.
+        answers:
+          attn: 16777216
+          mlp: 33554432
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: The MLP has a d × 4d and a 4d × d matrix, so it has 8d², twice attention's 4d².
+          - id: b
+            text: The MLP works on one token at a time, so it has only d² weights.
+          - id: c
+            text: The MLP is one d × 4d matrix, so it has 4d² weights, the same as attention.
+        feedback: Attention is 4 × 2048² = 16,777,216 and the MLP is 8 × 2048² = 33,554,432, about 50M per block in total.
+      - id: transformer-block-components.calculate.4
+        prompt: A small model has d = 256 and a classic 4× MLP. Record the attention weights (Q, K, V, O) and the MLP weights in one block, ignoring biases and norms.
+        answers:
+          attn: 262144
+          mlp: 524288
+        reason_answer: b
+        reason_options:
+          - id: c
+            text: The MLP works on one token at a time, so it has only d² weights.
+          - id: b
+            text: The MLP has a d × 4d and a 4d × d matrix, so it has 8d², twice attention's 4d².
+          - id: a
+            text: The MLP is one d × 4d matrix, so it has 4d² weights, the same as attention.
+        feedback: Attention is 4 × 256² = 262,144 and the MLP is 8 × 256² = 524,288. The block totals 12 × 65,536 = 786,432.
+      - id: transformer-block-components.calculate.5
+        prompt: GPT-2 large has d = 1280 and a classic 4× MLP. Record the attention weights (Q, K, V, O) and the MLP weights in one block, ignoring biases and norms.
+        answers:
+          attn: 6553600
+          mlp: 13107200
+        reason_answer: c
+        reason_options:
+          - id: b
+            text: The MLP is one d × 4d matrix, so it has 4d² weights, the same as attention.
+          - id: a
+            text: The MLP works on one token at a time, so it has only d² weights.
+          - id: c
+            text: The MLP has a d × 4d and a 4d × d matrix, so it has 8d², twice attention's 4d².
+        feedback: d² = 1,638,400, so attention is 4d² = 6,553,600 and the MLP is 8d² = 13,107,200.
+    numeric_fields:
+      - id: attn
+        label: Attention weights
+      - id: mlp
+        label: MLP weights
+    absolute_tolerance: 0.5

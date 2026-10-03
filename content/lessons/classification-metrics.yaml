@@ -1,249 +1,395 @@
 schema_version: 0.2-draft
 lesson:
   id: classification-metrics
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Look inside the average score
   state: draft
-  summary: Count false alarms and missed cases, then see why a high overall score can hide the mistakes that
-    matter.
+  summary: A defect detector is 90% accurate and still misses half the defects. Count the four kinds of outcome, then choose a cutoff your inspectors can live with.
   slot: M07.8
   category: learning
   sources:
-  - title: An Introduction to Statistical Learning — authors’ materials
-    url: https://www.statlearning.com/
+    - title: An Introduction to Statistical Learning — authors’ materials
+      url: https://www.statlearning.com/
 objectives:
-- id: objective.classification-metrics
-  version: 1-draft
-  statement: Confusion matrices, precision, recall, threshold curves, and error analysis reveal different aspects
-    of prediction quality and should be interpreted with class prevalence and costs.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - classification-metrics.base
-  - classification-metrics.transfer
-  prerequisites:
-  - anyOf:
-    - objective.logistic-regression
-  - anyOf:
-    - objective.baselines-and-success
+  - id: objective.classification-metrics
+    version: 2-draft
+    statement: Use a confusion matrix, precision, recall, and threshold curves to judge a classifier, taking class balance and error costs into account.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - classification-metrics.base.v2
+      - classification-metrics.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.logistic-regression
+      - anyOf:
+          - objective.baselines-and-success
 scenes:
-- id: classification-metrics.s1
-  title: Give each kind of mistake a name
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.classification-metrics
-  markdown: 'Choose the category you want to flag, such as defective parts. This is the **positive class**;
-    “positive” does not mean “good.” Then separate four outcomes:
+  - id: classification-metrics.s1
+    title: Ninety percent accurate, half the defects missed
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.classification-metrics
+    markdown: |-
+      A factory camera checks 100 parts for defects, and the vendor proudly reports 90% accuracy. Then the quality manager counts: 12 parts were actually defective, and the camera caught only 6 of them. Half the defects went out the door.
 
+      How can both be true? Because 88 of the 100 parts were fine, a camera that says "fine" to everything would already score 88% accuracy while catching nothing. Accuracy mixes every kind of mistake into one number, so split it up. First name the **positive class**, the thing you're trying to flag (here, defects; "positive" doesn't mean "good"). Then every part falls into one of four boxes:
 
-    - **True positive:** a defect correctly flagged.
+      | | Actually defective | Actually fine |
+      | --- | ---: | ---: |
+      | **Flagged** | 6 true positives (TP) | 4 false positives (FP) |
+      | **Not flagged** | 6 false negatives (FN) | 84 true negatives (TN) |
 
-    - **False positive:** a good part wrongly flagged—a false alarm.
+      This table is a **confusion matrix**. A false positive is a false alarm: a good part sent to an inspector. A false negative is a miss: a defect shipped to a customer. Accuracy is (6 + 84) / 100 = 90%, and it hides the six misses completely.
+    bridges: []
+  - id: classification-metrics.s2
+    title: Precision and recall start from different places
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.classification-metrics
+    markdown: |-
+      Two questions pull the table apart:
 
-    - **False negative:** a defect missed.
+      - **Precision**: of the parts we flagged, how many were really defective? $\text{TP} / (\text{TP} + \text{FP}) = 6/10 = 0.6$.
+      - **Recall** (also called sensitivity or true positive rate): of the parts that were really defective, how many did we flag? $\text{TP} / (\text{TP} + \text{FN}) = 6/12 = 0.5$.
 
-    - **True negative:** a good part correctly left alone.
+      Precision starts from the flags; recall starts from the real defects. An inspector who hates wasted checks cares about precision; a customer who receives the parts cares about recall.
 
+      To summarize both in one number, use the **F1 score**, their harmonic mean:
 
-    A **confusion matrix** puts these counts in a table of predicted versus observed categories. Keeping them
-    separate reveals errors that an overall score can hide.'
-  text_mode: 'Choose the category you want to flag, such as defective parts. This is the **positive class**;
-    “positive” does not mean “good.” Then separate four outcomes:
+      $$F_1 = \frac{2 \cdot \text{precision} \cdot \text{recall}}{\text{precision} + \text{recall}} = \frac{2 \times 0.6 \times 0.5}{0.6 + 0.5} \approx 0.55$$
 
+      :::predict A lazy detector flags just one part, and it's a real defect. What are its precision, recall, and F1, and how does F1 compare with the plain average?
+      Precision is 1/1 = 1.0, and recall is 1/12 ≈ 0.08. F1 = 2 × 1.0 × 0.08 / 1.08 ≈ 0.15, while the plain average would be about 0.54. The harmonic mean stays low unless *both* numbers are decent, so a detector can't score well by flagging almost nothing.
+      :::
 
-    - **True positive:** a defect correctly flagged.
+      :::mixup "Precision and recall are just two names for accuracy on the positive class."
+      They divide the same TP by different totals. With 1,000 good parts and 10 defects, a detector could catch all 10 (recall 1.0) while raising 90 false alarms (precision 0.1). Always ask which denominator a number uses.
+      :::
+    bridges:
+      - arithmetic
+      - statistics-evidence
+  - id: classification-metrics.s3
+    title: Move the cutoff and watch the trade
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.classification-metrics
+    markdown: |-
+      The camera doesn't really say "defect" or "fine." It gives each part a score and flags scores above a **cutoff** (or threshold). Lower the cutoff and you catch more defects but raise more false alarms; raise it and the reverse happens. So every cutoff gives its own confusion matrix.
 
-    - **False positive:** a good part wrongly flagged—a false alarm.
+      An **ROC curve** (receiver operating characteristic, a name from radar engineering, where the idea began during the Second World War) plots recall against the **false positive rate**, the share of good parts wrongly flagged, FP / (FP + TN), as the cutoff sweeps from high to low. In the 100-part example, the false positive rate is 4/88 ≈ 4.5%. The area under that curve, **AUC**, has a neat meaning: the chance that a randomly chosen defect scores higher than a randomly chosen good part. An AUC of 0.5 is coin-flipping; 1.0 is a perfect ranking.
 
-    - **False negative:** a defect missed.
+      A **precision–recall curve** plots precision against recall instead. When defects are rare, it's the more honest picture, because precision reacts to the flood of good parts that a small false positive rate still lets through.
 
-    - **True negative:** a good part correctly left alone.
+      Now try it. The activity below uses eight parts so you can see every decision: four defects and four good parts, with fixed scores. Before you move the cutoff, predict how many defects will be missed. Treat the scores as a ranking, not as probabilities: a score of 80 doesn't mean an 80% chance of a defect.
+    bridges: []
+    figure:
+      kind: threshold
+      caption: Move the score cutoff to see which defects are caught and which good parts are flagged.
+      description: Eight fixed scores and known conditions are plotted against a threshold. Predict missed defects, reveal counts and metrics, or read the same scores in a table.
+  - id: classification-metrics.s5
+    title: Pick the cutoff your team can live with
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.classification-metrics
+    markdown: |-
+      Here are the same eight parts in code, with precision, recall, and F1 at five cutoffs, plus the AUC:
 
+      ```python run
+      import numpy as np
 
-    A **confusion matrix** puts these counts in a table of predicted versus observed categories. Keeping them
-    separate reveals errors that an overall score can hide.'
-  bridges: []
-- id: classification-metrics.s2
-  title: Compute precision and recall
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.classification-metrics
-  markdown: 'Suppose a detector flags 10 cases, of which 6 are real positives, and there are 12 positives overall.
-    Precision is 6/10 = 0.6: how many flags are right. Recall is 6/12 = 0.5: how many positives were found.
-    Neither alone reports the full pattern of errors.
+      # The eight parts from the activity above: score, and whether each is defective
+      scores = np.array([95, 85, 75, 60, 45, 30, 20, 5])
+      defect = np.array([ 1,  0,  1,  1,  0,  1,  0, 0])
 
+      print("cutoff  TP FP FN  precision  recall    F1")
+      for cutoff in [90, 70, 50, 25, 0]:
+          flag = scores >= cutoff
+          tp = np.sum(flag & (defect == 1))
+          fp = np.sum(flag & (defect == 0))
+          fn = np.sum(~flag & (defect == 1))
+          precision = tp / (tp + fp)
+          recall = tp / (tp + fn)
+          f1 = 2 * precision * recall / (precision + recall)
+          print(f"{cutoff:6d}  {tp:2d} {fp:2d} {fn:2d}  {precision:9.2f}  {recall:6.2f}  {f1:5.2f}")
 
-    Complete the example with 100 cases: 6 true positives, 4 false positives, 6 false negatives, and 84 true
-    negatives. Accuracy is (6 + 84)/100 = 90%, while recall remains 50%. The high total hides half the defects
-    being missed. Remember: precision starts from the flags; recall starts from the actual positives.'
-  text_mode: 'Suppose a detector flags 10 cases, of which 6 are real positives, and there are 12 positives
-    overall. Precision is 6/10 = 0.6: how many flags are right. Recall is 6/12 = 0.5: how many positives were
-    found. Neither alone reports the full pattern of errors.
+      # AUC: the chance a random defect outscores a random good part
+      pairs = [(d, g) for d in scores[defect == 1] for g in scores[defect == 0]]
+      print("AUC =", np.mean([d > g for d, g in pairs]))
+      ```
 
+      F1 peaks at cutoff 25 (0.80): every defect caught, at the price of two false alarms. The AUC is 0.75 because 12 of the 16 defect–good pairs are ranked correctly.
 
-    Complete the example with 100 cases: 6 true positives, 4 false positives, 6 false negatives, and 84 true
-    negatives. Accuracy is (6 + 84)/100 = 90%, while recall remains 50%. The high total hides half the defects
-    being missed. Remember: precision starts from the flags; recall starts from the actual positives.'
-  bridges:
-  - arithmetic
-  - statistics-evidence
-- id: classification-metrics.s3
-  title: Move the cutoff and compare the mistakes
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.classification-metrics
-  markdown: 'Lowering the score cutoff flags more cases. It can catch more defects while also creating more
-    false alarms. Curves let us inspect this tradeoff across many cutoffs.
+      But the best cutoff depends on the job, not on F1. Say the inspector can check only three parts per batch: cutoff 70 flags exactly three and catches two defects. If a shipped defect costs 20 times as much as an inspection, cutoff 25 is worth its extra false alarm. Same scores, same AUC, different decisions. Add your own cutoffs to the list, such as 80 or 40, and check them against the activity.
+    bridges: []
+  - id: classification-metrics.s4
+    title: Read the mistakes, not just the score
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.classification-metrics
+    markdown: |-
+      Numbers tell you how many mistakes; looking at them tells you why. Back at the factory, the manager pulls the six missed defects and sorts them by what they have in common:
 
+      | Group | Missed defects |
+      | --- | ---: |
+      | Night shift, with glare on the part | 4 |
+      | Hairline cracks under 1 mm | 1 |
+      | Label was wrong: part was actually fine | 1 |
 
-    An **ROC curve**—receiver operating characteristic—plots recall against the false-positive rate. In our
-    100-case example, that rate is 4 false alarms divided by 88 actual negatives, about 4.5%. A **precision–recall
-    curve** compares the fraction of correct flags with the fraction of defects found; its interpretation depends
-    on how common defects are.
+      Four of the six misses share one cause, and it isn't the model's math: it's the lighting. Fix the lamp, or collect night-shift training images, and recall could jump. The mislabeled part is a reminder to check labels too. This habit is called **error analysis**: group the mistakes, find the largest group, and fix that first.
 
-
-    **AUC**, or area under the specified curve, summarizes performance across thresholds. It does not choose
-    a cutoff for a team that can inspect only ten cases. That still requires a decision about costs and capacity.
-
-
-    The activity below switches to eight cases so you can inspect every decision. Their scores stay fixed while
-    you move the cutoff. These scores are not calibrated probabilities: a score of 80 need not mean an 80%
-    chance of a defect.'
-  text_mode: 'Lowering the score cutoff flags more cases. It can catch more defects while also creating more
-    false alarms. Curves let us inspect this tradeoff across many cutoffs.
-
-
-    An **ROC curve**—receiver operating characteristic—plots recall against the false-positive rate. In our
-    100-case example, that rate is 4 false alarms divided by 88 actual negatives, about 4.5%. A **precision–recall
-    curve** compares the fraction of correct flags with the fraction of defects found; its interpretation depends
-    on how common defects are.
-
-
-    **AUC**, or area under the specified curve, summarizes performance across thresholds. It does not choose
-    a cutoff for a team that can inspect only ten cases. That still requires a decision about costs and capacity.
-
-
-    The activity below switches to eight cases so you can inspect every decision. Their scores stay fixed while
-    you move the cutoff. These scores are not calibrated probabilities: a score of 80 need not mean an 80%
-    chance of a defect.'
-  bridges: []
-  figure:
-    kind: threshold
-    caption: Move the score cutoff to see which defects are caught and which good parts are flagged.
-    description: Eight fixed scores and known conditions are plotted against a threshold. Predict missed defects,
-      reveal counts and metrics, or read the same scores in a table.
-- id: classification-metrics.s4
-  title: Explain failures with examples
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.classification-metrics
-  markdown: Group errors by conditions such as lighting, length, source, or subgroup. Inspect labeling mistakes
-    and ambiguous cases. Use confidence intervals when comparing models and keep the analysis separate from
-    an untouched final test where possible. Choose a model for the intended decision, not a single flattering
-    metric.
-  text_mode: Group errors by conditions such as lighting, length, source, or subgroup. Inspect labeling mistakes
-    and ambiguous cases. Use confidence intervals when comparing models and keep the analysis separate from
-    an untouched final test where possible. Choose a model for the intended decision, not a single flattering
-    metric.
-  bridges: []
-- id: classification-metrics.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.classification-metrics
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Precision asks how many flags are correct. Recall asks how many real positives were found. Compare
-    both, along with false alarms and the consequences of each mistake.
-- id: classification-metrics.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.classification-metrics
-  markdown: Precision asks how many flags are correct. Recall asks how many real positives were found. Compare
-    both, along with false alarms and the consequences of each mistake.
-  text_mode: Precision asks how many flags are correct. Recall asks how many real positives were found. Compare
-    both, along with false alarms and the consequences of each mistake.
+      Keep sample size in mind while you do it: recall measured on 12 defects can swing a lot from week to week, so gather more defects before trusting a small change.
+    bridges: []
+  - id: classification-metrics.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.classification-metrics
+    markdown: Compute precision, recall, and F1 from counts, then pick metrics and cutoffs for fraud alerts, cancer screening, review queues, and rare events.
+    takeaway: |-
+      Precision asks how many flags were right; recall asks how many real positives were caught. Choose the cutoff from the costs of each mistake and the team's capacity, and look at the mistakes themselves.
+  - id: classification-metrics.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.classification-metrics
+    markdown: |-
+      Precision asks how many flags are correct. Recall asks how many real positives were found. Compare both, along with false alarms and the consequences of each mistake.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - classification-metrics.s1
-    - classification-metrics.s2
-    - classification-metrics.s3
-    - classification-metrics.s4
-    - classification-metrics.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - classification-metrics.s1
+        - classification-metrics.s2
+        - classification-metrics.s3
+        - classification-metrics.s5
+        - classification-metrics.s4
+        - classification-metrics.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     classification-metrics.recap: classification-metrics.check
 assessment_families:
-- id: classification-metrics.base
-  objective_ref: objective.classification-metrics
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Compute precision and recall: trace the inputs, operation, and result before choosing.'
-  remediation_scene: classification-metrics.s2
-  variants:
-  - id: classification-metrics.base.1
-    prompt: Of 20 flagged cases, 15 are real positives. What is precision?
-    options:
-    - id: a
-      text: '0.75'
-    - id: b
-      text: '0.2'
-    - id: c
-      text: '15'
-    answer: a
-    feedback: Precision divides true positives by all flagged positives.
-  - id: classification-metrics.base.2
-    prompt: There are 30 actual positives and 12 are found. What is recall?
-    options:
-    - id: b
-      text: '0.6'
-    - id: c
-      text: '2.5'
-    - id: a
-      text: '0.4'
-    answer: a
-    feedback: Recall divides detected positives by all actual positives.
-- id: classification-metrics.transfer
-  objective_ref: objective.classification-metrics
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Explain failures with examples: trace the inputs, operation, and result before choosing.'
-  remediation_scene: classification-metrics.s4
-  variants:
-  - id: classification-metrics.transfer.1
-    prompt: A model has high ROC AUC. Does that choose the best threshold for a limited review team?
-    options:
-    - id: b
-      text: Yes; AUC is a threshold
-    - id: c
-      text: Only if the dataset is large
-    - id: a
-      text: No; capacity and costs still determine an operating choice
-    answer: a
-    feedback: A ranking summary does not specify a deployment decision rule.
-  - id: classification-metrics.transfer.2
-    prompt: Two models have the same accuracy but different missed-positive counts. What should comparison
-      include?
-    options:
-    - id: c
-      text: Only model size
-    - id: a
-      text: The full error pattern and consequences
-    - id: b
-      text: Only accuracy again
-    answer: a
-    feedback: Equal overall accuracy can hide materially different failures.
+  - id: classification-metrics.base
+    objective_ref: objective.classification-metrics
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Compute precision and recall: trace the inputs, operation, and result before choosing.'
+    remediation_scene: classification-metrics.s2
+    variants:
+      - id: classification-metrics.base.1
+        prompt: Of 20 flagged cases, 15 are real positives. What is precision?
+        options:
+          - id: a
+            text: '0.75'
+          - id: b
+            text: '0.2'
+          - id: c
+            text: '15'
+        answer: a
+        feedback: Precision divides true positives by all flagged positives.
+        retired: true
+      - id: classification-metrics.base.2
+        prompt: There are 30 actual positives and 12 are found. What is recall?
+        options:
+          - id: b
+            text: '0.6'
+          - id: c
+            text: '2.5'
+          - id: a
+            text: '0.4'
+        answer: a
+        feedback: Recall divides detected positives by all actual positives.
+        retired: true
+  - id: classification-metrics.transfer
+    objective_ref: objective.classification-metrics
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Explain failures with examples: trace the inputs, operation, and result before choosing.'
+    remediation_scene: classification-metrics.s4
+    variants:
+      - id: classification-metrics.transfer.1
+        prompt: A model has high ROC AUC. Does that choose the best threshold for a limited review team?
+        options:
+          - id: b
+            text: Yes; AUC is a threshold
+          - id: c
+            text: Only if the dataset is large
+          - id: a
+            text: No; capacity and costs still determine an operating choice
+        answer: a
+        feedback: A ranking summary does not specify a deployment decision rule.
+        retired: true
+      - id: classification-metrics.transfer.2
+        prompt: Two models have the same accuracy but different missed-positive counts. What should comparison include?
+        options:
+          - id: c
+            text: Only model size
+          - id: a
+            text: The full error pattern and consequences
+          - id: b
+            text: Only accuracy again
+        answer: a
+        feedback: Equal overall accuracy can hide materially different failures.
+        retired: true
+  - id: classification-metrics.base.v2
+    objective_ref: objective.classification-metrics
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Precision divides TP by everything flagged (TP + FP). Recall divides TP by everything truly positive (TP + FN). F1 = 2 × precision × recall ÷ (precision + recall).
+    remediation_scene: classification-metrics.s2
+    variants:
+      - id: classification-metrics.base.v2.1
+        prompt: 'A spam filter''s week: 8 true positives, 2 false positives, 8 false negatives. Find precision, recall, and F1 (two decimals).'
+        feedback: Precision = 8/(8 + 2) = 0.8, recall = 8/(8 + 8) = 0.5, and F1 = 2 × 0.8 × 0.5 / 1.3 ≈ 0.62. The filter's flags are mostly right, but it lets half the spam through.
+        answers:
+          precision: 0.8
+          recall: 0.5
+          f1: 0.615
+        reason_answer: denominators
+        reason_options:
+          - id: denominators
+            text: Precision divides TP by all flagged cases; recall divides TP by all real positives.
+          - id: swapped
+            text: Precision divides TP by all real positives; recall divides TP by all flagged cases.
+          - id: accuracy
+            text: Both divide the correct predictions by the total number of cases.
+      - id: classification-metrics.base.v2.2
+        prompt: 'A screening test''s month: 9 true positives, 3 false positives, 1 false negative. Find precision, recall, and F1 (two decimals).'
+        feedback: Precision = 9/12 = 0.75, recall = 9/10 = 0.9, and F1 = 2 × 0.75 × 0.9 / 1.65 ≈ 0.82.
+        answers:
+          precision: 0.75
+          recall: 0.9
+          f1: 0.818
+        reason_answer: denominators
+        reason_options:
+          - id: swapped
+            text: Precision divides TP by all real positives; recall divides TP by all flagged cases.
+          - id: denominators
+            text: Precision divides TP by all flagged cases; recall divides TP by all real positives.
+          - id: accuracy
+            text: Both divide the correct predictions by the total number of cases.
+      - id: classification-metrics.base.v2.3
+        prompt: 'A fraud model''s day: 3 true positives, 1 false positive, 3 false negatives. Find precision, recall, and F1 (two decimals).'
+        feedback: Precision = 3/4 = 0.75, recall = 3/6 = 0.5, and F1 = 2 × 0.75 × 0.5 / 1.25 = 0.6.
+        answers:
+          precision: 0.75
+          recall: 0.5
+          f1: 0.6
+        reason_answer: denominators
+        reason_options:
+          - id: accuracy
+            text: Both divide the correct predictions by the total number of cases.
+          - id: swapped
+            text: Precision divides TP by all real positives; recall divides TP by all flagged cases.
+          - id: denominators
+            text: Precision divides TP by all flagged cases; recall divides TP by all real positives.
+      - id: classification-metrics.base.v2.4
+        prompt: 'A cautious defect camera: 20 true positives, 30 false positives, 0 false negatives. Find precision, recall, and F1 (two decimals).'
+        feedback: Precision = 20/50 = 0.4, recall = 20/20 = 1.0, and F1 = 2 × 0.4 × 1.0 / 1.4 ≈ 0.57. Catching every defect doesn't make up for three false alarms in every five flags.
+        answers:
+          precision: 0.4
+          recall: 1
+          f1: 0.571
+        reason_answer: denominators
+        reason_options:
+          - id: denominators
+            text: Precision divides TP by all flagged cases; recall divides TP by all real positives.
+          - id: accuracy
+            text: Both divide the correct predictions by the total number of cases.
+          - id: swapped
+            text: Precision divides TP by all real positives; recall divides TP by all flagged cases.
+    absolute_tolerance: 0.01
+    numeric_fields:
+      - id: precision
+        label: Precision
+      - id: recall
+        label: Recall
+      - id: f1
+        label: F1 score
+  - id: classification-metrics.transfer.v2
+    objective_ref: objective.classification-metrics
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name the costly mistake and the team's capacity first. Then pick the metric or cutoff that tracks that mistake, rather than overall accuracy.
+    remediation_scene: classification-metrics.s5
+    variants:
+      - id: classification-metrics.transfer.v2.1
+        prompt: About 1 in 200 card payments is fraudulent. A new model reports 99.5% accuracy on a month of payments. What should you check before celebrating?
+        options:
+          - id: a
+            text: Its precision, since accuracy already covers the missed frauds
+          - id: b
+            text: Its recall, since flagging nothing would also score 99.5%
+          - id: c
+            text: Its AUC, since accuracy can't be computed on imbalanced data
+        answer: b
+        feedback: A model that never flags fraud is right on 199 of every 200 payments, which is exactly 99.5%. Recall shows how many frauds it actually caught. Accuracy doesn't reveal the misses, and it can be computed on any data; it just says little here.
+      - id: classification-metrics.transfer.v2.2
+        prompt: A support team can review 50 flagged accounts a day. The abuse model has an AUC of 0.92. How should the team set its cutoff?
+        options:
+          - id: c
+            text: Choose the cutoff that flags about 50 accounts on a typical day
+          - id: b
+            text: Set the cutoff at 0.92, matching the model's AUC value
+          - id: a
+            text: Keep the default of 0.5, since a high AUC means it's calibrated
+        answer: c
+        feedback: AUC summarizes how well the model ranks accounts across every cutoff; it doesn't pick one. Capacity does, so rank by score and flag about as many as the team can review. A high AUC says nothing about calibration, and 0.92 isn't a score threshold.
+      - id: classification-metrics.transfer.v2.3
+        prompt: A clinic chooses between two cutoffs for a cheap first-round cancer screen, after which positives get a more careful test. Which metric should matter most for the first round?
+        options:
+          - id: c
+            text: Precision, so that few healthy people are sent for the second test
+          - id: b
+            text: Accuracy, since it balances both kinds of mistake together
+          - id: a
+            text: Recall, so that few real cancers are missed by the first screen
+        answer: a
+        feedback: A cancer missed at the first round never reaches the careful test, while a false alarm only costs a second test. So the first round should favor recall. Accuracy would let the many healthy patients dominate the score.
+      - id: classification-metrics.transfer.v2.4
+        prompt: 'Two defect models both score 96% accuracy on 1,000 parts. Model A has 10 misses and 30 false alarms; model B has 30 misses and 10 false alarms. A miss costs $50 and a false alarm $2. Which is better?'
+        options:
+          - id: b
+            text: B, since it raises fewer false alarms for inspectors to check
+          - id: c
+            text: A, whose mistakes cost $560 against B's $1,520
+          - id: a
+            text: They tie, since both make 40 mistakes out of 1,000
+        answer: c
+        feedback: A costs 10 × 50 + 30 × 2 = $560 and B costs 30 × 50 + 10 × 2 = $1,520. Equal accuracy hides very different mistakes; weight each kind by what it costs.
+      - id: classification-metrics.transfer.v2.5
+        prompt: A churn model has an AUC of 0.80. What does that number mean?
+        options:
+          - id: a
+            text: At its best cutoff, the model classifies 80% of customers correctly
+          - id: c
+            text: Of the customers it flags, 80% really do go on to leave
+          - id: b
+            text: A random leaver outscores a random stayer 80% of the time
+        answer: b
+        feedback: AUC is a ranking measure across all cutoffs. It's the chance that a randomly chosen positive gets a higher score than a randomly chosen negative. "80% correct at the best cutoff" is an accuracy, and "80% of flags are right" is a precision.
+      - id: classification-metrics.transfer.v2.6
+        prompt: A model is tested on a balanced set (half positives), then deployed where only 1% of cases are positive. Its scores for each class behave the same in both places. Which number drops sharply after deployment?
+        options:
+          - id: c
+            text: Recall, since there are now far fewer positives left to catch
+          - id: a
+            text: Precision, since false alarms now greatly outnumber real hits
+          - id: b
+            text: The false positive rate, since negative cases now dominate the data
+        answer: a
+        feedback: Recall and the false positive rate are each computed within one class, so they stay the same. But with 99 negatives per positive, even a small false positive rate produces many false alarms per real hit, so precision falls. That's why precision–recall curves matter for rare events.

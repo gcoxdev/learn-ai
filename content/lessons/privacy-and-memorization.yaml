@@ -1,212 +1,400 @@
 schema_version: 0.2-draft
 lesson:
   id: privacy-and-memorization
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Understand what training and deployment can reveal about data
   state: draft
-  summary: Distinguish private data in a model from private data elsewhere in the application.
+  summary: Researchers got a chatbot to recite its training data by asking it to repeat one word forever. See how models leak, and how to add just enough noise to protect one person.
   slot: M29.3
   category: learning
   sources:
-  - title: Deep Learning with Differential Privacy
-    url: https://arxiv.org/abs/1607.00133
-  - title: Extracting Training Data from LLMs
-    url: https://arxiv.org/abs/2012.07805
+    - title: Deep Learning with Differential Privacy (Abadi et al., 2016)
+      url: https://arxiv.org/abs/1607.00133
+    - title: Extracting Training Data from Large Language Models (Carlini et al., 2021)
+      url: https://arxiv.org/abs/2012.07805
+    - title: Extracting Training Data from Diffusion Models (Carlini et al., 2023)
+      url: https://arxiv.org/abs/2301.13188
+    - title: Scalable Extraction of Training Data from (Production) Language Models (Nasr et al., 2023)
+      url: https://arxiv.org/abs/2311.17035
+    - title: Membership Inference Attacks against Machine Learning Models (Shokri et al., 2017)
+      url: https://arxiv.org/abs/1610.05820
+    - title: The Algorithmic Foundations of Differential Privacy (Dwork & Roth, 2014)
+      url: https://www.cis.upenn.edu/~aaroth/Papers/privacybook.pdf
+    - title: Simple Demographics Often Identify People Uniquely (Sweeney, 2000)
+      url: https://dataprivacylab.org/projects/identifiability/paper1.pdf
 objectives:
-- id: objective.privacy-and-memorization
-  version: 1-draft
-  statement: Privacy risks arise from memorization, membership signals, extraction, and application data flows;
-    differential privacy bounds a defined training-data influence while other controls address storage and
-    access.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - privacy-and-memorization.base
-  - privacy-and-memorization.transfer
-  prerequisites:
-  - anyOf:
-    - objective.data-provenance
-  - anyOf:
-    - objective.information-theory
-  - anyOf:
-    - objective.stochastic-gradients
+  - id: objective.privacy-and-memorization
+    version: 2-draft
+    statement: Privacy risks arise from memorization, membership signals, extraction, and application data flows; differential privacy bounds a defined training-data influence while other controls address storage and access.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - privacy-and-memorization.base.v2
+      - privacy-and-memorization.transfer.v2
+      - privacy-and-memorization.noise
+    prerequisites:
+      - anyOf:
+          - objective.data-provenance
+      - anyOf:
+          - objective.information-theory
+      - anyOf:
+          - objective.stochastic-gradients
 scenes:
-- id: privacy-and-memorization.s1
-  title: Different attacks ask different questions
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.privacy-and-memorization
-  markdown: Membership inference asks whether a record participated in training. Extraction seeks training
-    content or sensitive details. A model can generalize usefully and still memorize some unusual sequences.
-    Removing obvious names does not guarantee anonymity when other fields can identify someone.
-  text_mode: Membership inference asks whether a record participated in training. Extraction seeks training
-    content or sensitive details. A model can generalize usefully and still memorize some unusual sequences.
-    Removing obvious names does not guarantee anonymity when other fields can identify someone.
-  bridges: []
-- id: privacy-and-memorization.s2
-  title: Trace privacy through the application
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.privacy-and-memorization
-  markdown: Prompts, retrieved documents, logs, caches, backups, and tool calls can expose data independently
-    of model training. Minimize unnecessary collection and retain access and deletion rules across derived
-    state. A local model does not make unrelated network telemetry or shared logs private automatically.
-  text_mode: Prompts, retrieved documents, logs, caches, backups, and tool calls can expose data independently
-    of model training. Minimize unnecessary collection and retain access and deletion rules across derived
-    state. A local model does not make unrelated network telemetry or shared logs private automatically.
-  bridges:
-  - probability
-- id: privacy-and-memorization.s3
-  title: Introduce differential privacy precisely
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.privacy-and-memorization
-  markdown: '**Differential privacy** bounds how much a randomized algorithm''s output distribution can change
-    when one defined person''s or record''s contribution changes.
+  - id: privacy-and-memorization.s1
+    title: A poem, a poem, a poem, and then an email address
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.privacy-and-memorization
+    markdown: |-
+      In late 2023, Milad Nasr, Nicholas Carlini, and colleagues asked ChatGPT to repeat the word "poem" forever. After many repetitions it drifted off course and began printing text copied word for word from its training data, including a real person's email signature with contact details. OpenAI has since blocked the trick, but the point stands: the model had stored that text, and a strange enough prompt brought it out.
 
+      You met an earlier case in the lesson on scaling and memorization: in 2021, Carlini's team pulled names, phone numbers, and email addresses out of GPT-2. In 2023 the same group extracted over a thousand training images, including photos of real people, from image generators such as Stable Diffusion. Images repeated many times in the training data were the easiest to pull out, so deduplication, from the lesson on pretraining data, is also a privacy tool.
 
-    Imagine two training datasets differing only in one person''s contribution. The guarantee compares the
-    probabilities of possible outputs from the whole algorithm on those neighboring datasets. It is about limiting
-    individual influence, not promising that outputs contain no sensitive facts.
+      Getting a model to reproduce its training data is **training-data extraction**. Suppose Riverbend General fine-tunes a model on 200,000 of its discharge notes to help doctors write new ones. Extraction would mean a user coaxing out a real patient's note. There's a subtler risk too.
+    bridges: []
+  - id: privacy-and-memorization.membership
+    title: Was this note in the training set?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.privacy-and-memorization
+    markdown: |-
+      Suppose Riverbend's model was fine-tuned only on notes from its HIV clinic. Then learning that someone's note was *in* the training set reveals their diagnosis, even if no text leaks. Guessing whether a record was used in training is **membership inference** (Shokri et al., 2017).
 
+      The simplest attack uses the model's **loss**, how surprised it is by a text; models are less surprised by text they trained on. An attacker with ten notes, five used in training and five not, guesses "member" whenever the loss is below 0.5:
 
-    Two parameters describe the bound. **Epsilon** controls a multiplicative factor exp(epsilon); **delta**
-    permits additive slack in the probability inequality. Smaller values generally give a stronger bound under
-    the same definition. Delta is not simply “the chance your data leaks.” The privacy unit and accounting
-    rules matter, and repeated releases can consume additional privacy budget.'
-  text_mode: '**Differential privacy** bounds how much a randomized algorithm''s output distribution can change
-    when one defined person''s or record''s contribution changes.
+      | | Losses | Below 0.5 |
+      | --- | --- | ---: |
+      | Training notes | 0.2, 0.3, 0.4, 0.9, 0.3 | 4 of 5 |
+      | Unseen notes | 1.1, 0.8, 1.4, 0.45, 1.0 | 1 of 5 |
 
+      The attacker is right on 4 + 4 = 8 of 10 notes, 80%, against 50% for coin-flipping. The wider the gap between training and unseen loss (the generalization gap), the better this attack works.
 
-    Imagine two training datasets differing only in one person''s contribution. The guarantee compares the
-    probabilities of possible outputs from the whole algorithm on those neighboring datasets. It is about limiting
-    individual influence, not promising that outputs contain no sensitive facts.
+      :::mixup "We removed the names, so the data is anonymous."
+      In 2000, Latanya Sweeney estimated that 87% of the US population could be uniquely identified by just ZIP code, sex, and date of birth. In 1997 she had picked out Massachusetts Governor William Weld's hospital records from a "de-identified" state dataset using those fields and a voter roll. Removing names is only a start.
+      :::
+    bridges: []
+  - id: privacy-and-memorization.s3
+    title: Add noise sized to one person
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.privacy-and-memorization
+    markdown: |-
+      Riverbend wants to publish how many patients in each town have a rare condition. Smallville has 37. If it publishes 37, and next month 36, anyone who knows a Smallville patient moved away learns her diagnosis.
 
+      **Differential privacy** (DP) fixes this with a promise: whatever gets published would have been almost as likely with or without any one person in the data. A number **ε** (epsilon) sets how close "almost" is; smaller ε means a stronger promise.
 
-    Two parameters describe the bound. **Epsilon** controls a multiplicative factor exp(epsilon); **delta**
-    permits additive slack in the probability inequality. Smaller values generally give a stronger bound under
-    the same definition. Delta is not simply “the chance your data leaks.” The privacy unit and accounting
-    rules matter, and repeated releases can consume additional privacy budget.'
-  bridges: []
-- id: privacy-and-memorization.s4
-  title: See the training tradeoff
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.privacy-and-memorization
-  markdown: '**Differentially private stochastic gradient descent**, or **DP-SGD**, commonly clips per-example
-    gradients, adds calibrated noise to their aggregation, and tracks privacy spending across updates.
+      The **Laplace mechanism** keeps the promise by adding random noise from a Laplace distribution, a sharp-peaked bell curve. Its width, the scale $b$, is
 
+      $$b = \frac{\Delta}{\varepsilon}$$
 
-    Clipping limits each example''s influence; noise makes individual contributions harder to distinguish.
-    The privacy unit, sampling procedure, noise level, and number of updates must match the accounting assumptions.
-    Privacy, utility, and compute costs interact, so the guarantee depends on the complete mechanism and its
-    implementation.'
-  text_mode: '**Differentially private stochastic gradient descent**, or **DP-SGD**, commonly clips per-example
-    gradients, adds calibrated noise to their aggregation, and tracks privacy spending across updates.
+      where the **sensitivity** $\Delta$ is the most one person can change the true answer. For a count, $\Delta = 1$. At ε = 1 the scale is 1, and a typical published value is off by about 1 patient.
 
+      :::predict Riverbend's privacy officer wants ε = 0.1 instead. How large is the noise, and is the Smallville count still useful?
+      $b = 1/0.1 = 10$, so a typical error is about 10 patients on a true count of 37: barely useful. On a statewide count of 3,700, the same noise is about 0.3%. DP is gentle on big totals and harsh on small ones.
+      :::
 
-    Clipping limits each example''s influence; noise makes individual contributions harder to distinguish.
-    The privacy unit, sampling procedure, noise level, and number of updates must match the accounting assumptions.
-    Privacy, utility, and compute costs interact, so the guarantee depends on the complete mechanism and its
-    implementation.'
-  bridges: []
-- id: privacy-and-memorization.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.privacy-and-memorization
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Privacy risks can come from learned information and from application data flows. Differential privacy
-    bounds a defined contribution’s influence; storage and access still need their own controls.
-- id: privacy-and-memorization.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.privacy-and-memorization
-  markdown: Privacy risks can come from learned information and from application data flows. Differential privacy
-    bounds a defined contribution’s influence; storage and access still need their own controls.
-  text_mode: Privacy risks can come from learned information and from application data flows. Differential
-    privacy bounds a defined contribution’s influence; storage and access still need their own controls.
+      Run it. The last lines check the promise: at ε = 1, removing one patient changes the likelihood of any output by at most a factor of $e^1 \approx 2.72$ either way.
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(0)
+      true_count = 37      # patients with the condition in one small town
+      sensitivity = 1      # adding or removing one patient changes the count by at most 1
+
+      for eps in [2.0, 1.0, 0.5, 0.1]:
+          b = sensitivity / eps                        # Laplace noise scale
+          releases = true_count + rng.laplace(0, b, size=10_000)
+          typical_error = np.mean(np.abs(releases - true_count))
+          print(f"eps = {eps:<4} scale b = {b:<5} one release: {releases[0]:6.1f}   "
+                f"average error: {typical_error:5.2f}   e^eps = {np.exp(eps):.2f}")
+
+      # The privacy promise: with or without one patient (37 vs 36), the chance of
+      # any output differs by at most a factor of e^eps.
+      eps, b = 1.0, 1.0
+      for x in [30.0, 36.5, 40.0]:
+          with_her = np.exp(-abs(x - 37) / b)
+          without = np.exp(-abs(x - 36) / b)
+          print(f"output {x}: likelihood ratio {with_her / without:.2f} (limit {np.exp(eps):.2f})")
+      ```
+
+      The average error comes out close to $b$ each time. Now try a sum of visits where each patient contributes up to 3: set `sensitivity = 3` and watch every error triple.
+
+      :::papers The definition (Dwork, McSherry, Nissim & Smith, 2006)
+      A randomized mechanism $M$ is ε-differentially private if, for any two datasets $D$ and $D'$ that differ in one person, and any set of outputs $S$,
+      $$P[M(D) \in S] \le e^{\varepsilon}\, P[M(D') \in S].$$
+      Here $D$ is Smallville with the patient (37) and $D'$ without her (36). The common relaxation, $(\varepsilon, \delta)$-DP, adds a small slack $\delta$ to the right-hand side.
+      :::
+    bridges: []
+  - id: privacy-and-memorization.s4
+    title: Clip, add noise, and count the budget
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.privacy-and-memorization
+    markdown: |-
+      Training a model is a long series of releases: every gradient step uses the data. **DP-SGD** (Abadi et al., 2016) makes each step private in three moves:
+
+      1. **Clip** each example's gradient to a maximum length $C$. A patient whose gradient has length 5, with $C = 1$, gets scaled down to length 1. That caps the sensitivity: no single example can push the model further than $C$.
+      2. **Add noise** from a Gaussian distribution, scaled to $C$, to the sum of the clipped gradients.
+      3. **Count the privacy spent.** A privacy accountant tracks the total ε used across the whole run.
+
+      The price is accuracy: DP-trained models usually score lower than ordinary ones, most of all on rare cases. That is partly the point, since rare cases are exactly what a model would otherwise memorize.
+
+      :::mixup "The noise is random, so just ask the same question many times and average."
+      Averaging does cancel the noise, which is why each answer spends privacy. Under basic composition, 10 queries at ε = 0.5 each cost ε = 5 in total. A DP system tracks a **privacy budget** and stops answering when it runs out.
+      :::
+
+      :::story The 2020 US census
+      The US Census Bureau protected its published 2020 census tables with differential privacy, arguing that older methods no longer resisted modern re-identification. Some demographers and local officials objected to noisier counts for small towns and groups: the Smallville trade-off at national scale.
+      :::
+    bridges: []
+  - id: privacy-and-memorization.s2
+    title: The safest data is data you never kept
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.privacy-and-memorization
+    markdown: |-
+      Most privacy failures in AI products don't involve the model's weights at all. They happen in logs, caches, prompts, retrieved documents, and analytics tools. So first ask whether you need the data. Riverbend's privacy officer rewrote the note assistant's design line by line:
+
+      | Before | Risk | After |
+      | --- | --- | --- |
+      | Fine-tune on 200,000 notes | Extraction and membership inference | No fine-tuning; retrieve only this patient's past notes, filtered by the doctor's access |
+      | Log every full prompt for 90 days | Anyone with log access sees diagnoses | Log request IDs and error codes for 14 days |
+      | Send prompts to an outside analytics tool | Data leaves the hospital | Count usage inside the hospital |
+      | Keep unsigned notes forever | Data outlives its purpose | Delete them once the final note is signed |
+
+      This is **data minimization**: collect only what the task needs, keep it only as long as needed, and let as few people and systems see it as possible. Each "after" removes a leak instead of guarding it. When you really must train on sensitive data, deduplicate first, plant fake "canary" records and test whether they can be extracted, and consider DP-SGD.
+    bridges:
+      - probability
+  - id: privacy-and-memorization.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.privacy-and-memorization
+    markdown: Size Laplace noise from ε and sensitivity, then find the leak in a clinic chatbot's logs, a "de-identified" dataset, a small-area count, and an analyst who keeps asking.
+    takeaway: |-
+      Models can leak training data through extraction and membership inference. Differential privacy adds noise of scale sensitivity ÷ ε, and every answer spends budget, but the biggest wins come from not collecting or keeping data you don't need.
+  - id: privacy-and-memorization.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.privacy-and-memorization
+    markdown: |-
+      Privacy risks can come from learned information and from application data flows. Differential privacy bounds a defined contribution’s influence; storage and access still need their own controls.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - privacy-and-memorization.s1
-    - privacy-and-memorization.s2
-    - privacy-and-memorization.s3
-    - privacy-and-memorization.s4
-    - privacy-and-memorization.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - privacy-and-memorization.s1
+        - privacy-and-memorization.membership
+        - privacy-and-memorization.s3
+        - privacy-and-memorization.s4
+        - privacy-and-memorization.s2
+        - privacy-and-memorization.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     privacy-and-memorization.recap: privacy-and-memorization.check
 assessment_families:
-- id: privacy-and-memorization.base
-  objective_ref: objective.privacy-and-memorization
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace privacy through the application: trace the inputs, operation, and result before choosing.'
-  remediation_scene: privacy-and-memorization.s2
-  variants:
-  - id: privacy-and-memorization.base.1
-    prompt: What does membership inference try to determine?
-    options:
-    - id: c
-      text: Every private fact about a person necessarily
-    - id: a
-      text: Whether a record participated in training
-    - id: b
-      text: Only whether a model can spell a name
-    answer: a
-    feedback: Membership is a specific training-data question.
-  - id: privacy-and-memorization.base.2
-    prompt: Does removing names guarantee anonymity?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only in every tabular dataset
-    answer: a
-    feedback: Other attributes can identify or link records.
-- id: privacy-and-memorization.transfer
-  objective_ref: objective.privacy-and-memorization
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'See the training tradeoff: trace the inputs, operation, and result before choosing.'
-  remediation_scene: privacy-and-memorization.s4
-  variants:
-  - id: privacy-and-memorization.transfer.1
-    prompt: What does gradient clipping do in DP-SGD?
-    options:
-    - id: a
-      text: Bounds a contribution before noisy aggregation
-    - id: b
-      text: Eliminates all privacy risk alone
-    - id: c
-      text: Deletes every training example
-    answer: a
-    feedback: Bounded sensitivity supports calibrated privacy mechanisms.
-  - id: privacy-and-memorization.transfer.2
-    prompt: Why identify the privacy unit and composition accounting?
-    options:
-    - id: b
-      text: They only change terminology
-    - id: c
-      text: Every epsilon has identical meaning
-    - id: a
-      text: They define what is protected and how repeated releases spend privacy
-    answer: a
-    feedback: Guarantees depend on the precise mechanism and neighboring-data definition.
+  - id: privacy-and-memorization.base
+    objective_ref: objective.privacy-and-memorization
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace privacy through the application: trace the inputs, operation, and result before choosing.'
+    remediation_scene: privacy-and-memorization.s2
+    variants:
+      - id: privacy-and-memorization.base.1
+        prompt: What does membership inference try to determine?
+        options:
+          - id: c
+            text: Every private fact about a person necessarily
+          - id: a
+            text: Whether a record participated in training
+          - id: b
+            text: Only whether a model can spell a name
+        answer: a
+        feedback: Membership is a specific training-data question.
+        retired: true
+      - id: privacy-and-memorization.base.2
+        prompt: Does removing names guarantee anonymity?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only in every tabular dataset
+        answer: a
+        feedback: Other attributes can identify or link records.
+        retired: true
+  - id: privacy-and-memorization.transfer
+    objective_ref: objective.privacy-and-memorization
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'See the training tradeoff: trace the inputs, operation, and result before choosing.'
+    remediation_scene: privacy-and-memorization.s4
+    variants:
+      - id: privacy-and-memorization.transfer.1
+        prompt: What does gradient clipping do in DP-SGD?
+        options:
+          - id: a
+            text: Bounds a contribution before noisy aggregation
+          - id: b
+            text: Eliminates all privacy risk alone
+          - id: c
+            text: Deletes every training example
+        answer: a
+        feedback: Bounded sensitivity supports calibrated privacy mechanisms.
+        retired: true
+      - id: privacy-and-memorization.transfer.2
+        prompt: Why identify the privacy unit and composition accounting?
+        options:
+          - id: b
+            text: They only change terminology
+          - id: c
+            text: Every epsilon has identical meaning
+          - id: a
+            text: They define what is protected and how repeated releases spend privacy
+        answer: a
+        feedback: Guarantees depend on the precise mechanism and neighboring-data definition.
+        retired: true
+  - id: privacy-and-memorization.base.v2
+    objective_ref: objective.privacy-and-memorization
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Match the attacker''s question: "give me the text" is extraction, "was this record used?" is membership inference, and "how much can one person change the output?" is what ε limits.'
+    remediation_scene: privacy-and-memorization.membership
+    variants:
+      - id: privacy-and-memorization.base.v2.1
+        prompt: An attacker holds a patient's discharge note and wants to learn whether it was in a model's training set, which came only from an HIV clinic. What kind of attack is this?
+        options:
+          - id: b
+            text: Training-data extraction, since the note is clinical text
+          - id: a
+            text: Membership inference, since being included reveals a diagnosis
+          - id: c
+            text: Prompt injection, since the attacker controls what the model reads
+        answer: a
+        feedback: The attacker already has the text and only asks whether it was used, which is membership inference. Extraction would mean pulling unknown text out of the model; prompt injection is about hijacking instructions, not training data.
+      - id: privacy-and-memorization.base.v2.2
+        prompt: In a loss-threshold test, 4 of 5 training notes and 1 of 5 unseen notes fall below the cutoff, so the attacker is right 80% of the time. What does that show?
+        options:
+          - id: a
+            text: The model leaks membership, well above the 50% of guessing
+          - id: b
+            text: The model generalizes well, since it rejects most unseen notes
+          - id: c
+            text: The model has memorized 80% of its training notes word for word
+        answer: a
+        feedback: Coin-flipping scores 50%, so 80% means training notes are measurably easier for the model, and that difference leaks membership. It says nothing about verbatim recall, and rejecting unseen notes is the attack working, not good generalization.
+      - id: privacy-and-memorization.base.v2.3
+        prompt: A hospital releases a statistic with ε = 1 differential privacy. What does that promise any one patient?
+        options:
+          - id: c
+            text: An attacker can guess whether she is included at most 1% better than chance
+          - id: b
+            text: Her record appears in at most one of every e¹ published statistics
+          - id: a
+            text: Any output is at most e¹ ≈ 2.7 times likelier with her data than without
+        answer: a
+        feedback: ε bounds the ratio of output probabilities with and without one person by e^ε, here about 2.72. It isn't a percentage of attacker accuracy, and DP doesn't decide which records appear anywhere.
+      - id: privacy-and-memorization.base.v2.4
+        prompt: In DP-SGD, one example's gradient has length 5 and the clipping norm C is 1. What happens to it before noise is added?
+        options:
+          - id: b
+            text: It's dropped from the batch, since a large gradient marks an outlier
+          - id: a
+            text: It's scaled to length 1, capping how far one example can move the model
+          - id: c
+            text: It's kept at length 5, and only its own gradient gets extra noise
+        answer: a
+        feedback: Clipping rescales every oversized gradient to length C, which bounds the sensitivity so a fixed amount of noise suffices. Dropping it would bias training, and noise is added to the summed batch, not per example.
+  - id: privacy-and-memorization.transfer.v2
+    objective_ref: objective.privacy-and-memorization
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Follow the data to where it is stored, logged, or published. Then ask whether the fix is not keeping it, spending less privacy budget, or accepting more noise.
+    remediation_scene: privacy-and-memorization.s2
+    variants:
+      - id: privacy-and-memorization.transfer.v2.1
+        prompt: A clinic's chatbot uses a model never trained on patient data, but every conversation is logged for a year in an analytics tool the whole company can read. Where is the main privacy risk?
+        options:
+          - id: b
+            text: The model weights, which may memorize the chats over time
+          - id: c
+            text: The replies, which other users could extract with odd prompts
+          - id: a
+            text: The logs, which hold patient details that many people can read
+        answer: a
+        feedback: The model never trained on these chats, so its weights hold none of them. The year-long, widely readable logs do. Shorter retention, less logged content, and tighter access fix the real leak.
+      - id: privacy-and-memorization.transfer.v2.2
+        prompt: A research dataset has names removed but keeps ZIP code, date of birth, and sex. Why is releasing it risky?
+        options:
+          - id: a
+            text: Together, those three fields single out most people uniquely
+          - id: b
+            text: The removed names can be recovered from the order of the rows
+          - id: c
+            text: A date of birth by itself is enough to identify each person
+        answer: a
+        feedback: Sweeney estimated that 87% of Americans are unique on ZIP, sex, and birth date, so linking to a voter roll re-identifies them. It's the combination that identifies, not one field alone, and row order is a separate, easily fixed issue.
+      - id: privacy-and-memorization.transfer.v2.3
+        prompt: A city publishes differentially private counts of a rare condition per neighborhood at ε = 0.1 (noise scale 10). Most true counts are around 5. What will readers see?
+        options:
+          - id: c
+            text: Exact counts, since each person changes a count by only 1
+          - id: a
+            text: Noise that swamps the counts, so larger areas or a larger ε are needed
+          - id: b
+            text: Accurate counts, since the Laplace noise averages out to zero
+        answer: a
+        feedback: A typical error of about 10 on counts near 5 hides the signal. Sensitivity 1 is why the scale is 1/ε, not a reason for exactness, and noise averaging to zero over many releases doesn't help a single published number.
+      - id: privacy-and-memorization.transfer.v2.4
+        prompt: An analyst sends the same differentially private query 50 times at ε = 0.5 each and averages the answers. What has happened to privacy?
+        options:
+          - id: b
+            text: Nothing, since each of the 50 answers was private on its own
+          - id: c
+            text: It improved, since averaging hides the noise of each single answer
+          - id: a
+            text: The total spent is ε = 25, so the average reveals far more
+        answer: a
+        feedback: Under basic composition, privacy costs add up, 50 × 0.5 = 25, and averaging strips out the noise that protected people. That's why DP systems enforce a total budget. Each answer being private alone doesn't make the collection private.
+  - id: privacy-and-memorization.noise
+    objective_ref: objective.privacy-and-memorization
+    task: base
+    response_type: numeric
+    points: 1
+    hint: 'Find the sensitivity first: the most one person can change the true answer. Then divide it by ε.'
+    remediation_scene: privacy-and-memorization.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: privacy-and-memorization.noise.1
+        prompt: A hospital publishes a count of patients with a condition, using the Laplace mechanism with ε = 0.5. What is the noise scale b?
+        answer: 2
+        feedback: One patient changes a count by at most 1, so Δ = 1 and b = 1 / 0.5 = 2. Halving ε doubled the noise.
+      - id: privacy-and-memorization.noise.2
+        prompt: A school publishes the number of students who used a counselling service this term, with the Laplace mechanism at ε = 0.25. What is the noise scale b?
+        answer: 4
+        feedback: A count has sensitivity 1, so b = 1 / 0.25 = 4. A typical published value is off by about 4 students.
+      - id: privacy-and-memorization.noise.3
+        prompt: A clinic publishes its total number of visits. Each patient contributes at most 3 visits. Using the Laplace mechanism with ε = 0.6, what is the noise scale b?
+        answer: 5
+        feedback: Removing one patient can change the total by up to 3, so Δ = 3 and b = 3 / 0.6 = 5. Larger contributions need proportionally more noise.
+      - id: privacy-and-memorization.noise.4
+        prompt: A survey publishes the sum of respondents' ages, with each age capped at 100 before summing. Using the Laplace mechanism with ε = 2, what is the noise scale b?
+        answer: 50
+        feedback: One respondent can change the sum by up to 100, so Δ = 100 and b = 100 / 2 = 50. Capping the values is what makes the sensitivity finite at all.

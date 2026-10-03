@@ -1,207 +1,433 @@
 schema_version: 0.2-draft
 lesson:
   id: gated-recurrence
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Choose what to keep, add, and reveal
   state: draft
-  summary: Use learned numerical gates to decide how much of an old sequence state to keep and how much to
-    replace.
+  summary: The festival started at 7 a.m. Can the model still remember it at 2 p.m.? Compute an LSTM step by hand and see how gates rescue the fading gradient.
   slot: M13.3
   category: learning
   sources:
-  - title: Dive into Deep Learning — LSTM
-    url: https://d2l.ai/chapter_recurrent-modern/lstm.html
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: "Long Short-Term Memory (Hochreiter & Schmidhuber, 1997)"
+      url: https://doi.org/10.1162/neco.1997.9.8.1735
+    - title: "Learning to Forget: Continual Prediction with LSTM (Gers, Schmidhuber & Cummins, 2000)"
+      url: https://doi.org/10.1162/089976600300015015
+    - title: "Learning Phrase Representations using RNN Encoder–Decoder for Statistical Machine Translation (Cho et al., 2014)"
+      url: https://arxiv.org/abs/1406.1078
+    - title: "Empirical Evaluation of Gated Recurrent Neural Networks on Sequence Modeling (Chung et al., 2014)"
+      url: https://arxiv.org/abs/1412.3555
+    - title: Dive into Deep Learning — LSTM
+      url: https://d2l.ai/chapter_recurrent-modern/lstm.html
+    - title: Dive into Deep Learning — GRU
+      url: https://d2l.ai/chapter_recurrent-modern/gru.html
 objectives:
-- id: objective.gated-recurrence
-  version: 1-draft
-  statement: LSTMs and GRUs use learned gates to control state updates; these mechanisms can help long-range
-    learning but do not provide unlimited or perfect memory.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - gated-recurrence.base
-  - gated-recurrence.transfer
-  prerequisites:
-  - anyOf:
-    - objective.recurrent-networks
+  - id: objective.gated-recurrence
+    version: 2-draft
+    statement: LSTMs and GRUs use learned gates to control state updates; these mechanisms can help long-range learning but do not provide unlimited or perfect memory.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - gated-recurrence.base.v2
+      - gated-recurrence.transfer.v2
+      - gated-recurrence.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.recurrent-networks
 scenes:
-- id: gated-recurrence.s1
-  title: Use a numerical gate to control a contribution
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.gated-recurrence
-  markdown: 'Think of a gate as a dimmer: 0 passes none of a contribution, 1 passes all, and 0.5 passes half.
-    A learned gate commonly uses a **sigmoid**, which maps a score to a number between 0 and 1.
+  - id: gated-recurrence.s1
+    title: A dimmer switch the network sets itself
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.gated-recurrence
+    markdown: |-
+      On festival Saturday, the street outside Pebble Café fills up at 7 a.m. and stays busy until closing. A model that notices at 7 a.m. should still expect crowds at 2 p.m. The plain RNN from the last lesson struggles with that: its state shrinks at every step, and the gradient linking 2 p.m. back to 7 a.m. shrinks even faster.
 
+      The fix is to let the network decide, at each step, how much of its memory to keep. It does this with a **gate**: a number between 0 and 1 that multiplies another quantity, like a dimmer switch. A gate of 0 blocks the quantity, 1 passes it untouched, and 0.5 passes half.
 
-    The network calculates the gate from its input and state using learned parameters. The gate value can therefore
-    change at each sequence position without a person setting it or the model being retrained.'
-  text_mode: 'Think of a gate as a dimmer: 0 passes none of a contribution, 1 passes all, and 0.5 passes half.
-    A learned gate commonly uses a **sigmoid**, which maps a score to a number between 0 and 1.
+      The gate's value comes from a **sigmoid**, $\sigma(z) = 1 / (1 + e^{-z})$, which squeezes any score into the range 0 to 1: $\sigma(-1) \approx 0.269$, $\sigma(0) = 0.5$, $\sigma(2) \approx 0.881$. The score itself is computed like an RNN update, from the previous state and the new input with learned weights. So a person never sets the gate; the network sets a fresh value at every step, from what it's reading right now. On an ordinary 11 a.m. hour of festival day it can learn to hold the "crowds" memory open; at the next morning's first hour, it can learn to clear it.
+    bridges: []
+  - id: gated-recurrence.s2
+    title: One LSTM step, computed by hand
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.gated-recurrence
+    markdown: |-
+      The **long short-term memory (LSTM)**, published by Sepp Hochreiter and Jürgen Schmidhuber in 1997, adds a second state called the **cell**, $c_t$, a memory lane that gates read from and write to. The forget gate was added in 2000 by Gers, Schmidhuber, and Cummins, and today's standard LSTM includes it. Each step computes three gates and one candidate from $h_{t-1}$ and $x_t$:
 
+      | Piece | Formula | Job |
+      | --- | --- | --- |
+      | Forget gate | $f_t = \sigma(\text{score}_f)$ | How much old cell to keep |
+      | Input gate | $i_t = \sigma(\text{score}_i)$ | How much new content to write |
+      | Candidate | $\tilde{c}_t = \tanh(\text{score}_c)$ | The new content itself |
+      | Output gate | $o_t = \sigma(\text{score}_o)$ | How much of the cell to reveal |
 
-    The network calculates the gate from its input and state using learned parameters. The gate value can therefore
-    change at each sequence position without a person setting it or the model being retrained.'
-  bridges: []
-- id: gated-recurrence.s2
-  title: Calculate an LSTM cell update
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.gated-recurrence
-  markdown: '**LSTM** stands for **long short-term memory**. Its cell carries a state, written c. A common
-    update keeps part of the old state and adds part of a proposed new value: c_new = f × c_old + i × candidate.
-    The **forget gate** f scales what remains; the **input gate** i scales what is added.
+      Each score is $W[h_{t-1}, x_t] + b$, where $[h_{t-1}, x_t]$ means the old state and the new input stacked into one list. Each piece has its own $W$ and $b$, just like the RNN update. Then:
 
+      $$c_t = f_t\, c_{t-1} + i_t\, \tilde{c}_t \qquad h_t = o_t \tanh(c_t)$$
 
-    For f = 0.8, c_old = 2, i = 0.5, and candidate = 1, retain 0.8 × 2 = 1.6 and add 0.5 × 1 = 0.5. The new
-    cell state is 2.1. An **output gate** then controls how the cell contributes to the exposed hidden state
-    under the LSTM’s output rule.'
-  text_mode: '**LSTM** stands for **long short-term memory**. Its cell carries a state, written c. A common
-    update keeps part of the old state and adds part of a proposed new value: c_new = f × c_old + i × candidate.
-    The **forget gate** f scales what remains; the **input gate** i scales what is added.
+      Take festival Saturday at 11 a.m. The cell holds $c_{t-1} = 2.0$ ("festival, expect crowds"), and an ordinary hour produces the scores forget 2.0, input −1.0, candidate 0.5, output 1.0.
 
+      ```python run
+      import numpy as np
 
-    For f = 0.8, c_old = 2, i = 0.5, and candidate = 1, retain 0.8 × 2 = 1.6 and add 0.5 × 1 = 0.5. The new
-    cell state is 2.1. An **output gate** then controls how the cell contributes to the exposed hidden state
-    under the LSTM’s output rule.'
-  bridges:
-  - algebra-notation
-- id: gated-recurrence.s3
-  title: Compare a gated recurrent unit
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.gated-recurrence
-  markdown: 'A **gated recurrent unit (GRU)** uses a hidden state without the same separate cell-state structure
-    as an LSTM. Its **update gate** mixes the old and proposed state; its **reset gate** affects how the old
-    state contributes to the proposal.
+      def sigmoid(z):
+          return 1 / (1 + np.exp(-z))
 
+      c_prev = 2.0                                  # cell: "festival day, expect crowds"
+      scores = {"forget": 2.0, "input": -1.0, "candidate": 0.5, "output": 1.0}
 
-    Some formulas reverse which side is multiplied by the update-gate value, so compare the actual rules. Both
-    GRUs and LSTMs create paths that can retain information more directly than a simple recurrence, helping
-    with some gradient-flow problems.'
-  text_mode: 'A **gated recurrent unit (GRU)** uses a hidden state without the same separate cell-state structure
-    as an LSTM. Its **update gate** mixes the old and proposed state; its **reset gate** affects how the old
-    state contributes to the proposal.
+      f = sigmoid(scores["forget"])                 # how much old memory to keep
+      i = sigmoid(scores["input"])                  # how much new content to write
+      g = np.tanh(scores["candidate"])              # the new content itself
+      o = sigmoid(scores["output"])                 # how much of the cell to reveal
+      c = f * c_prev + i * g
+      h = o * np.tanh(c)
+      print(f"f = {f:.3f}  i = {i:.3f}  candidate = {g:.3f}  o = {o:.3f}")
+      print(f"c = {f:.3f} x {c_prev} + {i:.3f} x {g:.3f} = {c:.3f}")
+      print(f"h = {o:.3f} x tanh({c:.3f}) = {h:.3f}")
 
+      # Along the cell path, each step back multiplies the gradient by f.
+      for keep in (0.5, 0.881, 0.99):
+          print(f"forget gate {keep}: gradient after 24 steps = {keep**24:.3g}")
+      ```
 
-    Some formulas reverse which side is multiplied by the update-gate value, so compare the actual rules. Both
-    GRUs and LSTMs create paths that can retain information more directly than a simple recurrence, helping
-    with some gradient-flow problems.'
-  bridges: []
-- id: gated-recurrence.s4
-  title: Evaluate memory as a capability
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.gated-recurrence
-  markdown: Gating does not guarantee remembering every relevant event across any sequence length. Training
-    signals, state size, data, and optimization still matter. Test controlled delayed-dependency tasks and
-    real sequence conditions. Distinguish a learned retention pattern from a general external memory with exact
-    lookup.
-  text_mode: Gating does not guarantee remembering every relevant event across any sequence length. Training
-    signals, state size, data, and optimization still matter. Test controlled delayed-dependency tasks and
-    real sequence conditions. Distinguish a learned retention pattern from a general external memory with exact
-    lookup.
-  bridges: []
-- id: gated-recurrence.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.gated-recurrence
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Gates control how much information is kept, added, and exposed at each step. They can help a sequence
-    model retain useful information, but memory still depends on training and the task.
-- id: gated-recurrence.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.gated-recurrence
-  markdown: Gates control how much information is kept, added, and exposed at each step. They can help a sequence
-    model retain useful information, but memory still depends on training and the task.
-  text_mode: Gates control how much information is kept, added, and exposed at each step. They can help a sequence
-    model retain useful information, but memory still depends on training and the task.
+      The cell keeps $0.881 \times 2.0 = 1.762$, writes $0.269 \times 0.462 = 0.124$, and ends at $1.886$: the festival memory survives an ordinary hour almost intact. The output gate then reveals $0.731 \times \tanh(1.886) = 0.698$ as the hidden state.
+
+      :::predict At 7 a.m. the next day, the forget score is −2.0 instead of 2.0, and everything else is the same. What is the new cell value?
+      $f = \sigma(-2) \approx 0.119$, so the cell keeps only $0.119 \times 2.0 = 0.238$, plus the same $0.124$ written: $c \approx 0.363$. Yesterday's festival is mostly wiped. One learned gate, two different decisions, same weights.
+      :::
+    bridges:
+      - algebra-notation
+    diagram:
+      caption: An LSTM cell. Gates computed from the inputs decide what the cell keeps, writes, and reveals.
+      description: The inputs, the previous hidden state and the new input, feed four pieces - the forget gate, the input gate with its candidate, and the output gate. The old cell flows to the new cell, scaled by the forget gate. The input gate times the candidate is added to the new cell. The new cell passes through tanh and is scaled by the output gate to give the new hidden state.
+      nodes:
+        - id: cprev
+          label: Old cell c(t−1)
+          col: 0
+          row: 0
+          tone: muted
+        - id: cnew
+          label: New cell c(t)
+          note: f·c(t−1) + i·candidate
+          col: 3
+          row: 0
+          tone: accent
+        - id: hout
+          label: New hidden state h(t)
+          note: o · tanh(c(t))
+          col: 5
+          row: 0
+          tone: accent
+        - id: fgate
+          label: Forget gate f
+          note: keep how much?
+          col: 1
+          row: 2
+          tone: warn
+        - id: igate
+          label: Input gate × candidate
+          note: write what, how much?
+          col: 3
+          row: 2
+          tone: warn
+        - id: ogate
+          label: Output gate o
+          note: reveal how much?
+          col: 5
+          row: 2
+          tone: warn
+        - id: inputs
+          label: h(t−1) and x(t)
+          col: 3
+          row: 4
+          tone: data
+      edges:
+        - from: cprev
+          to: cnew
+          label: × f
+        - from: fgate
+          to: cnew
+          label: scales the old cell
+        - from: igate
+          to: cnew
+          label: added
+        - from: cnew
+          to: hout
+          label: tanh
+        - from: ogate
+          to: hout
+          label: × o
+        - from: inputs
+          to: fgate
+        - from: inputs
+          to: igate
+        - from: inputs
+          to: ogate
+  - id: gated-recurrence.s3
+    title: Why the gradient survives the cell
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.gated-recurrence
+    markdown: |-
+      In the plain RNN, each step back multiplied the gradient by $W_h(1 - h_t^2)$, and a surprise followed by 23 ordinary hours left about $10^{-7}$. Along the LSTM's cell, $c_t = f_t\,c_{t-1} + \ldots$, so the direct path back one step multiplies by just $f_t$. The last lines of the program show what that buys:
+
+      | Forget gate held at | Gradient left after 24 steps |
+      | ---: | ---: |
+      | 0.5 | about $6 \times 10^{-8}$ |
+      | 0.881 | 0.048 |
+      | 0.99 | 0.786 |
+
+      A plain RNN can't choose its factor; it falls out of the weights and the squashing. The LSTM *learns* to hold $f$ near 1 on the steps where a memory matters, so the error signal from 2 p.m. still reaches 7 a.m. Hochreiter and Schmidhuber called this uninterrupted path the "constant error carousel." It's the same idea as the residual connections of module 11: the new cell is the old cell, scaled by $f$, *plus* an update, so the gradient has a direct road back.
+
+      :::mixup "An LSTM remembers everything, forever."
+      It remembers what training taught its gates to keep, in a cell of fixed size, say 128 numbers. A forget gate of 0.99 still loses about a fifth of the signal over 24 steps, and much more over thousands. If you need exact recall of a fact from 5,000 steps ago, such as a customer's order number, store it somewhere you can look it up. To check what a trained LSTM keeps, test it: plant an event, wait a controlled number of steps, and see whether its prediction still reflects it.
+      :::
+    bridges: []
+  - id: gated-recurrence.s4
+    title: The GRU, a leaner cousin
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.gated-recurrence
+    markdown: |-
+      In 2014, Kyunghyun Cho and colleagues introduced the **gated recurrent unit (GRU)** in the same paper that proposed the RNN encoder–decoder, the subject of the next lesson. It drops the separate cell and uses two gates:
+
+      - The **update gate** $z_t$ decides how much of the old state to keep.
+      - The **reset gate** $r_t$ decides how much of the old state to use when proposing a new one.
+
+      $$\tilde{h}_t = \tanh\big(W x_t + U (r_t \odot h_{t-1}) + b\big) \qquad h_t = z_t\, h_{t-1} + (1 - z_t)\, \tilde{h}_t$$
+
+      Here $\odot$ means multiply entry by entry. With $z = 0.9$, $h_{t-1} = 0.8$, and a proposal $\tilde{h} = -0.5$, the new state is $0.9 \times 0.8 + 0.1 \times (-0.5) = 0.72 - 0.05 = 0.67$. The update gate works like a forget gate and an input gate tied together: whatever fraction you keep, you write the rest. Some textbooks swap the roles of $z$ and $1 - z$, so check which convention a formula uses before you compute.
+
+      How do you choose? A GRU has three weight blocks to an LSTM's four, so about a quarter fewer parameters for the same state size. Chung and colleagues (2014) compared them on music and speech-signal modeling: both gated units clearly beat the plain tanh RNN, and neither won consistently. In practice, treat the choice like any other setting. Ana would backtest both on her café data, and keep the smaller GRU unless the LSTM beats it on the held-out days.
+    bridges: []
+  - id: gated-recurrence.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.gated-recurrence
+    markdown: A few cell updates to compute, plus a heart monitor, a support chatbot, and a model comparison, test whether you can read what each gate is doing.
+    takeaway: |-
+      An LSTM's gates decide how much old memory to keep, how much new content to write, and how much to reveal. Holding the forget gate near 1 lets both memory and gradient survive many steps.
+  - id: gated-recurrence.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.gated-recurrence
+    markdown: |-
+      Gates control how much information is kept, added, and exposed at each step. They can help a sequence model retain useful information, but memory still depends on training and the task.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - gated-recurrence.s1
-    - gated-recurrence.s2
-    - gated-recurrence.s3
-    - gated-recurrence.s4
-    - gated-recurrence.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - gated-recurrence.s1
+        - gated-recurrence.s2
+        - gated-recurrence.s3
+        - gated-recurrence.s4
+        - gated-recurrence.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     gated-recurrence.recap: gated-recurrence.check
 assessment_families:
-- id: gated-recurrence.base
-  objective_ref: objective.gated-recurrence
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Follow an LSTM cell update: trace the inputs, operation, and result before choosing.'
-  remediation_scene: gated-recurrence.s2
-  variants:
-  - id: gated-recurrence.base.1
-    prompt: With f = 0.5, old cell = 4, i = 0.25, candidate = 2, what is new cell?
-    options:
-    - id: b
-      text: '4.5'
-    - id: c
-      text: '1.5'
-    - id: a
-      text: '2.5'
-    answer: a
-    feedback: Retain 2 and add 0.5.
-  - id: gated-recurrence.base.2
-    prompt: What does a sigmoid-style gate usually output?
-    options:
-    - id: c
-      text: A guaranteed binary decision always
-    - id: a
-      text: A value between zero and one
-    - id: b
-      text: An arbitrary document ID only
-    answer: a
-    feedback: The gate smoothly scales a numerical contribution.
-- id: gated-recurrence.transfer
-  objective_ref: objective.gated-recurrence
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate memory as a capability: trace the inputs, operation, and result before choosing.'
-  remediation_scene: gated-recurrence.s4
-  variants:
-  - id: gated-recurrence.transfer.1
-    prompt: Does an LSTM guarantee unlimited perfect memory?
-    options:
-    - id: c
-      text: Only if its output gate is named correctly
-    - id: a
-      text: 'No'
-    - id: b
-      text: Yes; long short-term memory is a formal unlimited guarantee
-    answer: a
-    feedback: Memory behavior depends on capacity, learning, and task conditions.
-  - id: gated-recurrence.transfer.2
-    prompt: Should a GRU be described as having exactly the same separate cell-state structure as a standard
-      LSTM?
-    options:
-    - id: a
-      text: No; their state and gate arrangements differ
-    - id: b
-      text: Yes; they are identical operations
-    - id: c
-      text: Only in small batches
-    answer: a
-    feedback: The architectures share gating ideas but differ in their mechanisms.
+  - id: gated-recurrence.base
+    objective_ref: objective.gated-recurrence
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Follow an LSTM cell update: trace the inputs, operation, and result before choosing.'
+    remediation_scene: gated-recurrence.s2
+    variants:
+      - id: gated-recurrence.base.1
+        prompt: With f = 0.5, old cell = 4, i = 0.25, candidate = 2, what is new cell?
+        options:
+          - id: b
+            text: '4.5'
+          - id: c
+            text: '1.5'
+          - id: a
+            text: '2.5'
+        answer: a
+        feedback: Retain 2 and add 0.5.
+        retired: true
+      - id: gated-recurrence.base.2
+        prompt: What does a sigmoid-style gate usually output?
+        options:
+          - id: c
+            text: A guaranteed binary decision always
+          - id: a
+            text: A value between zero and one
+          - id: b
+            text: An arbitrary document ID only
+        answer: a
+        feedback: The gate smoothly scales a numerical contribution.
+        retired: true
+  - id: gated-recurrence.transfer
+    objective_ref: objective.gated-recurrence
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate memory as a capability: trace the inputs, operation, and result before choosing.'
+    remediation_scene: gated-recurrence.s4
+    variants:
+      - id: gated-recurrence.transfer.1
+        prompt: Does an LSTM guarantee unlimited perfect memory?
+        options:
+          - id: c
+            text: Only if its output gate is named correctly
+          - id: a
+            text: 'No'
+          - id: b
+            text: Yes; long short-term memory is a formal unlimited guarantee
+        answer: a
+        feedback: Memory behavior depends on capacity, learning, and task conditions.
+        retired: true
+      - id: gated-recurrence.transfer.2
+        prompt: Should a GRU be described as having exactly the same separate cell-state structure as a standard LSTM?
+        options:
+          - id: a
+            text: No; their state and gate arrangements differ
+          - id: b
+            text: Yes; they are identical operations
+          - id: c
+            text: Only in small batches
+        answer: a
+        feedback: The architectures share gating ideas but differ in their mechanisms.
+        retired: true
+  - id: gated-recurrence.base.v2
+    objective_ref: objective.gated-recurrence
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Give each gate its job: forget scales the old cell, input scales what is written, output scales what the hidden state reveals. A gate near 1 passes; near 0 blocks."
+    remediation_scene: gated-recurrence.s2
+    variants:
+      - id: gated-recurrence.base.v2.1
+        prompt: On festival day, an ordinary 11 a.m. hour arrives and the LSTM should keep its "expect crowds" memory unchanged. Which gate values do that?
+        options:
+          - id: b
+            text: Forget gate near 0 and input gate near 1
+          - id: a
+            text: Forget gate near 1 and input gate near 0
+          - id: c
+            text: Output gate near 0 and forget gate near 0
+        answer: a
+        feedback: A forget gate near 1 keeps the old cell, and an input gate near 0 writes almost nothing new over it. The reverse erases the memory and replaces it with this hour's content; the output gate only controls what gets revealed.
+      - id: gated-recurrence.base.v2.2
+        prompt: At one step, an LSTM's output gate is close to 0 while its forget gate is close to 1. What happens?
+        options:
+          - id: c
+            text: The cell is erased, so the next step starts from nothing
+          - id: b
+            text: The new input is ignored, but the hidden state shows the cell
+          - id: a
+            text: The cell is kept, but the hidden state reveals little of it
+        answer: a
+        feedback: The forget gate near 1 preserves the cell, and the output gate near 0 makes h = o × tanh(c) small, so the memory is stored but hidden for now. Erasing is the forget gate's job, and ignoring input is the input gate's.
+      - id: gated-recurrence.base.v2.3
+        prompt: Why does the gradient survive more steps along an LSTM's cell than through a plain tanh RNN?
+        options:
+          - id: a
+            text: Each step back multiplies it by f, which training can hold near 1
+          - id: b
+            text: The cell has no weights of its own, so there is no gradient to shrink
+          - id: c
+            text: LSTMs clip their gradients inside every cell as part of the design
+        answer: a
+        feedback: Along the cell, ∂c_t/∂c_(t−1) is the forget gate, and a learned f near 1 keeps the product of factors from collapsing. The cell still carries a gradient, and clipping is a separate training trick for explosions.
+      - id: gated-recurrence.base.v2.4
+        prompt: Which statement correctly describes how a GRU differs from an LSTM?
+        options:
+          - id: b
+            text: It has no gates, and relies on a larger hidden state instead
+          - id: c
+            text: It adds a fifth gate that decides how much to output
+          - id: a
+            text: It has no separate cell, and one update gate both keeps and writes
+        answer: a
+        feedback: A GRU keeps a fraction z of the old state and fills the rest, 1 − z, with its proposal, so one gate does the work of the LSTM's forget and input gates, and there is no separate cell. It has two gates (update and reset), not zero or five.
+  - id: gated-recurrence.transfer.v2
+    objective_ref: objective.gated-recurrence
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Gates help a network learn to keep information across many steps, but the memory is learned and has a fixed size. Match the fix to the kind of memory the task needs.
+    remediation_scene: gated-recurrence.s3
+    variants:
+      - id: gated-recurrence.transfer.v2.1
+        prompt: A model reads a patient's heart rhythm once per second and must link a brief irregular beat to an alarm about 300 steps later. A plain tanh RNN never learns the link. What is the most promising change?
+        options:
+          - id: c
+            text: Cut each sequence to 50 steps so training runs faster
+          - id: b
+            text: Lower the learning rate so that the updates are steadier
+          - id: a
+            text: Switch to an LSTM or GRU, whose gates can keep the event
+        answer: a
+        feedback: The link fails because the gradient vanishes across 300 multiplications; gated units let training hold a memory path open. Cutting sequences to 50 steps removes the dependency entirely, and a smaller learning rate doesn't make a vanished gradient reappear.
+      - id: gated-recurrence.transfer.v2.2
+        prompt: An LSTM-based support bot forgets the order number a customer typed about 2,000 words earlier. What is the most reliable fix?
+        options:
+          - id: a
+            text: Save the order number in a record the bot can look up later
+          - id: b
+            text: Switch to a GRU, which has fewer gates that could forget it
+          - id: c
+            text: Double the LSTM's hidden state so it can hold more numbers
+        answer: a
+        feedback: A fixed-size, learned memory fades over thousands of steps, so exact facts belong in storage that can be looked up. A GRU has the same kind of memory, and a bigger state helps a little without making recall exact.
+      - id: gated-recurrence.transfer.v2.3
+        prompt: A team must choose between an LSTM and a GRU for hourly energy forecasting. What is the best way to decide?
+        options:
+          - id: b
+            text: Pick the LSTM, since its extra gate means it will remember more
+          - id: a
+            text: Backtest both on the same days and weigh accuracy against size
+          - id: c
+            text: Pick the GRU, since it came later and replaced the older LSTM
+        answer: a
+        feedback: Comparisons such as Chung et al. (2014) found neither unit wins consistently, so measure on your own data with the same backtest. More gates don't mean more memory, and the GRU is an alternative, not a replacement.
+      - id: gated-recurrence.transfer.v2.4
+        prompt: Engineers plant a sales spike in test data and watch a trained LSTM. Its forecasts still reflect the spike 30 steps later, but not after 100 steps. What does this show?
+        options:
+          - id: c
+            text: The LSTM is broken, since a working one keeps memories forever
+          - id: b
+            text: The output gate is stuck at 1, so the memory leaks out each step
+          - id: a
+            text: Its gates learned to hold this kind of event for tens of steps
+        answer: a
+        feedback: How long an LSTM remembers depends on what training taught its gates, and forget gates below 1 fade over long stretches. Healthy LSTMs forget; the output gate controls what is revealed, not what the cell keeps.
+  - id: gated-recurrence.calc.v2
+    objective_ref: objective.gated-recurrence
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "LSTM: new cell = forget × old cell + input × candidate. GRU: new state = z × old state + (1 − z) × proposal."
+    remediation_scene: gated-recurrence.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: gated-recurrence.calc.v2.1
+        prompt: An LSTM has forget gate 0.9, old cell 3.0, input gate 0.5, and candidate 0.4. What is the new cell value?
+        answer: 2.9
+        feedback: It keeps 0.9 × 3.0 = 2.7 and writes 0.5 × 0.4 = 0.2, so the new cell is 2.9.
+      - id: gated-recurrence.calc.v2.2
+        prompt: An LSTM has forget gate 0.2, old cell 5.0, input gate 0.8, and candidate −0.5. What is the new cell value?
+        answer: 0.6
+        feedback: It keeps 0.2 × 5.0 = 1.0 and writes 0.8 × (−0.5) = −0.4, so the new cell is 0.6. A low forget gate wiped most of the old memory.
+      - id: gated-recurrence.calc.v2.3
+        prompt: A GRU has update gate z = 0.75, old state 0.4, and proposed state 0.8, using h = z × old + (1 − z) × proposal. What is the new state?
+        answer: 0.5
+        feedback: 0.75 × 0.4 = 0.3 kept, plus 0.25 × 0.8 = 0.2 written, gives 0.5.
+      - id: gated-recurrence.calc.v2.4
+        prompt: An LSTM has forget gate 0.6, old cell −1.0, input gate 0.5, and candidate 0.6. What is the new cell value?
+        answer: -0.3
+        feedback: It keeps 0.6 × (−1.0) = −0.6 and writes 0.5 × 0.6 = 0.3, so the new cell is −0.3.

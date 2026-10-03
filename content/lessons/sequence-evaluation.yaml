@@ -1,216 +1,410 @@
 schema_version: 0.2-draft
 lesson:
   id: sequence-evaluation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Judge quality across time, languages, and delay
   state: draft
-  summary: Judge a sequence by its meaning and timing, as well as how many individual pieces match a reference.
+  summary: Is 3 cups of error good? Is a 7% WER good if one language sits at 30%? Learn the scores forecasters and speech teams trust, and what each one hides.
   slot: M13.8
   category: learning
   sources:
-  - title: Speech and Language Processing — authors’ draft
-    url: https://web.stanford.edu/~jurafsky/slp3/
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: "Another Look at Measures of Forecast Accuracy (Hyndman & Koehler, 2006)"
+      url: https://doi.org/10.1016/j.ijforecast.2006.03.001
+    - title: "Forecasting: Principles and Practice, 3rd edition, §5.8 Evaluating point forecast accuracy (Hyndman & Athanasopoulos, 2021)"
+      url: https://otexts.com/fpp3/accuracy.html
+    - title: "ITU-T Recommendation P.800: Methods for subjective determination of transmission quality"
+      url: https://www.itu.int/rec/T-REC-P.800
+    - title: "Natural TTS Synthesis by Conditioning WaveNet on Mel Spectrogram Predictions (Shen et al., 2018)"
+      url: https://arxiv.org/abs/1712.05884
+    - title: Speech and Language Processing, 3rd edition draft (Jurafsky & Martin)
+      url: https://web.stanford.edu/~jurafsky/slp3/
 objectives:
-- id: objective.sequence-evaluation
-  version: 1-draft
-  statement: Sequence evaluation must consider alignment, meaning, robustness, timing, and subgroup coverage;
-    a single aggregate metric rarely captures the full user task.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - sequence-evaluation.base
-  - sequence-evaluation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.speech-recognition
-  - anyOf:
-    - objective.speech-and-audio-generation
-  - anyOf:
-    - objective.time-series
+  - id: objective.sequence-evaluation
+    version: 2-draft
+    statement: Sequence evaluation must consider alignment, meaning, robustness, timing, and subgroup coverage; a single aggregate metric rarely captures the full user task.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - sequence-evaluation.base.v2
+      - sequence-evaluation.transfer.v2
+      - sequence-evaluation.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.speech-recognition
+      - anyOf:
+          - objective.speech-and-audio-generation
+      - anyOf:
+          - objective.time-series
 scenes:
-- id: sequence-evaluation.s1
-  title: A sequence has structure beyond its parts
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.sequence-evaluation
-  markdown: 'One incorrect word can reverse meaning while several harmless wording changes produce a large
-    edit distance. A forecast can have low average error yet miss a peak that matters operationally. Evaluate
-    the sequence against the use case, including how errors accumulate or change later behavior.
+  - id: sequence-evaluation.s1
+    title: Is 3 cups of error good? Ask the baseline
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.sequence-evaluation
+    markdown: |-
+      Ana's new forecasting model for Pebble Café has a backtest MAE of 2.8 cups. Is that good? For a café that sells 50 cups at 8 a.m., probably. For a stall that sells 4 cups an hour, it's terrible. And the owner of Harbor Café, which sells four times as much, can't compare her own model's MAE with Ana's at all.
 
+      The fix is to divide by the error of a baseline everyone understands. The **mean absolute scaled error (MASE)**, proposed by Rob Hyndman and Anne Koehler in 2006, divides a forecast's MAE by the MAE that the seasonal naive forecast achieves on the training data (the original paper used the plain naive forecast; the seasonal version suits seasonal data):
 
-    **Edit distance** counts a defined set of changes needed to turn one sequence into another. “Do open the
-    gate” versus “Do not open the gate” differs by one inserted word but reverses the instruction. A small
-    edit score is therefore not a complete meaning score. Start with the consequence of the changed sequence.'
-  text_mode: 'One incorrect word can reverse meaning while several harmless wording changes produce a large
-    edit distance. A forecast can have low average error yet miss a peak that matters operationally. Evaluate
-    the sequence against the use case, including how errors accumulate or change later behavior.
+      $$\text{MASE} = \frac{\text{MAE of the forecast}}{\text{MAE of the seasonal naive forecast, in-sample}}$$
 
+      Over Pebble Café's training weeks, "same hour last week" misses by 3.5 cups on average. So Ana's model scores $2.8 / 3.5 = 0.8$. Below 1 means it beats the seasonal naive baseline; above 1 means you'd do better copying last week. Harbor Café's model, with MAE 9 cups against a baseline of 12, scores 0.75, slightly better than Ana's, despite the bigger raw error. The M4 forecasting competition (2018), which compared methods on 100,000 series of very different sizes, used MASE as one of its two main accuracy measures.
 
-    **Edit distance** counts a defined set of changes needed to turn one sequence into another. “Do open the
-    gate” versus “Do not open the gate” differs by one inserted word but reverses the instruction. A small
-    edit score is therefore not a complete meaning score. Start with the consequence of the changed sequence.'
-  bridges: []
-- id: sequence-evaluation.s2
-  title: Pair quality with time
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sequence-evaluation
-  markdown: 'For a streaming recognizer, latency may include capture, buffering, computation, and stabilization
-    of partial text. A system can emit an early guess quickly but revise it repeatedly. Report the delay definition
-    and whether final accuracy is measured after unlimited future context or under the actual streaming constraint.
+      :::mixup "Just report the percentage error. Everyone understands percentages."
+      The mean absolute percentage error (MAPE) divides each miss by the actual value. On an hour when the café sells 0 cups, say a 7 a.m. hour during a snowstorm, it divides by zero. On a 2-cup hour, a miss of 2 counts as 100%. MASE divides by a baseline's typical error instead, so zeros and tiny values don't blow it up.
+      :::
+    bridges: []
+  - id: sequence-evaluation.s2
+    title: Keep the last stretch of time sealed
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sequence-evaluation
+    markdown: |-
+      Ana tries 40 model settings, backtests each one on January to March, and keeps the best: MASE 0.72. The time series lesson's rule, "use only the past," held inside every fold. Yet 0.72 is too rosy. Those same weeks were used to *choose* the settings, so the winner is partly the setting that happened to suit those particular weeks. It's the same leak as tuning on the test set, spread across time.
 
+      The fix is a sealed period. Tune on January to March, then score the chosen model once on April, which played no part in any decision. If April's MASE is 0.85, that's the number to report.
 
-    **Latency** is delay between a stated starting event and a stated useful result. For speech, distinguish
-    time to the first tentative word from time to a stable final transcript. A system that waits until a recording
-    ends can use future audio unavailable to a real-time listener; report that advantage rather than comparing
-    the two delays as if they were identical.'
-  text_mode: 'For a streaming recognizer, latency may include capture, buffering, computation, and stabilization
-    of partial text. A system can emit an early guess quickly but revise it repeatedly. Report the delay definition
-    and whether final accuracy is measured after unlimited future context or under the actual streaming constraint.
+      Speech has the same trap in a different shape. If one person's voice notes appear in both the training and test sets, the test rewards remembering that voice. Split by speaker, and for Jot, by recording date too, so the test sounds like next month's users.
+    bridges: []
+  - id: sequence-evaluation.s3
+    title: Pair accuracy with delay
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sequence-evaluation
+    markdown: |-
+      Jot's new live-caption mode shows your words while you speak. A streaming recognizer processes audio in **chunks** and may wait for a little **lookahead**, audio just after the chunk, before deciding. The worst-case delay for a word adds up three parts:
 
+      $$\text{delay} = \text{chunk} + \text{lookahead} + \text{compute} = 160 + 80 + 40 = 280 \text{ ms}$$
 
-    **Latency** is delay between a stated starting event and a stated useful result. For speech, distinguish
-    time to the first tentative word from time to a stable final transcript. A system that waits until a recording
-    ends can use future audio unavailable to a real-time listener; report that advantage rather than comparing
-    the two delays as if they were identical.'
-  bridges: []
-- id: sequence-evaluation.s3
-  title: Check language and condition coverage
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sequence-evaluation
-  markdown: 'Aggregate multilingual scores can hide languages with sparse data, different writing systems,
-    or inconsistent normalization. Audio quality can vary by accent, speaking rate, background noise, and overlapping
-    speakers. Compare these conditions with sufficient samples and respect the intended population rather than
-    assuming one language stands for all.
+      A word that ends just after a chunk begins waits for the whole 160 ms chunk, then 80 ms of lookahead, then 40 ms of computation. Bigger chunks and more lookahead give the model more context, so fewer errors, but a longer wait.
 
+      :::predict Jot's offline mode scores 6% WER on a test set, and streaming mode scores 8% on the same audio. Which number should the live-caption screen advertise?
+      The 8%. Offline mode hears the whole recording, including words *after* each word it transcribes; live captions can't. Report accuracy under the same conditions the user gets, and report it next to the delay: "8% WER at 280 ms."
+      :::
 
-    **Text normalization** decides whether forms such as “twenty one” and “21” count as the same answer. Set
-    that rule before scoring and apply it consistently. It can change an error count without changing what
-    a listener heard.'
-  text_mode: 'Aggregate multilingual scores can hide languages with sparse data, different writing systems,
-    or inconsistent normalization. Audio quality can vary by accent, speaking rate, background noise, and overlapping
-    speakers. Compare these conditions with sufficient samples and respect the intended population rather than
-    assuming one language stands for all.
+      Streaming adds one more thing to measure: **stability**. A captioner might show "I scream" and then change it to "ice cream" 300 ms later. The final WER counts only "ice cream," but the reader saw the flicker. Count how often partial text changes before it settles.
+    bridges: []
+    diagram:
+      caption: The worst-case delay of a streaming recognizer, from the end of a spoken word to text on screen.
+      description: A word ends. The recognizer waits for the current chunk to fill, 160 milliseconds, then for 80 milliseconds of lookahead audio, then spends 40 milliseconds computing, and the text appears on screen 280 milliseconds after the word ended.
+      nodes:
+        - id: spoken
+          label: Word ends
+          col: 0
+          row: 0
+          tone: data
+        - id: chunk
+          label: Chunk fills
+          note: 160 ms
+          col: 1
+          row: 0
+        - id: look
+          label: Lookahead
+          note: 80 ms
+          col: 2
+          row: 0
+        - id: compute
+          label: Compute
+          note: 40 ms
+          col: 3
+          row: 0
+        - id: screen
+          label: Text on screen
+          note: 280 ms total
+          col: 4
+          row: 0
+          tone: accent
+      edges:
+        - from: spoken
+          to: chunk
+        - from: chunk
+          to: look
+        - from: look
+          to: compute
+        - from: compute
+          to: screen
+  - id: sequence-evaluation.s4
+    title: Ask listeners, and count how many
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sequence-evaluation
+    markdown: |-
+      For Jot's read-aloud voice, there is no single right answer to compare against. Two good readings of one note can differ in every sample. So speech synthesis is judged by people. In a **mean opinion score (MOS)** test, listeners rate each clip from 1 (bad) to 5 (excellent), a method standardized for telephone quality in the ITU's P.800 recommendation, and the scores are averaged. Tacotron 2 (2018) reported a MOS of 4.53, against 4.58 for professional recordings.
 
+      A MOS is an average of a few dozen opinions, so it comes with uncertainty. Always report the confidence interval:
 
-    **Text normalization** decides whether forms such as “twenty one” and “21” count as the same answer. Set
-    that rule before scoring and apply it consistently. It can change an error count without changing what
-    a listener heard.'
-  bridges: []
-- id: sequence-evaluation.s4
-  title: Use a portfolio of evidence
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sequence-evaluation
-  markdown: Combine suitable automatic metrics with targeted human review and failure analysis. Record reference
-    ambiguity, normalization, streaming settings, and confidence intervals. A system should also have an appropriate
-    response to unsupported inputs, silence, or severe uncertainty instead of being rewarded solely for producing
-    output.
-  text_mode: Combine suitable automatic metrics with targeted human review and failure analysis. Record reference
-    ambiguity, normalization, streaming settings, and confidence intervals. A system should also have an appropriate
-    response to unsupported inputs, silence, or severe uncertainty instead of being rewarded solely for producing
-    output.
-  bridges: []
-- id: sequence-evaluation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.sequence-evaluation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Judge a sequence by what its errors mean and when the result becomes useful. A single average score
-    can hide language gaps, changed instructions, or unstable streaming output.
-- id: sequence-evaluation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.sequence-evaluation
-  markdown: Judge a sequence by what its errors mean and when the result becomes useful. A single average score
-    can hide language gaps, changed instructions, or unstable streaming output.
-  text_mode: Judge a sequence by what its errors mean and when the result becomes useful. A single average
-    score can hide language gaps, changed instructions, or unstable streaming output.
+      ```python run
+      import numpy as np
+
+      repeat = 1        # try 4: four times as many listeners, same spread of opinions
+      ratings = {       # 1-5 naturalness ratings, one from each listener
+          "old voice": [4, 3, 4, 4, 3, 5, 4, 3, 4, 4, 3, 4],
+          "new voice": [4, 5, 4, 3, 5, 4, 4, 5, 3, 4, 5, 4],
+      }
+      for name, r in ratings.items():
+          r = np.array(r * repeat)
+          mos = r.mean()
+          half = 1.96 * r.std(ddof=1) / np.sqrt(len(r))     # approximate 95% interval
+          print(f"{name}: MOS = {mos:.2f}  (95% CI {mos - half:.2f} to {mos + half:.2f})"
+                f"  from {len(r)} ratings")
+      ```
+
+      With 12 ratings each, the new voice's 4.17 beats the old voice's 3.75, but the intervals (3.40–4.10 and 3.76–4.57) overlap, so the test can't separate them yet. Set `repeat = 4`: with 48 ratings the intervals no longer overlap.
+
+      MOS numbers also depend on who listens, which sentences they hear, and what else is in the test. A 4.3 in one paper and a 4.1 in another can't be compared. Put both systems, plus real recordings as an anchor, in the same test.
+    bridges: []
+  - id: sequence-evaluation.s5
+    title: One average hides the language that fails
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sequence-evaluation
+    markdown: |-
+      Jot launches in two languages. On a test set of 9,000 English words and 1,000 Swahili words, the overall WER is 7.5%. Broken down, English is at 5% and Swahili at 30%:
+
+      $$\frac{0.05 \times 9{,}000 + 0.30 \times 1{,}000}{10{,}000} = \frac{450 + 300}{10{,}000} = 7.5\%$$
+
+      The pooled number is dominated by the language with more test words. A Swahili speaker gets almost one word in three wrong, and the headline never shows it. The same happens with accents, noisy cars, and children's voices.
+
+      So the Jot team writes its evaluation plan as a table, not a number:
+
+      | Slice | Words | WER | Notes |
+      | --- | ---: | ---: | --- |
+      | English, quiet | 6,000 | 4% | |
+      | English, in a car | 3,000 | 7% | |
+      | Swahili, all | 1,000 | 30% | Needs more training data |
+      | Silence clips | 50 clips | 3 with invented text | Speech detector threshold too low |
+
+      Every slice uses the same text normalization, set before scoring ("5" = "five", casing ignored), and each row lists how much data it rests on. The table tells the team what to fix next, which a single 7.5% never could.
+    bridges: []
+  - id: sequence-evaluation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.sequence-evaluation
+    markdown: Scaled forecast errors to compute, plus an energy forecaster, a live captioner, and a multilingual help line, test whether you can pick the score that tells the truth.
+    takeaway: |-
+      Scale forecast errors by a seasonal naive baseline (MASE), seal a final stretch of time, report accuracy together with delay, and put confidence intervals on listening scores. Break every average into the slices users live in.
+  - id: sequence-evaluation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.sequence-evaluation
+    markdown: |-
+      Judge a sequence by what its errors mean and when the result becomes useful. A single average score can hide language gaps, changed instructions, or unstable streaming output.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - sequence-evaluation.s1
-    - sequence-evaluation.s2
-    - sequence-evaluation.s3
-    - sequence-evaluation.s4
-    - sequence-evaluation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - sequence-evaluation.s1
+        - sequence-evaluation.s2
+        - sequence-evaluation.s3
+        - sequence-evaluation.s4
+        - sequence-evaluation.s5
+        - sequence-evaluation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     sequence-evaluation.recap: sequence-evaluation.check
 assessment_families:
-- id: sequence-evaluation.base
-  objective_ref: objective.sequence-evaluation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Pair quality with time: trace the inputs, operation, and result before choosing.'
-  remediation_scene: sequence-evaluation.s2
-  variants:
-  - id: sequence-evaluation.base.1
-    prompt: Does low average forecast error guarantee accurate rare peaks?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the average is a decimal
-    answer: a
-    feedback: Averages can hide errors in consequential regimes.
-  - id: sequence-evaluation.base.2
-    prompt: What can partial-transcript instability add beyond first-output latency?
-    options:
-    - id: b
-      text: A guaranteed improvement in every final score
-    - id: c
-      text: Only a larger vocabulary
-    - id: a
-      text: Repeated revisions that affect usability
-    answer: a
-    feedback: Users experience both delay and the stability of intermediate output.
-- id: sequence-evaluation.transfer
-  objective_ref: objective.sequence-evaluation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Use a portfolio of evidence: trace the inputs, operation, and result before choosing.'
-  remediation_scene: sequence-evaluation.s4
-  variants:
-  - id: sequence-evaluation.transfer.1
-    prompt: A multilingual average is strong but one language performs poorly. What should reporting include?
-    options:
-    - id: b
-      text: Only the overall average
-    - id: c
-      text: A claim that all languages are equivalent
-    - id: a
-      text: Language-level results and uncertainty
-    answer: a
-    feedback: Aggregate performance can conceal uneven coverage.
-  - id: sequence-evaluation.transfer.2
-    prompt: A speech system outputs words during silence. What failure should be evaluated?
-    options:
-    - id: c
-      text: Only a formatting issue
-    - id: a
-      text: Unsupported output or hallucination under no-speech input
-    - id: b
-      text: A successful transcription by definition
-    answer: a
-    feedback: The task includes deciding whether there is evidence for speech.
+  - id: sequence-evaluation.base
+    objective_ref: objective.sequence-evaluation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Pair quality with time: trace the inputs, operation, and result before choosing.'
+    remediation_scene: sequence-evaluation.s2
+    variants:
+      - id: sequence-evaluation.base.1
+        prompt: Does low average forecast error guarantee accurate rare peaks?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the average is a decimal
+        answer: a
+        feedback: Averages can hide errors in consequential regimes.
+        retired: true
+      - id: sequence-evaluation.base.2
+        prompt: What can partial-transcript instability add beyond first-output latency?
+        options:
+          - id: b
+            text: A guaranteed improvement in every final score
+          - id: c
+            text: Only a larger vocabulary
+          - id: a
+            text: Repeated revisions that affect usability
+        answer: a
+        feedback: Users experience both delay and the stability of intermediate output.
+        retired: true
+  - id: sequence-evaluation.transfer
+    objective_ref: objective.sequence-evaluation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Use a portfolio of evidence: trace the inputs, operation, and result before choosing.'
+    remediation_scene: sequence-evaluation.s4
+    variants:
+      - id: sequence-evaluation.transfer.1
+        prompt: A multilingual average is strong but one language performs poorly. What should reporting include?
+        options:
+          - id: b
+            text: Only the overall average
+          - id: c
+            text: A claim that all languages are equivalent
+          - id: a
+            text: Language-level results and uncertainty
+        answer: a
+        feedback: Aggregate performance can conceal uneven coverage.
+        retired: true
+      - id: sequence-evaluation.transfer.2
+        prompt: A speech system outputs words during silence. What failure should be evaluated?
+        options:
+          - id: c
+            text: Only a formatting issue
+          - id: a
+            text: Unsupported output or hallucination under no-speech input
+          - id: b
+            text: A successful transcription by definition
+        answer: a
+        feedback: The task includes deciding whether there is evidence for speech.
+        retired: true
+  - id: sequence-evaluation.base.v2
+    objective_ref: objective.sequence-evaluation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Work each score out from its parts (a baseline's error, delay components, words per slice, rating spread) before deciding what it tells you.
+    remediation_scene: sequence-evaluation.s3
+    variants:
+      - id: sequence-evaluation.base.v2.1
+        prompt: A forecaster's MASE on next quarter's sales is 1.3. What does that tell you?
+        options:
+          - id: b
+            text: Its forecasts miss the actual sales by about 30% on average
+          - id: c
+            text: Its forecasts miss by 1.3 units per period on average
+          - id: a
+            text: Its errors are larger than the seasonal naive baseline's
+        answer: a
+        feedback: MASE divides by the seasonal naive forecast's typical error, so anything above 1 means copying last season would have done better. It is a ratio of errors, not a percentage of sales or an error in units.
+      - id: sequence-evaluation.base.v2.2
+        prompt: A streaming recognizer uses 200 ms chunks, 100 ms of lookahead, and 50 ms of computation. What is the worst-case delay from the end of a word to its text?
+        options:
+          - id: c
+            text: 200 ms, since the chunk length sets the delay
+          - id: a
+            text: 350 ms, adding chunk, lookahead, and compute
+          - id: b
+            text: 250 ms, adding the chunk and the computation
+        answer: a
+        feedback: A word that ends as a chunk begins waits for the whole chunk, then the lookahead, then the computation, so 200 + 100 + 50 = 350 ms. Leaving out the lookahead is the most common slip.
+      - id: sequence-evaluation.base.v2.3
+        prompt: A test set has 9,000 English words at 4% WER and 1,000 Welsh words at 24% WER. What is the pooled WER?
+        options:
+          - id: a
+            text: 6%, weighting each language by its word count
+          - id: b
+            text: 14%, averaging the two languages' error rates
+          - id: c
+            text: 4%, because English makes up most of the words
+        answer: a
+        feedback: (0.04 × 9,000 + 0.24 × 1,000) / 10,000 = (360 + 240) / 10,000 = 6%. The plain average treats the languages as equal in size, and ignoring Welsh hides its 24%.
+      - id: sequence-evaluation.base.v2.4
+        prompt: Paper A reports its TTS voice at MOS 4.3, and paper B reports a different voice at 4.1. What can you conclude?
+        options:
+          - id: b
+            text: Voice A sounds better, because its average rating is 0.2 higher
+          - id: c
+            text: They sound the same, because 0.2 is too small a gap to notice
+          - id: a
+            text: Nothing yet, until both are rated in the same listening test
+        answer: a
+        feedback: MOS depends on the listeners, sentences, and other systems in each test, so scores from separate tests aren't on one scale. Rate both voices, plus real recordings, together, and check the confidence intervals.
+  - id: sequence-evaluation.transfer.v2
+    objective_ref: objective.sequence-evaluation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the reported number leaves out, such as time used for tuning, zero values, text that changes on screen, or a group of users, and choose the report that includes it.
+    remediation_scene: sequence-evaluation.s5
+    variants:
+      - id: sequence-evaluation.transfer.v2.1
+        prompt: An energy team tries 60 model settings, backtests each on 2024, and reports the winner's 2024 backtest error to management. What is wrong with the report?
+        options:
+          - id: c
+            text: The backtest should have used random folds instead of time order
+          - id: a
+            text: 2024 chose the winner, so score it once on a later, unused period
+          - id: b
+            text: The team should have reported the average error of all 60 settings
+        answer: a
+        feedback: Choosing among 60 settings by their 2024 error makes that error optimistic, even with a proper walk-forward backtest. A sealed later period gives an honest number. Random folds would leak the future, and averaging all settings doesn't describe the chosen model.
+      - id: sequence-evaluation.transfer.v2.2
+        prompt: A bakery forecasts sales of 200 products, and many sell nothing on most days. Which accuracy measure should it avoid, and why?
+        options:
+          - id: a
+            text: MAPE, because a day with zero sales puts zero in the denominator
+          - id: b
+            text: MASE, because a naive baseline is meaningless for rare products
+          - id: c
+            text: MAE, because it can't be computed for days with zero sales
+        answer: a
+        feedback: MAPE divides each miss by the actual value, so zero-sale days make it undefined and small days make it explode. MAE handles zeros fine, and MASE scales by a baseline's typical error instead of by the actual value.
+      - id: sequence-evaluation.transfer.v2.3
+        prompt: A live-caption system has a good final WER and shows words quickly, but viewers say the captions are hard to follow because words keep changing. What else should be measured?
+        options:
+          - id: b
+            text: Character error rate, which catches smaller spelling changes
+          - id: c
+            text: A mean opinion score for how natural the captions sound
+          - id: a
+            text: How often partial text changes before it becomes final
+        answer: a
+        feedback: Final WER only scores the settled text, and first-word latency only times the first guess. The flicker viewers see is partial-result instability, so count the revisions. CER and MOS don't measure it.
+      - id: sequence-evaluation.transfer.v2.4
+        prompt: A customer-support line serves callers in four languages, and its recognizer's overall WER is 7%. What should the evaluation report include?
+        options:
+          - id: c
+            text: The overall WER and the best language's WER, as a range
+          - id: a
+            text: WER for each language and condition, with its amount of test data
+          - id: b
+            text: The overall WER, since pooling gives the most reliable number
+        answer: a
+        feedback: A pooled WER is weighted toward the languages with the most test words, so a poorly served language can hide inside it. Per-slice results with their data sizes show where the system fails and how sure you can be.
+  - id: sequence-evaluation.calc.v2
+    objective_ref: objective.sequence-evaluation
+    task: base
+    response_type: numeric
+    points: 1
+    hint: MASE = the forecast's MAE ÷ the seasonal naive forecast's MAE on the training data. If you're given the baseline's misses, average them first.
+    remediation_scene: sequence-evaluation.s1
+    absolute_tolerance: 0.01
+    variants:
+      - id: sequence-evaluation.calc.v2.1
+        prompt: A model's backtest MAE is 6 units. On the training data, the seasonal naive forecast's MAE is 8 units. What is the model's MASE?
+        answer: 0.75
+        feedback: 6 ÷ 8 = 0.75, so the model's typical miss is three-quarters of the baseline's.
+      - id: sequence-evaluation.calc.v2.2
+        prompt: A model's backtest MAE is 12 cups. On the training data, the seasonal naive forecast's MAE is 10 cups. What is the model's MASE?
+        answer: 1.2
+        feedback: 12 ÷ 10 = 1.2. Above 1, so copying last season would have done better than this model.
+      - id: sequence-evaluation.calc.v2.3
+        prompt: On the training data, the seasonal naive forecast misses by 2, 4, 3, and 3 cups. A model's backtest MAE is 2.4 cups. What is its MASE?
+        answer: 0.8
+        feedback: The baseline's MAE is (2 + 4 + 3 + 3) ÷ 4 = 3 cups, and 2.4 ÷ 3 = 0.8.
+      - id: sequence-evaluation.calc.v2.4
+        prompt: A big café's model has a backtest MAE of 4.5 cups, and the seasonal naive forecast's in-sample MAE is 5 cups. What is the model's MASE?
+        answer: 0.9
+        feedback: 4.5 ÷ 5 = 0.9, a modest improvement on the baseline.

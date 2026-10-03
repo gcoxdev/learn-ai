@@ -1,280 +1,470 @@
 schema_version: 0.2-draft
 lesson:
   id: training-loop
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Inside a language model training step
   state: draft
-  summary: Distinguish forward evaluation, gradient computation, and optimizer updates in next-token pretraining.
+  summary: Every 1.6 seconds, Kestrel reads a million tokens and nudges a billion weights. Follow one training step from batch to update, and run a tiny one yourself.
   slot: M16.6
   category: learning
   sources:
-  - title: PyTorch — optimizing model parameters
-    url: https://docs.pytorch.org/tutorials/beginner/basics/optimization_tutorial.html
-  - title: Dive into Deep Learning — transformer architecture
-    url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/transformer.html
+    - title: Brown et al. — Language Models are Few-Shot Learners (GPT-3, 2020), appendix B
+      url: https://arxiv.org/abs/2005.14165
+    - title: Biderman et al. — Pythia, a suite for analyzing language-model training (2023)
+      url: https://arxiv.org/abs/2304.01373
+    - title: PyTorch — optimizing model parameters
+      url: https://docs.pytorch.org/tutorials/beginner/basics/optimization_tutorial.html
+    - title: Dive into Deep Learning — transformer architecture
+      url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/transformer.html
 objectives:
-- id: objective.training-loop
-  version: 1-draft
-  statement: Distinguish forward evaluation, gradient computation, and optimizer updates in next-token pretraining.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - training-loop.base
-  - training-loop.transfer
-  prerequisites:
-  - anyOf:
-    - objective.transformer-trace
-  - anyOf:
-    - objective.update-consequence
-  - anyOf:
-    - objective.data
+  - id: objective.training-loop
+    version: 2-draft
+    statement: Distinguish forward evaluation, gradient computation, and optimizer updates in next-token pretraining.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - training-loop.base.v2
+      - training-loop.transfer.v2
+      - training-loop.calculate
+    prerequisites:
+      - anyOf:
+          - objective.transformer-trace
+      - anyOf:
+          - objective.update-consequence
+      - anyOf:
+          - objective.data
 scenes:
-- title: Turn a recorded sequence into a task
-  markdown: 'For a toy sequence [“a”, “bird”, “sings”, “end”], next-token examples pair each prefix with its
-    following token. In a packed tensor, inputs and targets can be shifted views of the same sequence: [a,
-    bird, sings] predicts [bird, sings, end].
+  - title: A million tokens every 1.6 seconds
+    markdown: |-
+      Once Kestrel's run starts, the same short routine repeats about 95,000 times. Each repetition is one **training step**, and it always does the same six things:
 
+      1. **Load a batch**: 512 packed rows of 2,048 tokens, with targets shifted one place.
+      2. **Forward pass**: run the rows through the model to get a probability for every possible next token at every position.
+      3. **Loss**: average $-\ln p$ of the true next tokens, over the scored targets.
+      4. **Backward pass**: compute the gradient of that loss for every one of the 1.01 billion weights.
+      5. **Clip**: if the gradient is unusually large, shrink it.
+      6. **Optimizer step**: change the weights, using the learning rate the schedule sets for this step. Then clear the gradients and go again.
 
-    A causal mask keeps each input position from using future target information. Padding, document boundaries,
-    and the intended objective determine which positions should contribute to loss; not every array cell is
-    necessarily an example.'
-  id: training-loop.s1
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-loop
-  text_mode: 'For a toy sequence [“a”, “bird”, “sings”, “end”], next-token examples pair each prefix with its
-    following token. In a packed tensor, inputs and targets can be shifted views of the same sequence: [a,
-    bird, sings] predicts [bird, sings, end].
+      The amount of text per step is $\text{batch} \times \text{sequence length} = 512 \times 2{,}048 = 1{,}048{,}576$ tokens, about a million. To read 100 billion tokens takes $100 \times 10^9 / 1{,}048{,}576 \approx 95{,}367$ steps. On 32 GPUs, each step takes about 1.6 seconds; the budget lesson shows where that number comes from.
+    id: training-loop.s1
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-loop
+    diagram:
+      caption: One Kestrel training step. The loop runs about 95,000 times.
+      description: A batch of token rows goes into the forward pass, which produces predictions for the loss. The backward pass turns the loss into gradients. Gradients are clipped, then the optimizer step changes the weights, using the learning rate from the schedule. The updated weights are used by the next forward pass.
+      nodes:
+        - id: batch
+          label: Batch
+          note: 512 rows × 2,048 tokens
+          col: 0
+          row: 0
+          tone: data
+        - id: forward
+          label: Forward pass
+          note: probabilities at every position
+          col: 1
+          row: 0
+        - id: loss
+          label: Loss
+          note: mean −ln p of true tokens
+          col: 2
+          row: 0
+        - id: backward
+          label: Backward pass
+          note: a gradient for every weight
+          col: 3
+          row: 0
+        - id: clip
+          label: Clip
+          note: global norm ≤ 1.0
+          col: 3
+          row: 1
+          tone: warn
+        - id: step
+          label: Optimizer step
+          note: AdamW changes the weights
+          col: 2
+          row: 1
+          tone: accent
+        - id: schedule
+          label: Learning-rate schedule
+          note: warmup, then cosine decay
+          col: 2
+          row: 2
+          tone: muted
+      edges:
+        - from: batch
+          to: forward
+        - from: forward
+          to: loss
+        - from: loss
+          to: backward
+        - from: backward
+          to: clip
+        - from: clip
+          to: step
+        - from: schedule
+          to: step
+          label: rate for this step
+          dashed: true
+        - from: step
+          to: forward
+          label: updated weights
+          bend: -1
+  - title: Forward and loss, on one position
+    markdown: |-
+      Shrink the vocabulary to three tokens to see one position's arithmetic. The forward pass ends with three scores (logits), and softmax turns them into probabilities $[0.2, 0.5, 0.3]$. The true next token is the third one, so this position's loss is $-\ln 0.3 \approx 1.204$.
 
+      The backward pass starts from a remarkably simple fact: for softmax followed by this loss, the gradient with respect to the logits is the predicted probabilities minus a one-hot vector for the true token:
 
-    A causal mask keeps each input position from using future target information. Padding, document boundaries,
-    and the intended objective determine which positions should contribute to loss; not every array cell is
-    necessarily an example.'
-- title: Run the forward computation
-  markdown: 'The model calculates vocabulary logits for the eligible positions. Suppose a three-token vocabulary
-    receives probabilities [0.2, 0.5, 0.3], and the recorded target is the third token. The loss should reward
-    raising the target’s share relative to the alternatives.
+      $$\frac{\partial \mathcal{L}}{\partial \text{logits}} = p - \text{onehot}(y) = [0.2,\ 0.5,\ 0.3 - 1] = [0.2,\ 0.5,\ -0.7]$$
 
+      The negative entry says "raise the true token's score"; the positive entries say "lower the others", each in proportion to how much probability it wrongly took. Backpropagation then carries these numbers back through all 16 blocks to every weight. In Kestrel, the same happens at about a million positions per step, and their gradients are averaged.
+    bridges:
+      - probability
+      - powers-logs
+    id: training-loop.s2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-loop
+  - title: Gradients are advice; the optimizer acts on it
+    markdown: |-
+      The backward pass changes nothing. It only computes, for each weight, which direction would lower the loss. The **optimizer step** is the one moment weights change. With plain gradient descent, a weight of 1.0 with gradient 0.4 and learning rate 0.1 becomes $1.0 - 0.1 \times 0.4 = 0.96$.
 
-    A common next-token objective is negative log probability of the target, averaged over selected positions.
-    This connects the probability lesson and logarithm lesson to training: a confident wrong prediction is
-    costly, and increasing the target probability reduces this loss.'
-  bridges:
-  - probability
-  - powers-logs
-  id: training-loop.s2
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-loop
-  text_mode: 'The model calculates vocabulary logits for the eligible positions. Suppose a three-token vocabulary
-    receives probabilities [0.2, 0.5, 0.3], and the recorded target is the third token. The loss should reward
-    raising the target’s share relative to the alternatives.
+      Kestrel uses AdamW, from the optimization module, with settings GPT-3 also used: $\beta_1 = 0.9$, $\beta_2 = 0.95$, weight decay 0.1. Before the step, it **clips** the gradient: if the length (norm) of the whole gradient, all billion numbers taken together, exceeds 1.0, every entry is scaled down by the same factor. A gradient of $(3, 4)$ has norm 5, so it becomes $(0.6, 0.8)$: same direction, length 1.
 
+      :::mixup "Clipping caps each gradient entry at 1.0."
+      Global-norm clipping scales the *whole* vector, so the direction is kept. Capping entries one by one would turn $(3, 4)$ into $(1, 1)$, which points somewhere else.
+      :::
 
-    A common next-token objective is negative log probability of the target, averaged over selected positions.
-    This connects the probability lesson and logarithm lesson to training: a confident wrong prediction is
-    costly, and increasing the target probability reduces this loss.'
-- title: Backward computes information; the optimizer acts on it
-  markdown: 'Backpropagation computes derivatives of the loss with respect to trainable parameters. That tells
-    the optimizer how local parameter changes affect the objective. Gradient calculation alone is not the parameter
-    update.
+      The table sums up who does what.
+    type: table
+    columns:
+      - Stage
+      - Result
+    rows:
+      - - Forward
+        - Predictions and loss
+      - - Backward
+        - Gradients
+      - - Optimizer step
+        - Updated parameters
+    id: training-loop.s3
+    depth: mechanics
+    objective_refs:
+      - objective.training-loop
+  - title: A training step you can run
+    markdown: |-
+      Here is the whole loop at toy scale: a one-matrix bigram model (it predicts the next word from the current word only) learning a thirteen-word sentence. Each numbered comment is one of the six stages from the start of this lesson.
 
+      ```python run
+      import numpy as np
 
-    The optimizer then changes parameters using its update rule, learning rate, and possibly accumulated state.
-    In simple descent, a weight 1 with gradient 0.4 and rate 0.1 becomes 0.96. This toy update illustrates
-    the distinction; practical optimizers may use momentum and adaptive statistics.'
-  type: table
-  columns:
-  - Stage
-  - Result
-  rows:
-  - - Forward
-    - Predictions and loss
-  - - Backward
-    - Gradients
-  - - Optimizer step
-    - Updated parameters
-  id: training-loop.s3
-  depth: mechanics
-  objective_refs:
-  - objective.training-loop
-  text_mode: 'Backpropagation computes derivatives of the loss with respect to trainable parameters. That tells
-    the optimizer how local parameter changes affect the objective. Gradient calculation alone is not the parameter
-    update.
+      rng = np.random.default_rng(0)
+      words = "the kestrel hovers over the field and the kestrel dives on the vole".split()
+      vocab = sorted(set(words)); V = len(vocab)
+      ids = np.array([vocab.index(w) for w in words])
+      x, y = ids[:-1], ids[1:]                   # 1. batch: targets = inputs shifted one place
+      W = rng.normal(0, 0.02, (V, V))            # a bigram model: logits for next token = W[current]
+      steps, warmup, peak_lr, max_norm = 300, 30, 2.0, 1.0
 
+      for step in range(steps):
+          if step < warmup:                      # linear warmup, then cosine down to 10% of peak
+              lr = peak_lr * (step + 1) / warmup
+          else:
+              lr = peak_lr * (0.1 + 0.45 * (1 + np.cos(np.pi * (step - warmup) / (steps - warmup))))
+          logits = W[x]                                              # 2. forward
+          p = np.exp(logits - logits.max(1, keepdims=True)); p /= p.sum(1, keepdims=True)
+          loss = -np.log(p[np.arange(len(y)), y]).mean()             # 3. loss
+          g = p.copy(); g[np.arange(len(y)), y] -= 1; g /= len(y)    # 4. backward: dL/dlogits = p - onehot
+          grad = np.zeros_like(W); np.add.at(grad, x, g)
+          norm = np.linalg.norm(grad)
+          if norm > max_norm:                                        # 5. clip the global norm
+              grad *= max_norm / norm
+          W -= lr * grad                                             # 6. optimizer step (plain SGD)
+          if step in (0, 29, 100, 299):
+              print(f"step {step:3d}  lr {lr:.2f}  grad norm {norm:.3f}  loss {loss:.3f}")
+      print(f"ln V = ln {V} = {np.log(V):.3f}")
+      ```
 
-    The optimizer then changes parameters using its update rule, learning rate, and possibly accumulated state.
-    In simple descent, a weight 1 with gradient 0.4 and rate 0.1 becomes 0.96. This toy update illustrates
-    the distinction; practical optimizers may use momentum and adaptive statistics.'
-- title: Be deliberate about accumulation
-  markdown: 'Programs commonly accumulate gradients into buffers. Clear those buffers when starting a new intended
-    update, or deliberately accumulate across smaller microbatches before stepping. Accidental leftover gradients
-    change the effective update.
+      The first loss, 2.194, matches $\ln 9 = 2.197$, the loss of a model guessing evenly among the 9 distinct words, just as this module's first lesson predicted for Kestrel at $\ln 50{,}304$. The loss then falls to 0.493. It can't reach 0, because "the" is followed by three different words in this sentence.
 
+      Now break it on purpose. Set `max_norm = 0.01` and every step gets clipped hard: the loss is still 1.412 at step 299. Or set `x, y = ids, ids` to forget the shift: the loss drops to 0.028, because each position only has to copy its own input.
+    id: training-loop.s7
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-loop
+  - title: Accumulate gradients on purpose, never by accident
+    markdown: |-
+      Kestrel's batch is 512 rows, but each GPU can hold only 8 rows at once. Across 32 GPUs that's 256 rows. So each GPU runs two **micro-batches**, adds their gradients together (each loss scaled by ½, so the sum is an average), and only then takes an optimizer step: $32 \times 8 \times 2 = 512$ rows. This is **gradient accumulation**, which the lesson on stochastic gradients showed gives the same gradient as one big batch.
 
-    For a toy objective with desired gradient 0.4, an old gradient 0.6 left in the buffer makes the combined
-    value 1.0. At rate 0.1 this changes a weight by 0.1 rather than 0.04. The arithmetic is consistent; the
-    unintended training procedure is the problem.'
-  id: training-loop.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-loop
-  text_mode: 'Programs commonly accumulate gradients into buffers. Clear those buffers when starting a new
-    intended update, or deliberately accumulate across smaller microbatches before stepping. Accidental leftover
-    gradients change the effective update.
+      Accumulation works because most frameworks *add* new gradients into a buffer rather than overwriting it. That same design causes a classic bug. If the loop forgets to clear the buffer after a step, the old gradient leaks into the next one. Suppose the new gradient is 0.4 and a stale 0.6 remains: the step uses 1.0, and with learning rate 0.1 the weight moves by 0.1 instead of 0.04.
 
+      :::predict The team moves Kestrel to 16 GPUs, still 8 rows each. How many accumulation steps keep the batch at 512 rows?
+      $512 / (16 \times 8) = 4$. Each optimizer step now takes about twice as long, but it sees exactly the same data and gives the same update.
+      :::
+    id: training-loop.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-loop
+  - title: The schedule picks each step's learning rate
+    markdown: |-
+      The optimizer's learning rate changes every step. Kestrel uses warmup followed by cosine decay, from the optimization module, with one change borrowed from GPT-3: the cosine ends at 10% of the peak instead of zero.
 
-    For a toy objective with desired gradient 0.4, an old gradient 0.6 left in the buffer makes the combined
-    value 1.0. At rate 0.1 this changes a weight by 0.1 rather than 0.04. The arithmetic is consistent; the
-    unintended training procedure is the problem.'
-- title: Measure learning on data outside the update
-  markdown: 'Training loss describes the examples used for fitting. Evaluate on suitable held-out data to test
-    generalization. In an evaluation pass, parameters should ordinarily stay fixed and the held-out examples
-    should not silently become optimizer updates.
+      | Step | Phase | Learning rate |
+      | ---: | --- | ---: |
+      | 500 | warmup, a quarter of the way | $7.5 \times 10^{-5}$ |
+      | 2,000 | end of warmup (peak) | $3 \times 10^{-4}$ |
+      | 48,684 | halfway through the decay | $1.65 \times 10^{-4}$ |
+      | 95,367 | final step | $3 \times 10^{-5}$ |
 
+      Halfway through a cosine decay, the rate sits exactly midway between peak and floor: $(3 \times 10^{-4} + 3 \times 10^{-5}) / 2 = 1.65 \times 10^{-4}$. Because the schedule depends on the step number, the step number must be saved with every checkpoint.
+    id: training-loop.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-loop
+  - title: Measure without stepping
+    markdown: |-
+      Every 1,000 steps, Kestrel pauses to compute loss on held-out text it never trains on. An **evaluation pass** runs forward and loss only: no backward pass, no optimizer step, so the weights don't change and the held-out text never becomes training data. Frameworks also let you turn off gradient tracking here, which saves memory.
 
-    Dropout and similar components may also have training/evaluation behavior. Disabling gradient recording
-    and choosing evaluation behavior are related engineering choices, but neither by itself proves that your
-    dataset split is clean.'
-  id: training-loop.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-loop
-  text_mode: 'Training loss describes the examples used for fitting. Evaluate on suitable held-out data to
-    test generalization. In an evaluation pass, parameters should ordinarily stay fixed and the held-out examples
-    should not silently become optimizer updates.
-
-
-    Dropout and similar components may also have training/evaluation behavior. Disabling gradient recording
-    and choosing evaluation behavior are related engineering choices, but neither by itself proves that your
-    dataset split is clean.'
-- title: Repeat with checkpoints and a purpose
-  markdown: 'A run repeats data preparation, forward computation, loss, backward computation, and optimizer
-    updates. Checkpoints can preserve parameters and the state needed to resume training. A base model is the
-    result of an objective and data process, not an automatically helpful chat assistant.
-
-
-    Later post-training may use demonstrations, preferences, rewards, or other objectives. Those choices alter
-    the learning recipe. This lesson explains the common step boundary; data curation, distributed optimization,
-    and each post-training method remain deeper units.'
-  id: training-loop.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-loop
-  text_mode: 'A run repeats data preparation, forward computation, loss, backward computation, and optimizer
-    updates. Checkpoints can preserve parameters and the state needed to resume training. A base model is the
-    result of an objective and data process, not an automatically helpful chat assistant.
-
-
-    Later post-training may use demonstrations, preferences, rewards, or other objectives. Those choices alter
-    the learning recipe. This lesson explains the common step boundary; data curation, distributed optimization,
-    and each post-training method remain deeper units.'
-- id: training-loop.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.training-loop
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Forward computes predictions, backward computes gradients, and the optimizer changes parameters.
-    Keep fitting, deliberate gradient accumulation, and held-out measurement separate.
-- id: training-loop.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.training-loop
-  markdown: Forward computes predictions, backward computes gradients, and the optimizer changes parameters.
-    Keep fitting, deliberate gradient accumulation, and held-out measurement separate.
-  text_mode: Forward computes predictions, backward computes gradients, and the optimizer changes parameters.
-    Keep fitting, deliberate gradient accumulation, and held-out measurement separate.
+      The team watches two curves. Training loss should fall steadily. Held-out loss should fall with it. If held-out loss rises while training loss falls, the model is memorizing its training text, a sign to check for repeated data, as in the mixtures lesson.
+    id: training-loop.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-loop
+  - id: training-loop.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.training-loop
+    markdown: Tokens-per-step and accumulation arithmetic, a clipped gradient, a stale buffer, and an evaluation routine that trains by mistake test whether you can follow one step from batch to update.
+    takeaway: |-
+      A training step loads batch × sequence-length tokens, runs forward and loss, computes gradients backward, clips them, and lets the optimizer change the weights at the schedule's learning rate. Only that last step changes the model.
+  - id: training-loop.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.training-loop
+    markdown: |-
+      Forward computes predictions, backward computes gradients, and the optimizer changes parameters. Keep fitting, deliberate gradient accumulation, and held-out measurement separate.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - training-loop.s1
-    - training-loop.s2
-    - training-loop.s3
-    - training-loop.s4
-    - training-loop.s5
-    - training-loop.s6
-    - training-loop.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - training-loop.s1
+        - training-loop.s2
+        - training-loop.s3
+        - training-loop.s7
+        - training-loop.s4
+        - training-loop.s6
+        - training-loop.s5
+        - training-loop.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     training-loop.recap: training-loop.check
 assessment_families:
-- response_type: single_choice
-  hint: Forward produces predictions; backward produces gradients; the optimizer applies a parameter change.
-  variants:
-  - prompt: Which operation applies a parameter change in the usual training loop?
-    options:
-    - id: answer
-      text: The optimizer step.
-    - id: a
-      text: Reading the loss value for display.
-    - id: b
-      text: Tokenizing a held-out sentence, by itself.
-    answer: answer
-    feedback: The optimizer uses gradients and its update rule to change parameters. Merely calculating or
-      displaying a loss does not apply an update.
-    id: training-loop.base.1
-  - prompt: A backward pass finishes successfully. What has it primarily computed?
-    options:
-    - id: a
-      text: A guarantee that the next generated statement is true.
-    - id: b
-      text: A new tokenizer vocabulary for the next request.
-    - id: answer
-      text: Gradients of the selected loss with respect to trainable parameters.
-    answer: answer
-    feedback: Backpropagation computes derivatives through the forward graph. Parameter updates and tokenizer
-      design are separate operations.
-    id: training-loop.base.2
-  id: training-loop.base
-  objective_ref: objective.training-loop
-  task: base
-  points: 1
-  remediation_scene: training-loop.s1
-- response_type: single_choice
-  hint: Ask whether the observed data should fit parameters or only measure fixed-model behavior.
-  variants:
-  - prompt: A held-out evaluation routine accidentally calls the optimizer after computing its loss. What is
-      wrong?
-    options:
-    - id: a
-      text: Nothing; evaluation must always retrain the model.
-    - id: b
-      text: The input token IDs necessarily become probabilities.
-    - id: answer
-      text: The supposed measurement can now change parameters using the evaluation data.
-    answer: answer
-    feedback: An optimizer call can turn held-out examples into fitting data. A reported evaluation then no
-      longer cleanly measures the unchanged model on those examples.
-    id: training-loop.transfer.1
-  - prompt: The intended new gradient is 0.2, but an old 0.3 remains in the accumulation buffer. What must
-      be decided explicitly?
-    options:
-    - id: b
-      text: Whether inference must always perform the same parameter update.
-    - id: answer
-      text: Whether accumulating to 0.5 is intended; otherwise clear the old gradients before the new update.
-    - id: a
-      text: Whether to rename the tokens so the old gradient disappears.
-    answer: answer
-    feedback: Gradient accumulation is valid when designed. An uncleared buffer accidentally changes the effective
-      gradient and therefore the training procedure.
-    id: training-loop.transfer.2
-  id: training-loop.transfer
-  objective_ref: objective.training-loop
-  task: transfer
-  points: 1
-  remediation_scene: training-loop.s1
+  - response_type: single_choice
+    hint: Forward produces predictions; backward produces gradients; the optimizer applies a parameter change.
+    variants:
+      - prompt: Which operation applies a parameter change in the usual training loop?
+        options:
+          - id: answer
+            text: The optimizer step.
+          - id: a
+            text: Reading the loss value for display.
+          - id: b
+            text: Tokenizing a held-out sentence, by itself.
+        answer: answer
+        feedback: The optimizer uses gradients and its update rule to change parameters. Merely calculating or displaying a loss does not apply an update.
+        id: training-loop.base.1
+        retired: true
+      - prompt: A backward pass finishes successfully. What has it primarily computed?
+        options:
+          - id: a
+            text: A guarantee that the next generated statement is true.
+          - id: b
+            text: A new tokenizer vocabulary for the next request.
+          - id: answer
+            text: Gradients of the selected loss with respect to trainable parameters.
+        answer: answer
+        feedback: Backpropagation computes derivatives through the forward graph. Parameter updates and tokenizer design are separate operations.
+        id: training-loop.base.2
+        retired: true
+    id: training-loop.base
+    objective_ref: objective.training-loop
+    task: base
+    points: 1
+    remediation_scene: training-loop.s1
+  - response_type: single_choice
+    hint: Ask whether the observed data should fit parameters or only measure fixed-model behavior.
+    variants:
+      - prompt: A held-out evaluation routine accidentally calls the optimizer after computing its loss. What is wrong?
+        options:
+          - id: a
+            text: Nothing; evaluation must always retrain the model.
+          - id: b
+            text: The input token IDs necessarily become probabilities.
+          - id: answer
+            text: The supposed measurement can now change parameters using the evaluation data.
+        answer: answer
+        feedback: An optimizer call can turn held-out examples into fitting data. A reported evaluation then no longer cleanly measures the unchanged model on those examples.
+        id: training-loop.transfer.1
+        retired: true
+      - prompt: The intended new gradient is 0.2, but an old 0.3 remains in the accumulation buffer. What must be decided explicitly?
+        options:
+          - id: b
+            text: Whether inference must always perform the same parameter update.
+          - id: answer
+            text: Whether accumulating to 0.5 is intended; otherwise clear the old gradients before the new update.
+          - id: a
+            text: Whether to rename the tokens so the old gradient disappears.
+        answer: answer
+        feedback: Gradient accumulation is valid when designed. An uncleared buffer accidentally changes the effective gradient and therefore the training procedure.
+        id: training-loop.transfer.2
+        retired: true
+    id: training-loop.transfer
+    objective_ref: objective.training-loop
+    task: transfer
+    points: 1
+    remediation_scene: training-loop.s1
+  - id: training-loop.base.v2
+    objective_ref: objective.training-loop
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Place the event in the six stages (batch, forward, loss, backward, clip, optimizer step). Only the optimizer step changes weights, and clipping rescales the whole gradient.
+    remediation_scene: training-loop.s3
+    variants:
+      - id: training-loop.base.v2.1
+        prompt: During one training step, at which moment do the model's weights actually change?
+        options:
+          - id: b
+            text: During the backward pass, when each weight's gradient is computed
+          - id: a
+            text: During the optimizer step, after gradients have been clipped
+          - id: c
+            text: During the loss calculation, when the error is measured
+        answer: a
+        feedback: The backward pass only computes which way each weight should move; the optimizer step applies the change. The loss is just a measurement of the forward pass.
+      - id: training-loop.base.v2.2
+        prompt: A gradient has global norm 5.0 and the clipping threshold is 1.0. What happens to it?
+        options:
+          - id: c
+            text: Each entry larger than 1.0 is set to 1.0, and the rest stay the same
+          - id: a
+            text: Every entry is multiplied by 0.2, so its direction is kept
+          - id: b
+            text: The step is skipped, since the gradient is over the threshold
+        answer: a
+        feedback: Global-norm clipping scales the whole vector by 1.0 / 5.0 = 0.2, keeping the direction. Capping entries one by one changes the direction, and clipping shrinks the step rather than skipping it.
+      - id: training-loop.base.v2.3
+        prompt: A loop forgets to clear the gradient buffer after each optimizer step. What does the next step use?
+        options:
+          - id: a
+            text: The new gradient plus the previous step's gradient
+          - id: b
+            text: The average of the new gradient and the previous one
+          - id: c
+            text: The previous step's gradient in place of the new one
+        answer: a
+        feedback: Frameworks add new gradients into the buffer, so stale ones accumulate and the step is too big. That adding is what makes deliberate accumulation work, but here nothing cleared the buffer.
+      - id: training-loop.base.v2.4
+        prompt: A run warms up linearly to a peak learning rate of 3 × 10⁻⁴ over 2,000 steps. What is the rate at step 500?
+        options:
+          - id: b
+            text: 3 × 10⁻⁴, since warmup only changes the rate after the peak
+          - id: c
+            text: 1.5 × 10⁻⁴, since warmup begins at half the peak rate
+          - id: a
+            text: 7.5 × 10⁻⁵, a quarter of the way up to the peak
+        answer: a
+        feedback: Linear warmup climbs from 0 to the peak, so step 500 of 2,000 gives 500/2,000 × 3 × 10⁻⁴ = 7.5 × 10⁻⁵. 1.5 × 10⁻⁴ is the rate at step 1,000.
+  - id: training-loop.transfer.v2
+    objective_ref: objective.training-loop
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide whether the data in question should change the weights, and whether the number of rows per optimizer step stays the same.
+    remediation_scene: training-loop.s4
+    variants:
+      - id: training-loop.transfer.v2.1
+        prompt: An evaluation routine computes held-out loss and then, by mistake, calls the optimizer step. What is the problem?
+        options:
+          - id: c
+            text: The held-out loss is reported with gradient tracking turned on
+          - id: b
+            text: The evaluation runs slower because of the extra computation
+          - id: a
+            text: The held-out text is now training the model it's meant to measure
+        answer: a
+        feedback: An optimizer step turns the held-out text into training data, so later held-out losses are no longer honest. Tracking gradients wastes memory and time, but only the step changes the weights.
+      - id: training-loop.transfer.v2.2
+        prompt: A team moves from 64 GPUs to 32, keeping 4 rows per GPU and a global batch of 512 rows. How should gradient accumulation change?
+        options:
+          - id: a
+            text: Double it, from 2 to 4 micro-batches per step
+          - id: b
+            text: Keep it at 2, and halve the learning rate instead
+          - id: c
+            text: Keep it at 2, since the batch size is set per GPU
+        answer: a
+        feedback: 64 × 4 × 2 = 512 before; with 32 GPUs, 32 × 4 × 4 = 512. Keeping 2 would halve the batch to 256 rows, and a smaller learning rate doesn't restore the missing rows.
+      - id: training-loop.transfer.v2.3
+        prompt: A run's gradient norm sits near 0.3 for thousands of steps. Then one batch gives a norm of 40, with clipping at 1.0. What does that step's update look like?
+        options:
+          - id: b
+            text: The step is skipped, so the weights don't change at all
+          - id: a
+            text: It points the same way as the gradient, scaled to norm 1.0
+          - id: c
+            text: It is 40 times larger than usual, pointing the same way
+        answer: a
+        feedback: Clipping multiplies the gradient by 1/40, so the update keeps its direction but is limited to norm 1.0. Without clipping it would be about 130 times the usual size. Clipping doesn't skip steps, though some teams add that rule separately.
+      - id: training-loop.transfer.v2.4
+        prompt: Run A uses 256 rows per step and run B uses 512 rows, both of 2,048 tokens. At step 10,000, B's loss is lower. What is the fairest first comparison?
+        options:
+          - id: c
+            text: Compare them at step 10,000, since both ran the same number of steps
+          - id: b
+            text: Compare them at step 5,000, since B's steps took longer to run
+          - id: a
+            text: Compare them after the same number of tokens, B's step 5,000 and A's 10,000
+        answer: a
+        feedback: By step 10,000, B has read twice as many tokens. Comparing at equal tokens, as the lesson on stochastic gradients advised, separates the effect of batch size from the effect of more data.
+  - id: training-loop.calculate
+    objective_ref: objective.training-loop
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Tokens per step = rows per step × tokens per row. Rows per step = GPUs × rows per GPU × accumulation steps. Steps = total tokens ÷ tokens per step.
+    remediation_scene: training-loop.s1
+    absolute_tolerance: 1
+    variants:
+      - id: training-loop.calculate.1
+        prompt: A run uses batches of 256 rows, each 4,096 tokens long. How many tokens does one optimizer step read?
+        answer: 1048576
+        feedback: 256 × 4,096 = 1,048,576 tokens, the same as Kestrel's 512 × 2,048.
+      - id: training-loop.calculate.2
+        prompt: 8 GPUs each hold 4 rows of 2,048 tokens, and each GPU accumulates 8 micro-batches before stepping. How many tokens does one optimizer step read?
+        answer: 524288
+        feedback: 8 × 4 × 8 = 256 rows per step, and 256 × 2,048 = 524,288 tokens.
+      - id: training-loop.calculate.3
+        prompt: Pythia's models read 2,097,152 tokens per step (1,024 rows of 2,048). How many steps does a 300-billion-token run take? Round to the nearest step.
+        answer: 143051
+        feedback: 300,000,000,000 ÷ 2,097,152 ≈ 143,051 steps. Pythia's released checkpoints run to step 143,000.
+      - id: training-loop.calculate.4
+        prompt: A global batch is 1,024 rows. There are 64 GPUs, and each holds 4 rows at a time. How many accumulation steps does each GPU need per optimizer step?
+        answer: 4
+        feedback: 64 × 4 = 256 rows per micro-batch round, and 1,024 ÷ 256 = 4 rounds.

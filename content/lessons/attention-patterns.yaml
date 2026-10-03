@@ -1,202 +1,479 @@
 schema_version: 0.2-draft
 lesson:
   id: attention-patterns
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Choose which token pairs may communicate
   state: draft
-  summary: Draw which earlier positions one token may read, then follow information through several layers.
+  summary: A 100,000-token codebase means five billion token pairs per head, per layer. See how sliding windows, dilation, and global tokens cut that bill, and what each cut gives up.
   slot: M19.1
   category: learning
   sources:
-  - title: Longformer
-    url: https://arxiv.org/abs/2004.05150
-  - title: Big Bird
-    url: https://arxiv.org/abs/2007.14062
+    - title: "Longformer: The Long-Document Transformer (Beltagy, Peters & Cohan, 2020)"
+      url: https://arxiv.org/abs/2004.05150
+    - title: "Big Bird: Transformers for Longer Sequences (Zaheer et al., 2020)"
+      url: https://arxiv.org/abs/2007.14062
+    - title: "Generating Long Sequences with Sparse Transformers (Child et al., 2019)"
+      url: https://arxiv.org/abs/1904.10509
+    - title: "Mistral 7B (Jiang et al., 2023)"
+      url: https://arxiv.org/abs/2310.06825
+    - title: "Gemma 2: Improving Open Language Models at a Practical Size (Gemma Team, 2024)"
+      url: https://arxiv.org/abs/2408.00118
 objectives:
-- id: objective.attention-patterns
-  version: 1-draft
-  statement: Local, sliding-window, sparse, and global attention patterns change direct token connectivity;
-    trace multi-layer information paths and measure quality alongside reduced pair counts.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - attention-patterns.base
-  - attention-patterns.transfer
-  prerequisites:
-  - anyOf:
-    - objective.transformer-trace
-  - anyOf:
-    - objective.algorithm-cost
+  - id: objective.attention-patterns
+    version: 2-draft
+    statement: Local, sliding-window, sparse, and global attention patterns change direct token connectivity; trace multi-layer information paths and measure quality alongside reduced pair counts.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - attention-patterns.base.v2
+      - attention-patterns.transfer.v2
+      - attention-patterns.reach
+      - attention-patterns.cost
+    prerequisites:
+      - anyOf:
+          - objective.transformer-trace
+      - anyOf:
+          - objective.algorithm-cost
 scenes:
-- id: attention-patterns.s1
-  title: Dense connectivity has a cost
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.attention-patterns
-  markdown: In causal dense attention, each position can read its allowed prefix. Restricting that set reduces
-    direct query-key pairs. A sliding window permits only a recent neighborhood; a sparse pattern selects other
-    connections. The pattern is part of the model’s information pathway, not just a storage setting.
-  text_mode: In causal dense attention, each position can read its allowed prefix. Restricting that set reduces
-    direct query-key pairs. A sliding window permits only a recent neighborhood; a sparse pattern selects other
-    connections. The pattern is part of the model’s information pathway, not just a storage setting.
-  bridges: []
-- id: attention-patterns.s2
-  title: Trace a small window
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention-patterns
-  markdown: 'With a causal window of three positions including the current one, position six directly reads
-    positions four, five, and six. Information from earlier positions may arrive indirectly through representations
-    built by earlier layers. Whether a useful detail survives that chain depends on training and representation
-    capacity.
+  - id: attention-patterns.s1
+    title: Five billion pairs per head
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.attention-patterns
+    markdown: |-
+      You want a coding assistant to read a whole repository, about 100,000 tokens, and then answer "where is `parse_invoice` defined?" In full causal attention, every token compares its query with the key of every earlier token. That is $n(n+1)/2 \approx 5$ billion query-key pairs for $n = 100{,}000$, in *every head of every layer*. As the end-to-end token trace in module 15 showed, doubling $n$ quadruples that count.
 
+      An **attention pattern** (also called an attention mask) is the rule for which pairs are allowed to be computed at all. Draw it as a grid: one row per query position, one column per key position, ■ where a pair is allowed and · where it is blocked. Here are two patterns for 8 tokens:
 
-    At the previous layer, position four could itself have read positions two, three and four under the same
-    window. Position six can therefore receive transformed information about position two indirectly. This
-    is a path through representations, not direct access to the original token forever. Draw one layer at a
-    time to keep the two claims separate.'
-  text_mode: 'With a causal window of three positions including the current one, position six directly reads
-    positions four, five, and six. Information from earlier positions may arrive indirectly through representations
-    built by earlier layers. Whether a useful detail survives that chain depends on training and representation
-    capacity.
+      ```text
+      Full causal                 Window, w = 3
+      keys:  1 2 3 4 5 6 7 8      keys:  1 2 3 4 5 6 7 8
+      q1     ■ · · · · · · ·      q1     ■ · · · · · · ·
+      q2     ■ ■ · · · · · ·      q2     ■ ■ · · · · · ·
+      q3     ■ ■ ■ · · · · ·      q3     ■ ■ ■ · · · · ·
+      q4     ■ ■ ■ ■ · · · ·      q4     · ■ ■ ■ · · · ·
+      q5     ■ ■ ■ ■ ■ · · ·      q5     · · ■ ■ ■ · · ·
+      q6     ■ ■ ■ ■ ■ ■ · ·      q6     · · · ■ ■ ■ · ·
+      q7     ■ ■ ■ ■ ■ ■ ■ ·      q7     · · · · ■ ■ ■ ·
+      q8     ■ ■ ■ ■ ■ ■ ■ ■      q8     · · · · · ■ ■ ■
+      36 pairs                    21 pairs
+      ```
 
+      The full triangle grows with the sequence. A **sliding window** of width $w$ lets each token read only itself and the $w - 1$ tokens just before it, so it stays a band of constant width no matter how long the sequence gets.
 
-    At the previous layer, position four could itself have read positions two, three and four under the same
-    window. Position six can therefore receive transformed information about position two indirectly. This
-    is a path through representations, not direct access to the original token forever. Draw one layer at a
-    time to keep the two claims separate.'
-  bridges: []
-- id: attention-patterns.s3
-  title: Add global or structured links
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention-patterns
-  markdown: 'Some architectures combine local windows with selected global tokens, dilated connections, or
-    periodic dense layers. These links shorten paths between distant positions but add work. A globally connected
-    summary token can become an information bottleneck rather than a perfect store of the full sequence.
+      :::papers Masked attention
+      Every pattern in this lesson is the same attention formula with a different mask $M$:
 
+      $$\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}} + M\right)V, \qquad M_{ij} = \begin{cases} 0 & \text{pair allowed} \\ -\infty & \text{pair blocked} \end{cases}$$
 
-    **Global** positions have broadly permitted connections; **dilated** links skip positions at chosen intervals.
-    “Sparse” says fewer pairs are allowed than in the corresponding dense pattern. A connection diagram states
-    what can communicate; trained weights and values determine what actually gets carried.'
-  text_mode: 'Some architectures combine local windows with selected global tokens, dilated connections, or
-    periodic dense layers. These links shorten paths between distant positions but add work. A globally connected
-    summary token can become an information bottleneck rather than a perfect store of the full sequence.
+      A $-\infty$ score becomes a softmax weight of exactly 0. The ■ cells in the grid are the zeros of $M$. Efficient kernels skip blocked pairs entirely, and that is where the savings come from.
+      :::
+    bridges: []
+  - id: attention-patterns.s2
+    title: Stacked windows see further than one window
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention-patterns
+    markdown: |-
+      A window of 3 looks tiny, but a transformer stacks layers. Follow token 6:
 
+      - **Layer 1.** Token 6 reads tokens 4, 5, and 6. Token 4, meanwhile, reads tokens 2, 3, and 4.
+      - **Layer 2.** Token 6 reads the layer-1 outputs of tokens 4, 5, and 6. The layer-1 output of token 4 already carries information about token 2, so token 2 now reaches token 6 in two hops.
 
-    **Global** positions have broadly permitted connections; **dilated** links skip positions at chosen intervals.
-    “Sparse” says fewer pairs are allowed than in the corresponding dense pattern. A connection diagram states
-    what can communicate; trained weights and values determine what actually gets carried.'
-  bridges: []
-- id: attention-patterns.s4
-  title: Separate pattern changes from kernel changes
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention-patterns
-  markdown: A tiled exact dense kernel preserves the dense permitted pairs; a local attention model changes
-    them. Compare task accuracy, long-range retrieval, memory, and latency at matched lengths. A cheaper pattern
-    can lose needed connections even if its implementation is highly efficient.
-  text_mode: A tiled exact dense kernel preserves the dense permitted pairs; a local attention model changes
-    them. Compare task accuracy, long-range retrieval, memory, and latency at matched lengths. A cheaper pattern
-    can lose needed connections even if its implementation is highly efficient.
-  bridges: []
-- id: attention-patterns.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.attention-patterns
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: An attention pattern determines which positions can exchange information directly. Trace several
-    layers to see indirect paths, then test whether the needed detail survives.
-- id: attention-patterns.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.attention-patterns
-  markdown: An attention pattern determines which positions can exchange information directly. Trace several
-    layers to see indirect paths, then test whether the needed detail survives.
-  text_mode: An attention pattern determines which positions can exchange information directly. Trace several
-    layers to see indirect paths, then test whether the needed detail survives.
+      Each layer extends the reach back by another $w - 1$ positions. After $L$ layers, the span of input tokens that can influence one position, its **receptive field**, is
+
+      $$\text{span} = L\,(w - 1) + 1 \;\approx\; L \cdot w$$
+
+      Longformer's paper states the same result as "$\ell \times w$". Mistral 7B (2023) used a 4,096-token window in 32 layers and noted a theoretical span of about 131K tokens: $32 \times 4{,}095 + 1 = 131{,}041$.
+
+      :::predict With w = 3, how many layers until token 1 can influence token 9?
+      You need a span of 9 tokens: $L \times 2 + 1 = 9$, so $L = 4$. After three layers the span is only 7 (tokens 3 through 9).
+      :::
+
+      The code below tracks reach exactly: it multiplies the mask by itself once per layer, the way information hops.
+
+      ```python run
+      import numpy as np
+
+      n, w = 16, 3                       # 16 tokens, causal window of 3 (itself + 2 back)
+      i, j = np.indices((n, n))
+      mask = (j <= i) & (j > i - w)      # mask[i, j]: may token i read token j directly?
+
+      reach = np.eye(n, dtype=int)       # before layer 1, each position holds only its own token
+      for layer in range(1, 6):
+          reach = ((mask @ reach) > 0).astype(int)   # one more hop through the window
+          first = np.argmax(reach[-1]) + 1           # earliest token that reaches token 16
+          span = n - first + 1
+          print(f"layer {layer}: token 16 carries tokens {first:2d}..16  span {span:2d}"
+                f"  formula L*(w-1)+1 = {layer * (w - 1) + 1}")
+
+      print("pairs computed:", mask.sum(), "window vs", n * (n + 1) // 2, "full causal")
+      ```
+
+      The span grows 3, 5, 7, 9, 11 while the pair count stays at 45 instead of 136. Change `w` to 5 and watch the span grow by 4 per layer.
+
+      :::mixup "A 131K receptive field means the model remembers 131K tokens."
+      It means a *path* exists. Information from token 1 must survive 32 hops, each squeezed into a fixed-width vector shared with everything else that token carries. When exact recall of a distant token matters, test it directly.
+      :::
+    diagram:
+      caption: Two layers of a window-3 pattern carry token 2 to token 6 in two hops.
+      description: "Inputs sit on the bottom row: token 2, token 4, and token 6 (tokens 3 and 5 are left out to keep the drawing simple). In layer 1, token 4 reads token 2 and token 4 (its window covers tokens 2 to 4), and token 6 reads token 4 and token 6 (its window covers 4 to 6). In layer 2, token 6 reads the layer-1 outputs of tokens 4 and 6. Token 2 has no direct arrow to token 6 in any single layer; it arrives through token 4."
+      nodes:
+        - id: in2
+          label: Token 2 input
+          col: 0
+          row: 2
+          tone: data
+        - id: in4
+          label: Token 4 input
+          col: 2
+          row: 2
+          tone: data
+        - id: in6
+          label: Token 6 input
+          col: 4
+          row: 2
+          tone: data
+        - id: l1t4
+          label: Token 4, layer 1
+          note: window covers 2..4
+          col: 2
+          row: 1
+        - id: l1t6
+          label: Token 6, layer 1
+          note: window covers 4..6
+          col: 4
+          row: 1
+        - id: l2t6
+          label: Token 6, layer 2
+          note: now carries tokens 2..6
+          col: 4
+          row: 0
+          tone: accent
+      edges:
+        - from: in2
+          to: l1t4
+        - from: in4
+          to: l1t4
+        - from: in4
+          to: l1t6
+        - from: in6
+          to: l1t6
+        - from: l1t4
+          to: l2t6
+          label: hop 2
+        - from: l1t6
+          to: l2t6
+    bridges: []
+  - id: attention-patterns.s3
+    title: "Shortcuts: dilated windows and global tokens"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention-patterns
+    markdown: |-
+      Stacking windows reaches far slowly. Two tricks add shortcuts.
+
+      A **dilated window** keeps $w$ keys per query but spaces them $d$ positions apart, the way a dilated convolution skips pixels. With $d = 2$ and $w = 3$, token 8 reads tokens 4, 6, and 8. The span per layer grows to about $d \cdot w$, so Longformer gives the stacked reach as $\ell \times d \times w$. Longformer (Beltagy, Peters & Cohan, 2020) worked best with some heads undilated, for local detail, and others dilated. OpenAI's Sparse Transformer (Child et al., 2019) did something similar a year earlier, splitting heads between a local window and a strided pattern that reads every $k$-th earlier token.
+
+      A **global token** is a position exempt from the window. In Longformer the rule is symmetric: a global token attends to every token, and every token attends to it. Longformer made the classifier's `[CLS]` token global, and for question answering it made every question token global. Now any two tokens are at most two hops apart: token → global token → token. In a causal (left-to-right) model, the version you can build is one-sided: every token may read a few designated early tokens, such as the instructions at the top.
+
+      ```text
+      Dilated, d = 2, w = 3       Window 3 + global token 1 (causal)
+      keys:  1 2 3 4 5 6 7 8      keys:  1 2 3 4 5 6 7 8
+      q5     ■ · ■ · ■ · · ·      q5     ■ · ■ ■ ■ · · ·
+      q6     · ■ · ■ · ■ · ·      q6     ■ · · ■ ■ ■ · ·
+      q7     · · ■ · ■ · ■ ·      q7     ■ · · · ■ ■ ■ ·
+      q8     · · · ■ · ■ · ■      q8     ■ · · · · ■ ■ ■
+      ```
+
+      Global tokens are cheap because there are few of them: $g$ symmetric global tokens add about $2gn$ pairs (a full row and column each), still linear in $n$.
+
+      **BigBird** (Zaheer et al., 2020) combined a sliding window, a few global tokens, and a few random keys per query; the random links act as shortcuts that keep paths short. The authors proved that this sparse pattern keeps full attention's main theoretical guarantees (it can still approximate any sequence-to-sequence function), and ran on sequences up to 8 times longer than before on similar hardware.
+    bridges: []
+  - id: attention-patterns.s4
+    title: Count the savings, then check what was cut
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention-patterns
+    markdown: |-
+      Back to the repository. For a causal model, count pairs with two approximations:
+
+      | Pattern | Pairs per head per layer | $n = 100{,}000$, $w = 4{,}096$ |
+      | --- | --- | ---: |
+      | Full causal | $\approx n^2 / 2$ | $5.0 \times 10^9$ |
+      | Sliding window | $\approx n \cdot w$ | $4.1 \times 10^8$ |
+      | Ratio | $\approx n / (2w)$ | about 12× |
+
+      Full attention grows as $O(n^2)$ and the window as $O(n \cdot w)$: linear in $n$ for a fixed window. The ratio itself grows with $n$. At 1 million tokens the same window saves about 122×.
+
+      :::predict You keep w = 4,096 and double n to 200,000. What happens to each cost, and to the ratio?
+      Full attention quadruples to $2 \times 10^{10}$ pairs. The window only doubles, to about $8.2 \times 10^8$. The ratio doubles to about 24×.
+      :::
+
+      :::mixup "FlashAttention and a sliding window are two ways of doing the same thing."
+      FlashAttention (from module 17's lesson on efficient attention kernels) computes *exactly the same* pairs as plain attention while moving less data, so its outputs match. A sliding window removes pairs, so it changes what the model computes, and a model usually needs training with the pattern it will use.
+      :::
+
+      Now decide for the coding assistant. With a 4,096 window and 32 layers, `parse_invoice`'s definition 80,000 tokens back is inside the receptive field, but only through about 20 hops. That is a weak path for recalling an exact name. Three practical fixes:
+
+      - make the user's question and the file index **global**, so every token can read them directly;
+      - interleave some **full-attention layers** among the windowed ones (Gemma 2, for example, alternates local sliding-window layers with global-attention layers);
+      - retrieve the relevant file first and show the model a shorter context.
+
+      Then test on questions whose evidence sits far outside one window: a benchmark of 2,000-token articles can't tell a 4,096-token window from full attention.
+    bridges: []
+  - id: attention-patterns.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.attention-patterns
+    markdown: Trace windows through layers, count the pairs a pattern saves, and choose shortcuts for a genome model, a chat system prompt, and a contract classifier.
+    takeaway: |-
+      An attention pattern decides which token pairs are computed. A window of w over L layers reaches about L·w tokens at a cost near n·w instead of n²/2, and global or dilated links add shortcuts for the pairs that matter.
+  - id: attention-patterns.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.attention-patterns
+    markdown: |-
+      An attention pattern determines which positions can exchange information directly. Trace several layers to see indirect paths, then test whether the needed detail survives.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - attention-patterns.s1
-    - attention-patterns.s2
-    - attention-patterns.s3
-    - attention-patterns.s4
-    - attention-patterns.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - attention-patterns.s1
+        - attention-patterns.s2
+        - attention-patterns.s3
+        - attention-patterns.s4
+        - attention-patterns.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     attention-patterns.recap: attention-patterns.check
 assessment_families:
-- id: attention-patterns.base
-  objective_ref: objective.attention-patterns
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a small window: trace the inputs, operation, and result before choosing.'
-  remediation_scene: attention-patterns.s2
-  variants:
-  - id: attention-patterns.base.1
-    prompt: A causal window of three at position six directly includes which positions?
-    options:
-    - id: b
-      text: One through six
-    - id: c
-      text: Only position one
-    - id: a
-      text: Four, five, and six
-    answer: a
-    feedback: The specified window includes the current position and two predecessors.
-  - id: attention-patterns.base.2
-    prompt: Can information travel beyond one local window across layers?
-    options:
-    - id: c
-      text: Only through changing the tokenizer
-    - id: a
-      text: Yes, through intermediate representations
-    - id: b
-      text: Never
-    answer: a
-    feedback: Multi-layer paths can extend effective connectivity.
-- id: attention-patterns.transfer
-  objective_ref: objective.attention-patterns
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Separate pattern changes from kernel changes: trace the inputs, operation, and result before choosing.'
-  remediation_scene: attention-patterns.s4
-  variants:
-  - id: attention-patterns.transfer.1
-    prompt: Does a global summary token guarantee lossless long-term storage?
-    options:
-    - id: c
-      text: Only if named global
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: A finite representation can lose details.
-  - id: attention-patterns.transfer.2
-    prompt: 'Which changes connectivity: tiled exact dense attention or a local mask?'
-    options:
-    - id: a
-      text: The local mask
-    - id: b
-      text: Only tiling
-    - id: c
-      text: Neither
-    answer: a
-    feedback: Tiling changes execution; masking changes allowed pairs.
+  - id: attention-patterns.base
+    objective_ref: objective.attention-patterns
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Count the window from the current token backwards, then add one window's reach per layer.
+    remediation_scene: attention-patterns.s2
+    variants:
+      - id: attention-patterns.base.1
+        prompt: A causal window of three at position six directly includes which positions?
+        options:
+          - id: b
+            text: One through six
+          - id: c
+            text: Only position one
+          - id: a
+            text: Four, five, and six
+        answer: a
+        feedback: The specified window includes the current position and two predecessors.
+        retired: true
+      - id: attention-patterns.base.2
+        prompt: Can information travel beyond one local window across layers?
+        options:
+          - id: c
+            text: Only through changing the tokenizer
+          - id: a
+            text: Yes, through intermediate representations
+          - id: b
+            text: Never
+        answer: a
+        feedback: Multi-layer paths can extend effective connectivity.
+        retired: true
+  - id: attention-patterns.transfer
+    objective_ref: objective.attention-patterns
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask whether the change removes pairs from the mask or only changes how the same pairs are computed.
+    remediation_scene: attention-patterns.s4
+    variants:
+      - id: attention-patterns.transfer.1
+        prompt: Does a global summary token guarantee lossless long-term storage?
+        options:
+          - id: c
+            text: Only if named global
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: A finite representation can lose details.
+        retired: true
+      - id: attention-patterns.transfer.2
+        prompt: 'Which changes connectivity: tiled exact dense attention or a local mask?'
+        options:
+          - id: a
+            text: The local mask
+          - id: b
+            text: Only tiling
+          - id: c
+            text: Neither
+        answer: a
+        feedback: Tiling changes execution; masking changes allowed pairs.
+        retired: true
+  - id: attention-patterns.base.v2
+    objective_ref: objective.attention-patterns
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "A causal window of w covers the token itself plus the w − 1 tokens before it. Each extra layer pushes the reach back by another w − 1."
+    remediation_scene: attention-patterns.s2
+    variants:
+      - id: attention-patterns.base.v2.1
+        prompt: A causal sliding window has w = 4 (the token itself plus three before it). Which tokens can token 10 read directly in one layer?
+        options:
+          - id: b
+            text: Tokens 6, 7, 8, 9, and 10
+          - id: a
+            text: Tokens 7, 8, 9, and 10
+          - id: c
+            text: Tokens 10, 11, 12, and 13
+        answer: a
+        feedback: The window holds four tokens counting token 10 itself, so it reaches back three places, to token 7. Tokens 6 to 10 would be five tokens, and a causal model never reads the tokens after 10.
+      - id: attention-patterns.base.v2.2
+        prompt: A model stacks two layers, each with a causal window of w = 3. What is the earliest input token that can influence token 20 at the output of layer 2?
+        options:
+          - id: c
+            text: Token 18
+          - id: b
+            text: Token 14
+          - id: a
+            text: Token 16
+        answer: a
+        feedback: Each layer reaches back w − 1 = 2 positions, so two layers reach back 4, to token 16. Token 18 is the reach of a single layer; token 14 comes from subtracting L·w = 6, which counts the current token twice.
+      - id: attention-patterns.base.v2.3
+        prompt: One team replaces standard attention with a FlashAttention kernel. Another team replaces full attention with a 1,024-token sliding window. Which change can alter the model's answer to a question about page 1 of a 50-page document?
+        options:
+          - id: a
+            text: The sliding window, because it removes query-key pairs
+          - id: b
+            text: The FlashAttention kernel, because it computes in tiles
+          - id: c
+            text: Both equally, because both of them reduce memory use
+        answer: a
+        feedback: FlashAttention computes exactly the same pairs in a different order, so its outputs match (up to rounding). The window blocks pairs, so tokens far from page 1 can no longer read it directly.
+      - id: attention-patterns.base.v2.4
+        prompt: In Longformer's question-answering setup, every question token gets symmetric global attention while document tokens use a sliding window. What does that give a document token 3,000 positions away from the question?
+        options:
+          - id: c
+            text: A window twice as wide, so it can reach the question in fewer layers
+          - id: a
+            text: A direct link to every question token in each layer, whatever the distance
+          - id: b
+            text: A copy of the question stored in the cache, which it reads after the last layer
+        answer: a
+        feedback: A global token attends to every token and every token attends to it, so distance stops mattering for that link. Global attention doesn't widen anyone's window, and it works inside each layer's attention, not as a separate cache read at the end.
+  - id: attention-patterns.transfer.v2
+    objective_ref: objective.attention-patterns
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Work out whether the needed evidence is inside one window, reachable only through many hops, or out of reach. Then pick the shortcut that connects it directly.
+    remediation_scene: attention-patterns.s4
+    variants:
+      - id: attention-patterns.transfer.v2.1
+        prompt: A DNA model uses a 512-token window in 12 layers. Biologists need it to link a gene to a control region about 50,000 bases upstream. Which change targets that need?
+        options:
+          - id: b
+            text: Swap in a faster attention kernel so that each layer runs quicker
+          - id: a
+            text: Add dilated heads, global tokens, or a few full-attention layers
+          - id: c
+            text: Increase the batch size so the model sees more genes per step
+        answer: a
+        feedback: The receptive field is only about 12 × 511 + 1 ≈ 6,100 tokens, far short of 50,000. Dilation, global tokens, or full layers create longer paths. A faster kernel or bigger batch leaves the pattern, and so the reach, unchanged.
+      - id: attention-patterns.transfer.v2.2
+        prompt: A chat model uses only sliding-window attention. Deep into a 30,000-token conversation, it stops following the formatting rules from the system prompt at the very start. Which fix fits the pattern problem?
+        options:
+          - id: a
+            text: Let every token attend directly to the system-prompt tokens
+          - id: c
+            text: Shrink the window so that the model can afford more layers
+          - id: b
+            text: Swap in FlashAttention so that the long prompt runs faster
+        answer: a
+        feedback: Making the system prompt global (every later token may read it) gives the rules a direct link from every position. A smaller window reaches less per layer, and FlashAttention doesn't change which pairs exist.
+      - id: attention-patterns.transfer.v2.3
+        prompt: A classifier reads 10,000-token contracts using a 512-token window and predicts the label from one summary token at the start. Accuracy is poor. Which change follows Longformer's recipe?
+        options:
+          - id: c
+            text: Dilate every head so no head spends its window on nearby text
+          - id: b
+            text: Move the summary token to the end so it sits closer to the text
+          - id: a
+            text: Give the summary token global attention over the whole contract
+        answer: a
+        feedback: Longformer made [CLS] global so the classification token reads every token and every token reads it. Moving it only changes which 512 tokens it sees, and dilating every head throws away the local detail that some heads should keep.
+      - id: attention-patterns.transfer.v2.4
+        prompt: A team switches to a 4,096-token sliding window and reports "no quality loss" on a benchmark of 2,000-token news articles. What is the right reading of that result?
+        options:
+          - id: b
+            text: The window is lossless, so it is safe to deploy for long documents
+          - id: a
+            text: Every article fit inside one window, so the test couldn't reveal a loss
+          - id: c
+            text: The window must be hurting quality in ways the benchmark hides
+        answer: a
+        feedback: With 2,000-token inputs and a 4,096 window, the mask is identical to full causal attention, so the test couldn't show a difference. It doesn't prove harm either; you need long inputs with distant evidence to find out.
+  - id: attention-patterns.reach
+    objective_ref: objective.attention-patterns
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Each layer reaches back w − 1 tokens, so after L layers the span is L × (w − 1) + 1, counting the token itself."
+    remediation_scene: attention-patterns.s2
+    absolute_tolerance: 0.5
+    variants:
+      - id: attention-patterns.reach.1
+        prompt: A causal window covers w = 3 tokens (the token plus two before it). After L = 4 stacked layers, how many input tokens wide is the span that can influence the last token?
+        answer: 9
+        feedback: "Each layer adds w − 1 = 2 positions: 4 × 2 + 1 = 9."
+      - id: attention-patterns.reach.2
+        prompt: A causal window covers w = 5 tokens. After L = 6 stacked layers, how many input tokens wide is the span that can influence the last token?
+        answer: 25
+        feedback: "6 × (5 − 1) + 1 = 25. The shortcut L × w = 30 overcounts by counting the current token in every layer."
+      - id: attention-patterns.reach.3
+        prompt: A model uses a causal window of w = 4,096 tokens in each of L = 32 layers. How many tokens wide is its theoretical receptive field at the top layer?
+        answer: 131041
+        feedback: "32 × 4,095 + 1 = 131,041, the 'about 131K' span reported for Mistral 7B."
+      - id: attention-patterns.reach.4
+        prompt: A causal window covers w = 129 tokens. After L = 8 stacked layers, how many input tokens wide is the span that can influence the last token?
+        answer: 1025
+        feedback: "8 × 128 + 1 = 1,025."
+  - id: attention-patterns.cost
+    objective_ref: objective.attention-patterns
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Use n²/2 pairs for full causal attention and n × w pairs for a sliding window. Their ratio simplifies to n / (2w)."
+    remediation_scene: attention-patterns.s4
+    absolute_tolerance: 0.1
+    variants:
+      - id: attention-patterns.cost.1
+        prompt: A causal model reads n = 8,192 tokens. Using n²/2 pairs for full attention and n × w for a window of w = 1,024, how many times more pairs does full attention compute?
+        answer: 4
+        feedback: "n / (2w) = 8,192 / 2,048 = 4."
+      - id: attention-patterns.cost.2
+        prompt: A causal model reads n = 100,000 tokens. Using n²/2 pairs for full attention and n × w for a window of w = 4,096, how many times more pairs does full attention compute? Give one decimal place.
+        answer: 12.2
+        feedback: "n / (2w) = 100,000 / 8,192 ≈ 12.2."
+      - id: attention-patterns.cost.3
+        prompt: A causal model reads n = 32,768 tokens. Using n²/2 pairs for full attention and n × w for a window of w = 512, how many times more pairs does full attention compute?
+        answer: 32
+        feedback: "n / (2w) = 32,768 / 1,024 = 32."
+      - id: attention-patterns.cost.4
+        prompt: A causal model reads n = 131,072 tokens. Using n²/2 pairs for full attention and n × w for a window of w = 4,096, how many times more pairs does full attention compute?
+        answer: 16
+        feedback: "n / (2w) = 131,072 / 8,192 = 16. At 4× the length it would be 64."

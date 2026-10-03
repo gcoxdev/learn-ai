@@ -4,201 +4,366 @@ lesson:
   version: 0.3.0-draft
   title: Count total capacity and active work separately
   state: draft
-  summary: Count the experts stored in the model separately from those used by one token.
+  summary: Eight experts of 7 billion should make 56 billion, yet Mixtral 8x7B has 46.7 billion. Count parameters the way MoE papers do, and learn which number predicts memory and which predicts speed.
   slot: M18.4
   category: learning
   sources:
-  - title: Sparsely-Gated Mixture-of-Experts
-    url: https://arxiv.org/abs/1701.06538
-  - title: Switch Transformers
-    url: https://arxiv.org/abs/2101.03961
+    - title: "Mixtral of Experts (Jiang et al., 2024)"
+      url: https://arxiv.org/abs/2401.04088
+    - title: "Switch Transformers (Fedus, Zoph & Shazeer, 2021)"
+      url: https://arxiv.org/abs/2101.03961
+    - title: "DeepSeek-V3 Technical Report (DeepSeek-AI, 2024)"
+      url: https://arxiv.org/abs/2412.19437
+    - title: "Scaling Laws for Neural Language Models (Kaplan et al., 2020): the 2N FLOPs-per-token estimate"
+      url: https://arxiv.org/abs/2001.08361
 objectives:
-- id: objective.moe-parameter-accounting
-  version: 1-draft
-  statement: Total parameters describe stored model capacity, while activated parameters approximate the subset
-    used per token; neither alone determines memory, FLOPs, latency, or quality.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - moe-parameter-accounting.base
-  - moe-parameter-accounting.transfer
-  prerequisites:
-  - anyOf:
-    - objective.expert-dispatch-and-combine
-  - anyOf:
-    - objective.training-memory
+  - id: objective.moe-parameter-accounting
+    version: 2-draft
+    statement: Total parameters describe stored model capacity, while activated parameters approximate the subset used per token; neither alone determines memory, FLOPs, latency, or quality.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - moe-parameter-accounting.base.v2
+      - moe-parameter-accounting.transfer.v2
+      - moe-parameter-accounting.calculate
+    prerequisites:
+      - anyOf:
+          - objective.expert-dispatch-and-combine
+      - anyOf:
+          - objective.training-memory
 scenes:
-- id: moe-parameter-accounting.s1
-  title: Count shared and expert parameters
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.moe-parameter-accounting
-  markdown: 'Suppose a toy model has 10 million shared parameters and four experts of 5 million each in one
-    sparse block. Total parameters are 10 + 4×5 = 30 million. Under top-one routing, roughly 15 million participate
-    for a token, ignoring small routing details in this simplified count.
+  - id: moe-parameter-accounting.s1
+    title: Why "8x7B" isn't 56 billion
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.moe-parameter-accounting
+    markdown: |-
+      Mixtral 8x7B is built from the same blueprint as Mistral 7B, a dense model with about 7.24 billion parameters. Eight of those would be about 58 billion. Yet Mixtral has about 46.7 billion parameters, and each token uses about 12.9 billion. Where did the rest go?
 
+      Only the feed-forward blocks were copied eight times. Everything else exists once and is **shared** by every token:
 
-    Change only the routing to top-two. Shared parameters remain 10 million, selected experts contribute 2
-    × 5 million, so the simplified active count becomes 20 million. Total stored capacity is still 30 million.
-    Selecting more experts changes the per-token computation, not the number of expert weight arrays in the
-    artifact.'
-  text_mode: 'Suppose a toy model has 10 million shared parameters and four experts of 5 million each in one
-    sparse block. Total parameters are 10 + 4×5 = 30 million. Under top-one routing, roughly 15 million participate
-    for a token, ignoring small routing details in this simplified count.
+      | Part (per model) | Copies in Mixtral | Parameters |
+      | --- | --- | ---: |
+      | Attention in 32 layers | 1 | 1.34 B |
+      | Embedding table and output head | 1 | 0.26 B |
+      | Routers and norms | 1 | 0.001 B |
+      | Feed-forward experts (176M each, 8 per layer) | 8 | 45.10 B |
+      | **Total** | | **46.70 B** |
 
+      Two different counts describe this model. **Total parameters** are every weight stored: 46.7B. **Active parameters** are the weights one token actually uses: the shared 1.61B plus 2 experts in each of 32 layers, $1.61 + 2 \times 32 \times 0.176 \approx 12.88$B.
 
-    Change only the routing to top-two. Shared parameters remain 10 million, selected experts contribute 2
-    × 5 million, so the simplified active count becomes 20 million. Total stored capacity is still 30 million.
-    Selecting more experts changes the per-token computation, not the number of expert weight arrays in the
-    artifact.'
-  bridges: []
-- id: moe-parameter-accounting.s2
-  title: Account for all resident weights
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.moe-parameter-accounting
-  markdown: 'Choosing one expert per token does not eliminate the others from the model artifact. Serving arbitrary
-    routes may require all experts resident across devices or a slower loading strategy. Active parameter count
-    therefore cannot be used alone as the model’s weight-memory requirement.
+      The "8x7B" name counts experts, not weights. Each expert is only the feed-forward part of a 7B model, not a whole one.
+    bridges: []
+  - id: moe-parameter-accounting.s2
+    title: Rebuild both counts from the blueprint
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.moe-parameter-accounting
+    markdown: |-
+      The calculator below uses the architecture numbers from the Mixtral paper: width 4,096, 32 layers, experts with an inner width of 14,336, 32 query heads sharing 8 key-value heads (grouped-query attention), and a 32,000-token vocabulary.
 
+      ```python run
+      # Mixtral 8x7B, from the paper's architecture table
+      d, layers, d_ff, vocab = 4096, 32, 14336, 32000
+      heads, kv_heads, head_dim = 32, 8, 128
+      n_experts, top_k = 8, 2
 
-    At two bytes per parameter, the 30 million stored parameters need 60 million bytes of raw weight payload
-    before scales, caches and other state. Multiplying the top-one active count by two would give 30 million
-    bytes and omit weights needed for other routes. Spreading the weights across devices changes where they
-    live, not this total payload.'
-  text_mode: 'Choosing one expert per token does not eliminate the others from the model artifact. Serving
-    arbitrary routes may require all experts resident across devices or a slower loading strategy. Active parameter
-    count therefore cannot be used alone as the model’s weight-memory requirement.
+      expert = 3 * d * d_ff                                   # SwiGLU: 3 matrices
+      attn = d * heads * head_dim * 2 + d * kv_heads * head_dim * 2   # Wq, Wo + Wk, Wv
+      router = d * n_experts
+      norms = 2 * d
+      embed = 2 * vocab * d                                   # input table + output head
 
+      shared = layers * (attn + router + norms) + d + embed   # + final norm
+      total = shared + layers * n_experts * expert
+      active = shared + layers * top_k * expert
 
-    At two bytes per parameter, the 30 million stored parameters need 60 million bytes of raw weight payload
-    before scales, caches and other state. Multiplying the top-one active count by two would give 30 million
-    bytes and omit weights needed for other routes. Spreading the weights across devices changes where they
-    live, not this total payload.'
-  bridges: []
-- id: moe-parameter-accounting.s3
-  title: Parameters are not FLOPs
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.moe-parameter-accounting
-  markdown: Different operations reuse parameters different numbers of times, and attention cost depends on
-    context. Router work, communication, shared computation, batching, and expert dimensions affect actual
-    operations and runtime. Two models with the same active parameter count can have different latency and
-    throughput.
-  text_mode: Different operations reuse parameters different numbers of times, and attention cost depends on
-    context. Router work, communication, shared computation, batching, and expert dimensions affect actual
-    operations and runtime. Two models with the same active parameter count can have different latency and
-    throughput.
-  bridges: []
-- id: moe-parameter-accounting.s4
-  title: Compare on a declared budget
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.moe-parameter-accounting
-  markdown: Specify whether a comparison fixes total capacity, active arithmetic, hardware memory, training
-    compute, or serving cost. Evaluate quality under the same task protocol. A sparse model may offer more
-    stored capacity at a chosen compute budget, but the benefit is an empirical systems result.
-  text_mode: Specify whether a comparison fixes total capacity, active arithmetic, hardware memory, training
-    compute, or serving cost. Evaluate quality under the same task protocol. A sparse model may offer more
-    stored capacity at a chosen compute budget, but the benefit is an empirical systems result.
-  bridges: []
-- id: moe-parameter-accounting.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.moe-parameter-accounting
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Count every stored expert when budgeting weight memory. Count selected experts and shared computation
-    when estimating work for a token, then measure the actual runtime.
-- id: moe-parameter-accounting.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.moe-parameter-accounting
-  markdown: Count every stored expert when budgeting weight memory. Count selected experts and shared computation
-    when estimating work for a token, then measure the actual runtime.
-  text_mode: Count every stored expert when budgeting weight memory. Count selected experts and shared computation
-    when estimating work for a token, then measure the actual runtime.
+      print(f"one expert:     {expert / 1e6:8.1f} M")
+      print(f"shared (attn, router, norms, embeddings): {shared / 1e9:.2f} B")
+      print(f"all experts:    {layers * n_experts * expert / 1e9:8.2f} B")
+      print(f"total params:   {total / 1e9:8.2f} B")
+      print(f"active per token: {active / 1e9:6.2f} B  ({active / total:.0%} of total)")
+      print(f"naive 8 x 7.24B:  {8 * (shared + layers * expert) / 1e9:6.2f} B")
+      ```
+
+      The script reproduces the published 46.7B and 12.9B. Experts are 97% of the weights, so the ratio of experts used, 2 of 8, nearly sets the active fraction: 28%.
+
+      :::predict Set top_k = 1. How many parameters would each token use?
+      About 7.24B: the shared 1.61B plus one expert per layer, 32 × 0.176B = 5.64B. That's exactly the size of Mistral 7B, because a top-1 Mixtral token runs the same shapes as the dense model. The total stays 46.70B. Now try `n_experts = 16`: the total nearly doubles to 91.8B, and the active count doesn't move.
+      :::
+    bridges: []
+  - id: moe-parameter-accounting.s3
+    title: Total sets memory, active sets arithmetic
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.moe-parameter-accounting
+    markdown: |-
+      Each count answers a different question.
+
+      **Memory.** Every expert must be loaded, because the next token might need any of them. At 2 bytes per parameter (bfloat16), Mixtral's weights take 46.7B × 2 = 93.4 GB. That's more than one 80 GB GPU holds, before counting the KV cache.
+
+      **Arithmetic.** A matrix multiply costs about 2 FLOPs per weight used, so a forward pass costs roughly $2 \times$ active parameters per token: $2 \times 12.9\text{B} \approx 26$ GFLOPs for Mixtral. Attention adds work that grows with context length, as the compute and bandwidth lesson in module 17 showed.
+
+      | Model | Total | Active per token | Weights at 2 bytes |
+      | --- | ---: | ---: | ---: |
+      | Llama 2 13B (dense) | 13B | 13B | 26 GB |
+      | Mixtral 8x7B | 46.7B | 12.9B | 93 GB |
+      | Llama 2 70B (dense) | 70B | 70B | 140 GB |
+      | DeepSeek-V3 | 671B | 37B | 1,342 GB |
+
+      Mixtral does about the arithmetic of a 13B model with a 47B model's memory bill. The Mixtral paper says it directly: inference compute follows the active count, and serving memory follows the total. DeepSeek-V3 pushes the gap further: about 5.5% of its weights are active per token.
+
+      :::mixup "Mixtral uses 12.9B parameters per token, so it needs about 26 GB of GPU memory."
+      That's the memory for one token's weights, not the model's. A different token picks different experts, so all 46.7B must be ready: about 93 GB at 2 bytes each. Budget memory from the total and compute from the active count.
+      :::
+    bridges: []
+  - id: moe-parameter-accounting.s4
+    title: Say which budget you held fixed
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.moe-parameter-accounting
+    markdown: |-
+      "Our MoE beats a dense model" means little until you say what was held equal. The Switch Transformer paper compared models with the same FLOPs per token, so its sparse models had many more total parameters than the dense baselines. That comparison answers, "What do I get for the same compute?" It doesn't answer, "What do I get for the same memory?" The same rule carries over to training budgets: module 16 priced a run at $C \approx 6ND$ FLOPs, and for an MoE, $N$ is the active count, not the total.
+
+      Here is the decision in practice. A team must serve on one 80 GB GPU, at 2 bytes per weight:
+
+      - Llama 2 13B fits easily (26 GB) and costs about 26 GFLOPs per token.
+      - Mixtral costs the same 26 GFLOPs per token but needs 93 GB. It doesn't fit without quantizing to fewer bits per weight or splitting it across two GPUs.
+      - Llama 2 70B fits neither budget.
+
+      If the budget is compute per token, Mixtral is a bargain. If it's memory on a single GPU, the dense 13B wins. So when you read or write a comparison, state the total, the active count, and which of the two was matched.
+    bridges: []
+  - id: moe-parameter-accounting.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.moe-parameter-accounting
+    markdown: Compute total and active counts for new MoE designs, size their memory, and decide which model fits a given GPU or compute budget.
+    takeaway: |-
+      Total parameters count every stored weight and set the memory bill. Active parameters count what one token uses and set the arithmetic. Always say which one a comparison held fixed.
+  - id: moe-parameter-accounting.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.moe-parameter-accounting
+    markdown: |-
+      Count every stored expert when budgeting weight memory. Count selected experts and shared computation when estimating work for a token, then measure the actual runtime.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - moe-parameter-accounting.s1
-    - moe-parameter-accounting.s2
-    - moe-parameter-accounting.s3
-    - moe-parameter-accounting.s4
-    - moe-parameter-accounting.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - moe-parameter-accounting.s1
+        - moe-parameter-accounting.s2
+        - moe-parameter-accounting.s3
+        - moe-parameter-accounting.s4
+        - moe-parameter-accounting.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     moe-parameter-accounting.recap: moe-parameter-accounting.check
 assessment_families:
-- id: moe-parameter-accounting.base
-  objective_ref: objective.moe-parameter-accounting
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Account for all resident weights: trace the inputs, operation, and result before choosing.'
-  remediation_scene: moe-parameter-accounting.s2
-  variants:
-  - id: moe-parameter-accounting.base.1
-    prompt: 10 million shared plus four 5-million experts gives total parameters?
-    options:
-    - id: b
-      text: 15 million
-    - id: c
-      text: 20 million
-    - id: a
-      text: 30 million
-    answer: a
-    feedback: Total includes every expert plus shared parameters.
-  - id: moe-parameter-accounting.base.2
-    prompt: In that toy top-one model, approximate active parameters per token?
-    options:
-    - id: c
-      text: 5 million
-    - id: a
-      text: 15 million
-    - id: b
-      text: 30 million
-    answer: a
-    feedback: The selected expert and shared computation both participate.
-- id: moe-parameter-accounting.transfer
-  objective_ref: objective.moe-parameter-accounting
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compare on a declared budget: trace the inputs, operation, and result before choosing.'
-  remediation_scene: moe-parameter-accounting.s4
-  variants:
-  - id: moe-parameter-accounting.transfer.1
-    prompt: Can active parameter count alone size all weight storage?
-    options:
-    - id: c
-      text: Only if routing is learned
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Unselected experts still belong to the artifact.
-  - id: moe-parameter-accounting.transfer.2
-    prompt: Two MoEs have equal active counts. Must latency match?
-    options:
-    - id: a
-      text: No; hardware, routing, shapes, and communication differ
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only total count can change speed
-    answer: a
-    feedback: Parameter counts are incomplete runtime descriptions.
+  - id: moe-parameter-accounting.base
+    objective_ref: objective.moe-parameter-accounting
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Account for all resident weights: trace the inputs, operation, and result before choosing.'
+    remediation_scene: moe-parameter-accounting.s2
+    variants:
+      - id: moe-parameter-accounting.base.1
+        prompt: 10 million shared plus four 5-million experts gives total parameters?
+        options:
+          - id: b
+            text: 15 million
+          - id: c
+            text: 20 million
+          - id: a
+            text: 30 million
+        answer: a
+        feedback: Total includes every expert plus shared parameters.
+        retired: true
+      - id: moe-parameter-accounting.base.2
+        prompt: In that toy top-one model, approximate active parameters per token?
+        options:
+          - id: c
+            text: 5 million
+          - id: a
+            text: 15 million
+          - id: b
+            text: 30 million
+        answer: a
+        feedback: The selected expert and shared computation both participate.
+        retired: true
+  - id: moe-parameter-accounting.transfer
+    objective_ref: objective.moe-parameter-accounting
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compare on a declared budget: trace the inputs, operation, and result before choosing.'
+    remediation_scene: moe-parameter-accounting.s4
+    variants:
+      - id: moe-parameter-accounting.transfer.1
+        prompt: Can active parameter count alone size all weight storage?
+        options:
+          - id: c
+            text: Only if routing is learned
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Unselected experts still belong to the artifact.
+        retired: true
+      - id: moe-parameter-accounting.transfer.2
+        prompt: Two MoEs have equal active counts. Must latency match?
+        options:
+          - id: a
+            text: No; hardware, routing, shapes, and communication differ
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only total count can change speed
+        answer: a
+        feedback: Parameter counts are incomplete runtime descriptions.
+        retired: true
+  - id: moe-parameter-accounting.base.v2
+    objective_ref: objective.moe-parameter-accounting
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Split the model into shared parts (attention, embeddings, norms, router), which exist once, and experts, which are copied. Total counts all copies; active counts the shared parts plus k experts per layer.
+    remediation_scene: moe-parameter-accounting.s1
+    variants:
+      - id: moe-parameter-accounting.base.v2.1
+        prompt: Mixtral 8x7B has about 46.7B parameters rather than 8 × 7.24B ≈ 58B. What accounts for the difference?
+        options:
+          - id: b
+            text: Each expert was pruned to a smaller size than Mistral 7B's feed-forward block
+          - id: a
+            text: Only the feed-forward blocks are copied; attention and embeddings exist once
+          - id: c
+            text: The router merges similar experts after training, removing duplicate weights
+        answer: a
+        feedback: Attention, embeddings, and norms (about 1.6B) are stored once and shared, while only the feed-forward block is repeated 8 times. Each expert is the same size as Mistral 7B's feed-forward block, and no merging happens.
+      - id: moe-parameter-accounting.base.v2.2
+        prompt: Which weights make up the active parameter count for one token in an MoE model?
+        options:
+          - id: c
+            text: Just the weights of the k chosen experts in each MoE layer
+          - id: b
+            text: Each expert's weights, since the router computes a score for each one
+          - id: a
+            text: The shared layers plus the k chosen experts in each MoE layer
+        answer: a
+        feedback: A token passes through attention, norms, and embeddings as well as its chosen experts, so all of those count. The router scores every expert, but its matrix is tiny; unchosen experts do no work for this token.
+      - id: moe-parameter-accounting.base.v2.3
+        prompt: For an MoE language model, what does the active parameter count estimate best?
+        options:
+          - id: a
+            text: The arithmetic per token, at about 2 FLOPs per active weight
+          - id: b
+            text: The GPU memory needed to hold the model's weights for serving
+          - id: c
+            text: The size of the checkpoint file saved to disk after training
+        answer: a
+        feedback: Active parameters are the weights a token multiplies by, so they set the FLOPs. Memory and checkpoint size depend on the total, because every expert must be stored.
+      - id: moe-parameter-accounting.base.v2.4
+        prompt: Suppose Mixtral routed each token to 1 expert instead of 2. Shared weights are 1.61B and each layer's expert is 0.176B, over 32 layers. About how many parameters would each token use?
+        options:
+          - id: b
+            text: About 6.4B, half of the top-2 active count
+          - id: c
+            text: About 5.6B, the size of one expert in each layer
+          - id: a
+            text: About 7.2B, the same as the dense Mistral 7B
+        answer: a
+        feedback: 1.61B + 32 × 0.176B ≈ 7.24B. Halving 12.88B wrongly halves the shared part too, and 5.64B leaves out the shared 1.61B that every token uses.
+  - id: moe-parameter-accounting.transfer.v2
+    objective_ref: objective.moe-parameter-accounting
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask which budget the situation is about. Memory must hold the total; compute per token follows the active count.
+    remediation_scene: moe-parameter-accounting.s4
+    variants:
+      - id: moe-parameter-accounting.transfer.v2.1
+        prompt: A startup must serve on a single 80 GB GPU at 2 bytes per weight. It can pick a dense 13B model or an MoE with 46.7B total and 12.9B active parameters. Which fits?
+        options:
+          - id: b
+            text: Both, since each one uses about 13B parameters per token
+          - id: a
+            text: The dense 13B model, since the MoE's weights need about 93 GB
+          - id: c
+            text: The MoE, since its active weights need just about 26 GB
+        answer: a
+        feedback: Any token might need any expert, so the MoE must hold all 46.7B × 2 bytes ≈ 93 GB, which exceeds 80 GB. The dense 13B needs about 26 GB. Equal active counts mean equal arithmetic, not equal memory.
+      - id: moe-parameter-accounting.transfer.v2.2
+        prompt: A blog post claims, "DeepSeek-V3 is as cheap to host as a 37B dense model." What is the best response?
+        options:
+          - id: c
+            text: Correct, since only the 37B active weights are ever loaded
+          - id: a
+            text: Its compute per token is like a 37B model's, but all 671B must be stored
+          - id: b
+            text: Wrong, since each token really uses all 671B once routing is counted
+        answer: a
+        feedback: Per-token arithmetic follows the 37B active count, but hosting needs every expert resident, because different tokens pick different experts. The router is small and doesn't make every expert run.
+      - id: moe-parameter-accounting.transfer.v2.3
+        prompt: A paper claims its MoE "beats a dense model at the same training compute." Which setup makes that claim fair?
+        options:
+          - id: b
+            text: Match total parameters, then train both for the same number of steps
+          - id: c
+            text: Match the number of experts, giving the dense model one large expert
+          - id: a
+            text: Match FLOPs per token and tokens trained, and report both totals
+        answer: a
+        feedback: Training compute is roughly FLOPs per token times tokens trained, and FLOPs follow the active count. Matching total parameters would give the MoE far less compute per token. Reporting both totals lets readers see the memory cost too.
+      - id: moe-parameter-accounting.transfer.v2.4
+        prompt: An engineer doubles the experts per layer from 8 to 16 in a Mixtral-like model, keeping top-2 and the expert size. What happens?
+        options:
+          - id: a
+            text: Total parameters nearly double; active parameters stay the same
+          - id: c
+            text: Both total and active parameters roughly double
+          - id: b
+            text: Active parameters halve, since each expert gets fewer tokens
+        answer: a
+        feedback: Experts are about 97% of Mixtral's weights, so doubling them nearly doubles the total (about 91.8B). Each token still uses the shared layers plus 2 experts per layer, so the active count doesn't change.
+  - id: moe-parameter-accounting.calculate
+    objective_ref: objective.moe-parameter-accounting
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Total = shared + all experts. Active = shared + (k ÷ number of experts per layer) × all expert weights. Memory = total × bytes per parameter.
+    remediation_scene: moe-parameter-accounting.s2
+    absolute_tolerance: 0.05
+    variants:
+      - id: moe-parameter-accounting.calculate.1
+        prompt: An MoE model has 2B shared parameters and 16 experts per layer, whose weights add up to 8B across all layers. Each token uses the top 2 experts in every layer. How many billion active parameters does each token use?
+        answer: 3
+        feedback: The 2 chosen experts are 2/16 of the expert weights, 2/16 × 8B = 1B. Add the shared 2B for 3B active.
+      - id: moe-parameter-accounting.calculate.2
+        prompt: The same model has 2B shared parameters and 8B of expert weights. How many billion parameters are stored in total?
+        answer: 10
+        feedback: 2B shared + 8B experts = 10B. Every expert is stored, whichever ones a given token uses.
+      - id: moe-parameter-accounting.calculate.3
+        prompt: Mixtral has 1.61B shared parameters and 45.10B of expert weights, with 8 experts per layer. If each token used only the top 1 expert per layer, how many billion parameters would it use?
+        answer: 7.25
+        feedback: One expert per layer is 45.10B ÷ 8 ≈ 5.64B, plus the shared 1.61B, for about 7.25B, the size of Mistral 7B.
+      - id: moe-parameter-accounting.calculate.4
+        prompt: Mixtral has 46.7B total parameters. How many gigabytes do its weights take at 2 bytes per parameter?
+        answer: 93.4
+        feedback: 46.7B × 2 bytes = 93.4 GB. Using the 12.9B active count instead would badly underestimate the memory.
+      - id: moe-parameter-accounting.calculate.5
+        prompt: A model has 3B shared parameters and 64 experts per layer, whose weights add up to 12.8B across all layers. Each token uses 4 experts per layer. How many billion active parameters does it use?
+        answer: 3.8
+        feedback: 4 of 64 experts is 1/16 of the expert weights, 12.8B ÷ 16 = 0.8B. Add the shared 3B for 3.8B active.

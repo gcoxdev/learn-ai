@@ -1,192 +1,414 @@
 schema_version: 0.2-draft
 lesson:
   id: agent-evaluation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Evaluate the completed task and the trajectory that produced it
   state: draft
-  summary: Check what an agent actually accomplished and what it cost.
+  summary: Wayfarer said "Booked!" nine times out of ten. The hotel's database says six. Learn to test an agent by what it changed, what it cost, and whether it succeeds every time.
   slot: M25.8
   category: learning
   sources:
-  - title: AgentBench
-    url: https://arxiv.org/abs/2308.03688
-  - title: SWE-bench
-    url: https://arxiv.org/abs/2310.06770
+    - title: AgentBench
+      url: https://arxiv.org/abs/2308.03688
+    - title: 'SWE-bench: Can Language Models Resolve Real-World GitHub Issues? (Jimenez et al., 2023)'
+      url: https://arxiv.org/abs/2310.06770
+    - title: 'WebArena: A Realistic Web Environment for Building Autonomous Agents (Zhou et al., 2023)'
+      url: https://arxiv.org/abs/2307.13854
+    - title: 'τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains (Yao et al., 2024)'
+      url: https://arxiv.org/abs/2406.12045
+    - title: Evaluating Large Language Models Trained on Code (Chen et al., 2021), source of the unbiased pass@k estimator
+      url: https://arxiv.org/abs/2107.03374
 objectives:
-- id: objective.agent-evaluation
-  version: 1-draft
-  statement: Agent evaluation needs reproducible environments, task-level success criteria, action traces,
-    and resource accounting; final text alone cannot establish that external work was completed correctly.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - agent-evaluation.base
-  - agent-evaluation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.agent-permissions-and-untrusted-input
-  - anyOf:
-    - objective.agent-planning-and-recovery
-  - anyOf:
-    - objective.research-reporting
+  - id: objective.agent-evaluation
+    version: 2-draft
+    statement: Agent evaluation needs reproducible environments, task-level success criteria, action traces, and resource accounting; success is judged by the environment's final state, not by the agent's claim that the work is done.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - agent-evaluation.base.v2
+      - agent-evaluation.transfer.v2
+      - agent-evaluation.calculate
+    prerequisites:
+      - anyOf:
+          - objective.agent-permissions-and-untrusted-input
+      - anyOf:
+          - objective.agent-planning-and-recovery
+      - anyOf:
+          - objective.research-reporting
 scenes:
-- id: agent-evaluation.s1
-  title: Define observable success
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.agent-evaluation
-  markdown: A file-editing task might require a specific resulting file and passing behavior checks. A retrieval
-    task needs supported answers from permitted sources. Scoring only the agent’s final statement allows false
-    completion claims to pass. Inspect the relevant environment state.
-  text_mode: A file-editing task might require a specific resulting file and passing behavior checks. A retrieval
-    task needs supported answers from permitted sources. Scoring only the agent’s final statement allows false
-    completion claims to pass. Inspect the relevant environment state.
-  bridges: []
-- id: agent-evaluation.s2
-  title: Record the trajectory
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.agent-evaluation
-  markdown: Capture inputs, tool calls, returned observations, state changes, failures, retries, and stopping
-    reasons within privacy limits. This helps distinguish planning mistakes, interface errors, poor perception,
-    and execution failures. Keep model, prompt, tool, and environment versions linked to the run.
-  text_mode: Capture inputs, tool calls, returned observations, state changes, failures, retries, and stopping
-    reasons within privacy limits. This helps distinguish planning mistakes, interface errors, poor perception,
-    and execution failures. Keep model, prompt, tool, and environment versions linked to the run.
-  bridges: []
-- id: agent-evaluation.s3
-  title: Control the evaluation environment
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.agent-evaluation
-  markdown: Reset task state, account for nondeterministic services, and separate training examples from evaluation
-    tasks. Repeated trials reveal variance. Tests should include missing information, tool failures, adversarial
-    content, and tasks that should stop or ask for required clarification.
-  text_mode: Reset task state, account for nondeterministic services, and separate training examples from evaluation
-    tasks. Repeated trials reveal variance. Tests should include missing information, tool failures, adversarial
-    content, and tasks that should stop or ask for required clarification.
-  bridges: []
-- id: agent-evaluation.s4
-  title: Measure complexity and cost
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.agent-evaluation
-  markdown: 'Report success rate alongside total tokens, tool calls, elapsed time, and human interventions.
-    Compare single-agent and workflow baselines when relevant. A long successful trace can conceal inefficient
-    looping; a short answer can conceal unfinished work. The task outcome and process evidence belong together.
+  - id: agent-evaluation.s1
+    title: It said "Booked!" Check the database
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.agent-evaluation
+    markdown: |-
+      Wayfarer's team runs a test: *"Book Tejo for one night, July 10."* The run ends cheerfully: *"Done! Your room at Tejo is booked."* The test hotel's database holds no booking. The call had timed out, and the model took silence for success, the trap from the tool-contracts lesson.
 
+      Scored by its final message, this run would have passed. So agent tests run in a **sandbox**, a disposable copy of the world with fake hotels, cards, and mail server, and judge **task success** by that world's state when the run ends: exactly one booking, right hotel, right nights, within budget, and nothing else changed.
 
-    Suppose system A completes 8 of 10 tasks using 100 total tool calls; B completes 9 using 300 calls. B has
-    the higher observed success rate, but it also uses three times as many calls. Count failed runs in resource
-    totals rather than reporting only the cheap successes. Ten tasks are too few to establish a precise general
-    advantage; repeat on a larger representative set before drawing that conclusion.'
-  text_mode: 'Report success rate alongside total tokens, tool calls, elapsed time, and human interventions.
-    Compare single-agent and workflow baselines when relevant. A long successful trace can conceal inefficient
-    looping; a short answer can conceal unfinished work. The task outcome and process evidence belong together.
+      The best-known agent benchmarks all work this way:
 
+      | Benchmark | Tasks | How success is checked |
+      | --- | --- | --- |
+      | SWE-bench (Jimenez et al., 2023) | 2,294 real GitHub issues from 12 popular Python projects | The agent's code change must make the issue's failing tests pass without breaking the others |
+      | WebArena (Zhou et al., 2023) | Tasks on self-hosted copies of shopping, forum, code-hosting, content-management, and map sites | Programs check the resulting site state or the answer |
+      | τ-bench (Yao et al., 2024) | Customer-service chats in retail and airline settings, with a simulated customer | The database at the end must match the expected goal state |
 
-    Suppose system A completes 8 of 10 tasks using 100 total tool calls; B completes 9 using 300 calls. B has
-    the higher observed success rate, but it also uses three times as many calls. Count failed runs in resource
-    totals rather than reporting only the cheap successes. Ten tasks are too few to establish a precise general
-    advantage; repeat on a larger representative set before drawing that conclusion.'
-  bridges: []
-- id: agent-evaluation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.agent-evaluation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Check the completed task in the environment, then inspect the actions and resources used to get
-    there. A claim of completion is not evidence that the work happened.
-- id: agent-evaluation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.agent-evaluation
-  markdown: Check the completed task in the environment, then inspect the actions and resources used to get
-    there. A claim of completion is not evidence that the work happened.
-  text_mode: Check the completed task in the environment, then inspect the actions and resources used to get
-    there. A claim of completion is not evidence that the work happened.
+      None of them asks the agent whether it succeeded.
+    bridges: []
+  - id: agent-evaluation.s2
+    title: Read the trajectory, name the failure
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.agent-evaluation
+    markdown: |-
+      A pass/fail score says *whether*; the trace says *why*. A **trajectory** is the full record of one run: every model message, tool call, result, and change to the sandbox, in order. Sorting failed trajectories into categories tells you what to fix:
+
+      | Category | What the trajectory shows | Wayfarer example | Where to look |
+      | --- | --- | --- | --- |
+      | Bad tool call | Arguments wrong or rejected | `"nights": "two"`; the wrong Friday | Tool contract, error messages |
+      | Misread result | The tool said X; the agent acted as if Y | Treated a timeout as a booking | Request states |
+      | Wrong plan | Steps missing or out of order | Emailed the itinerary before booking the flight | Plan preconditions |
+      | Duplicate action | The same effect happened twice | Retried a booking without a key | Idempotency keys |
+      | Gave up or looped | The step limit ran out | Repeated one failing search | Retry and replanning rules |
+      | Out of scope | An action the task didn't allow | Followed an instruction on a hotel page | Permission gate |
+
+      Each category points back to an earlier lesson in this module. Save the model, prompt, and tool versions with each trajectory, so when a later run behaves differently you can tell whether the agent changed or the world did.
+    bridges: []
+  - id: agent-evaluation.harness
+    title: A ten-task test harness
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.agent-evaluation
+    markdown: |-
+      Here's the scoring half of an evaluation **harness**, the program that runs tasks and grades them. Each of the 10 synthetic tasks names the booking the sandbox should hold at the end; each run records what the sandbox actually holds, how many tool calls it took, and whether the agent claimed success.
+
+      ```python run
+      from collections import Counter
+
+      # 10 synthetic tasks: the booking the sandbox database should hold at the end.
+      GOALS = [("casa-azul", 2), ("rua-nova", 3), ("tejo", 1), ("casa-azul", 4), ("rua-nova", 2),
+               ("tejo", 2), ("casa-azul", 1), ("rua-nova", 1), ("tejo", 3), ("casa-azul", 2)]
+
+      # One run per task, as recorded by the sandbox: bookings made, tool calls, and
+      # whether the agent's final message claimed success.
+      RUNS = [([("casa-azul", 2)], 4, True), ([("rua-nova", 3)], 5, True),
+              ([], 3, True),                                  # read a timeout as success
+              ([("casa-azul", 4)], 4, True),
+              ([("rua-nova", 2), ("rua-nova", 2)], 6, True),  # retried without a key
+              ([("tejo", 2)], 4, True),
+              ([("casa-azul", 2)], 4, True),                  # 2 nights, asked for 1
+              ([("rua-nova", 1)], 3, True),
+              ([], 12, False),                                # hit the step limit
+              ([("casa-azul", 2)], 5, True)]
+
+      def grade(goal, bookings, calls, claimed):
+          if bookings == [goal]:
+              return "success"
+          if len(bookings) > 1:
+              return "duplicate booking"
+          if bookings:
+              return "wrong booking"
+          return "false report" if claimed else "gave up"
+
+      results = [grade(goal, *run) for goal, run in zip(GOALS, RUNS)]
+      wins, calls = results.count("success"), sum(run[1] for run in RUNS)
+      print(f"agent claimed success: {sum(run[2] for run in RUNS)}/10")
+      print(f"actual success rate:   {wins}/10 = {wins / 10:.0%}")
+      print(f"average tool calls:    {calls / 10:.1f}  (per success: {calls / wins:.1f})")
+      print("failures:", dict(Counter(r for r in results if r != "success")))
+      ```
+
+      The agent claimed success 9 times; it actually succeeded 6 times. It averaged 5.0 tool calls per run, but 50 calls bought only 6 successes, so each success cost 8.3 calls. The failure breakdown shows four different problems, each with a different fix. Change the third run to `([("tejo", 1)], 3, True)` and predict the new success rate before you run it.
+
+      Real harnesses add the other half: a fresh sandbox for every run, so one run's leftover booking can't make the next run look successful or turn its correct booking into a "duplicate."
+    bridges: []
+  - id: agent-evaluation.s3
+    title: Run it again, and again
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.agent-evaluation
+    markdown: |-
+      Run the same task twice and an agent may take different paths: the model samples its words, and the world's timing varies. So run each task several times, and decide what you're asking of the agent.
+
+      Suppose Wayfarer completes a certain task with probability $p = 0.8$ per run.
+
+      - **pass@k** asks: *does at least one of k tries succeed?* That's $1 - (1-p)^k$. It suits settings where you can check each attempt and keep a good one, like generated code tested before use. It was popularized by OpenAI's Codex paper (Chen et al., 2021).
+      - **pass^k** asks: *do all k tries succeed?* That's $p^k$. τ-bench introduced it to measure consistency, because a booking assistant faces each customer once and has to get it right every time.
+
+      | k | pass@k | pass^k |
+      | ---: | ---: | ---: |
+      | 1 | 0.800 | 0.800 |
+      | 3 | 0.992 | 0.512 |
+      | 8 | 1.000 | 0.168 |
+
+      The same agent looks nearly perfect by one measure and unreliable by the other. τ-bench's authors found that even strong models' pass^k fell steeply as k grew.
+
+      :::papers Estimating both from trials
+      With $n$ runs of a task and $c$ successes, the unbiased estimates are
+
+      $$\text{pass@}k = 1 - \frac{\binom{n-c}{k}}{\binom{n}{k}}, \qquad \text{pass}^k = \frac{\binom{c}{k}}{\binom{n}{k}},$$
+
+      averaged over tasks. If Wayfarer succeeds on $c = 8$ of $n = 10$ runs, pass$^3$ $= \binom{8}{3}/\binom{10}{3} = 56/120 \approx 0.47$ (close to $0.8^3 = 0.512$), and pass@3 $= 1$, since there are only 2 failures to draw 3 from.
+      :::
+    bridges: []
+  - id: agent-evaluation.s4
+    title: Price every run, failures included
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.agent-evaluation
+    markdown: |-
+      Wayfarer's team must choose between two versions, tested on the same 50 tasks. Tokens cost \$10 per million.
+
+      | | Version A | Version B |
+      | --- | ---: | ---: |
+      | Successes | 40 of 50 (80%) | 45 of 50 (90%) |
+      | Tokens per run | 30,000 (\$0.30) | 90,000 (\$0.90) |
+      | Time per run | 45 s | 110 s |
+      | Cost of all 50 runs | \$15 | \$45 |
+      | **Cost per success** | \$15 ÷ 40 = \$0.375 | \$45 ÷ 45 = \$1.00 |
+
+      **Cost per success** divides the cost of *every* run, failures included, by the number of successes. Failed runs burn tokens too.
+
+      B succeeds more often but costs about 2.7 times as much per success and takes more than twice as long. Which is better depends on what a failure costs. If each failed booking takes \$5 of a support person's time to fix, A's total is \$15 + 10 × \$5 = \$65 and B's is \$45 + 5 × \$5 = \$70: A wins. At \$10 per failure, A costs \$115 and B \$95: B wins.
+
+      :::predict At what cost per failure do the two versions tie?
+      Set the totals equal: 15 + 10x = 45 + 5x, so 5x = 30 and x = \$6. Above \$6 per failure, B's extra reliability pays for itself.
+      :::
+
+      :::key What to report
+      Success judged from the final state, repeated runs with pass^k, the failure categories, and cost and time per success, with failures counted in.
+      :::
+    bridges: []
+  - id: agent-evaluation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.agent-evaluation
+    markdown: Wayfarer's test runs, then an expense bot, a coding benchmark, a support agent, and two web agents test whether you can grade by final state, pick the right pass rate, and count what success really costs.
+    takeaway: |-
+      Grade an agent by what changed in the world, not by what it says. Run tasks repeatedly, sort failures by cause, and report cost per success with the failed runs counted in.
+  - id: agent-evaluation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.agent-evaluation
+    markdown: |-
+      Check the completed task in the environment, then inspect the actions and resources used to get there. A claim of completion is not evidence that the work happened.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - agent-evaluation.s1
-    - agent-evaluation.s2
-    - agent-evaluation.s3
-    - agent-evaluation.s4
-    - agent-evaluation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - agent-evaluation.s1
+        - agent-evaluation.s2
+        - agent-evaluation.harness
+        - agent-evaluation.s3
+        - agent-evaluation.s4
+        - agent-evaluation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     agent-evaluation.recap: agent-evaluation.check
 assessment_families:
-- id: agent-evaluation.base
-  objective_ref: objective.agent-evaluation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Record the trajectory: trace the inputs, operation, and result before choosing.'
-  remediation_scene: agent-evaluation.s2
-  variants:
-  - id: agent-evaluation.base.1
-    prompt: An agent says a file was updated. What verifies completion?
-    options:
-    - id: a
-      text: Inspecting the resulting file and required behavior
-    - id: b
-      text: The statement alone
-    - id: c
-      text: Only response confidence
-    answer: a
-    feedback: External work needs external-state evidence.
-  - id: agent-evaluation.base.2
-    prompt: Why reset environment state between trials?
-    options:
-    - id: b
-      text: To guarantee every run succeeds
-    - id: c
-      text: To remove all model variability
-    - id: a
-      text: To make task conditions comparable
-    answer: a
-    feedback: Residual changes can contaminate later evaluations.
-- id: agent-evaluation.transfer
-  objective_ref: objective.agent-evaluation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Measure complexity and cost: trace the inputs, operation, and result before choosing.'
-  remediation_scene: agent-evaluation.s4
-  variants:
-  - id: agent-evaluation.transfer.1
-    prompt: What can action traces help diagnose?
-    options:
-    - id: b
-      text: Every hidden neural cause with certainty
-    - id: c
-      text: Only spelling mistakes
-    - id: a
-      text: Where planning, tools, or execution failed
-    answer: a
-    feedback: Observable transitions locate many system-level failures.
-  - id: agent-evaluation.transfer.2
-    prompt: Should success rate be reported without resource use in a cost-sensitive comparison?
-    options:
-    - id: c
-      text: Only model names are needed
-    - id: a
-      text: No; include the relevant operating costs
-    - id: b
-      text: Yes, costs never affect usefulness
-    answer: a
-    feedback: Efficiency is part of the deployment decision.
+  - id: agent-evaluation.base
+    objective_ref: objective.agent-evaluation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Record the trajectory: trace the inputs, operation, and result before choosing.'
+    remediation_scene: agent-evaluation.s2
+    variants:
+      - id: agent-evaluation.base.1
+        prompt: An agent says a file was updated. What verifies completion?
+        options:
+          - id: a
+            text: Inspecting the resulting file and required behavior
+          - id: b
+            text: The statement alone
+          - id: c
+            text: Only response confidence
+        answer: a
+        feedback: External work needs external-state evidence.
+        retired: true
+      - id: agent-evaluation.base.2
+        prompt: Why reset environment state between trials?
+        options:
+          - id: b
+            text: To guarantee every run succeeds
+          - id: c
+            text: To remove all model variability
+          - id: a
+            text: To make task conditions comparable
+        answer: a
+        feedback: Residual changes can contaminate later evaluations.
+        retired: true
+  - id: agent-evaluation.transfer
+    objective_ref: objective.agent-evaluation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Measure complexity and cost: trace the inputs, operation, and result before choosing.'
+    remediation_scene: agent-evaluation.s4
+    variants:
+      - id: agent-evaluation.transfer.1
+        prompt: What can action traces help diagnose?
+        options:
+          - id: b
+            text: Every hidden neural cause with certainty
+          - id: c
+            text: Only spelling mistakes
+          - id: a
+            text: Where planning, tools, or execution failed
+        answer: a
+        feedback: Observable transitions locate many system-level failures.
+        retired: true
+      - id: agent-evaluation.transfer.2
+        prompt: Should success rate be reported without resource use in a cost-sensitive comparison?
+        options:
+          - id: c
+            text: Only model names are needed
+          - id: a
+            text: No; include the relevant operating costs
+          - id: b
+            text: Yes, costs never affect usefulness
+        answer: a
+        feedback: Efficiency is part of the deployment decision.
+        retired: true
+  - id: agent-evaluation.base.v2
+    objective_ref: objective.agent-evaluation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Judge by what changed in the sandbox, not by the agent's last message. Then ask whether the task must succeed once or every time.
+    remediation_scene: agent-evaluation.s1
+    variants:
+      - id: agent-evaluation.base.v2.1
+        prompt: 'A Wayfarer test run ends with "Done, your room is booked," but the sandbox hotel database holds no booking. How should the harness score the run?'
+        options:
+          - id: b
+            text: Success, because the final message matches the task's goal
+          - id: a
+            text: Failure, filed under false report, since no booking exists
+          - id: c
+            text: Partial credit, because the agent picked the right hotel
+        answer: a
+        feedback: Success is judged by the final state of the sandbox, and it holds no booking. The confident message is itself a failure worth counting separately, because it means users would be misled. Picking the right hotel earns nothing if nothing was booked.
+      - id: agent-evaluation.base.v2.2
+        prompt: In a trajectory, book_hotel returns "sold out," and the agent then emails the traveler an itinerary that includes that hotel. Which failure category fits?
+        options:
+          - id: c
+            text: Bad tool call, since the booking did not go through
+          - id: b
+            text: Gave up, since the agent stopped trying to book
+          - id: a
+            text: Misread result, since it acted as if the booking worked
+        answer: a
+        feedback: The tool gave a clear answer and the agent acted on the opposite, so the problem is how it read results. The call's arguments were fine, so it isn't a bad tool call, and the agent didn't give up; it carried on as if it had succeeded.
+      - id: agent-evaluation.base.v2.3
+        prompt: A booking assistant faces each traveler once, with no second attempt. Which measure of repeated runs best matches that job?
+        options:
+          - id: a
+            text: pass^k, the chance that all k runs of a task succeed
+          - id: b
+            text: pass@k, the chance that at least one of k runs succeeds
+          - id: c
+            text: The best score out of k runs, averaged over all tasks
+        answer: a
+        feedback: A traveler gets one attempt, so the agent must succeed consistently, which is what pass^k measures. pass@k and best-of-k reward an agent that succeeds only sometimes, which suits settings where you can check attempts and keep a good one.
+      - id: agent-evaluation.base.v2.4
+        prompt: A team runs its ten booking tasks without resetting the sandbox between runs. Which problem does that cause?
+        options:
+          - id: b
+            text: The model gives exactly the same answers every time
+          - id: a
+            text: Bookings left from earlier runs distort later grades
+          - id: c
+            text: Each run needs more tool calls to finish its task
+        answer: a
+        feedback: A leftover booking can make a later run look successful, or make its correct booking look like a duplicate. Resetting doesn't make the model deterministic, and tool-call counts depend on the agent, not on leftovers.
+  - id: agent-evaluation.transfer.v2
+    objective_ref: objective.agent-evaluation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Choose the evidence a skeptic would accept, which means the final state checked by a program, repeated runs, and costs that include the failures.
+    remediation_scene: agent-evaluation.s4
+    variants:
+      - id: agent-evaluation.transfer.v2.1
+        prompt: An expense-report agent claims it finished 48 of 50 test tasks. The finance system shows 41 reports filed correctly. What success rate should the team report?
+        options:
+          - id: c
+            text: 96%, since it finished the 48 tasks it reported on
+          - id: b
+            text: 85%, counting only the 48 tasks that it claimed
+          - id: a
+            text: 82%, with the 7 false claims as their own category
+        answer: a
+        feedback: Success comes from the finance system's state, 41 of 50 tasks, or 82%. The 7 tasks it wrongly claimed are a separate failure worth reporting. Dividing by the claimed tasks hides both the false claims and the 2 it never finished.
+      - id: agent-evaluation.transfer.v2.2
+        prompt: A team builds a coding-agent test in the style of SWE-bench. How should it decide whether the agent's fix for an issue succeeded?
+        options:
+          - id: a
+            text: Run the project's tests on the changed code
+          - id: b
+            text: Ask a strong model whether the change looks right
+          - id: c
+            text: Compare the change line by line with the real fix
+        answer: a
+        feedback: SWE-bench applies the agent's change and checks that the issue's failing tests now pass and the others still do. A model's opinion is a claim, not a check. Many different changes can correctly fix one bug, so matching the human fix line by line would fail good solutions.
+      - id: agent-evaluation.transfer.v2.3
+        prompt: A customer-service agent scores pass@5 = 0.97 on a benchmark. In the product, each customer gets exactly one attempt. What should the team measure before launch?
+        options:
+          - id: b
+            text: pass@10, to get an even more stable estimate
+          - id: c
+            text: Nothing further, since 0.97 is already high
+          - id: a
+            text: Single-run success and pass^k across repeats
+        answer: a
+        feedback: pass@5 counts a task as solved if any of five tries works, but customers get one try. Single-run success and pass^k measure what customers will see. A larger k in pass@k only makes the number look better.
+      - id: agent-evaluation.transfer.v2.4
+        prompt: Web agent X succeeds on 70 of 100 tasks with 8 tool calls per run; Y succeeds on 75 with 25 calls per run. Each call costs $0.02, and each failure costs $1 of cleanup. Which is cheaper for 100 tasks?
+        options:
+          - id: a
+            text: X, about $46 in total against Y's $75
+          - id: b
+            text: Y, because its higher success rate costs less
+          - id: c
+            text: Y, about $50 in total against X's $54
+        answer: a
+        feedback: 'X: 100 × 8 × 0.02 = $16 in calls plus 30 failures × $1 = $46. Y: 100 × 25 × 0.02 = $50 plus 25 failures × $1 = $75. Y fails less often, but its extra calls cost more than the failures it saves.'
+  - id: agent-evaluation.calculate
+    objective_ref: objective.agent-evaluation
+    task: base
+    response_type: numeric
+    points: 1
+    hint: 'With per-run success p, all k runs succeed with probability p^k (pass^k), and at least one succeeds with probability 1 − (1 − p)^k (pass@k).'
+    remediation_scene: agent-evaluation.s3
+    absolute_tolerance: 0.005
+    variants:
+      - id: agent-evaluation.calculate.1
+        prompt: An agent completes a task with probability 0.9 per run, independently. What is pass^3, the chance that all 3 runs succeed? Give a decimal.
+        answer: 0.729
+        feedback: pass^3 = 0.9 × 0.9 × 0.9 = 0.729. Three runs in a row is noticeably harder than one.
+      - id: agent-evaluation.calculate.2
+        prompt: An agent completes a task with probability 0.7 per run, independently. What is pass@2, the chance that at least one of 2 runs succeeds? Give a decimal.
+        answer: 0.91
+        feedback: Both runs fail with probability 0.3 × 0.3 = 0.09, so at least one succeeds with probability 1 − 0.09 = 0.91.
+      - id: agent-evaluation.calculate.3
+        prompt: An agent completes a task with probability 0.95 per run, independently. What is pass^4, the chance that all 4 runs succeed? Give a decimal to three places.
+        answer: 0.815
+        feedback: pass^4 = 0.95⁴ ≈ 0.815. Even a 95% agent fails at least once in four tries almost a fifth of the time.
+      - id: agent-evaluation.calculate.4
+        prompt: An agent completes a task with probability 0.6 per run, independently. What is pass@3, the chance that at least one of 3 runs succeeds? Give a decimal to three places.
+        answer: 0.936
+        feedback: All three fail with probability 0.4³ = 0.064, so pass@3 = 1 − 0.064 = 0.936, while pass^3 would be only 0.6³ = 0.216.

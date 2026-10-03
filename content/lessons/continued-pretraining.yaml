@@ -1,211 +1,355 @@
 schema_version: 0.2-draft
 lesson:
   id: continued-pretraining
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Continue pretraining without losing sight of the starting model
   state: draft
-  summary: Continue learning from a saved model while measuring both new gains and useful behavior that may
-    be lost.
+  summary: Teach Kestrel medicine in a tenth of the original compute, then stretch its context from 2,048 to 8,192 tokens, without letting it forget how to write an ordinary email.
   slot: M16.8
   category: learning
   sources:
-  - title: The Llama 3 Herd of Models
-    url: https://arxiv.org/abs/2407.21783
-  - title: Qwen3 Technical Report
-    url: https://arxiv.org/abs/2505.09388
+    - title: "Gururangan et al. — Don't Stop Pretraining: Adapt Language Models to Domains and Tasks (2020)"
+      url: https://arxiv.org/abs/2004.10964
+    - title: Ibrahim et al. — Simple and Scalable Strategies to Continually Pre-train Large Language Models (2024)
+      url: https://arxiv.org/abs/2403.08763
+    - title: Chen et al. — Extending Context Window of Large Language Models via Positional Interpolation (2023)
+      url: https://arxiv.org/abs/2306.15595
+    - title: 'Rozière et al. — Code Llama: Open Foundation Models for Code (2023)'
+      url: https://arxiv.org/abs/2308.12950
+    - title: The Llama 3 Herd of Models (2024)
+      url: https://arxiv.org/abs/2407.21783
 objectives:
-- id: objective.continued-pretraining
-  version: 1-draft
-  statement: Continued pretraining adapts an existing checkpoint to new distributions or contexts; preserve
-    the artifact lineage and evaluate gains alongside forgetting and deployment changes.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - continued-pretraining.base
-  - continued-pretraining.transfer
-  prerequisites:
-  - anyOf:
-    - objective.pretraining-budget-and-checkpoints
-  - anyOf:
-    - objective.positional-encodings
+  - id: objective.continued-pretraining
+    version: 2-draft
+    statement: Continued pretraining adapts an existing checkpoint to new distributions or contexts; preserve the artifact lineage and evaluate gains alongside forgetting and deployment changes.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - continued-pretraining.base.v2
+      - continued-pretraining.transfer.v2
+      - continued-pretraining.calculate
+    prerequisites:
+      - anyOf:
+          - objective.pretraining-budget-and-checkpoints
+      - anyOf:
+          - objective.positional-encodings
 scenes:
-- id: continued-pretraining.s1
-  title: Keep learning from an existing checkpoint
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.continued-pretraining
-  markdown: 'Imagine a pretrained text model continuing next-token prediction on astronomy articles. It still
-    predicts recorded next tokens, but now sees more examples from a particular domain. This is **continued
-    pretraining**.
+  - id: continued-pretraining.s1
+    title: Kestrel goes to medical school
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.continued-pretraining
+    markdown: |-
+      A hospital group likes Kestrel-1B but finds it clumsy with drug names and lab abbreviations. Training a medical model from scratch would cost another 56 GPU-days. Instead, the team loads Kestrel's final checkpoint and keeps going: same model, same tokenizer, same next-token objective, but now reading 10 billion tokens of biomedical papers and de-identified clinical notes. By $6ND$, that's $6 \times 1.01 \times 10^9 \times 10^{10} \approx 6 \times 10^{19}$ FLOPs, about 5.6 GPU-days.
 
+      This is **continued pretraining**: more pretraining, starting from a trained checkpoint, usually on text from a new domain. Gururangan et al. (2020) called it domain-adaptive pretraining and found consistent gains on biomedical, computer-science, news, and review tasks. Code Llama (2023) is a famous example: Meta took Llama 2 and continued it on 500 billion tokens of mostly code.
 
-    **Instruction tuning** instead trains responses to requests in a specified demonstration format. Both may
-    change weights, but their immediate tasks differ. To describe a continued-pretraining experiment, record
-    the starting checkpoint, compatible tokenizer, new mixture, learning rate, and stopping rule.'
-  text_mode: 'Imagine a pretrained text model continuing next-token prediction on astronomy articles. It still
-    predicts recorded next tokens, but now sees more examples from a particular domain. This is **continued
-    pretraining**.
+      It's different from **instruction tuning**, which a later module covers. Instruction tuning trains on prompt-and-response pairs to make a model follow requests. Continued pretraining just reads more raw text, so Kestrel-Bio is still a base model, one that now knows medicine.
+    bridges: []
+  - id: continued-pretraining.s2
+    title: New knowledge in, old skills out
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.continued-pretraining
+    markdown: |-
+      The team measures held-out loss on two test sets before and after. (The numbers are from our running example, but the pattern is the real one.)
 
+      | Checkpoint | Biomedical loss | General web loss |
+      | --- | ---: | ---: |
+      | Kestrel-1B (start) | 2.40 | 2.60 |
+      | After 10B biomedical tokens | 1.95 | 2.95 |
+      | After 10B tokens, 25% of them general text | 2.00 | 2.65 |
 
-    **Instruction tuning** instead trains responses to requests in a specified demonstration format. Both may
-    change weights, but their immediate tasks differ. To describe a continued-pretraining experiment, record
-    the starting checkpoint, compatible tokenizer, new mixture, learning rate, and stopping rule.'
-  bridges: []
-- id: continued-pretraining.s2
-  title: Check what improves and what is lost
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.continued-pretraining
-  markdown: 'Astronomy predictions may improve while general-language or multilingual behavior gets worse.
-    This loss of earlier useful behavior is called **forgetting**. Test the same protected domain and general
-    tasks before and after the update.
+      The medical loss fell, but general text got noticeably worse. Neural networks trained on new data drift away from what they learned before, which is called **catastrophic forgetting**; McCloskey and Cohen described it in 1989. Nothing marks the old knowledge as worth keeping, so gradient steps that help medicine are free to overwrite it.
 
+      The standard fix is **replay**: keep mixing some of the original training data back in. With 25% replay, the 10-billion-token run reads 7.5 billion biomedical tokens and 2.5 billion general ones. Medical loss gives up a little (2.00 instead of 1.95), and general loss nearly holds.
 
-    If astronomy improves by 5 points and the general task drops by 8, report both. Mixing in general data
-    or adjusting update strength can help manage the tradeoff, but no recipe guarantees that every capability
-    survives. Judge the result against the intended use.'
-  text_mode: 'Astronomy predictions may improve while general-language or multilingual behavior gets worse.
-    This loss of earlier useful behavior is called **forgetting**. Test the same protected domain and general
-    tasks before and after the update.
+      :::predict The biomedical corpus holds 5 billion tokens. How many epochs of it does the replay run read?
+      $7.5\text{B} / 5\text{B} = 1.5$ epochs, well inside the range where repetition still helps (the mixtures lesson).
+      :::
 
+      The learning rate matters too. Kestrel ended its first run at $3 \times 10^{-5}$, 10% of its peak. Continuing at that tiny rate learns the new domain slowly. Ibrahim et al. (2024) found that **re-warming** the rate back up, re-decaying it with a new schedule, and replaying old data together matched a model retrained from scratch on the old and new data combined, for a fraction of the compute.
+    bridges: []
+  - id: continued-pretraining.s3
+    title: Stretch the context from 2,048 to 8,192
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.continued-pretraining
+    markdown: |-
+      Clinical records are long, so the team also wants 8,192-token context. This module's first lesson showed that adds no weights. But Kestrel has never seen a position past 2,047. RoPE, from the lesson on positional encodings, rotates each pair of numbers in a query or key by an angle equal to the position times that pair's speed. Slow pairs never completed a full turn in training, so positions past 2,047 give them angles the model has never met.
 
-    If astronomy improves by 5 points and the general task drops by 8, report both. Mixing in general data
-    or adjusting update strength can help manage the tradeoff, but no recipe guarantees that every capability
-    survives. Judge the result against the intended use.'
-  bridges: []
-- id: continued-pretraining.s3
-  title: Extend context as a tested capability
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.continued-pretraining
-  markdown: Changing a configured maximum length or position scaling does not by itself establish useful long-context
-    reasoning. Training on longer sequences and evaluating retrieval, distractors, position sensitivity, and
-    multi-document reasoning provide evidence. Serving must also afford the larger attention work and cache.
-  text_mode: Changing a configured maximum length or position scaling does not by itself establish useful long-context
-    reasoning. Training on longer sequences and evaluating retrieval, distractors, position sensitivity, and
-    multi-document reasoning provide evidence. Serving must also afford the larger attention work and cache.
-  bridges: []
-- id: continued-pretraining.s4
-  title: Release a traceable derivative
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.continued-pretraining
-  markdown: 'Record the parent checkpoint, data and recipe changes, context assumptions, evaluation results,
-    tokenizer, and runtime requirements. Name limitations of available evidence. A new checkpoint is a distinct
-    artifact even if its architecture dimensions match its parent; downstream users need that distinction to
-    reproduce behavior.
+      ```python run
+      import numpy as np
 
+      d, base = 128, 10_000                 # Kestrel's head size and RoPE base
+      train_len, new_len = 2048, 8192
+      freqs = base ** (-np.arange(0, d, 2) / d)   # rotation speed (radians per position) of each of 64 pairs
 
-    **Lineage** records which earlier artifact a model came from and what changed. Two files with the same
-    array dimensions can contain different learned numbers and behave differently. Keep the parent identifier
-    and transformation recipe alongside the new weights so comparisons can be reconstructed.'
-  text_mode: 'Record the parent checkpoint, data and recipe changes, context assumptions, evaluation results,
-    tokenizer, and runtime requirements. Name limitations of available evidence. A new checkpoint is a distinct
-    artifact even if its architecture dimensions match its parent; downstream users need that distinction to
-    reproduce behavior.
+      seen = freqs * (train_len - 1)              # largest angle each pair reached in training
+      unseen = freqs * (new_len - 1)              # largest angle at the new length
+      interp = freqs * (new_len - 1) * train_len / new_len   # interpolation: scale every position by 1/4
 
+      slow = -1                                   # the slowest-turning pair
+      print(f"slowest pair, trained up to:   {seen[slow]:.3f} rad")
+      print(f"slowest pair, new last token:  {unseen[slow]:.3f} rad  (never seen)")
+      print(f"slowest pair, interpolated:    {interp[slow]:.3f} rad")
+      print("pairs that never made a full turn in training:", int((seen < 2 * np.pi).sum()), "of", d // 2)
+      ```
 
-    **Lineage** records which earlier artifact a model came from and what changed. Two files with the same
-    array dimensions can contain different learned numbers and behave differently. Keep the parent identifier
-    and transformation recipe alongside the new weights so comparisons can be reconstructed.'
-  bridges: []
-- id: continued-pretraining.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.continued-pretraining
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Continued pretraining starts from learned weights and changes them using new data. Preserve the
-    starting model’s identity and measure both new gains and losses of earlier capabilities.
-- id: continued-pretraining.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.continued-pretraining
-  markdown: Continued pretraining starts from learned weights and changes them using new data. Preserve the
-    starting model’s identity and measure both new gains and losses of earlier capabilities.
-  text_mode: Continued pretraining starts from learned weights and changes them using new data. Preserve the
-    starting model’s identity and measure both new gains and losses of earlier capabilities.
+      23 of the 64 pairs have only ever seen part of a circle. **Position interpolation** (Chen et al., 2023) fixes that by multiplying every position by $2{,}048 / 8{,}192 = 0.25$, so position 8,191 is treated as 2,047.75 and every angle stays inside the range seen in training. A short continued-pretraining run on long documents then teaches the model to tell the squeezed positions apart; Chen et al. extended LLaMA models to 32,768 tokens within 1,000 steps. Code Llama used a different knob, raising RoPE's base from 10,000 to 1,000,000 so every pair turns more slowly, and trained on 16,384-token sequences.
+
+      :::predict With interpolation from 2,048 to 8,192, which trained position does position 6,000 map to?
+      $6{,}000 \times 0.25 = 1{,}500$. Every new position lands between two trained ones.
+      :::
+
+      :::mixup "Changing the context length in the config file gives the model a longer memory."
+      The config just stops truncating. Without rescaled positions and training on long documents, quality usually collapses past the trained length. Test it with facts planted deep in long documents, not just a loss number. Llama 3 went from 8K to 128K tokens in six stages over roughly 800 billion tokens, and used document masks from the packing lesson, which it found mattered for very long sequences.
+      :::
+    bridges: []
+  - id: continued-pretraining.s4
+    title: Release Kestrel-Bio with its family tree
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.continued-pretraining
+    markdown: |-
+      Kestrel-Bio-8K has exactly the same shape as Kestrel-1B: 16 layers, width 2,048, 1,011,351,552 weights. A config file can't tell them apart. So its card records its **lineage**, the chain of checkpoints and changes it came from:
+
+      ```json
+      {"model": "kestrel-bio-8k", "parent": "kestrel-1b step 95367 (sha256 41ac…)",
+       "continued_tokens": 1.0e10, "mix": {"biomedical": 0.75, "replay_general": 0.25},
+       "lr": "re-warm to 1.5e-4, cosine to 1.5e-5", "context": 8192,
+       "positions": "rope, interpolation x0.25", "tokenizer": "kestrel-bpe-v3 (unchanged)"}
+      ```
+
+      Then they run both models on the same three test sets: biomedical, general, and long-document retrieval. They publish all three results, including where Kestrel-Bio is worse. A reader choosing between the two needs the losses as much as the gains.
+    bridges: []
+  - id: continued-pretraining.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.continued-pretraining
+    markdown: Interpolated positions to compute, plus a legal-contracts model that forgot how to write email, a context length set only in a config file, and a code model built on a general one, test whether you can adapt a model without losing track of what it was.
+    takeaway: |-
+      Continued pretraining keeps training a checkpoint on new text for a fraction of the original cost. Replay old data and re-warm the learning rate to limit forgetting, rescale RoPE positions to extend context, and record the parent in the new model's lineage.
+  - id: continued-pretraining.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.continued-pretraining
+    markdown: |-
+      Continued pretraining starts from learned weights and changes them using new data. Preserve the starting model’s identity and measure both new gains and losses of earlier capabilities.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - continued-pretraining.s1
-    - continued-pretraining.s2
-    - continued-pretraining.s3
-    - continued-pretraining.s4
-    - continued-pretraining.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - continued-pretraining.s1
+        - continued-pretraining.s2
+        - continued-pretraining.s3
+        - continued-pretraining.s4
+        - continued-pretraining.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     continued-pretraining.recap: continued-pretraining.check
 assessment_families:
-- id: continued-pretraining.base
-  objective_ref: objective.continued-pretraining
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trade specialization against retention: trace the inputs, operation, and result before choosing.'
-  remediation_scene: continued-pretraining.s2
-  variants:
-  - id: continued-pretraining.base.1
-    prompt: What distinguishes continued pretraining from training from scratch?
-    options:
-    - id: a
-      text: It begins from already learned weights
-    - id: b
-      text: It never updates parameters
-    - id: c
-      text: It requires a new vocabulary every time
-    answer: a
-    feedback: Initialization carries prior learned behavior into the new run.
-  - id: continued-pretraining.base.2
-    prompt: Domain performance rises while general skills fall. What is this called?
-    options:
-    - id: b
-      text: Proof of evaluation leakage in every case
-    - id: c
-      text: An impossible result
-    - id: a
-      text: A specialization and retention tradeoff
-    answer: a
-    feedback: New updates can improve one distribution while forgetting another.
-- id: continued-pretraining.transfer
-  objective_ref: objective.continued-pretraining
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Release a traceable derivative: trace the inputs, operation, and result before choosing.'
-  remediation_scene: continued-pretraining.s4
-  variants:
-  - id: continued-pretraining.transfer.1
-    prompt: A configuration accepts 100,000 tokens. What remains unproven?
-    options:
-    - id: b
-      text: Whether the integer is positive
-    - id: c
-      text: Whether any tokenizer exists
-    - id: a
-      text: Reliable use of information throughout that context
-    answer: a
-    feedback: Accepted input length and useful long-context capability differ.
-  - id: continued-pretraining.transfer.2
-    prompt: Two checkpoints share tensor shapes. Are they interchangeable research artifacts?
-    options:
-    - id: c
-      text: Only if file sizes match
-    - id: a
-      text: No; their learned weights and training histories can differ
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Artifact identity includes learned state and lineage.
+  - id: continued-pretraining.base
+    objective_ref: objective.continued-pretraining
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trade specialization against retention: trace the inputs, operation, and result before choosing.'
+    remediation_scene: continued-pretraining.s2
+    variants:
+      - id: continued-pretraining.base.1
+        prompt: What distinguishes continued pretraining from training from scratch?
+        options:
+          - id: a
+            text: It begins from already learned weights
+          - id: b
+            text: It never updates parameters
+          - id: c
+            text: It requires a new vocabulary every time
+        answer: a
+        feedback: Initialization carries prior learned behavior into the new run.
+        retired: true
+      - id: continued-pretraining.base.2
+        prompt: Domain performance rises while general skills fall. What is this called?
+        options:
+          - id: b
+            text: Proof of evaluation leakage in every case
+          - id: c
+            text: An impossible result
+          - id: a
+            text: A specialization and retention tradeoff
+        answer: a
+        feedback: New updates can improve one distribution while forgetting another.
+        retired: true
+  - id: continued-pretraining.transfer
+    objective_ref: objective.continued-pretraining
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Release a traceable derivative: trace the inputs, operation, and result before choosing.'
+    remediation_scene: continued-pretraining.s4
+    variants:
+      - id: continued-pretraining.transfer.1
+        prompt: A configuration accepts 100,000 tokens. What remains unproven?
+        options:
+          - id: b
+            text: Whether the integer is positive
+          - id: c
+            text: Whether any tokenizer exists
+          - id: a
+            text: Reliable use of information throughout that context
+        answer: a
+        feedback: Accepted input length and useful long-context capability differ.
+        retired: true
+      - id: continued-pretraining.transfer.2
+        prompt: Two checkpoints share tensor shapes. Are they interchangeable research artifacts?
+        options:
+          - id: c
+            text: Only if file sizes match
+          - id: a
+            text: No; their learned weights and training histories can differ
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Artifact identity includes learned state and lineage.
+        retired: true
+  - id: continued-pretraining.base.v2
+    objective_ref: objective.continued-pretraining
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Continued pretraining is the same next-token game on new text. Forgetting is fought with replay and a re-warmed learning rate; longer context needs rescaled positions plus long-document training.
+    remediation_scene: continued-pretraining.s2
+    variants:
+      - id: continued-pretraining.base.v2.1
+        prompt: After continued pretraining on legal text, a model's legal loss falls from 2.3 to 1.9 but its general-text loss rises from 2.5 to 2.9. What is happening, and what is the usual fix?
+        options:
+          - id: b
+            text: Overfitting to the legal text, fixed by stopping the run earlier
+          - id: a
+            text: Catastrophic forgetting, fixed by replaying some general data
+          - id: c
+            text: Test-set contamination, fixed by removing overlaps with the tests
+        answer: a
+        feedback: New gradient steps overwrote general skills while legal loss kept improving, which is forgetting. Replay keeps general text in the mix. Stopping early would also give up legal gains, and nothing points to leaked test data.
+      - id: continued-pretraining.base.v2.2
+        prompt: What does position interpolation do when extending RoPE from 4,096 to 16,384 tokens?
+        options:
+          - id: c
+            text: It adds a learned position vector for each of the 12,288 new positions
+          - id: b
+            text: It keeps positions unchanged and lets the model extrapolate past 4,096
+          - id: a
+            text: It multiplies every position by 1/4 so the angles stay within the trained range
+        answer: a
+        feedback: Scaling positions by 4,096/16,384 keeps every rotation angle inside what the model saw. RoPE has no learned position weights, and plain extrapolation produces angles it has never met.
+      - id: continued-pretraining.base.v2.3
+        prompt: A base model finished pretraining at 10% of its peak learning rate. Why do continued-pretraining recipes often warm the rate back up?
+        options:
+          - id: a
+            text: At the tiny final rate, the model learns the new domain very slowly
+          - id: b
+            text: The optimizer state is erased when the new data is loaded
+          - id: c
+            text: A higher rate stops the model from forgetting what it knew
+        answer: a
+        feedback: Ibrahim et al. found that re-warming and then re-decaying the rate, plus replay, matched retraining from scratch. A higher rate actually tends to increase forgetting, which is why replay goes with it, and nothing erases the optimizer state by itself.
+      - id: continued-pretraining.base.v2.4
+        prompt: How does continued pretraining on medical papers differ from instruction tuning?
+        options:
+          - id: b
+            text: It trains on prompt and answer pairs written by medical experts
+          - id: c
+            text: It freezes the original weights and adds new layers on top
+          - id: a
+            text: It keeps predicting the next token of raw text, just from a new domain
+        answer: a
+        feedback: Continued pretraining is the same objective on new raw text, and the result is still a base model. Prompt and answer pairs are instruction tuning. Adding new layers is a different adaptation method.
+  - id: continued-pretraining.transfer.v2
+    objective_ref: objective.continued-pretraining
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the change costs (forgotten skills, unseen positions, or lost track of where a model came from) and pick the step that protects against it.
+    remediation_scene: continued-pretraining.s3
+    variants:
+      - id: continued-pretraining.transfer.v2.1
+        prompt: A legal-tech startup continued a base model on 30 billion tokens of contracts. Now it writes stiff, contract-like emails. What should its next run change?
+        options:
+          - id: c
+            text: Train longer on contracts so the model settles down
+          - id: a
+            text: Replay a share of general text alongside the contracts
+          - id: b
+            text: Retrain the tokenizer on the contract corpus
+        answer: a
+        feedback: The model has drifted toward contracts and away from everyday writing. Replaying general text keeps those skills in training. More contracts would push further in the same direction, and a new tokenizer wouldn't match the learned embeddings.
+      - id: continued-pretraining.transfer.v2.2
+        prompt: An engineer raises a 4,096-context model's maximum length to 32,768 in its config, with no further training. Answers about the ends of long documents are garbled. What was missing?
+        options:
+          - id: a
+            text: Rescaled positions plus training on long documents
+          - id: b
+            text: Extra weights to hold the 28,672 new positions
+          - id: c
+            text: A larger vocabulary to cover longer documents
+        answer: a
+        feedback: Positions past 4,096 produce RoPE angles the model never saw. Interpolation or a larger RoPE base, followed by long-document training, is the standard fix. RoPE needs no position weights, and vocabulary size is unrelated to length.
+      - id: continued-pretraining.transfer.v2.3
+        prompt: A downstream team finds a released model answers differently from its parent, though both config files are identical. What should the release have documented?
+        options:
+          - id: b
+            text: The layer count and width, so the shapes can be compared
+          - id: c
+            text: The file size, so the two downloads can be told apart
+          - id: a
+            text: The parent checkpoint, the new data mix, and the training settings
+        answer: a
+        feedback: Continued pretraining changes weights, not shapes, so only a lineage record explains the difference. Layer counts and file sizes are identical for parent and child.
+      - id: continued-pretraining.transfer.v2.4
+        prompt: A lab has a strong 7B general model and 500 billion tokens of code. Why continue from the general model rather than train a code model from scratch?
+        options:
+          - id: c
+            text: Training from scratch can't learn code without natural-language text
+          - id: a
+            text: It keeps the general language skills and costs far less than full training
+          - id: b
+            text: Continuing avoids needing a tokenizer that covers the code
+        answer: a
+        feedback: This is Code Llama's recipe, which started from Llama 2 and continued on code. The model keeps its language understanding and skips the cost of relearning it. Code models can be trained from scratch, and the tokenizer is needed either way.
+  - id: continued-pretraining.calculate
+    objective_ref: objective.continued-pretraining
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Position interpolation multiplies each position by old length ÷ new length.
+    remediation_scene: continued-pretraining.s3
+    absolute_tolerance: 0.5
+    variants:
+      - id: continued-pretraining.calculate.1
+        prompt: A model trained on 2,048 tokens is extended to 8,192 with position interpolation. Which position does position 6,000 map to?
+        answer: 1500
+        feedback: The scale is 2,048 ÷ 8,192 = 0.25, so 6,000 × 0.25 = 1,500.
+      - id: continued-pretraining.calculate.2
+        prompt: A model trained on 4,096 tokens is extended to 16,384 with position interpolation. Which position does position 10,000 map to?
+        answer: 2500
+        feedback: The scale is 4,096 ÷ 16,384 = 0.25, so 10,000 × 0.25 = 2,500.
+      - id: continued-pretraining.calculate.3
+        prompt: A model trained on 2,048 tokens is extended to 32,768 with position interpolation. Which position does position 20,000 map to?
+        answer: 1250
+        feedback: The scale is 2,048 ÷ 32,768 = 1/16, so 20,000 ÷ 16 = 1,250.
+      - id: continued-pretraining.calculate.4
+        prompt: A model trained on 8,192 tokens is extended to 131,072 with position interpolation. Which position does position 100,000 map to?
+        answer: 6250
+        feedback: The scale is 8,192 ÷ 131,072 = 1/16, so 100,000 ÷ 16 = 6,250.

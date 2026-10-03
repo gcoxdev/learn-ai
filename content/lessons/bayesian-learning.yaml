@@ -1,236 +1,316 @@
 schema_version: 0.2-draft
 lesson:
   id: bayesian-learning
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn distributions over plausible explanations
   state: draft
-  summary: Keep several plausible models in view, and see how data changes their influence on a prediction.
+  summary: One café has two glowing reviews; another has 180 out of 200. Which should you trust? Learn to keep every plausible explanation in view instead of betting on one.
   slot: M06.7
   category: learning
   sources:
-  - title: Deep Learning — probability and information theory
-    url: https://www.deeplearningbook.org/contents/prob.html
-  - title: Gaussian Processes for Machine Learning — authors’ book
-    url: https://gaussianprocess.org/gpml/
+    - title: Deep Learning — probability and information theory
+      url: https://www.deeplearningbook.org/contents/prob.html
+    - title: Gaussian Processes for Machine Learning — authors’ book
+      url: https://gaussianprocess.org/gpml/
+    - title: 'Variational Inference: A Review for Statisticians (Blei, Kucukelbir, McAuliffe, 2017)'
+      url: https://arxiv.org/abs/1601.00670
 objectives:
-- id: objective.bayesian-learning
-  version: 1-draft
-  statement: Bayesian learning updates uncertain parameters or functions; Gaussian processes, variational approximations,
-    and probabilistic programs offer different representations and computational tradeoffs.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - bayesian-learning.base
-  - bayesian-learning.transfer
-  prerequisites:
-  - anyOf:
-    - objective.bayes-rule
-  - anyOf:
-    - objective.graphical-models
-  - anyOf:
-    - objective.information-theory
+  - id: objective.bayesian-learning
+    version: 2-draft
+    statement: Bayesian learning updates uncertain parameters or functions; Gaussian processes, variational approximations, and probabilistic programs offer different representations and computational tradeoffs.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - bayesian-learning.base.v2
+      - bayesian-learning.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.bayes-rule
+      - anyOf:
+          - objective.graphical-models
+      - anyOf:
+          - objective.information-theory
 scenes:
-- id: bayesian-learning.s1
-  title: Keep several plausible models in view
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.bayesian-learning
-  markdown: 'Suppose two snack rules remain plausible after seeing the data: 2 crackers per guest has posterior
-    weight 0.25, and 4 per guest has weight 0.75. **Posterior** means the uncertainty after the observations.
-    For three guests, the rules predict 6 and 12. Averaging their predictions gives 0.25 × 6 + 0.75 × 12 =
-    10.5 crackers.
+  - id: bayesian-learning.s1
+    title: Keep both explanations in view
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.bayesian-learning
+    markdown: |-
+      Café A has 2 reviews, both happy. Café B has 200 reviews, 180 happy. Café A's record is perfect, yet most people would bet on Café B. Bayesian reasoning explains that instinct and puts numbers on it.
 
+      Start simple. Suppose any café is either *great* (90% of customers leave happy) or *average* (60% happy), and before reading reviews you think each is equally likely. Café A's two happy reviews have likelihood 0.9 × 0.9 = 0.81 if it's great and 0.6 × 0.6 = 0.36 if it's average. Bayes' rule gives:
 
-    Bayesian learning combines a **prior**, uncertainty before the data, with a **likelihood**, how each candidate
-    accounts for the observations. Keeping several plausible settings can reveal uncertainty that choosing
-    one best setting hides. But a collection of wrong model assumptions can still give misleading predictions.'
-  text_mode: 'Suppose two snack rules remain plausible after seeing the data: 2 crackers per guest has posterior
-    weight 0.25, and 4 per guest has weight 0.75. **Posterior** means the uncertainty after the observations.
-    For three guests, the rules predict 6 and 12. Averaging their predictions gives 0.25 × 6 + 0.75 × 12 =
-    10.5 crackers.
+      | Explanation | Prior | × Likelihood | Posterior |
+      | --- | ---: | ---: | ---: |
+      | Great (90%) | 0.5 | 0.81 | 0.405 / 0.585 ≈ 0.69 |
+      | Average (60%) | 0.5 | 0.36 | 0.180 / 0.585 ≈ 0.31 |
 
+      :::predict What's the chance that *your* visit to Café A is happy?
+      About 0.81. Don't just pick the winner. Average the explanations' predictions, weighted by the posterior: 0.69 × 0.9 + 0.31 × 0.6 ≈ 0.81. Betting on "great" alone would say 0.9, and those extra 9 points of confidence come from ignoring a 31% chance that you're wrong.
+      :::
 
-    Bayesian learning combines a **prior**, uncertainty before the data, with a **likelihood**, how each candidate
-    accounts for the observations. Keeping several plausible settings can reveal uncertainty that choosing
-    one best setting hides. But a collection of wrong model assumptions can still give misleading predictions.'
-  bridges: []
-- id: bayesian-learning.s2
-  title: A Gaussian process places a prior over functions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.bayesian-learning
-  markdown: 'A **Gaussian process** is a way to describe uncertainty over functions: possible curves mapping
-    an input to an output. For example, several smooth curves might fit the measured temperature at two times
-    but disagree between them.
+      Keeping every plausible explanation, weighted by its posterior, is the heart of **Bayesian learning**. The weighted-average prediction is called the **posterior predictive**.
+    bridges: []
+  - id: bayesian-learning.every-rate
+    title: From two explanations to every possible rate
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.bayesian-learning
+    markdown: |-
+      Real cafés aren't just "great" or "average." Let θ be the café's happy-customer rate, anywhere from 0 to 1, and give every value equal prior weight. Then update exactly as before, for every θ at once. This program does it on a fine grid of 999 values:
 
+      ```python run
+      import numpy as np
 
-    Its **kernel** says how function values at different inputs are expected to vary together. A common choice
-    treats nearby times as strongly related. A Gaussian process specifies a jointly Gaussian, or multivariate
-    bell-shaped, distribution for any finite set of function values. New observations update this collection
-    of plausible curves. The kernel''s assumptions matter: smoothness can be a poor fit for a sudden equipment
-    shutdown.'
-  text_mode: 'A **Gaussian process** is a way to describe uncertainty over functions: possible curves mapping
-    an input to an output. For example, several smooth curves might fit the measured temperature at two times
-    but disagree between them.
+      theta = np.linspace(0.001, 0.999, 999)      # candidate "happy customer" rates
+      prior = np.ones_like(theta)                 # flat prior: every rate equally plausible
 
+      for name, happy, reviews in [("Cafe A", 2, 2), ("Cafe B", 180, 200)]:
+          likelihood = theta**happy * (1 - theta)**(reviews - happy)
+          posterior = prior * likelihood
+          posterior /= posterior.sum()            # normalize, as in Bayes' rule
+          mean = (theta * posterior).sum()
+          p_above = posterior[theta > 0.8].sum()
+          print(f"{name}: {happy}/{reviews} happy -> posterior mean {mean:.3f}, "
+                f"P(rate > 0.8) = {p_above:.2f}")
+      ```
 
-    Its **kernel** says how function values at different inputs are expected to vary together. A common choice
-    treats nearby times as strongly related. A Gaussian process specifies a jointly Gaussian, or multivariate
-    bell-shaped, distribution for any finite set of function values. New observations update this collection
-    of plausible curves. The kernel''s assumptions matter: smoothness can be a poor fit for a sudden equipment
-    shutdown.'
-  bridges:
-  - information-theory
-  - matrices-tensors
-- id: bayesian-learning.s3
-  title: Approximate a difficult posterior
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.bayesian-learning
-  markdown: 'Exact updating may be too expensive. **Variational inference** chooses a manageable distribution,
-    often written q, to approximate the posterior. Imagine replacing a complicated landscape of possibilities
-    with a simpler shape that can be stored and calculated easily.
+      Café A's posterior mean is 0.750, and there's only a 0.49 chance its rate beats 80%: two reviews can't rule out a mediocre café. Café B's mean is 0.896, and it's almost certainly above 80%. The perfect record loses because its posterior is wide. Try giving Café A 20 happy reviews out of 20.
 
+      :::papers Updating a parameter, then predicting
+      For parameters $\theta$ and data $D$:
 
-    One common objective rewards explaining the observations while penalizing departure from the prior using
-    **KL divergence**, a measure of how distributions differ. This is equivalent to fitting the posterior under
-    the associated approximation objective. A shape with one peak can miss two separated explanations. MCMC,
-    introduced in the sampling lesson, explores by drawing dependent samples; it has different computational
-    and diagnostic needs.'
-  text_mode: 'Exact updating may be too expensive. **Variational inference** chooses a manageable distribution,
-    often written q, to approximate the posterior. Imagine replacing a complicated landscape of possibilities
-    with a simpler shape that can be stored and calculated easily.
+      $$p(\theta \mid D) = \frac{p(D \mid \theta)\,p(\theta)}{p(D)}, \qquad p(x_{\text{new}} \mid D) = \int p(x_{\text{new}} \mid \theta)\,p(\theta \mid D)\,d\theta$$
 
+      The integral is the continuous version of the café table's weighted average. For a flat prior and k happy reviews out of n, the posterior mean has a famous closed form: $(k + 1)/(n + 2)$. Café A: $3/4 = 0.750$. Café B: $181/202 \approx 0.896$. Both match the program.
+      :::
+  - id: bayesian-learning.s2
+    title: A prior over whole curves
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.bayesian-learning
+    markdown: |-
+      Sometimes the unknown is a whole curve, such as how crowded Café B is at each hour of the day. You've counted people at 9 a.m. and 1 p.m. What about 11 a.m.? Or 6 p.m.?
 
-    One common objective rewards explaining the observations while penalizing departure from the prior using
-    **KL divergence**, a measure of how distributions differ. This is equivalent to fitting the posterior under
-    the associated approximation objective. A shape with one peak can miss two separated explanations. MCMC,
-    introduced in the sampling lesson, explores by drawing dependent samples; it has different computational
-    and diagnostic needs.'
-  bridges:
-  - information-theory
-- id: bayesian-learning.s4
-  title: A probabilistic program separates model from inference
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.bayesian-learning
-  markdown: 'A **probabilistic program** describes unknown quantities, their distributions, and how observations
-    depend on them. A separate inference procedure performs the updating. **Latent** simply means a quantity
-    is unobserved rather than directly supplied as data.
+      A **Gaussian process** puts a prior over curves. Its **kernel**, a function k(t, t′), says how strongly the values at two times move together. A common choice treats nearby times as similar:
 
+      $$k(t, t') = \sigma^2 \exp\!\left(-\frac{(t - t')^2}{2\ell^2}\right)$$
 
-    Before trusting the result, generate possible data from the prior: do they resemble plausible situations?
-    Then check predictions after fitting against observed and held-out cases. A narrow uncertainty interval
-    is useful only if the model and approximation deserve that confidence. Try asking what real-world change
-    the temperature model would have difficulty representing.'
-  text_mode: 'A **probabilistic program** describes unknown quantities, their distributions, and how observations
-    depend on them. A separate inference procedure performs the updating. **Latent** simply means a quantity
-    is unobserved rather than directly supplied as data.
+      With length scale ℓ = 2 hours, times 1 hour apart get correlation exp(−1/8) ≈ 0.88, and times 4 hours apart only exp(−2) ≈ 0.14. After the two counts, the plausible curves all pass near the measured points. Between them they still agree fairly well, because 11 a.m. is strongly tied to both. At 6 p.m., five hours after the nearest count, they fan out widely. The model's uncertainty grows exactly where you have no data.
 
+      The kernel is where your assumptions live. A smooth kernel expects gradual change, so it would blur a sudden event like a fire alarm emptying the café. Pick a kernel whose idea of "similar" matches how your curve really behaves.
+    bridges:
+      - information-theory
+      - matrices-tensors
+  - id: bayesian-learning.s3
+    title: When the exact posterior is out of reach
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.bayesian-learning
+    markdown: |-
+      A grid of 999 values works for one parameter. A neural network has millions, and a grid would need more points than there are atoms in the universe. Two escape routes exist. MCMC, from the last lesson, samples the posterior. **Variational inference** instead picks a simple family of shapes, usually bell curves, and searches for the member q that sits closest to the true posterior.
 
-    Before trusting the result, generate possible data from the prior: do they resemble plausible situations?
-    Then check predictions after fitting against observed and held-out cases. A narrow uncertainty interval
-    is useful only if the model and approximation deserve that confidence. Try asking what real-world change
-    the temperature model would have difficulty representing.'
-  bridges: []
-- id: bayesian-learning.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.bayesian-learning
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Keep several explanations in view and update their influence using observations. A useful uncertainty
-    estimate depends on both the model assumptions and the method used to approximate the answer.
-- id: bayesian-learning.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.bayesian-learning
-  markdown: Keep several explanations in view and update their influence using observations. A useful uncertainty
-    estimate depends on both the model assumptions and the method used to approximate the answer.
-  text_mode: Keep several explanations in view and update their influence using observations. A useful uncertainty
-    estimate depends on both the model assumptions and the method used to approximate the answer.
+      "Closest" is measured with **KL divergence**, the mismatch between distributions from the information theory lesson. You can't compute the KL to the true posterior directly, since that needs the posterior you're trying to find. But a quantity you *can* compute, the **evidence lower bound (ELBO)**, rises exactly as that KL falls. In plain terms, the method searches for the simple shape q that best balances two goals: explain the data, and stay close to the prior.
+
+      :::papers The evidence lower bound (ELBO)
+      $$\log p(D) = \underbrace{\mathbb{E}_{q(\theta)}\big[\log p(D \mid \theta)\big] - \mathrm{KL}\big(q(\theta)\,\|\,p(\theta)\big)}_{\text{ELBO}(q)} \;+\; \mathrm{KL}\big(q(\theta)\,\|\,p(\theta \mid D)\big)$$
+
+      The first ELBO term rewards explaining the data; the second penalizes straying from the prior. The left side doesn't depend on q, so raising the ELBO must shrink the last term, the gap between q and the true posterior. Variational autoencoders are trained by maximizing a version of this bound, with the unknowns being each image's hidden code.
+      :::
+
+      :::mixup "Variational inference gives you the posterior, just faster."
+      It gives you the closest simple shape. If the true posterior has two separate peaks and q is a single bell, q typically settles on one peak and reports too little uncertainty. MCMC is slower but can, with good mixing, find both.
+      :::
+    bridges:
+      - information-theory
+  - id: bayesian-learning.s4
+    title: Write the model, let the computer infer
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.bayesian-learning
+    markdown: |-
+      A **probabilistic program** is code that describes how your data could have been generated: which quantities are unknown, what priors they have, and how the observations depend on them. Tools such as Stan and PyMC then run the inference (usually MCMC or variational inference) for you. Unknown quantities that are never observed directly, like a café's true happy rate, are called **latent** variables.
+
+      Before trusting the result, run the model forward. Draw parameters from the priors and simulate fake data, a **prior predictive check**. Suppose your café model's priors produce simulated days where 300% of customers are happy, or where the café serves 40,000 people before lunch. The priors are wrong, and you've caught it before fitting anything. After fitting, compare the model's predictions with real days it didn't train on.
+    bridges: []
+  - id: bayesian-learning.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.bayesian-learning
+    markdown: Compute posterior means from review counts, then weigh rating rankings, rain forecasts, curve kernels, and a two-peaked posterior.
+    takeaway: |-
+      Bayesian learning keeps a distribution over explanations and averages their predictions by posterior weight. When the exact posterior is too hard, sample it (MCMC) or fit the closest simple shape (variational inference), and check both against data.
+  - id: bayesian-learning.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.bayesian-learning
+    markdown: |-
+      Keep several explanations in view and update their influence using observations. A useful uncertainty estimate depends on both the model assumptions and the method used to approximate the answer.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - bayesian-learning.s1
-    - bayesian-learning.s2
-    - bayesian-learning.s3
-    - bayesian-learning.s4
-    - bayesian-learning.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - bayesian-learning.s1
+        - bayesian-learning.every-rate
+        - bayesian-learning.s2
+        - bayesian-learning.s3
+        - bayesian-learning.s4
+        - bayesian-learning.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     bayesian-learning.recap: bayesian-learning.check
 assessment_families:
-- id: bayesian-learning.base
-  objective_ref: objective.bayesian-learning
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'A Gaussian process places a prior over functions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: bayesian-learning.s2
-  variants:
-  - id: bayesian-learning.base.1
-    prompt: What does a Gaussian-process kernel specify?
-    options:
-    - id: b
-      text: Only a processor instruction
-    - id: c
-      text: A guaranteed causal effect
-    - id: a
-      text: Covariance relationships among function values
-    answer: a
-    feedback: The kernel encodes relationships such as smoothness in a function prior.
-  - id: bayesian-learning.base.2
-    prompt: What does variational inference optimize?
-    options:
-    - id: c
-      text: The true posterior without any approximation restrictions
-    - id: a
-      text: A tractable approximation to the target posterior
-    - id: b
-      text: Only the order of file names
-    answer: a
-    feedback: The approximation family and objective constrain the result.
-- id: bayesian-learning.transfer
-  objective_ref: objective.bayesian-learning
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'A probabilistic program separates model from inference: trace the inputs, operation, and result before
-    choosing.'
-  remediation_scene: bayesian-learning.s4
-  variants:
-  - id: bayesian-learning.transfer.1
-    prompt: A variational family cannot represent two separated modes. What may happen?
-    options:
-    - id: c
-      text: The likelihood becomes irrelevant
-    - id: a
-      text: It can miss important posterior structure
-    - id: b
-      text: It must recover both modes exactly
-    answer: a
-    feedback: Approximation restrictions can shape reported uncertainty.
-  - id: bayesian-learning.transfer.2
-    prompt: A probabilistic program runs successfully. What is still necessary?
-    options:
-    - id: a
-      text: Model checks and inference diagnostics
-    - id: b
-      text: A claim that every interval is correct
-    - id: c
-      text: No further inspection
-    answer: a
-    feedback: Executable model notation does not certify assumptions or inference quality.
+  - id: bayesian-learning.base
+    objective_ref: objective.bayesian-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'A Gaussian process places a prior over functions: trace the inputs, operation, and result before choosing.'
+    remediation_scene: bayesian-learning.s2
+    variants:
+      - id: bayesian-learning.base.1
+        prompt: What does a Gaussian-process kernel specify?
+        options:
+          - id: b
+            text: Only a processor instruction
+          - id: c
+            text: A guaranteed causal effect
+          - id: a
+            text: Covariance relationships among function values
+        answer: a
+        feedback: The kernel encodes relationships such as smoothness in a function prior.
+        retired: true
+      - id: bayesian-learning.base.2
+        prompt: What does variational inference optimize?
+        options:
+          - id: c
+            text: The true posterior without any approximation restrictions
+          - id: a
+            text: A tractable approximation to the target posterior
+          - id: b
+            text: Only the order of file names
+        answer: a
+        feedback: The approximation family and objective constrain the result.
+        retired: true
+  - id: bayesian-learning.transfer
+    objective_ref: objective.bayesian-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'A probabilistic program separates model from inference: trace the inputs, operation, and result before choosing.'
+    remediation_scene: bayesian-learning.s4
+    variants:
+      - id: bayesian-learning.transfer.1
+        prompt: A variational family cannot represent two separated modes. What may happen?
+        options:
+          - id: c
+            text: The likelihood becomes irrelevant
+          - id: a
+            text: It can miss important posterior structure
+          - id: b
+            text: It must recover both modes exactly
+        answer: a
+        feedback: Approximation restrictions can shape reported uncertainty.
+        retired: true
+      - id: bayesian-learning.transfer.2
+        prompt: A probabilistic program runs successfully. What is still necessary?
+        options:
+          - id: a
+            text: Model checks and inference diagnostics
+          - id: b
+            text: A claim that every interval is correct
+          - id: c
+            text: No further inspection
+        answer: a
+        feedback: Executable model notation does not certify assumptions or inference quality.
+        retired: true
+  - id: bayesian-learning.base.v2
+    objective_ref: objective.bayesian-learning
+    task: base
+    response_type: numeric
+    points: 1
+    hint: With a flat prior over the rate, k successes in n tries give posterior mean (k + 1)/(n + 2). It sits between the raw fraction k/n and 0.5, closer to k/n as n grows.
+    remediation_scene: bayesian-learning.every-rate
+    absolute_tolerance: 0.01
+    variants:
+      - id: bayesian-learning.base.v2.1
+        prompt: A new food truck has 4 reviews, 3 of them happy. With a flat prior on its happy-customer rate, what is the posterior mean rate? Use a decimal to two places.
+        answer: 0.67
+        feedback: (3 + 1)/(4 + 2) = 4/6 ≈ 0.67. The raw fraction 0.75 ignores how little four reviews tell you, so the posterior pulls it toward the middle.
+      - id: bayesian-learning.base.v2.2
+        prompt: A new app feature was tried by 3 users, and none of them kept using it. With a flat prior on the keep-using rate, what is the posterior mean rate? Use a decimal to two places.
+        answer: 0.2
+        feedback: (0 + 1)/(3 + 2) = 1/5 = 0.2. The raw fraction 0 would claim the feature can never work, which three users can't show.
+      - id: bayesian-learning.base.v2.3
+        prompt: A coding assistant's suggestions were accepted 9 times out of 10. With a flat prior on its acceptance rate, what is the posterior mean rate? Use a decimal to two places.
+        answer: 0.83
+        feedback: (9 + 1)/(10 + 2) = 10/12 ≈ 0.83. With ten tries, the prior still pulls the raw 0.9 noticeably toward the middle.
+      - id: bayesian-learning.base.v2.4
+        prompt: A delivery robot finished 18 of its first 20 routes without help. With a flat prior on its success rate, what is the posterior mean rate? Use a decimal to two places.
+        answer: 0.86
+        feedback: (18 + 1)/(20 + 2) = 19/22 ≈ 0.86. It's the same raw fraction as 9 of 10, but with twice the data the posterior mean sits closer to 0.9.
+  - id: bayesian-learning.transfer.v2
+    objective_ref: objective.bayesian-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: A Bayesian answer weights every plausible explanation by its posterior. Ask what the method assumes (prior, kernel, or shape of q) and where that assumption could hide uncertainty.
+    remediation_scene: bayesian-learning.s3
+    variants:
+      - id: bayesian-learning.transfer.v2.1
+        prompt: A shop ranks products by average star rating. A product with a single 5-star review now sits above one rated 4.8 from 900 reviews. Which change applies Bayesian learning to fix this?
+        options:
+          - id: b
+            text: Hide every product that has fewer than 1,000 reviews
+          - id: a
+            text: Rank by posterior mean, pulling thin records toward a prior
+          - id: c
+            text: Rank by each product's single most recent review score
+        answer: a
+        feedback: A posterior mean shrinks a one-review average strongly toward the prior, while 900 reviews barely move. Hiding small products throws away real information, and the latest review is even noisier than the average.
+      - id: bayesian-learning.transfer.v2.2
+        prompt: Two rain models have posterior weights 0.7 and 0.3. They predict 10 mm and 30 mm of rain tomorrow. What is the Bayesian (posterior predictive) forecast?
+        options:
+          - id: c
+            text: 20 mm, halfway between the two
+          - id: b
+            text: 10 mm, from the more probable model
+          - id: a
+            text: 16 mm, weighting each by its posterior
+        answer: a
+        feedback: 0.7 × 10 + 0.3 × 30 = 16 mm. Picking the stronger model ignores a 30% chance it's wrong, and a plain average ignores the evidence that favors the first model.
+      - id: bayesian-learning.transfer.v2.3
+        prompt: A Gaussian process with a smooth kernel models a machine's temperature. At 2:00 the machine shut down and cooled by 30 degrees within a minute. Predictions near 2:00 are smeared and wrong. What is the main cause?
+        options:
+          - id: a
+            text: The kernel assumes nearby times have similar values, and a sudden drop breaks that
+          - id: b
+            text: The model needs more readings from later that afternoon to see the drop
+          - id: c
+            text: The noise level is set too low, so the model overreacts to each reading
+        answer: a
+        feedback: The kernel encodes "nearby times are alike," so it spreads the drop across neighboring minutes. A kernel that allows sudden changes fits better. Readings from later in the afternoon wouldn't change what the kernel assumes around 2:00.
+      - id: bayesian-learning.transfer.v2.4
+        prompt: The true posterior of a parameter has two separate peaks. Variational inference with a single bell curve reports one narrow peak. What most likely happened?
+        options:
+          - id: b
+            text: The ELBO was maximized, so q must equal the true posterior
+          - id: a
+            text: The single bell settled on one peak and ignored the other
+          - id: c
+            text: The prior was so wide that it merged the two peaks into one
+        answer: a
+        feedback: A one-peaked q can't cover two peaks, and fitting it by KL(q‖p) tends to lock onto one of them, understating uncertainty. Maximizing the ELBO finds the closest bell, not an exact match.

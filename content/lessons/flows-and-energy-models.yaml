@@ -1,247 +1,442 @@
 schema_version: 0.2-draft
 lesson:
   id: flows-and-energy-models
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Represent probability through invertible maps or energy scores
   state: draft
-  summary: Stretch a simple probability distribution, then compare that approach with assigning scores to possible
-    samples.
+  summary: Stretch a bell curve and its height must drop. Score states instead and you face a sum too big to compute. Two exact-probability ideas, and the problem each one dodges.
   slot: M22.5
   category: learning
   sources:
-  - title: Real NVP
-    url: https://arxiv.org/abs/1605.08803
-  - title: A Tutorial on Energy-Based Learning
-    url: https://www.cs.toronto.edu/~hinton/absps/ebm.pdf
+    - title: "NICE: Non-linear Independent Components Estimation (Dinh, Krueger & Bengio, 2014)"
+      url: https://arxiv.org/abs/1410.8516
+    - title: Density estimation using Real NVP (Dinh, Sohl-Dickstein & Bengio, 2016)
+      url: https://arxiv.org/abs/1605.08803
+    - title: "Glow: Generative Flow with Invertible 1x1 Convolutions (Kingma & Dhariwal, 2018)"
+      url: https://arxiv.org/abs/1807.03039
+    - title: A Tutorial on Energy-Based Learning (LeCun et al., 2006)
+      url: http://yann.lecun.com/exdb/publis/pdf/lecun-06.pdf
+    - title: "Deep Learning, chapter 18: Confronting the Partition Function (Goodfellow, Bengio & Courville, 2016)"
+      url: https://www.deeplearningbook.org/contents/partition.html
 objectives:
-- id: objective.flows-and-energy-models
-  version: 1-draft
-  statement: Normalizing flows transform a known density with invertible maps and volume corrections; energy-based
-    models assign unnormalized scores and require a way to handle normalization and sampling.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - flows-and-energy-models.base
-  - flows-and-energy-models.transfer
-  prerequisites:
-  - anyOf:
-    - objective.generative-models
-  - anyOf:
-    - objective.integrals-density
+  - id: objective.flows-and-energy-models
+    version: 2-draft
+    statement: Normalizing flows transform a known density with invertible maps and volume corrections; energy-based models assign unnormalized scores and require a way to handle normalization and sampling.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - flows-and-energy-models.base.v2
+      - flows-and-energy-models.transfer.v2
+      - flows-and-energy-models.calculate
+    prerequisites:
+      - anyOf:
+          - objective.generative-models
+      - anyOf:
+          - objective.integrals-density
 scenes:
-- id: flows-and-energy-models.s1
-  title: Transform a simple random variable
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.flows-and-energy-models
-  markdown: 'A normalizing flow maps a variable from a tractable base distribution through invertible transformations.
-    To compute output density, account for how the transformation expands or contracts volume using a Jacobian
-    determinant. Invertibility and tractable volume computation constrain useful layer designs.
+  - id: flows-and-energy-models.s1
+    title: Stack invertible layers
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.flows-and-energy-models
+    markdown: |-
+      One affine stretch only turns a bell curve into a wider bell. A **normalizing flow** stacks many invertible steps, $x = f_K(\cdots f_2(f_1(z)))$, each a small neural network, so a plain Gaussian can bend into the shape of real data. The log-density just collects one correction per layer:
 
+      $$\log p_x(x) = \log p_z(z) - \sum_{k=1}^{K} \log \left|\det J_{f_k}\right|$$
 
-    A **Jacobian** is a table of how each output coordinate changes when each input changes. Its **determinant**
-    measures local volume scaling for a square transformation. In the preceding one-dimensional stretch, that
-    factor is simply 2. The multivariable and linear-algebra bridges supply the deeper mathematics; the key
-    accounting rule is to preserve probability when stretching space.'
-  text_mode: 'A normalizing flow maps a variable from a tractable base distribution through invertible transformations.
-    To compute output density, account for how the transformation expands or contracts volume using a Jacobian
-    determinant. Invertibility and tractable volume computation constrain useful layer designs.
+      In many dimensions, the stretch factor comes from the **Jacobian**, the table of how each output changes with each input (see the multivariable calculus lesson). Its **determinant** is how much the step scales a small volume; in 1-D it's just $a$. For a 784-pixel image the Jacobian is 784 × 784, and a general determinant costs roughly $784^3 \approx 480$ million operations, so flow layers are built to make it cheap.
 
+      :::papers Coupling layers (Real NVP; Dinh, Sohl-Dickstein & Bengio, 2016)
+      Split the input into halves $z_A$ and $z_B$. Keep $z_A$, and transform $z_B$ with a scale and shift computed from $z_A$:
 
-    A **Jacobian** is a table of how each output coordinate changes when each input changes. Its **determinant**
-    measures local volume scaling for a square transformation. In the preceding one-dimensional stretch, that
-    factor is simply 2. The multivariable and linear-algebra bridges supply the deeper mathematics; the key
-    accounting rule is to preserve probability when stretching space.'
-  bridges: []
-- id: flows-and-energy-models.s2
-  title: Trace a one-dimensional stretch
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.flows-and-energy-models
-  markdown: Let x = 2z for a continuous base variable z. A small interval doubles in width, so density at x
-    is the base density at x/2 divided by two. Probability mass is conserved even though density height changes.
-    This is the change-of-variables idea behind flow likelihoods.
-  text_mode: Let x = 2z for a continuous base variable z. A small interval doubles in width, so density at
-    x is the base density at x/2 divided by two. Probability mass is conserved even though density height changes.
-    This is the change-of-variables idea behind flow likelihoods.
-  bridges:
-  - integrals-density
-  - multivariable-calculus
-- id: flows-and-energy-models.s3
-  title: Assign low energy to compatible states
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.flows-and-energy-models
-  markdown: 'An energy model defines probability proportional to exp(-E(x)). Lower energy gives higher unnormalized
-    preference, but the partition function must account for all possible states to normalize probability. Computing
-    it can be difficult, making likelihood learning and sampling nontrivial.
+      $$x_A = z_A, \qquad x_B = z_B \odot e^{s(z_A)} + t(z_A)$$
 
+      Inverting is easy: $z_B = (x_B - t(x_A)) \odot e^{-s(x_A)}$, and $s$ and $t$ can be any network, since they're never inverted. The Jacobian is triangular, so its log-determinant is just $\sum s(z_A)$. Glow (Kingma & Dhariwal, 2018) built on this to generate realistic high-resolution faces.
+      :::
 
-    The “energy” is a mathematical score and need not measure joules or physical energy. The **partition function**
-    adds the positive weights exp(−E) over discrete states, or integrates them over continuous states. Its
-    role is the denominator that makes total probability one. Finding one low-energy state avoids that sum
-    but answers a different question from sampling the distribution.'
-  text_mode: 'An energy model defines probability proportional to exp(-E(x)). Lower energy gives higher unnormalized
-    preference, but the partition function must account for all possible states to normalize probability. Computing
-    it can be difficult, making likelihood learning and sampling nontrivial.
+      The payoff is rare among generators: an exact likelihood *and* one-pass sampling. The price is that every layer must stay invertible and keep all 784 dimensions, so there's no bottleneck.
+    bridges: []
+  - id: flows-and-energy-models.s2
+    title: Change of variables, worked in 1-D
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.flows-and-energy-models
+    markdown: |-
+      Now start from a bell curve. Let $z$ follow the standard normal and apply the **affine flow** $x = f(z) = 2z + 1$: stretch by $a = 2$, shift by $b = 1$. To find the density at $x = 3$:
 
+      1. **Invert.** $z = f^{-1}(x) = (3 - 1)/2 = 1$.
+      2. **Look up the base density.** $p_z(1) = 0.2420$.
+      3. **Correct for stretching.** Space was stretched by 2, so divide by 2: $p_x(3) = 0.2420 / 2 = 0.1210$.
 
-    The “energy” is a mathematical score and need not measure joules or physical energy. The **partition function**
-    adds the positive weights exp(−E) over discrete states, or integrates them over continuous states. Its
-    role is the denominator that makes total probability one. Finding one low-energy state avoids that sum
-    but answers a different question from sampling the distribution.'
-  bridges: []
-- id: flows-and-energy-models.s4
-  title: Distinguish generation procedures
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.flows-and-energy-models
-  markdown: Some flows sample by directly transforming base noise. Many energy-model methods use iterative
-    procedures such as Markov chain Monte Carlo, which require mixing and convergence assessment. Minimizing
-    energy finds a preferred state; it is not the same as drawing representative samples from the entire distribution.
-  text_mode: Some flows sample by directly transforming base noise. Many energy-model methods use iterative
-    procedures such as Markov chain Monte Carlo, which require mixing and convergence assessment. Minimizing
-    energy finds a preferred state; it is not the same as drawing representative samples from the entire distribution.
-  bridges: []
-- id: flows-and-energy-models.extension-density-by-area
-  title: A density can change while probability stays the same
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.flows-and-energy-models
-  markdown: Begin with a uniform random number z between 0 and 1. Uniform means equal-length intervals are
-    equally likely. Its density height is 1, giving total area 1 × 1 = 1. Map it to x=2z. The possible interval
-    is now 0 to 2, so the uniform density height becomes 1/2. Area is still 2 × 1/2 = 1. The probability of
-    x lying between 0 and 1 is the area 1 × 1/2 = 1/2. A height of 1/2 is not by itself the probability of
-    any single exact continuous point.
-  text_mode: Begin with a uniform random number z between 0 and 1. Uniform means equal-length intervals are
-    equally likely. Its density height is 1, giving total area 1 × 1 = 1. Map it to x=2z. The possible interval
-    is now 0 to 2, so the uniform density height becomes 1/2. Area is still 2 × 1/2 = 1. The probability of
-    x lying between 0 and 1 is the area 1 × 1/2 = 1/2. A height of 1/2 is not by itself the probability of
-    any single exact continuous point.
-  bridges:
-  - integrals-density
-  - probability
-- id: flows-and-energy-models.extension-two-state-energy
-  title: Normalize an energy score on two possible states
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.flows-and-energy-models
-  markdown: An energy is a model-assigned score; lower energy means greater preference under the usual negative-exponential
-    rule. Suppose two states have unnormalized positive weights 2 and 1 after applying that rule. “Unnormalized”
-    means they do not yet add to one. Their total, called the partition function in this example, is 3. Divide
-    by 3 to get probabilities 2/3 and 1/3. Sampling can choose either state in those proportions; taking only
-    the most preferred state chooses the first every time. The challenge for a large energy model is accounting
-    for far more than two possible states.
-  text_mode: An energy is a model-assigned score; lower energy means greater preference under the usual negative-exponential
-    rule. Suppose two states have unnormalized positive weights 2 and 1 after applying that rule. “Unnormalized”
-    means they do not yet add to one. Their total, called the partition function in this example, is 3. Divide
-    by 3 to get probabilities 2/3 and 1/3. Sampling can choose either state in those proportions; taking only
-    the most preferred state chooses the first every time. The challenge for a large energy model is accounting
-    for far more than two possible states.
-  bridges:
-  - probability
-  - powers-logs
-- id: flows-and-energy-models.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.flows-and-energy-models
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A normalizing flow tracks how a reversible transformation changes density. An energy model scores
-    possible states and needs a way to normalize or sample those scores.
-- id: flows-and-energy-models.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.flows-and-energy-models
-  markdown: A normalizing flow tracks how a reversible transformation changes density. An energy model scores
-    possible states and needs a way to normalize or sample those scores.
-  text_mode: A normalizing flow tracks how a reversible transformation changes density. An energy model scores
-    possible states and needs a way to normalize or sample those scores.
+      :::papers The change-of-variables formula
+      $$p_x(x) = p_z\big(f^{-1}(x)\big)\,\left|\frac{d f^{-1}}{dx}\right| \qquad\text{so}\qquad \log p_x(x) = \log p_z(z) - \log|a|$$
+
+      Here $f^{-1}(x) = (x - 1)/2$ and its derivative is $1/2$, the "divide by 2" in step 3. In log form, $\log p_x(3) = \log 0.2420 - \log 2 \approx -2.112$. A flow is trained by maximizing exactly this log-likelihood on real data.
+      :::
+
+      ```python run
+      import numpy as np
+
+      def p_z(z):                      # base density: standard normal
+          return np.exp(-z**2 / 2) / np.sqrt(2 * np.pi)
+
+      a, b = 2.0, 1.0                  # the flow: x = f(z) = a*z + b
+
+      def p_x(x):                      # change of variables
+          z = (x - b) / a              # invert the flow: f^-1(x)
+          return p_z(z) * abs(1 / a)   # times |d f^-1 / dx| = 1/|a|
+
+      for x in [1.0, 3.0, 5.0]:
+          print(f"x = {x}: z = {(x - b) / a}, p_z(z) = {p_z((x - b) / a):.4f}, p_x(x) = {p_x(x):.4f}")
+
+      # Check 1: total probability is still 1 (add up thin slices)
+      xs = np.linspace(-20, 22, 200_001)
+      print("area under p_x:", round(float(np.sum(p_x(xs)) * (xs[1] - xs[0])), 4))
+
+      # Check 2: it matches a normal with mean b and standard deviation a
+      direct = np.exp(-(3.0 - b)**2 / (2 * a**2)) / (a * np.sqrt(2 * np.pi))
+      print("normal(1, 2) density at 3:", round(float(direct), 4))
+
+      # Log-likelihood of a data point: log p_z(z) - log|a|
+      print("log p_x(3) =", round(float(np.log(p_z(1.0)) - np.log(a)), 4))
+      ```
+
+      The area stays 1, and the result matches a normal with mean 1 and standard deviation 2, as it should. Delete the `abs(1 / a)` factor and rerun: the area jumps to 2, a "distribution" that's twice too big.
+
+      :::predict With a = 0.5 instead of 2 (a squeeze), what is p_x at the point that maps back to z = 1?
+      The point is $x = 0.5 \times 1 + 1 = 1.5$, and squeezing by 0.5 *multiplies* the density by 2: $p_x(1.5) = 0.2420 / 0.5 = 0.484$. Squeezed probability piles up higher.
+      :::
+    bridges:
+      - integrals-density
+      - multivariable-calculus
+  - id: flows-and-energy-models.s3
+    title: The sum you can't compute
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.flows-and-energy-models
+    markdown: |-
+      Normalizing three states was easy. Now let the states be 4 × 4 black-and-white images, with an energy that charges 1 for each pair of neighboring pixels that differ, so smooth images are preferred. There are $2^{16} = 65{,}536$ images, and the program below visits every one to compute $Z$:
+
+      ```python run
+      import numpy as np
+
+      def energy(imgs):                 # each pair of neighbors that differ costs 1
+          return ((imgs[:, :, 1:] != imgs[:, :, :-1]).sum(axis=(1, 2))
+                  + (imgs[:, 1:, :] != imgs[:, :-1, :]).sum(axis=(1, 2)))
+
+      n = 4                             # a 4 x 4 black-and-white image
+      ids = np.arange(2 ** (n * n))
+      imgs = ((ids[:, None] >> np.arange(n * n)) & 1).reshape(-1, n, n)
+      E = energy(imgs)
+
+      Z = np.exp(-E).sum()              # the partition function: add up every state
+      print("states:", len(imgs), "  Z =", round(float(Z), 3))
+      print("p(all white)    =", round(float(np.exp(-0) / Z), 4))
+      checker = np.indices((n, n)).sum(axis=0) % 2
+      print("checkerboard energy:", int(energy(checker[None])[0]),
+            "  p =", f"{np.exp(-energy(checker[None])[0]) / Z:.1e}")
+      print("states for 28 x 28: about 10 **", round(28 * 28 * np.log10(2)))
+      ```
+
+      An all-white image has energy 0 and probability $1/12.155 = 0.0823$; a checkerboard, with 24 disagreeing neighbors, is almost impossible. But a 28 × 28 image has about $10^{236}$ states, far too many to visit, so $Z$ and every exact probability are out of reach. This is the **partition function problem**, and it's why Boltzmann machines (in the associative memory lesson of module 37) are hard to train.
+
+      There is one escape. The gradient of the log-probability with respect to the input, called the **score** (a more specific meaning than "scoring" a sample in the first lesson of this module), is $\nabla_x \log p(x) = -\nabla_x E(x) - \nabla_x \log Z = -\nabla_x E(x)$, because $Z$ is a constant that doesn't depend on $x$. The score tells you which way to nudge an image to make it more probable, with no $Z$ needed. Diffusion models, in the next lesson, are built on this: they learn the score of noisy images.
+    bridges: []
+  - id: flows-and-energy-models.s4
+    title: One pass or a long walk
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.flows-and-energy-models
+    markdown: |-
+      The two families also sample differently. A flow draws $z$ from a bell curve and pushes it through the layers once. An energy model has no such recipe, so it takes a walk: start from noise, repeatedly nudge the image downhill in energy along the score, and add a little fresh noise each step. This is **Langevin dynamics**, a Markov chain Monte Carlo (MCMC) method like those in module 6's Monte Carlo lesson. With small enough steps, the walk's positions end up following $p(x)$.
+
+      :::mixup "To sample an energy model, find the lowest-energy state."
+      Minimizing energy always ends at a perfectly smooth image, all white or all black, but a true sample is all-white only 8.2% of the time. The random kicks in an MCMC walk keep it exploring instead of sliding to the bottom.
+      :::
+
+      | | Normalizing flow | Energy-based model |
+      | --- | --- | --- |
+      | Defines | An invertible map from noise | An energy score for every state |
+      | Exact likelihood | Yes, via change of variables | No: needs $Z$ |
+      | Sampling | One pass through the layers | Many MCMC steps |
+      | Main constraint | Every layer invertible, full dimension | Must estimate or avoid $Z$ |
+
+      To compare two candidates, an energy model is enough: $p(x_1)/p(x_2) = e^{E(x_2) - E(x_1)}$, and $Z$ cancels. For exact probabilities of new data, use a flow.
+    bridges: []
+  - id: flows-and-energy-models.extension-density-by-area
+    title: A density can change while probability stays the same
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.flows-and-energy-models
+    markdown: |-
+      Spread a cup of sand evenly along a one-metre shelf. Now spread the same cup along two metres. The pile is half as high, but it's still one cup. Probability densities behave the same way.
+
+      Let $z$ be a uniform random number between 0 and 1: every stretch of equal length is equally likely. Its **density**, the height of the curve, is 1 across that interval, so the area is $1 \times 1 = 1$. Now set $x = 2z$. The values now run from 0 to 2, so the height must drop to 1/2 to keep the area at $2 \times 1/2 = 1$. The chance that $x$ lands between 0 and 1 is the area there, $1 \times 1/2 = 1/2$.
+
+      Stretching space by 2 divides the density by 2. (A height of 1/2 isn't the probability of any single point; probabilities are areas.) That's the idea behind a **normalizing flow**: transform a simple random variable with a function you can reverse, and track how the density changes so it still adds up, or normalizes, to 1.
+    bridges:
+      - integrals-density
+      - probability
+  - id: flows-and-energy-models.extension-two-state-energy
+    title: Energies that don't add up to one
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.flows-and-energy-models
+    markdown: |-
+      Flows must keep every step reversible. The other idea drops that constraint: give every possible state $x$ one number $E(x)$, called its **energy**, where low means "likely" and high means "unlikely". A model built this way is an **energy-based model**, and any network that outputs one number will do. (The name comes from statistical physics; it isn't physical energy.)
+
+      To turn energies into probabilities, make each one positive with $e^{-E(x)}$, then divide by the total:
+
+      $$p(x) = \frac{e^{-E(x)}}{Z}, \qquad Z = \sum_{x} e^{-E(x)}$$
+
+      The total $Z$ is the **partition function**. With three states of energy 0, 1, and 2:
+
+      | State | Energy | $e^{-E}$ | Probability |
+      | --- | ---: | ---: | ---: |
+      | A | 0 | 1.000 | 1.000 / 1.503 = 0.665 |
+      | B | 1 | 0.368 | 0.245 |
+      | C | 2 | 0.135 | 0.090 |
+      | Sum | | $Z = 1.503$ | 1.000 |
+
+      Each extra unit of energy makes a state $e \approx 2.7$ times less likely. Before dividing by $Z$, the weights are **unnormalized**: they rank states but don't add to 1.
+    bridges:
+      - probability
+      - powers-logs
+  - id: flows-and-energy-models.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.flows-and-energy-models
+    markdown: Flow densities and energy probabilities to compute, plus a sensor model, a molecule scorer, and a sampler that keeps returning one image, test whether you can pick and use each approach.
+    takeaway: |-
+      A flow gets exact densities by inverting an invertible map and dividing by how much it stretches space. An energy model scores states with e^(−E) but needs Z to normalize, so it compares states and samples by walking downhill with noise.
+  - id: flows-and-energy-models.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.flows-and-energy-models
+    markdown: |-
+      A normalizing flow tracks how a reversible transformation changes density. An energy model scores possible states and needs a way to normalize or sample those scores.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - flows-and-energy-models.extension-density-by-area
-    - flows-and-energy-models.s2
-    - flows-and-energy-models.s1
-    - flows-and-energy-models.extension-two-state-energy
-    - flows-and-energy-models.s3
-    - flows-and-energy-models.s4
-    - flows-and-energy-models.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - flows-and-energy-models.extension-density-by-area
+        - flows-and-energy-models.s2
+        - flows-and-energy-models.s1
+        - flows-and-energy-models.extension-two-state-energy
+        - flows-and-energy-models.s3
+        - flows-and-energy-models.s4
+        - flows-and-energy-models.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     flows-and-energy-models.recap: flows-and-energy-models.check
 assessment_families:
-- id: flows-and-energy-models.base
-  objective_ref: objective.flows-and-energy-models
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a one-dimensional stretch: trace the inputs, operation, and result before choosing.'
-  remediation_scene: flows-and-energy-models.s2
-  variants:
-  - id: flows-and-energy-models.base.1
-    prompt: For x = 2z, what happens to density under the one-dimensional change of variables?
-    options:
-    - id: a
-      text: It is evaluated at x/2 and divided by two
-    - id: b
-      text: It always doubles
-    - id: c
-      text: It remains identical at every x
-    answer: a
-    feedback: Stretching intervals reduces density height while preserving mass.
-  - id: flows-and-energy-models.base.2
-    prompt: What does a Jacobian determinant account for?
-    options:
-    - id: b
-      text: Only the number of training epochs
-    - id: c
-      text: The output file format
-    - id: a
-      text: Local volume change
-    answer: a
-    feedback: Density transformations need a volume correction.
-- id: flows-and-energy-models.transfer
-  objective_ref: objective.flows-and-energy-models
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Distinguish generation procedures: trace the inputs, operation, and result before choosing.'
-  remediation_scene: flows-and-energy-models.s4
-  variants:
-  - id: flows-and-energy-models.transfer.1
-    prompt: Does an unnormalized energy score alone provide normalized probability?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the energy is negative
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: The partition function supplies normalization.
-  - id: flows-and-energy-models.transfer.2
-    prompt: Is finding the minimum-energy state equivalent to sampling the whole distribution?
-    options:
-    - id: c
-      text: Only for every multimodal distribution
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Optimization and distributional sampling are distinct tasks.
+  - id: flows-and-energy-models.base
+    objective_ref: objective.flows-and-energy-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a one-dimensional stretch: trace the inputs, operation, and result before choosing.'
+    remediation_scene: flows-and-energy-models.s2
+    variants:
+      - id: flows-and-energy-models.base.1
+        prompt: For x = 2z, what happens to density under the one-dimensional change of variables?
+        options:
+          - id: a
+            text: It is evaluated at x/2 and divided by two
+          - id: b
+            text: It always doubles
+          - id: c
+            text: It remains identical at every x
+        answer: a
+        feedback: Stretching intervals reduces density height while preserving mass.
+        retired: true
+      - id: flows-and-energy-models.base.2
+        prompt: What does a Jacobian determinant account for?
+        options:
+          - id: b
+            text: Only the number of training epochs
+          - id: c
+            text: The output file format
+          - id: a
+            text: Local volume change
+        answer: a
+        feedback: Density transformations need a volume correction.
+        retired: true
+  - id: flows-and-energy-models.transfer
+    objective_ref: objective.flows-and-energy-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Distinguish generation procedures: trace the inputs, operation, and result before choosing.'
+    remediation_scene: flows-and-energy-models.s4
+    variants:
+      - id: flows-and-energy-models.transfer.1
+        prompt: Does an unnormalized energy score alone provide normalized probability?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the energy is negative
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: The partition function supplies normalization.
+        retired: true
+      - id: flows-and-energy-models.transfer.2
+        prompt: Is finding the minimum-energy state equivalent to sampling the whole distribution?
+        options:
+          - id: c
+            text: Only for every multimodal distribution
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Optimization and distributional sampling are distinct tasks.
+        retired: true
+  - id: flows-and-energy-models.base.v2
+    objective_ref: objective.flows-and-energy-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "For a flow: invert, look up the base density, divide by the stretch. For an energy model: e^(−E) ranks states, and only dividing by Z turns them into probabilities."
+    remediation_scene: flows-and-energy-models.s2
+    variants:
+      - id: flows-and-energy-models.base.v2.1
+        prompt: A flow maps x = 3z. A student computes p_x(6) as p_z(6). What two corrections are missing?
+        options:
+          - id: b
+            text: Evaluate p_z at 18, then multiply by 3
+          - id: a
+            text: Evaluate p_z at 2, then divide by 3
+          - id: c
+            text: Evaluate p_z at 2, then multiply by 3
+        answer: a
+        feedback: Invert first (z = 6/3 = 2), then divide by the stretch, 3, so p_x(6) = p_z(2)/3. Multiplying would give a total area of 9 instead of 1; mapping forward to 18 uses the wrong direction.
+      - id: flows-and-energy-models.base.v2.2
+        prompt: Why are Real NVP coupling layers built to leave half the input unchanged?
+        options:
+          - id: c
+            text: It halves the model size, so training runs twice as fast
+          - id: b
+            text: It keeps half the image fixed as the condition for sampling
+          - id: a
+            text: It makes the layer easy to invert and its determinant cheap
+        answer: a
+        feedback: Because x_A = z_A, you can recompute s and t from x_A to invert, and the Jacobian is triangular, so the log-determinant is just the sum of s. Other layers transform the other half, so nothing stays fixed overall.
+      - id: flows-and-energy-models.base.v2.3
+        prompt: States A and B have energies 1 and 3. Without knowing Z, what can you say?
+        options:
+          - id: a
+            text: A is e² ≈ 7.4 times as likely as B
+          - id: b
+            text: A has probability e⁻¹ ≈ 0.37
+          - id: c
+            text: B is 3 times as likely as A
+        answer: a
+        feedback: The ratio p(A)/p(B) = e^(−1)/e^(−3) = e², and Z cancels. e^(−1) is only an unnormalized weight, and higher energy means less likely, not more.
+      - id: flows-and-energy-models.base.v2.4
+        prompt: Why can the score ∇ₓ log p(x) of an energy model be computed even when Z can't?
+        options:
+          - id: b
+            text: Because Z is always 1 for a well-trained model
+          - id: a
+            text: Because Z doesn't depend on x, so its gradient is zero
+          - id: c
+            text: Because the gradient of E already includes Z
+        answer: a
+        feedback: log p(x) = −E(x) − log Z, and log Z is the same for every x, so it drops out of the gradient, leaving −∇E(x). Z is rarely 1, and E itself knows nothing about Z.
+  - id: flows-and-energy-models.transfer.v2
+    objective_ref: objective.flows-and-energy-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the task needs. Exact probabilities of new data point to a flow; comparing candidates only needs energy differences; sampling an energy model needs a noisy walk, not a minimum.
+    remediation_scene: flows-and-energy-models.s4
+    variants:
+      - id: flows-and-energy-models.transfer.v2.1
+        prompt: A factory wants the exact probability density of each new sensor reading to flag rare ones. Which model type gives this directly?
+        options:
+          - id: c
+            text: An energy model, since low energy means a common reading
+          - id: a
+            text: A normalizing flow, via the change-of-variables formula
+          - id: b
+            text: A GAN, since its discriminator scores how real a reading is
+        answer: a
+        feedback: A flow gives exact log p(x) by inverting and correcting for stretch. An energy model ranks readings but lacks Z, and a discriminator's output isn't a density.
+      - id: flows-and-energy-models.transfer.v2.2
+        prompt: A chemist's energy model scores candidate molecules, and she only needs to pick the more stable of two. Does she need the partition function?
+        options:
+          - id: a
+            text: No; comparing two energies is enough, since Z cancels
+          - id: b
+            text: Yes; without Z the energies can't be compared at all
+          - id: c
+            text: Yes; she must first estimate Z with a normalizing flow
+        answer: a
+        feedback: p(x₁)/p(x₂) = e^(E(x₂) − E(x₁)), so ranking two candidates needs only their energies. Z matters for absolute probabilities, not comparisons.
+      - id: flows-and-energy-models.transfer.v2.3
+        prompt: A sampler for an image energy model returns the same smooth image every run. Its code does gradient descent on E from random starts. What is wrong?
+        options:
+          - id: b
+            text: The energy network is too small to tell images apart
+          - id: c
+            text: The partition function was never computed
+          - id: a
+            text: It minimizes energy instead of sampling; it needs added noise
+        answer: a
+        feedback: Pure descent slides to a lowest-energy image. Langevin dynamics adds fresh noise each step so the walk visits states in proportion to p(x). Sampling doesn't need Z.
+      - id: flows-and-energy-models.transfer.v2.4
+        prompt: A team wants to shrink a 784-pixel image to a 16-number code inside a normalizing flow. Why won't this work as a flow layer?
+        options:
+          - id: c
+            text: Flows are limited to affine layers, not neural networks
+          - id: a
+            text: Flow layers must be invertible, so none can drop dimensions
+          - id: b
+            text: Flows can't work with images larger than 16 pixels
+        answer: a
+        feedback: A map from 784 numbers to 16 can't be reversed, so the change-of-variables formula fails. Coupling layers do use neural networks, and flows handle large images; they just can't compress.
+  - id: flows-and-energy-models.calculate
+    objective_ref: objective.flows-and-energy-models
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "For a flow x = az + b: invert with z = (x − b)/a, then p_x(x) = p_z(z)/|a|. For energies: probability = e^(−E) / Z."
+    remediation_scene: flows-and-energy-models.s2
+    absolute_tolerance: 0.005
+    variants:
+      - id: flows-and-energy-models.calculate.1
+        prompt: A flow maps x = 2z + 1, with z standard normal. Given p_z(0) = 0.399, what is p_x(1)?
+        answer: 0.1995
+        feedback: z = (1 − 1)/2 = 0, so p_x(1) = 0.399 / 2 = 0.1995.
+      - id: flows-and-energy-models.calculate.2
+        prompt: A flow maps x = 0.5z, with z standard normal. Given p_z(1) = 0.242, what is p_x(0.5)?
+        answer: 0.484
+        feedback: z = 0.5 / 0.5 = 1, and squeezing by 0.5 doubles the density, so p_x(0.5) = 0.242 / 0.5 = 0.484.
+      - id: flows-and-energy-models.calculate.3
+        prompt: A flow maps x = 4z − 2, with z standard normal. Given p_z(1) = 0.242, what is p_x(2)?
+        answer: 0.0605
+        feedback: z = (2 + 2)/4 = 1, so p_x(2) = 0.242 / 4 = 0.0605.
+      - id: flows-and-energy-models.calculate.4
+        prompt: Two states have energies 0 and ln 3 (so e^(−E) = 1 and 1/3). What is the probability of the lower-energy state?
+        answer: 0.75
+        feedback: Z = 1 + 1/3 = 4/3, so p = 1 / (4/3) = 0.75.
+      - id: flows-and-energy-models.calculate.5
+        prompt: Three states have unnormalized weights e^(−E) of 1.0, 0.368, and 0.135. What is the probability of the middle state?
+        answer: 0.245
+        feedback: Z = 1.0 + 0.368 + 0.135 = 1.503, so p = 0.368 / 1.503 ≈ 0.245.

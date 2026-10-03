@@ -1,414 +1,567 @@
 schema_version: 0.2-draft
 lesson:
   id: processors-and-parallelism
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: What makes an accelerator useful?
   state: draft
-  summary: Separate arithmetic, data movement, and waiting; calculate why four workers do not necessarily make
-    a task four times faster.
+  summary: Hire four times the cooks and dinner still isn't four times faster. Discover Amdahl's law, why chips sit idle waiting for data, and why a busy system can still feel slow.
   slot: M02.7
   category: learning
   sources:
-  - title: NVIDIA CUDA programming guide
-    url: https://docs.nvidia.com/cuda/cuda-programming-guide/
+    - title: NVIDIA CUDA programming guide
+      url: https://docs.nvidia.com/cuda/cuda-programming-guide/
+    - title: "Amdahl, G. M. (1967). Validity of the single processor approach to achieving large scale computing capabilities. AFIPS Spring Joint Computer Conference."
+      url: https://doi.org/10.1145/1465482.1465560
   archetype: mechanism
 objectives:
-- id: objective.processors-and-parallelism
-  version: 2-draft
-  statement: Calculate an ideal serial-plus-parallel runtime and identify whether arithmetic, dependencies,
-    or data movement limits a concrete workload.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - processors-and-parallelism.base.v2
-  - processors-and-parallelism.transfer.v2
-  prerequisites:
-  - anyOf:
-    - objective.algorithm-cost
-  - anyOf:
-    - objective.tensor-shape-tracing
+  - id: objective.processors-and-parallelism
+    version: 3-draft
+    statement: Calculate an ideal serial-plus-parallel runtime and identify whether arithmetic, dependencies, or data movement limits a concrete workload.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - processors-and-parallelism.base.v3
+      - processors-and-parallelism.transfer.v3
+    prerequisites:
+      - anyOf:
+          - objective.algorithm-cost
+      - anyOf:
+          - objective.tensor-shape-tracing
 scenes:
-- id: processors-and-parallelism.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.processors-and-parallelism
-  title: A processor executes the operations
-  markdown: 'A **processor** is hardware that carries out program instructions. A **CPU**, or central processing
-    unit, handles many kinds of work, including decisions and coordinating other devices. A **GPU**, or graphics
-    processing unit, is designed to perform large amounts of suitable work in parallel: many operations can
-    proceed at the same time.
+  - id: processors-and-parallelism.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.processors-and-parallelism
+    title: A few chefs or a thousand line cooks
+    markdown: |-
+      Picture two kitchens. One has a few brilliant chefs who can cook anything, switching from soup to soufflé in seconds. The other has a thousand line cooks who can each do only simple jobs, but all at once. For a banquet of 10,000 identical sandwiches, the second kitchen wins easily.
 
+      Computers have both kinds of kitchen. A **processor** is the hardware that carries out a program's instructions. A **CPU** (central processing unit) is the brilliant-chef kind: a handful of powerful cores, good at complicated step-by-step work and at running the rest of the computer. A **GPU** (graphics processing unit) is the line-cook kind: thousands of simpler cores that do the same kind of arithmetic on many numbers **in parallel**, meaning at the same time.
 
-    GPU does not mean an AI model. It is one kind of machine on which model calculations can run. CPUs can
-    also run AI, and modern CPUs can perform parallel work. The useful question is which hardware matches the
-    operations and data involved.'
-  text_mode: 'A **processor** is hardware that carries out program instructions. A **CPU**, or central processing
-    unit, handles many kinds of work, including decisions and coordinating other devices. A **GPU**, or graphics
-    processing unit, is designed to perform large amounts of suitable work in parallel: many operations can
-    proceed at the same time.
+      GPUs were built to color millions of screen pixels at once. Model calculations turned out to be the same kind of job: huge batches of multiply-and-add, like the XW you traced in the shapes lesson. In 2012, AlexNet, the image model that kicked off the deep learning boom, was trained on two consumer gaming GPUs. Chips built mainly for this work, like GPUs and Google's TPUs, are called **accelerators**.
+    bridges: []
+  - id: processors-and-parallelism.s2
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.processors-and-parallelism
+    title: Which jobs can happen at the same time?
+    markdown: |-
+      Parallel hardware only helps when there's work that can truly happen at once.
 
+      In the batch from the shapes lesson, parcel 1's row of XW doesn't need parcel 2's result. Those rows are independent, so different cores can compute them simultaneously.
 
-    GPU does not mean an AI model. It is one kind of machine on which model calculations can run. CPUs can
-    also run AI, and modern CPUs can perform parallel work. The useful question is which hardware matches the
-    operations and data involved.'
-  bridges: []
-- id: processors-and-parallelism.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.processors-and-parallelism
-  title: Find the independent pieces
-  markdown: 'For input rows [1, 2] and [3, 4], computing the weighted result of the first row need not wait
-    for the result of the second. Those calculations can be assigned to different workers.
+      Model layers are different. Layer 2 needs layer 1's output before it can start, and layer 3 needs layer 2's. When one step must wait for another, that's a **dependency**. Work forced to happen one step after another is called **serial** work. Like a recipe where you can't frost a cake before it's baked, no number of extra cooks makes a chain of dependencies go faster.
 
+      So before counting processors, sketch which results depend on which. The independent pieces are the part that can speed up.
+    bridges: []
+  - id: processors-and-parallelism.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.processors-and-parallelism
+    title: Four workers, not four times faster
+    markdown: |-
+      A job takes 10 seconds on one worker: 2 seconds of serial setup, then 8 seconds of work that splits evenly. Give it 4 workers:
 
-    Inside a sequence of model layers, however, a later layer needs the earlier layer’s output. That is a **dependency**.
-    Work constrained to occur in sequence is called **serial** work. Some operations within a layer may still
-    run together. Drawing which results depend on which earlier results helps identify potential parallelism;
-    counting processors alone cannot tell you how much overlap is possible.'
-  text_mode: 'For input rows [1, 2] and [3, 4], computing the weighted result of the first row need not wait
-    for the result of the second. Those calculations can be assigned to different workers.
+      | Part | One worker | Four workers |
+      | --- | ---: | ---: |
+      | Serial setup | 2 s | 2 s (can't be shared) |
+      | Parallel work | 8 s | 8 ÷ 4 = 2 s |
+      | **Total** | **10 s** | **4 s** |
 
+      **Speedup** is old time divided by new time: 10 ÷ 4 = 2.5. Four workers, only 2.5 times faster.
 
-    Inside a sequence of model layers, however, a later layer needs the earlier layer’s output. That is a **dependency**.
-    Work constrained to occur in sequence is called **serial** work. Some operations within a layer may still
-    run together. Drawing which results depend on which earlier results helps identify potential parallelism;
-    counting processors alone cannot tell you how much overlap is possible.'
-  bridges: []
-- id: processors-and-parallelism.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.processors-and-parallelism
-  title: Calculate the ideal speedup
-  markdown: 'Suppose a job takes 10 seconds on one worker: 2 seconds of serial preparation followed by 8 seconds
-    of perfectly divisible parallel work. With four workers, the parallel part ideally takes 8 ÷ 4 = 2 seconds.
-    Total time is 2 + 2 = 4 seconds.
+      :::predict What if you had a million workers?
+      The parallel part shrinks toward zero, but the 2 serial seconds never budge. The time approaches 2 seconds, so the speedup approaches 10 ÷ 2 = 5, and never passes it.
+      :::
 
+      ```python run
+      serial = 2.0                        # seconds that must run one step at a time
+      parallel = 8.0                      # seconds of work that can be split evenly
+      one_worker = serial + parallel      # 10 seconds on a single worker
 
-    **Speedup** is old time divided by new time: 10 ÷ 4 = 2.5. Four workers give a 2.5-fold ideal speedup,
-    not a fourfold one. Even infinitely accelerating the parallel part leaves the 2-second serial part, so
-    this simplified job cannot improve by more than a factor of 5.'
-  text_mode: 'Suppose a job takes 10 seconds on one worker: 2 seconds of serial preparation followed by 8 seconds
-    of perfectly divisible parallel work. With four workers, the parallel part ideally takes 8 ÷ 4 = 2 seconds.
-    Total time is 2 + 2 = 4 seconds.
+      for workers in [1, 2, 4, 8, 16, 1000]:
+          time = serial + parallel / workers      # only the parallel part gets shared
+          speedup = one_worker / time             # old time divided by new time
+          print(f"{workers:5d} workers: {time:6.3f} s   speedup {speedup:5.2f}x")
+      ```
 
+      Going from 8 to 16 workers only lifts the speedup from 3.33 to 4, and 1,000 workers reach just 4.98. Now set `serial = 0.5` and add `1000000` to the list of worker counts: the speedup climbs to 8.5 ÷ 0.5 = 17.
 
-    **Speedup** is old time divided by new time: 10 ÷ 4 = 2.5. Four workers give a 2.5-fold ideal speedup,
-    not a fourfold one. Even infinitely accelerating the parallel part leaves the 2-second serial part, so
-    this simplified job cannot improve by more than a factor of 5.'
-  bridges:
-  - arithmetic
-- id: processors-and-parallelism.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.processors-and-parallelism
-  title: Bring the numbers to the arithmetic units
-  markdown: 'A processor needs its input values from **memory**, storage it can access during calculation.
-    **Bandwidth** is how much data can move per unit of time. One gigabyte is one billion bytes. If a stage
-    transfers 1 gigabyte at a sustained 10 gigabytes per second, that transfer takes 0.1 seconds under our
-    assumptions.
+      :::papers The formula behind the ceiling
+      Computer architect Gene Amdahl made this argument in 1967, and it's now called **Amdahl's law**. If a fraction $p$ of the one-worker time can be split among $N$ workers, the speedup is
 
+      $$S(N) = \frac{1}{(1 - p) + \dfrac{p}{N}}$$
 
-    This is a lower bound on that transfer stage, not necessarily an extra 0.1 seconds to add to the whole
-    program: some transfer may overlap computation. **Caching** keeps useful data nearby for reuse. Extra arithmetic
-    hardware may sit idle if values cannot arrive fast enough. Memory capacity also limits what fits at once.'
-  text_mode: 'A processor needs its input values from **memory**, storage it can access during calculation.
-    **Bandwidth** is how much data can move per unit of time. One gigabyte is one billion bytes. If a stage
-    transfers 1 gigabyte at a sustained 10 gigabytes per second, that transfer takes 0.1 seconds under our
-    assumptions.
+      For our job, $p = 8/10 = 0.8$ and $N = 4$: $S = 1 / (0.2 + 0.2) = 2.5$. As $N$ grows, $p/N$ vanishes and $S$ approaches $1/(1-p) = 1/0.2 = 5$. The serial fraction sets the ceiling.
+      :::
+    bridges:
+      - arithmetic
+  - id: processors-and-parallelism.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.processors-and-parallelism
+    title: Fast cooks, slow deliveries
+    markdown: |-
+      Back in the kitchen: a thousand cooks are useless if ingredients arrive through one small door. Processors have the same problem. The numbers they work on live in **memory**, and **bandwidth** is how much data can move from memory to the processor each second.
 
+      Suppose a step must move 1 gigabyte (one billion bytes) and the connection carries 10 gigabytes per second. Moving the data takes at least 1 ÷ 10 = 0.1 seconds. If the arithmetic itself would take only 0.01 seconds, the cores spend most of that time waiting. That step is **memory-bound**: data delivery, not arithmetic, sets its speed.
 
-    This is a lower bound on that transfer stage, not necessarily an extra 0.1 seconds to add to the whole
-    program: some transfer may overlap computation. **Caching** keeps useful data nearby for reuse. Extra arithmetic
-    hardware may sit idle if values cannot arrive fast enough. Memory capacity also limits what fits at once.'
-  bridges: []
-- id: processors-and-parallelism.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.processors-and-parallelism
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Speed depends on the work that can overlap and the resources it needs. Count dependencies and data
-    movement as well as arithmetic.
-- id: processors-and-parallelism.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.processors-and-parallelism
-  markdown: CPUs and accelerators organize computation differently; useful speed depends on workload shape,
-    parallelism, memory movement, and software support.
-  text_mode: CPUs and accelerators organize computation differently; useful speed depends on workload shape,
-    parallelism, memory movement, and software support.
-- id: processors-and-parallelism.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.processors-and-parallelism
-  title: Throughput and latency answer different questions
-  markdown: '**Latency** is how long a particular request takes from arrival to its result. **Throughput**
-    is how many requests a system completes per unit of time.
+      :::mixup "A chip with more cores will always run my model faster."
+      Extra cores only help if data reaches them fast enough. For a memory-bound step, a chip with twice the cores and the same bandwidth waits just as long. That's why accelerators keep small, very fast **caches** close to the cores: data that's reused, like a weight matrix applied to every row of a batch, is fetched once and used many times.
+      :::
+    bridges: []
+  - id: processors-and-parallelism.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.processors-and-parallelism
+    markdown: Work out speedups for new jobs, then find the real bottleneck in a waiting chip, a batch of chat requests, and a stack of layers.
+    takeaway: |-
+      Extra workers only speed up the part of a job that can run at once, and only if data reaches them fast enough. Measure where the time goes before buying more hardware.
+  - id: processors-and-parallelism.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.processors-and-parallelism
+    markdown: |-
+      CPUs and accelerators organize computation differently; useful speed depends on workload shape, parallelism, memory movement, and software support.
+  - id: processors-and-parallelism.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.processors-and-parallelism
+    title: Busy system, slow answer
+    markdown: |-
+      A chat service can measure speed in two different ways. **Latency** is how long one request takes, from the moment you hit Enter to the moment your answer arrives. **Throughput** is how many requests the system finishes per second.
 
+      Suppose the service waits until 4 requests have arrived, then answers all four together in 2 seconds. Its throughput is 4 ÷ 2 = 2 requests per second.
 
-    A batch of four requests that takes two seconds to process has processing throughput 4 ÷ 2 = 2 requests
-    per second. If requests wait in a queue while the batch fills, their end-to-end latency includes that waiting
-    time. Larger batches can use hardware efficiently while making some users wait longer. Compare both measurements
-    under a stated workload; a high throughput number alone does not tell a waiting user when their answer
-    will arrive.'
-  text_mode: '**Latency** is how long a particular request takes from arrival to its result. **Throughput**
-    is how many requests a system completes per unit of time.
+      :::predict The first request in the batch waited 3 seconds for the other three to arrive. What latency does that user experience?
+      3 seconds of waiting plus 2 seconds of processing: 5 seconds. The throughput figure (2 per second) says nothing about that wait.
+      :::
 
+      Bigger batches keep the hardware busier and raise throughput, but can make each person wait longer. A good service watches both numbers.
+    bridges: []
+  - id: processors-and-parallelism.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.processors-and-parallelism
+    title: Measure before you buy
+    markdown: |-
+      Real jobs also lose time to things our examples skipped: workers passing results to each other, or waiting for the slowest one to finish. So before adding hardware, measure. A **profile** is a record of where a program's time actually goes. The biggest item is the **bottleneck**, the thing holding everything else back.
 
-    A batch of four requests that takes two seconds to process has processing throughput 4 ÷ 2 = 2 requests
-    per second. If requests wait in a queue while the batch fills, their end-to-end latency includes that waiting
-    time. Larger batches can use hardware efficiently while making some users wait longer. Compare both measurements
-    under a stated workload; a high throughput number alone does not tell a waiting user when their answer
-    will arrive.'
-  bridges: []
-- id: processors-and-parallelism.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.processors-and-parallelism
-  title: Measure where the time actually goes
-  markdown: 'Our four-worker calculation assumed equal work division and no communication or scheduling overhead.
-    Real workers may need to exchange intermediate results or wait for the slowest participant. That additional
-    work can reduce the ideal speedup.
+      Here's Sofia's image-labeling job, which takes 60 seconds:
 
+      | Stage | Time |
+      | --- | ---: |
+      | Loading images from disk, one at a time | 42 s |
+      | Model arithmetic on the GPU | 12 s |
+      | Saving results | 6 s |
 
-    A **profile** records where time or resources are spent. If a profile shows long waits for memory, investigate
-    data reuse and transfer. If it shows a serial stage dominating, adding workers to another stage has limited
-    benefit. Later training and inference lessons apply these ideas to model weights, intermediate arrays,
-    and generated tokens. Start with the measured bottleneck, the resource currently limiting progress.'
-  text_mode: 'Our four-worker calculation assumed equal work division and no communication or scheduling overhead.
-    Real workers may need to exchange intermediate results or wait for the slowest participant. That additional
-    work can reduce the ideal speedup.
-
-
-    A **profile** records where time or resources are spent. If a profile shows long waits for memory, investigate
-    data reuse and transfer. If it shows a serial stage dominating, adding workers to another stage has limited
-    benefit. Later training and inference lessons apply these ideas to model weights, intermediate arrays,
-    and generated tokens. Start with the measured bottleneck, the resource currently limiting progress.'
-  bridges: []
+      Her team wants a GPU twice as fast. That would cut 12 s to 6 s and the total to 54 s, a speedup of only 1.1. Instead, Sofia loads images with 6 workers in parallel: 42 s becomes about 7 s, and the job drops to about 25 s, more than twice as fast, with no new hardware. Fix the biggest line of the profile first.
+    bridges: []
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - processors-and-parallelism.s1
-    - processors-and-parallelism.s2
-    - processors-and-parallelism.s3
-    - processors-and-parallelism.s4
-    - processors-and-parallelism.s5
-    - processors-and-parallelism.s6
-    - processors-and-parallelism.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - processors-and-parallelism.s1
+        - processors-and-parallelism.s2
+        - processors-and-parallelism.s3
+        - processors-and-parallelism.s4
+        - processors-and-parallelism.s5
+        - processors-and-parallelism.s6
+        - processors-and-parallelism.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     processors-and-parallelism.recap: processors-and-parallelism.check
 assessment_families:
-- id: processors-and-parallelism.base
-  objective_ref: objective.processors-and-parallelism
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'A matrix product exposes parallel work: trace the inputs, operation, and result before choosing.'
-  remediation_scene: processors-and-parallelism.s2
-  variants:
-  - id: processors-and-parallelism.base.1
-    prompt: What often suits a GPU well?
-    options:
-    - id: a
-      text: Large regular parallel numerical work
-    - id: b
-      text: Every tiny serial branch-heavy operation equally
-    - id: c
-      text: Only text-file naming
-    answer: a
-    feedback: Regular workloads can use many execution lanes and shared numerical kernels.
-    retired: true
-  - id: processors-and-parallelism.base.2
-    prompt: Transfer and launch take 4 ms; computation takes 2 ms. Minimum combined time?
-    options:
-    - id: b
-      text: 2 ms
-    - id: c
-      text: 4 ms
-    - id: a
-      text: 6 ms
-    answer: a
-    feedback: Costs on the critical path add in this simplified sequential example.
-    retired: true
-- id: processors-and-parallelism.transfer
-  objective_ref: objective.processors-and-parallelism
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compare measured workloads: trace the inputs, operation, and result before choosing.'
-  remediation_scene: processors-and-parallelism.s4
-  variants:
-  - id: processors-and-parallelism.transfer.1
-    prompt: An accelerator advertises twice the peak FLOPs. Must inference latency halve?
-    options:
-    - id: b
-      text: Yes; peak arithmetic determines every workload
-    - id: c
-      text: Only if the output is text
-    - id: a
-      text: No; memory, overhead, shapes, and utilization matter
-    answer: a
-    feedback: A peak specification is not an application benchmark.
-    retired: true
-  - id: processors-and-parallelism.transfer.2
-    prompt: A tiny GPU task is slower than a CPU task. What should diagnosis include?
-    options:
-    - id: c
-      text: An assumption that all measurements are impossible
-    - id: a
-      text: Launch and transfer overhead relative to useful work
-    - id: b
-      text: Only parameter names
-    answer: a
-    feedback: Fixed overhead can dominate small workloads.
-    retired: true
-- id: processors-and-parallelism.base.v2
-  objective_ref: objective.processors-and-parallelism
-  task: base
-  response_type: numeric_fields_with_reason
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: processors-and-parallelism.s3
-  variants:
-  - prompt: A job has 2 seconds of serial work and 6 seconds of perfectly divisible parallel work on one worker.
-      With 3 workers and no overhead, calculate parallel time, total time, and speedup over one worker.
-    answers:
-      parallel: 2.0
-      total: 4.0
-      speedup: 2.0
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Divide only the parallel part by workers, add the serial time, then divide old total by new total.
-    - id: b
-      text: Divide the whole job, including its serial part, by workers.
-    - id: c
-      text: Multiply the serial time by the worker count.
-    feedback: Parallel time is 6/3; total adds 2; speedup compares the original 8 seconds with that total.
-    id: processors-and-parallelism.base.v2.1
-  - prompt: A job has 1 seconds of serial work and 9 seconds of perfectly divisible parallel work on one worker.
-      With 3 workers and no overhead, calculate parallel time, total time, and speedup over one worker.
-    answers:
-      parallel: 3.0
-      total: 4.0
-      speedup: 2.5
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Divide the whole job, including its serial part, by workers.
-    - id: c
-      text: Multiply the serial time by the worker count.
-    - id: a
-      text: Divide only the parallel part by workers, add the serial time, then divide old total by new total.
-    feedback: Parallel time is 9/3; total adds 1; speedup compares the original 10 seconds with that total.
-    id: processors-and-parallelism.base.v2.2
-  - prompt: A job has 4 seconds of serial work and 20 seconds of perfectly divisible parallel work on one worker.
-      With 5 workers and no overhead, calculate parallel time, total time, and speedup over one worker.
-    answers:
-      parallel: 4
-      total: 8
-      speedup: 3
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: Multiply the serial time by the worker count.
-    - id: a
-      text: Divide only the parallel part by workers, add the serial time, then divide old total by new total.
-    - id: b
-      text: Divide the whole job, including its serial part, by workers.
-    feedback: Parallel time is 20/5 = 4; total time is 4 + 4 = 8; speedup is 24/8 = 3.
-    id: processors-and-parallelism.base.v2.3
-  - prompt: A job has 3 seconds of serial work and 6 seconds of perfectly divisible parallel work on one worker.
-      With 2 workers and no overhead, calculate parallel time, total time, and speedup over one worker.
-    answers:
-      parallel: 3.0
-      total: 6.0
-      speedup: 1.5
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Divide only the parallel part by workers, add the serial time, then divide old total by new total.
-    - id: b
-      text: Divide the whole job, including its serial part, by workers.
-    - id: c
-      text: Multiply the serial time by the worker count.
-    feedback: Parallel time is 6/2; total adds 3; speedup compares the original 9 seconds with that total.
-    id: processors-and-parallelism.base.v2.4
-  numeric_fields:
-  - id: parallel
-    label: Parallel time in seconds
-  - id: total
-    label: Total time in seconds
-  - id: speedup
-    label: Speedup factor
-  absolute_tolerance: 1.0e-06
-- id: processors-and-parallelism.transfer.v2
-  objective_ref: objective.processors-and-parallelism
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: processors-and-parallelism.s4
-  variants:
-  - prompt: A profile shows arithmetic units mostly waiting for values from memory. Which change directly targets
-      that observed limit?
-    answer: a
-    options:
-    - id: a
-      text: Reduce repeated data transfers through reuse.
-    - id: b
-      text: Add arithmetic units while leaving data delivery unchanged.
-    - id: c
-      text: Measure only the fastest arithmetic instruction.
-    feedback: The observed bottleneck is delivery of data, not the supply of arithmetic units.
-    id: processors-and-parallelism.transfer.v2.1
-  - prompt: A batch completes four requests in two seconds after each waits three seconds for the batch. What
-      does each request’s five seconds describe?
-    answer: a
-    options:
-    - id: b
-      text: Processing throughput in requests per second.
-    - id: c
-      text: The number of parallel workers.
-    - id: a
-      text: End-to-end latency including the wait.
-    feedback: Latency includes the request’s wait and processing; throughput counts completions per unit time.
-    id: processors-and-parallelism.transfer.v2.2
-  - prompt: Why can a later model layer not use an earlier layer’s output before it exists?
-    answer: a
-    options:
-    - id: c
-      text: All input examples must share the same numeric values.
-    - id: a
-      text: The later calculation depends on that earlier result.
-    - id: b
-      text: Each layer must execute on a different brand of processor.
-    feedback: Dependencies restrict which work can overlap.
-    id: processors-and-parallelism.transfer.v2.3
-  - prompt: A job takes longer than its ideal serial-plus-parallel estimate. Which factor could explain the
-      difference?
-    answer: a
-    options:
-    - id: a
-      text: Communication and coordination between workers.
-    - id: b
-      text: The removal of all transfer and coordination costs.
-    - id: c
-      text: An assumption that results require no calculation.
-    feedback: The ideal estimate omitted overhead and uneven work distribution.
-    id: processors-and-parallelism.transfer.v2.4
+  - id: processors-and-parallelism.base
+    objective_ref: objective.processors-and-parallelism
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'A matrix product exposes parallel work: trace the inputs, operation, and result before choosing.'
+    remediation_scene: processors-and-parallelism.s2
+    variants:
+      - id: processors-and-parallelism.base.1
+        prompt: What often suits a GPU well?
+        options:
+          - id: a
+            text: Large regular parallel numerical work
+          - id: b
+            text: Every tiny serial branch-heavy operation equally
+          - id: c
+            text: Only text-file naming
+        answer: a
+        feedback: Regular workloads can use many execution lanes and shared numerical kernels.
+        retired: true
+      - id: processors-and-parallelism.base.2
+        prompt: Transfer and launch take 4 ms; computation takes 2 ms. Minimum combined time?
+        options:
+          - id: b
+            text: 2 ms
+          - id: c
+            text: 4 ms
+          - id: a
+            text: 6 ms
+        answer: a
+        feedback: Costs on the critical path add in this simplified sequential example.
+        retired: true
+  - id: processors-and-parallelism.transfer
+    objective_ref: objective.processors-and-parallelism
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compare measured workloads: trace the inputs, operation, and result before choosing.'
+    remediation_scene: processors-and-parallelism.s4
+    variants:
+      - id: processors-and-parallelism.transfer.1
+        prompt: An accelerator advertises twice the peak FLOPs. Must inference latency halve?
+        options:
+          - id: b
+            text: Yes; peak arithmetic determines every workload
+          - id: c
+            text: Only if the output is text
+          - id: a
+            text: No; memory, overhead, shapes, and utilization matter
+        answer: a
+        feedback: A peak specification is not an application benchmark.
+        retired: true
+      - id: processors-and-parallelism.transfer.2
+        prompt: A tiny GPU task is slower than a CPU task. What should diagnosis include?
+        options:
+          - id: c
+            text: An assumption that all measurements are impossible
+          - id: a
+            text: Launch and transfer overhead relative to useful work
+          - id: b
+            text: Only parameter names
+        answer: a
+        feedback: Fixed overhead can dominate small workloads.
+        retired: true
+  - id: processors-and-parallelism.base.v2
+    objective_ref: objective.processors-and-parallelism
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: processors-and-parallelism.s3
+    variants:
+      - prompt: A job has 2 seconds of serial work and 6 seconds of perfectly divisible parallel work on one worker. With 3 workers and no overhead, calculate parallel time, total time, and speedup over one worker.
+        answers:
+          parallel: 2.0
+          total: 4.0
+          speedup: 2.0
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Divide only the parallel part by workers, add the serial time, then divide old total by new total.
+          - id: b
+            text: Divide the whole job, including its serial part, by workers.
+          - id: c
+            text: Multiply the serial time by the worker count.
+        feedback: Parallel time is 6/3; total adds 2; speedup compares the original 8 seconds with that total.
+        id: processors-and-parallelism.base.v2.1
+        retired: true
+      - prompt: A job has 1 seconds of serial work and 9 seconds of perfectly divisible parallel work on one worker. With 3 workers and no overhead, calculate parallel time, total time, and speedup over one worker.
+        answers:
+          parallel: 3.0
+          total: 4.0
+          speedup: 2.5
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Divide the whole job, including its serial part, by workers.
+          - id: c
+            text: Multiply the serial time by the worker count.
+          - id: a
+            text: Divide only the parallel part by workers, add the serial time, then divide old total by new total.
+        feedback: Parallel time is 9/3; total adds 1; speedup compares the original 10 seconds with that total.
+        id: processors-and-parallelism.base.v2.2
+        retired: true
+      - prompt: A job has 4 seconds of serial work and 20 seconds of perfectly divisible parallel work on one worker. With 5 workers and no overhead, calculate parallel time, total time, and speedup over one worker.
+        answers:
+          parallel: 4
+          total: 8
+          speedup: 3
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: Multiply the serial time by the worker count.
+          - id: a
+            text: Divide only the parallel part by workers, add the serial time, then divide old total by new total.
+          - id: b
+            text: Divide the whole job, including its serial part, by workers.
+        feedback: Parallel time is 20/5 = 4; total time is 4 + 4 = 8; speedup is 24/8 = 3.
+        id: processors-and-parallelism.base.v2.3
+        retired: true
+      - prompt: A job has 3 seconds of serial work and 6 seconds of perfectly divisible parallel work on one worker. With 2 workers and no overhead, calculate parallel time, total time, and speedup over one worker.
+        answers:
+          parallel: 3.0
+          total: 6.0
+          speedup: 1.5
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Divide only the parallel part by workers, add the serial time, then divide old total by new total.
+          - id: b
+            text: Divide the whole job, including its serial part, by workers.
+          - id: c
+            text: Multiply the serial time by the worker count.
+        feedback: Parallel time is 6/2; total adds 3; speedup compares the original 9 seconds with that total.
+        id: processors-and-parallelism.base.v2.4
+        retired: true
+    numeric_fields:
+      - id: parallel
+        label: Parallel time in seconds
+      - id: total
+        label: Total time in seconds
+      - id: speedup
+        label: Speedup factor
+    absolute_tolerance: 1e-6
+  - id: processors-and-parallelism.transfer.v2
+    objective_ref: objective.processors-and-parallelism
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: processors-and-parallelism.s4
+    variants:
+      - prompt: A profile shows arithmetic units mostly waiting for values from memory. Which change directly targets that observed limit?
+        answer: a
+        options:
+          - id: a
+            text: Reduce repeated data transfers through reuse.
+          - id: b
+            text: Add arithmetic units while leaving data delivery unchanged.
+          - id: c
+            text: Measure only the fastest arithmetic instruction.
+        feedback: The observed bottleneck is delivery of data, not the supply of arithmetic units.
+        id: processors-and-parallelism.transfer.v2.1
+        retired: true
+      - prompt: A batch completes four requests in two seconds after each waits three seconds for the batch. What does each request’s five seconds describe?
+        answer: a
+        options:
+          - id: b
+            text: Processing throughput in requests per second.
+          - id: c
+            text: The number of parallel workers.
+          - id: a
+            text: End-to-end latency including the wait.
+        feedback: Latency includes the request’s wait and processing; throughput counts completions per unit time.
+        id: processors-and-parallelism.transfer.v2.2
+        retired: true
+      - prompt: Why can a later model layer not use an earlier layer’s output before it exists?
+        answer: a
+        options:
+          - id: c
+            text: All input examples must share the same numeric values.
+          - id: a
+            text: The later calculation depends on that earlier result.
+          - id: b
+            text: Each layer must execute on a different brand of processor.
+        feedback: Dependencies restrict which work can overlap.
+        id: processors-and-parallelism.transfer.v2.3
+        retired: true
+      - prompt: A job takes longer than its ideal serial-plus-parallel estimate. Which factor could explain the difference?
+        answer: a
+        options:
+          - id: a
+            text: Communication and coordination between workers.
+          - id: b
+            text: The removal of all transfer and coordination costs.
+          - id: c
+            text: An assumption that results require no calculation.
+        feedback: The ideal estimate omitted overhead and uneven work distribution.
+        id: processors-and-parallelism.transfer.v2.4
+        retired: true
+  - id: processors-and-parallelism.base.v3
+    objective_ref: objective.processors-and-parallelism
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Only the parallel part is shared among the workers; the serial part stays the same. Speedup is the one-worker total divided by the new total.
+    remediation_scene: processors-and-parallelism.s3
+    numeric_fields:
+      - id: parallel
+        label: Parallel time in seconds
+      - id: total
+        label: Total time in seconds
+      - id: speedup
+        label: Speedup factor
+    absolute_tolerance: 0.01
+    variants:
+      - id: processors-and-parallelism.base.v3.1
+        prompt: A job has 2 seconds of serial work and 6 seconds of evenly splittable work on one worker. With 3 workers and no overhead, find the parallel time, the total time, and the speedup.
+        answers:
+          parallel: 2
+          total: 4
+          speedup: 2
+        reason_answer: b
+        reason_options:
+          - id: a
+            text: Split the whole job, serial part included, among the workers.
+          - id: b
+            text: Split only the parallel part, add the serial part, then compare totals.
+          - id: c
+            text: The speedup equals the number of workers, since each takes a share.
+        feedback: 6 ÷ 3 = 2 s of parallel work, plus 2 s serial, is 4 s. The one-worker time was 8 s, so the speedup is 8 ÷ 4 = 2, not 3, because the serial 2 s can't be shared.
+      - id: processors-and-parallelism.base.v3.2
+        prompt: A job has 1 second of serial work and 9 seconds of evenly splittable work on one worker. With 3 workers and no overhead, find the parallel time, the total time, and the speedup.
+        answers:
+          parallel: 3
+          total: 4
+          speedup: 2.5
+        reason_answer: c
+        reason_options:
+          - id: a
+            text: The speedup equals the number of workers, since each takes a share.
+          - id: b
+            text: Split the whole job, serial part included, among the workers.
+          - id: c
+            text: Split only the parallel part, add the serial part, then compare totals.
+        feedback: 9 ÷ 3 = 3 s, plus 1 s serial, is 4 s. The speedup is 10 ÷ 4 = 2.5. Splitting all 10 s would give 3.33 s, but the serial second has to run on its own.
+      - id: processors-and-parallelism.base.v3.3
+        prompt: A job has 4 seconds of serial work and 20 seconds of evenly splittable work on one worker. With 5 workers and no overhead, find the parallel time, the total time, and the speedup.
+        answers:
+          parallel: 4
+          total: 8
+          speedup: 3
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Split only the parallel part, add the serial part, then compare totals.
+          - id: b
+            text: Split the whole job, serial part included, among the workers.
+          - id: c
+            text: The speedup equals the number of workers, since each takes a share.
+        feedback: 20 ÷ 5 = 4 s, plus 4 s serial, is 8 s. The speedup is 24 ÷ 8 = 3, well short of 5, because a sixth of the original time is serial.
+      - id: processors-and-parallelism.base.v3.4
+        prompt: A job has 3 seconds of serial work and 6 seconds of evenly splittable work on one worker. With 2 workers and no overhead, find the parallel time, the total time, and the speedup.
+        answers:
+          parallel: 3
+          total: 6
+          speedup: 1.5
+        reason_answer: b
+        reason_options:
+          - id: a
+            text: The speedup equals the number of workers, since each takes a share.
+          - id: b
+            text: Split only the parallel part, add the serial part, then compare totals.
+          - id: c
+            text: Split the whole job, serial part included, among the workers.
+        feedback: 6 ÷ 2 = 3 s, plus 3 s serial, is 6 s. The speedup is 9 ÷ 6 = 1.5. With a third of the job serial, even a second worker helps less than you'd hope.
+      - id: processors-and-parallelism.base.v3.5
+        prompt: A job has 1 second of serial work and 15 seconds of evenly splittable work on one worker. With 5 workers and no overhead, find the parallel time, the total time, and the speedup.
+        answers:
+          parallel: 3
+          total: 4
+          speedup: 4
+        reason_answer: c
+        reason_options:
+          - id: a
+            text: Split the whole job, serial part included, among the workers.
+          - id: b
+            text: The speedup equals the number of workers, since each takes a share.
+          - id: c
+            text: Split only the parallel part, add the serial part, then compare totals.
+        feedback: 15 ÷ 5 = 3 s, plus 1 s serial, is 4 s. The speedup is 16 ÷ 4 = 4, not 5, because the serial second doesn't shrink.
+      - id: processors-and-parallelism.base.v3.6
+        prompt: A job has 5 seconds of serial work and 40 seconds of evenly splittable work on one worker. With 8 workers and no overhead, find the parallel time, the total time, and the speedup.
+        answers:
+          parallel: 5
+          total: 10
+          speedup: 4.5
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Split only the parallel part, add the serial part, then compare totals.
+          - id: b
+            text: The speedup equals the number of workers, since each takes a share.
+          - id: c
+            text: Split the whole job, serial part included, among the workers.
+        feedback: 40 ÷ 8 = 5 s, plus 5 s serial, is 10 s. The speedup is 45 ÷ 10 = 4.5, barely half of 8, because the serial 5 s now takes as long as all the parallel work.
+  - id: processors-and-parallelism.transfer.v3
+    objective_ref: objective.processors-and-parallelism
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Find what the work is actually waiting on (a serial step, a dependency, data arriving from memory, or a queue) and pick the change that shortens that wait.
+    remediation_scene: processors-and-parallelism.s6
+    variants:
+      - id: processors-and-parallelism.transfer.v3.1
+        prompt: A profile shows a GPU's cores idle 70% of the time, waiting for numbers to arrive from memory. Which change targets this bottleneck?
+        options:
+          - id: a
+            text: Switch to a chip with twice as many cores
+          - id: b
+            text: Split the work across more of the same GPUs
+          - id: c
+            text: Reuse data already nearby instead of refetching it
+        answer: c
+        feedback: The cores are waiting for data, so the fix is to move less data, for example by reusing values held in a cache. More cores with the same memory connection would simply wait in larger numbers.
+      - id: processors-and-parallelism.transfer.v3.2
+        prompt: A program spends 10% of its one-worker time in a step that can't be split. What is the largest speedup any number of workers could give?
+        options:
+          - id: b
+            text: '90 times'
+          - id: a
+            text: '10 times'
+          - id: c
+            text: No limit, with enough workers
+        answer: a
+        feedback: Even if the other 90% took no time at all, the serial 10% would remain, so the speedup can't exceed 1 ÷ 0.1 = 10. That ceiling is Amdahl's law.
+      - id: processors-and-parallelism.transfer.v3.3
+        prompt: A translation service waits 3 seconds for a batch of 4 requests to fill, then translates all four in 2 seconds. What latency does the first user experience?
+        options:
+          - id: a
+            text: 0.5 seconds, the batch time shared by 4
+          - id: b
+            text: 2 seconds, the time to process the batch
+          - id: c
+            text: 5 seconds, the wait plus the processing
+        answer: c
+        feedback: Latency runs from sending the request to receiving the answer, so the 3-second wait counts, giving 3 + 2 = 5 seconds. Dividing 2 seconds by 4 requests gives a throughput figure, not anyone's waiting time.
+      - id: processors-and-parallelism.transfer.v3.4
+        prompt: Which of these jobs would gain the most from running on a GPU instead of a CPU?
+        options:
+          - id: b
+            text: Following a long chain of if-then steps, each needing the last
+          - id: c
+            text: Reading one small settings file from the disk at startup
+          - id: a
+            text: Multiplying a batch of 10,000 examples by a weight matrix
+        answer: a
+        feedback: A big batch multiply is thousands of independent multiply-and-adds, exactly what a GPU's many cores do at once. A chain of dependent steps must run one at a time, and reading one small file is mostly waiting on the disk.
+      - id: processors-and-parallelism.transfer.v3.5
+        prompt: A model has 12 layers, and each needs the previous layer's output. You have 12 GPUs. Why can't each GPU work on its own layer at the same time for a single input?
+        options:
+          - id: c
+            text: Each GPU would need its own full copy of the model's weights
+          - id: a
+            text: Each layer has to wait for the output of the layer before it
+          - id: b
+            text: GPUs can only run one kind of layer, so the layers must differ
+        answer: a
+        feedback: This is a dependency chain, so for one input, layer 5 has nothing to work on until layer 4 finishes. Copying weights is a memory question, not the reason the layers can't overlap.
+      - id: processors-and-parallelism.transfer.v3.6
+        prompt: A training step must move 2 gigabytes from memory, and the connection carries 20 gigabytes per second. What is the least time the transfer can take?
+        options:
+          - id: b
+            text: 10 seconds
+          - id: a
+            text: 0.1 seconds
+          - id: c
+            text: 40 seconds
+        answer: a
+        feedback: Time is data divided by bandwidth, 2 ÷ 20 = 0.1 seconds. 10 comes from dividing the wrong way round, and 40 from multiplying.

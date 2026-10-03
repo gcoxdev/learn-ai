@@ -1,425 +1,579 @@
 schema_version: 0.2-draft
 lesson:
   id: tokenizer-training
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn the units used by a language model
   state: draft
-  summary: Invent reusable text pieces by counting pairs, then see why changing the dictionary also changes
-    the model’s input language.
+  summary: A 1994 file-compression trick now decides how every chatbot reads text. Learn byte-pair encoding by hand, run it on the original paper's example, and see what vocabulary size costs.
   slot: M14.6
   category: learning
   sources:
-  - title: Sennrich, Haddow, Birch — subword units
-    url: https://arxiv.org/abs/1508.07909
-  - title: Kudo — Subword Regularization, unigram model (2018)
-    url: https://aclanthology.org/P18-1007/
+    - title: Neural Machine Translation of Rare Words with Subword Units (Sennrich, Haddow & Birch, 2016)
+      url: https://aclanthology.org/P16-1162/
+    - title: "Subword Regularization: Improving Neural Network Translation Models with Multiple Subword Candidates (Kudo, 2018)"
+      url: https://aclanthology.org/P18-1007/
+    - title: "SentencePiece: A simple and language independent subword tokenizer and detokenizer (Kudo & Richardson, 2018)"
+      url: https://aclanthology.org/D18-2012/
+    - title: Language Models are Unsupervised Multitask Learners (Radford et al., 2019), the GPT-2 paper, section 2.2
+      url: https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf
+    - title: Hugging Face LLM course, chapter 6 — byte-pair encoding tokenization (WordPiece and Unigram follow in sections 6 and 7)
+      url: https://huggingface.co/learn/llm-course/chapter6/5
   archetype: mechanism
 objectives:
-- id: objective.tokenizer-training
-  version: 2-draft
-  statement: Trace one byte-pair merge and distinguish tokenizer training from later text encoding and model
-    training.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - tokenizer-training.base.v2
-  - tokenizer-training.transfer.v2
-  prerequisites:
-  - anyOf:
-    - objective.tokenization
-  - anyOf:
-    - objective.count-based-language
+  - id: objective.tokenizer-training
+    version: 3-draft
+    statement: Trace one byte-pair merge and distinguish tokenizer training from later text encoding and model training.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - tokenizer-training.base.v3
+      - tokenizer-training.transfer.v3
+    prerequisites:
+      - anyOf:
+          - objective.tokenization
+      - anyOf:
+          - objective.count-based-language
 scenes:
-- id: tokenizer-training.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.tokenizer-training
-  title: The machine needs a reusable alphabet
-  markdown: 'A **tokenizer** turns text into stored pieces and their IDs. A word-level dictionary is easy to
-    imagine, but it grows large and struggles with new names. A character-level dictionary handles more spellings
-    but creates longer sequences. **Subword** pieces sit between these choices: familiar chunks can be reused
-    inside unfamiliar words. Training a tokenizer means choosing a reusable vocabulary and splitting rules
-    from examples. This is a different job from fitting the language model’s prediction weights.'
-  text_mode: 'A **tokenizer** turns text into stored pieces and their IDs. A word-level dictionary is easy
-    to imagine, but it grows large and struggles with new names. A character-level dictionary handles more
-    spellings but creates longer sequences. **Subword** pieces sit between these choices: familiar chunks can
-    be reused inside unfamiliar words. Training a tokenizer means choosing a reusable vocabulary and splitting
-    rules from examples. This is a different job from fitting the language model’s prediction weights.'
-  bridges: []
-- id: tokenizer-training.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.tokenizer-training
-  title: Make the first merge by hand
-  markdown: Use a simplified byte-pair encoding exercise, or **BPE**. The training list contains “cat” twice
-    and “cap” once. Start with c, a, t, and p as separate pieces and count neighboring pairs within each word.
-    The pair c+a occurs three times; a+t occurs twice; a+p occurs once. Merge the most frequent pair, c+a,
-    into a new piece ca. The token sequences become [ca,t], [ca,t], and [ca,p]. We deliberately omit real systems’
-    whitespace and byte handling so one merge is visible.
-  text_mode: Use a simplified byte-pair encoding exercise, or **BPE**. The training list contains “cat” twice
-    and “cap” once. Start with c, a, t, and p as separate pieces and count neighboring pairs within each word.
-    The pair c+a occurs three times; a+t occurs twice; a+p occurs once. Merge the most frequent pair, c+a,
-    into a new piece ca. The token sequences become [ca,t], [ca,t], and [ca,p]. We deliberately omit real systems’
-    whitespace and byte handling so one merge is visible.
-  bridges: []
-  figure:
-    kind: tokenizer
-    caption: The small corpus is cat twice and cap once. Pair counts include both occurrences of cat.
-    description: Inspect adjacent character pairs, choose a merge, and watch token boundaries and counts change.
-      These operations fit a toy tokenizer rule; applying an already chosen rule is a separate encoding operation.
-- id: tokenizer-training.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tokenizer-training
-  title: Count the changed sequence lengths
-  markdown: Before the merge, the three examples contain 3+3+3=9 pieces. Afterward they contain 2+2+2=6. We
-    added one vocabulary entry but shortened these sequences by three positions. Next we recount neighboring
-    pairs; their frequencies can change after a merge. A tie needs a specified rule so separate runs agree.
-    A larger vocabulary can reduce sequence length but also increases the size of vocabulary-dependent model
-    tables. “Fewer tokens” is one tradeoff, not a universal winner.
-  text_mode: Before the merge, the three examples contain 3+3+3=9 pieces. Afterward they contain 2+2+2=6. We
-    added one vocabulary entry but shortened these sequences by three positions. Next we recount neighboring
-    pairs; their frequencies can change after a merge. A tie needs a specified rule so separate runs agree.
-    A larger vocabulary can reduce sequence length but also increases the size of vocabulary-dependent model
-    tables. “Fewer tokens” is one tradeoff, not a universal winner.
-  bridges:
-  - arithmetic
-- id: tokenizer-training.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tokenizer-training
-  title: Apply the learned rules without relearning
-  markdown: At use time, the tokenizer applies its saved merge rules to new text. With just the ca merge, “cap”
-    becomes [ca,p]; it does not become one cap token unless that piece has been learned and selected by the
-    rules. Encoding one new sentence does not normally update the vocabulary. **Normalization** is any specified
-    text cleanup before splitting, such as a particular treatment of spaces or letter forms. It must be recorded
-    because it can change the exact text representation.
-  text_mode: At use time, the tokenizer applies its saved merge rules to new text. With just the ca merge,
-    “cap” becomes [ca,p]; it does not become one cap token unless that piece has been learned and selected
-    by the rules. Encoding one new sentence does not normally update the vocabulary. **Normalization** is any
-    specified text cleanup before splitting, such as a particular treatment of spaces or letter forms. It must
-    be recorded because it can change the exact text representation.
-  bridges: []
-- id: tokenizer-training.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.tokenizer-training
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Learn the splitting rules, freeze their version, then apply them consistently. Token IDs name entries;
-    they do not carry numerical meaning.
-- id: tokenizer-training.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.tokenizer-training
-  markdown: BPE and unigram tokenizers construct subword vocabularies with different learning procedures; normalization,
-    merge rules, special tokens, and model compatibility determine the encoded sequence.
-  text_mode: BPE and unigram tokenizers construct subword vocabularies with different learning procedures;
-    normalization, merge rules, special tokens, and model compatibility determine the encoded sequence.
-- id: tokenizer-training.s5
-  type: explanation
-  depth: mechanics
-  objective_refs: &id001
-  - objective.tokenizer-training
-  title: Keep the dictionary and model together
-  markdown: Suppose token ID 17 means ca in one vocabulary and dog in another. Feeding the second tokenizer’s
-    IDs into a model trained with the first vocabulary selects the wrong embedding rows. The number 17 is an
-    address, not a measurement of meaning. Store tokenizer files, special-token conventions, and model weights
-    as compatible versions. Changing splitting or ID assignment requires a deliberate compatibility strategy,
-    potentially including model updates; switching a filename is not enough.
-  text_mode: Suppose token ID 17 means ca in one vocabulary and dog in another. Feeding the second tokenizer’s
-    IDs into a model trained with the first vocabulary selects the wrong embedding rows. The number 17 is an
-    address, not a measurement of meaning. Store tokenizer files, special-token conventions, and model weights
-    as compatible versions. Changing splitting or ID assignment requires a deliberate compatibility strategy,
-    potentially including model updates; switching a filename is not enough.
-  bridges: []
-- type: explanation
-  depth: mechanics
-  objective_refs: *id001
-  id: tokenizer-training.compare-unigram
-  title: 'Another approach: score possible segmentations'
-  markdown: 'A **unigram tokenizer** starts with a candidate vocabulary and fits probabilities for its pieces.
-    Different ways of splitting the same text receive scores based on those probabilities. Training can remove
-    pieces that contribute little until a target vocabulary size is reached.
+  - id: tokenizer-training.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.tokenizer-training
+    title: A compression trick learns to read
+    markdown: |-
+      Rico Sennrich, Barry Haddow, and Alexandra Birch had a problem: their translation system had a fixed word list, so rare names and long compound words became "unknown." Their fix (published 2016) borrowed a 1994 file-compression method by Philip Gage, **byte-pair encoding (BPE)**, which repeatedly replaced the most common pair of neighboring bytes with a new byte. They applied it to letters: start from single characters and keep gluing together the most frequent neighboring pair. Frequent words become one token; rare words are spelled from common pieces. BPE now builds the vocabularies of GPT-2, the Llama models, and many others.
 
+      **Training a tokenizer** means choosing those pieces from a sample of text. It's a counting job done once, before the language model is trained, with no neural network involved.
+    bridges: []
+  - id: tokenizer-training.s2
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.tokenizer-training
+    title: Make the first merge by hand
+    markdown: |-
+      Take a tiny training set: *cat* twice and *cap* once. Start with single letters, so the vocabulary is {c, a, t, p}, and count every neighboring pair, once for each time its word occurs:
 
-    Encoding can choose a high-probability segmentation, or deliberately sample one when the training setup
-    calls for it. BPE builds pieces through saved merges; unigram tokenization scores candidate pieces through
-    a probability model. Neither procedure is the language model’s own next-token predictor, and both require
-    a vocabulary compatible with the model.'
-  text_mode: 'A **unigram tokenizer** starts with a candidate vocabulary and fits probabilities for its pieces.
-    Different ways of splitting the same text receive scores based on those probabilities. Training can remove
-    pieces that contribute little until a target vocabulary size is reached.
+      | Pair | Where | Count |
+      | --- | --- | ---: |
+      | c + a | cat, cat, cap | 3 |
+      | a + t | cat, cat | 2 |
+      | a + p | cap | 1 |
 
+      The winner is c + a, so BPE adds the new token *ca* to the vocabulary and records the **merge rule** "c + a → ca." Every word is rewritten: [ca, t], [ca, t], [ca, p].
 
-    Encoding can choose a high-probability segmentation, or deliberately sample one when the training setup
-    calls for it. BPE builds pieces through saved merges; unigram tokenization scores candidate pieces through
-    a probability model. Neither procedure is the language model’s own next-token predictor, and both require
-    a vocabulary compatible with the model.'
-- id: tokenizer-training.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tokenizer-training
-  title: Check whose text needs more pieces
-  markdown: 'A tokenizer trained mostly on one kind of text may split other languages, scripts, or specialist
-    names into many more pieces. Compare representative samples, reconstruction where supported, and special-token
-    behavior. More pieces can change cost and context use, but token count alone does not establish reasoning
-    ability.
+      Try it in the lab: pick the pair to merge and watch the boundaries and the token count change.
+    bridges: []
+    figure:
+      kind: tokenizer
+      caption: The small corpus is cat twice and cap once. Pair counts include both occurrences of cat.
+      description: Inspect adjacent character pairs, choose a merge, and watch token boundaries and counts change. These operations fit a toy tokenizer rule; applying an already chosen rule is a separate encoding operation.
+  - id: tokenizer-training.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenizer-training
+    title: Count, merge, recount
+    markdown: |-
+      Before the merge, the three words took 9 tokens; after it, 6. Now recount in the *new* pieces: ca + t appears twice and ca + p once, so the second merge is "ca + t → cat." That leaves [cat], [cat], [ca, p]: 4 tokens and a vocabulary of {c, a, t, p, ca, cat}.
 
+      :::papers The BPE training loop (Sennrich et al., 2016)
+      1. Split every word in the training text into characters, adding an end-of-word marker `</w>`.
+      2. Count every neighboring pair of symbols, weighted by how often each word occurs.
+      3. Merge the most frequent pair everywhere it appears, and append that merge to the rule list.
+      4. Repeat steps 2–3 until you've done the chosen number of merges.
 
-    Our small BPE example isolates one merge. Production implementations also define bytes, word boundaries,
-    reserved tokens, and decoding rules. Keep those conventions with the saved tokenizer. For BPE, remember
-    “count pairs, merge, recount” during training and “apply the saved rules” during encoding.'
-  text_mode: 'A tokenizer trained mostly on one kind of text may split other languages, scripts, or specialist
-    names into many more pieces. Compare representative samples, reconstruction where supported, and special-token
-    behavior. More pieces can change cost and context use, but token count alone does not establish reasoning
-    ability.
+      The vocabulary is the starting characters plus one entry per merge. The end marker lets word-final "est" differ from "est" mid-word.
+      :::
 
+      The code runs this loop on the word counts from the paper's own Python example: *low* 5 times, *lower* 2, *newest* 6, *widest* 3.
 
-    Our small BPE example isolates one merge. Production implementations also define bytes, word boundaries,
-    reserved tokens, and decoding rules. Keep those conventions with the saved tokenizer. For BPE, remember
-    “count pairs, merge, recount” during training and “apply the saved rules” during encoding.'
-  bridges: []
-- id: tokenizer-training.s7
-  type: question
-  depth: mechanics
-  objective_refs:
-  - objective.tokenizer-training
-  title: Do the next merge
-  markdown: After the ca merge, the list is [ca,t], [ca,t], [ca,p]. Which pair is now most frequent?
-  text_mode: After the ca merge, the list is [ca,t], [ca,t], [ca,p]. Which pair is now most frequent?
-  bridges: []
-  question:
-    response_type: single_choice
-    options:
-    - id: a
-      text: ca+t
-    - id: b
-      text: c+a
-    - id: c
-      text: a+t
-    answer: a
-    reveal_markdown: The current sequences contain ca+t twice and ca+p once. The old c+a pieces have already
-      been merged.
-    hint: Trace the example using the rule from the preceding pages.
-    id: tokenizer-training.practice.v2.7
+      :::predict Which pair gets merged first?
+      e + s appears in *newest* (6) and *widest* (3): 9. So do s + t and t + `</w>`, a three-way tie. The code takes the pair it counted first, e + s.
+      :::
+
+      ```python run
+      from collections import Counter
+
+      # word counts from the toy corpus in Sennrich et al. (2016); </w> marks a word's end
+      corpus = {"low": 5, "lower": 2, "newest": 6, "widest": 3}
+      words = {tuple(w) + ("</w>",): n for w, n in corpus.items()}
+
+      def merge(symbols, pair):
+          out, i = [], 0
+          while i < len(symbols):
+              if symbols[i:i + 2] == pair:
+                  out.append(symbols[i] + symbols[i + 1]); i += 2
+              else:
+                  out.append(symbols[i]); i += 1
+          return tuple(out)
+
+      merges = []
+      for step in range(1, 9):
+          pairs = Counter()
+          for symbols, n in words.items():
+              for pair in zip(symbols, symbols[1:]):
+                  pairs[pair] += n                  # weight each pair by word frequency
+          best, count = pairs.most_common(1)[0]     # ties: the pair counted first wins
+          merges.append(best)
+          words = {merge(s, best): n for s, n in words.items()}
+          print(f"merge {step}: {best[0]} + {best[1]}  (count {count})")
+
+      new = tuple("lowest") + ("</w>",)             # a word the corpus never contained
+      for pair in merges:                           # encoding: replay merges in order
+          new = merge(new, pair)
+      print("lowest ->", new)
+      ```
+
+      Eight merges build *est`</w>`*, *low*, and *new* + *est`</w>`*. Change `range(1, 9)` to `range(1, 4)` and see how "lowest" splits with only three merges learned.
+    bridges:
+      - arithmetic
+  - id: tokenizer-training.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenizer-training
+    title: Encoding replays the merges in order
+    markdown: |-
+      The program's last lines show the other half of a tokenizer. *Lowest* never appeared in training, but encoding it is easy: split it into characters, then replay the saved merges **in the order they were learned**:
+
+      | Rule applied | Pieces |
+      | --- | --- |
+      | start | l · o · w · e · s · t · `</w>` |
+      | e + s, es + t, est + `</w>` | l · o · w · est`</w>` |
+      | l + o, lo + w | low · est`</w>` |
+
+      Two familiar tokens. Likewise *cap*, with the rules "c + a → ca" and "ca + t → cat," becomes [ca, p], because no rule builds *cap*. Encoding never changes the rules: a million new sentences leave the merge list exactly as it was.
+
+      Any cleanup done before splitting, such as converting to a standard Unicode form or lowercasing, is called **normalization**. It's part of the tokenizer too: the same rules must run at training time and at use time.
+    bridges: []
+  - id: tokenizer-training.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenizer-training
+    title: How many merges?
+    markdown: |-
+      Each merge adds one vocabulary entry. More merges mean more whole words and shorter sequences, but every entry also needs a row in the embedding table and a score in the output layer:
+
+      | Model | Tokenizer | Vocabulary |
+      | --- | --- | ---: |
+      | BERT (2018) | WordPiece | 30,522 |
+      | GPT-2 (2019) | byte-level BPE | 50,257 |
+      | Llama 2 (2023) | SentencePiece BPE | 32,000 |
+
+      GPT-2's number is 256 byte tokens, plus 50,000 merges, plus one special end-of-text token. With 768 numbers per row, its embedding table alone holds 50,257 × 768 ≈ 38.6 million parameters.
+
+      :::mixup "A bigger vocabulary is always better, because sequences get shorter."
+      The extra tokens are mostly rare pieces seen only a few times in training, so their rows are poorly learned, and each one adds a row to the embedding table and a score to the output layer. Past some size, shorter sequences stop paying for that.
+      :::
+
+      And remember the tokenization lesson: retraining the tokenizer renumbers the pieces, so it must ship with a model trained on it.
+    bridges: []
+  - type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenizer-training
+    id: tokenizer-training.compare-unigram
+    title: "Two cousins: WordPiece and Unigram"
+    markdown: |-
+      - **WordPiece**, used by BERT, also merges pairs, but picks the merge that most increases the training text's likelihood, favoring pairs whose parts rarely appear apart. BERT marks word-continuing pieces with `##`: "playing" might be `play` + `##ing`.
+      - A **unigram tokenizer** (Kudo, 2018) works in the opposite direction. It starts from many candidate pieces, each with a probability, and repeatedly drops those whose removal hurts the training text's likelihood least. To encode, it picks the most probable split. During training it can also *sample* different splits, a trick Kudo called **subword regularization**: the model sees the same word split several ways and becomes more robust to odd splits.
+
+      The **SentencePiece** library (Kudo & Richardson, 2018) runs BPE or unigram directly on raw text, treating the space as an ordinary symbol (written ▁), so it also works for languages written without spaces, like Japanese.
+  - id: tokenizer-training.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenizer-training
+    title: Start from bytes, never meet an unknown
+    markdown: |-
+      Starting from characters leaves a hole: a character missing from the training text, say a new emoji, can't be encoded. GPT-2 closed it by running BPE on **bytes**. The starting vocabulary is all 256 byte values, so any text can fall back to bytes, and merges build common byte sequences into bigger tokens.
+
+      But merges follow the training text, so a language that was rare there stays split into many small pieces. The next lesson measures that gap.
+    bridges: []
+  - id: tokenizer-training.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.tokenizer-training
+    markdown: Count pairs and tokens for four small corpora, then encode a new word, size a vocabulary, and break a tie.
+    takeaway: |-
+      BPE training counts neighboring pairs, merges the most frequent, and repeats; encoding replays the saved merges in order on new text. Every merge adds a vocabulary row, so vocabulary size trades shorter sequences for bigger tables.
+  - id: tokenizer-training.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.tokenizer-training
+    markdown: |-
+      BPE and unigram tokenizers construct subword vocabularies with different learning procedures; normalization, merge rules, special tokens, and model compatibility determine the encoded sequence.
+  - id: tokenizer-training.s7
+    type: question
+    depth: mechanics
+    objective_refs:
+      - objective.tokenizer-training
+    title: Do the next merge
+    markdown: After the ca merge, the list is [ca,t], [ca,t], [ca,p]. Which pair is now most frequent?
+    bridges: []
+    question:
+      response_type: single_choice
+      options:
+        - id: a
+          text: ca+t
+        - id: b
+          text: c+a
+        - id: c
+          text: a+t
+      answer: a
+      reveal_markdown: The current sequences contain ca+t twice and ca+p once. The letters c and a are already glued into ca, so c+a and a+t no longer appear as neighboring pairs.
+      hint: Recount using the current pieces, not the original letters. Which two pieces sit side by side most often?
+      id: tokenizer-training.practice.v2.7
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - tokenizer-training.s1
-    - tokenizer-training.s2
-    - tokenizer-training.s3
-    - tokenizer-training.s4
-    - tokenizer-training.s5
-    - tokenizer-training.compare-unigram
-    - tokenizer-training.s6
-    - tokenizer-training.s7
-    - tokenizer-training.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - tokenizer-training.s1
+        - tokenizer-training.s2
+        - tokenizer-training.s7
+        - tokenizer-training.s3
+        - tokenizer-training.s4
+        - tokenizer-training.s5
+        - tokenizer-training.compare-unigram
+        - tokenizer-training.s6
+        - tokenizer-training.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     tokenizer-training.recap: tokenizer-training.check
 assessment_families:
-- id: tokenizer-training.base
-  objective_ref: objective.tokenizer-training
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Follow a BPE merge: trace the inputs, operation, and result before choosing.'
-  remediation_scene: tokenizer-training.s2
-  variants:
-  - id: tokenizer-training.base.1
-    prompt: What operation characterizes BPE vocabulary construction?
-    options:
-    - id: a
-      text: Merging selected adjacent symbol pairs
-    - id: b
-      text: Assigning one token to every possible sentence
-    - id: c
-      text: Updating the language model’s gradients only
-    answer: a
-    feedback: BPE repeatedly builds larger pieces from smaller adjacent units.
-    retired: true
-  - id: tokenizer-training.base.2
-    prompt: Is tokenizer training identical to language-model weight training?
-    options:
-    - id: b
-      text: Yes; every tokenizer is the full model
-    - id: c
-      text: Only when text is English
-    - id: a
-      text: No; they are distinct procedures
-    answer: a
-    feedback: The segmentation vocabulary and neural prediction parameters play different roles.
-    retired: true
-- id: tokenizer-training.transfer
-  objective_ref: objective.tokenizer-training
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Preserve the surrounding conventions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: tokenizer-training.s4
-  variants:
-  - id: tokenizer-training.transfer.1
-    prompt: A model is paired with a different ID mapping. What is a risk?
-    options:
-    - id: b
-      text: Only the displayed text color changes
-    - id: c
-      text: The model automatically remaps every weight correctly
-    - id: a
-      text: Embeddings receive IDs with incompatible meanings
-    answer: a
-    feedback: Token IDs must match the model’s learned vocabulary interface.
-    retired: true
-  - id: tokenizer-training.transfer.2
-    prompt: Why preserve special-token and template configuration?
-    options:
-    - id: c
-      text: They have no effect after pretraining
-    - id: a
-      text: They affect how inputs are interpreted and outputs stop
-    - id: b
-      text: Only to increase file count
-    answer: a
-    feedback: Boundary and control conventions are part of the model input format.
-    retired: true
-- id: tokenizer-training.base.v2
-  objective_ref: objective.tokenizer-training
-  task: base
-  response_type: numeric_fields_with_reason
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: tokenizer-training.s3
-  variants:
-  - prompt: A toy corpus contains “cat” 3 times and “cap” 1 times. Starting from characters, merge c+a in every
-      word. Record the count of c+a before merging and total tokens after merging.
-    answers:
-      pairs: 4
-      tokens: 8
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: The merge changes the vocabulary but no sequence lengths.
-    - id: a
-      text: Each three-character word becomes two pieces.
-    - id: b
-      text: Each word becomes one piece after the pair merge.
-    feedback: Each word contributes one c+a pair and then two pieces, ca plus its last character.
-    id: tokenizer-training.base.v2.1
-  - prompt: A toy corpus contains “cat” 2 times and “cap” 2 times. Starting from characters, merge c+a in every
-      word. Record the count of c+a before merging and total tokens after merging.
-    answers:
-      pairs: 4
-      tokens: 8
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Each three-character word becomes two pieces.
-    - id: c
-      text: The merge changes the vocabulary but no sequence lengths.
-    - id: b
-      text: Each word becomes one piece after the pair merge.
-    feedback: Each word contributes one c+a pair and then two pieces, ca plus its last character.
-    id: tokenizer-training.base.v2.2
-  - prompt: A toy corpus contains “cat” 1 times and “cap” 4 times. Starting from characters, merge c+a in every
-      word. Record the count of c+a before merging and total tokens after merging.
-    answers:
-      pairs: 5
-      tokens: 10
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: The merge changes the vocabulary but no sequence lengths.
-    - id: b
-      text: Each word becomes one piece after the pair merge.
-    - id: a
-      text: Each three-character word becomes two pieces.
-    feedback: Each word contributes one c+a pair and then two pieces, ca plus its last character.
-    id: tokenizer-training.base.v2.3
-  - prompt: A toy corpus contains “cat” 4 times and “cap” 2 times. Starting from characters, merge c+a in every
-      word. Record the count of c+a before merging and total tokens after merging.
-    answers:
-      pairs: 6
-      tokens: 12
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Each three-character word becomes two pieces.
-    - id: b
-      text: Each word becomes one piece after the pair merge.
-    - id: c
-      text: The merge changes the vocabulary but no sequence lengths.
-    feedback: Each word contributes one c+a pair and then two pieces, ca plus its last character.
-    id: tokenizer-training.base.v2.4
-  numeric_fields:
-  - id: pairs
-    label: c+a pair count
-  - id: tokens
-    label: Total tokens after this merge
-  absolute_tolerance: 1.0e-06
-- id: tokenizer-training.transfer.v2
-  objective_ref: objective.tokenizer-training
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: tokenizer-training.s3
-  variants:
-  - prompt: A new tokenizer assigns different pieces to the same IDs. What should happen before using it with
-      old weights?
-    answer: a
-    options:
-    - id: b
-      text: Keep the weights and assume ID numbers preserve meaning
-    - id: a
-      text: Check and adapt tokenizer/model compatibility
-    - id: c
-      text: Sort the input IDs into numerical order
-    feedback: Embedding rows were trained for the old token assignments; a compatibility plan is required.
-    id: tokenizer-training.transfer.v2.1
-  - prompt: What changes when a frozen BPE tokenizer encodes a new sentence?
-    answer: a
-    options:
-    - id: b
-      text: The saved merge list after every sentence
-    - id: c
-      text: The language model’s weights during splitting
-    - id: a
-      text: The output sequence for that sentence
-    feedback: Encoding applies existing rules and produces a sequence.
-    id: tokenizer-training.transfer.v2.2
-  - prompt: One language needs twice as many tokens for comparable messages. What is a useful next check?
-    answer: a
-    options:
-    - id: a
-      text: Measure coverage and sequence-cost differences on representative text
-    - id: c
-      text: Treat the higher count as a reasoning benchmark
-    - id: b
-      text: Conclude speakers express twice as many ideas
-    feedback: Tokenization efficiency and semantic or reasoning quality are distinct measurements.
-    id: tokenizer-training.transfer.v2.3
-  - prompt: Two pairs tie for the highest count. What makes the training procedure reproducible?
-    answer: a
-    options:
-    - id: a
-      text: A documented tie-breaking rule
-    - id: b
-      text: Choosing whichever pair happens to appear in memory first
-    - id: c
-      text: Changing the winner whenever a test score falls
-    feedback: A defined tie rule avoids hidden implementation-dependent vocabulary changes.
-    id: tokenizer-training.transfer.v2.4
+  - id: tokenizer-training.base
+    objective_ref: objective.tokenizer-training
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Follow a BPE merge: trace the inputs, operation, and result before choosing.'
+    remediation_scene: tokenizer-training.s2
+    variants:
+      - id: tokenizer-training.base.1
+        prompt: What operation characterizes BPE vocabulary construction?
+        options:
+          - id: a
+            text: Merging selected adjacent symbol pairs
+          - id: b
+            text: Assigning one token to every possible sentence
+          - id: c
+            text: Updating the language model’s gradients only
+        answer: a
+        feedback: BPE repeatedly builds larger pieces from smaller adjacent units.
+        retired: true
+      - id: tokenizer-training.base.2
+        prompt: Is tokenizer training identical to language-model weight training?
+        options:
+          - id: b
+            text: Yes; every tokenizer is the full model
+          - id: c
+            text: Only when text is English
+          - id: a
+            text: No; they are distinct procedures
+        answer: a
+        feedback: The segmentation vocabulary and neural prediction parameters play different roles.
+        retired: true
+  - id: tokenizer-training.transfer
+    objective_ref: objective.tokenizer-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Preserve the surrounding conventions: trace the inputs, operation, and result before choosing.'
+    remediation_scene: tokenizer-training.s4
+    variants:
+      - id: tokenizer-training.transfer.1
+        prompt: A model is paired with a different ID mapping. What is a risk?
+        options:
+          - id: b
+            text: Only the displayed text color changes
+          - id: c
+            text: The model automatically remaps every weight correctly
+          - id: a
+            text: Embeddings receive IDs with incompatible meanings
+        answer: a
+        feedback: Token IDs must match the model’s learned vocabulary interface.
+        retired: true
+      - id: tokenizer-training.transfer.2
+        prompt: Why preserve special-token and template configuration?
+        options:
+          - id: c
+            text: They have no effect after pretraining
+          - id: a
+            text: They affect how inputs are interpreted and outputs stop
+          - id: b
+            text: Only to increase file count
+        answer: a
+        feedback: Boundary and control conventions are part of the model input format.
+        retired: true
+  - id: tokenizer-training.base.v2
+    objective_ref: objective.tokenizer-training
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: tokenizer-training.s3
+    variants:
+      - prompt: A toy corpus contains “cat” 3 times and “cap” 1 times. Starting from characters, merge c+a in every word. Record the count of c+a before merging and total tokens after merging.
+        answers:
+          pairs: 4
+          tokens: 8
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: The merge changes the vocabulary but no sequence lengths.
+          - id: a
+            text: Each three-character word becomes two pieces.
+          - id: b
+            text: Each word becomes one piece after the pair merge.
+        feedback: Each word contributes one c+a pair and then two pieces, ca plus its last character.
+        id: tokenizer-training.base.v2.1
+        retired: true
+      - prompt: A toy corpus contains “cat” 2 times and “cap” 2 times. Starting from characters, merge c+a in every word. Record the count of c+a before merging and total tokens after merging.
+        answers:
+          pairs: 4
+          tokens: 8
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Each three-character word becomes two pieces.
+          - id: c
+            text: The merge changes the vocabulary but no sequence lengths.
+          - id: b
+            text: Each word becomes one piece after the pair merge.
+        feedback: Each word contributes one c+a pair and then two pieces, ca plus its last character.
+        id: tokenizer-training.base.v2.2
+        retired: true
+      - prompt: A toy corpus contains “cat” 1 times and “cap” 4 times. Starting from characters, merge c+a in every word. Record the count of c+a before merging and total tokens after merging.
+        answers:
+          pairs: 5
+          tokens: 10
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: The merge changes the vocabulary but no sequence lengths.
+          - id: b
+            text: Each word becomes one piece after the pair merge.
+          - id: a
+            text: Each three-character word becomes two pieces.
+        feedback: Each word contributes one c+a pair and then two pieces, ca plus its last character.
+        id: tokenizer-training.base.v2.3
+        retired: true
+      - prompt: A toy corpus contains “cat” 4 times and “cap” 2 times. Starting from characters, merge c+a in every word. Record the count of c+a before merging and total tokens after merging.
+        answers:
+          pairs: 6
+          tokens: 12
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Each three-character word becomes two pieces.
+          - id: b
+            text: Each word becomes one piece after the pair merge.
+          - id: c
+            text: The merge changes the vocabulary but no sequence lengths.
+        feedback: Each word contributes one c+a pair and then two pieces, ca plus its last character.
+        id: tokenizer-training.base.v2.4
+        retired: true
+    numeric_fields:
+      - id: pairs
+        label: c+a pair count
+      - id: tokens
+        label: Total tokens after this merge
+    absolute_tolerance: 1e-6
+  - id: tokenizer-training.transfer.v2
+    objective_ref: objective.tokenizer-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: tokenizer-training.s3
+    variants:
+      - prompt: A new tokenizer assigns different pieces to the same IDs. What should happen before using it with old weights?
+        answer: a
+        options:
+          - id: b
+            text: Keep the weights and assume ID numbers preserve meaning
+          - id: a
+            text: Check and adapt tokenizer/model compatibility
+          - id: c
+            text: Sort the input IDs into numerical order
+        feedback: Embedding rows were trained for the old token assignments; a compatibility plan is required.
+        id: tokenizer-training.transfer.v2.1
+        retired: true
+      - prompt: What changes when a frozen BPE tokenizer encodes a new sentence?
+        answer: a
+        options:
+          - id: b
+            text: The saved merge list after every sentence
+          - id: c
+            text: The language model’s weights during splitting
+          - id: a
+            text: The output sequence for that sentence
+        feedback: Encoding applies existing rules and produces a sequence.
+        id: tokenizer-training.transfer.v2.2
+        retired: true
+      - prompt: One language needs twice as many tokens for comparable messages. What is a useful next check?
+        answer: a
+        options:
+          - id: a
+            text: Measure coverage and sequence-cost differences on representative text
+          - id: c
+            text: Treat the higher count as a reasoning benchmark
+          - id: b
+            text: Conclude speakers express twice as many ideas
+        feedback: Tokenization efficiency and semantic or reasoning quality are distinct measurements.
+        id: tokenizer-training.transfer.v2.3
+        retired: true
+      - prompt: Two pairs tie for the highest count. What makes the training procedure reproducible?
+        answer: a
+        options:
+          - id: a
+            text: A documented tie-breaking rule
+          - id: b
+            text: Choosing whichever pair happens to appear in memory first
+          - id: c
+            text: Changing the winner whenever a test score falls
+        feedback: A defined tie rule avoids hidden implementation-dependent vocabulary changes.
+        id: tokenizer-training.transfer.v2.4
+        retired: true
+  - id: tokenizer-training.base.v3
+    objective_ref: objective.tokenizer-training
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Count the pair once for every place it occurs, multiplied by how often each word appears. After the merge, each occurrence of the pair becomes one token instead of two.
+    remediation_scene: tokenizer-training.s3
+    absolute_tolerance: 0.1
+    numeric_fields:
+      - id: pairs
+        label: Count of the pair before merging
+      - id: tokens
+        label: Total tokens after the merge
+    variants:
+      - id: tokenizer-training.base.v3.1
+        prompt: A corpus has "hug" 4 times, "pug" 2 times, and "hugs" 1 time, split into single letters. Merge u + g everywhere. Give the u + g count before merging and the total tokens after.
+        answers:
+          pairs: 7
+          tokens: 15
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Weight pairs by word frequency; each merged pair saves one token.
+          - id: b
+            text: Count each distinct word once, however often it appears.
+          - id: c
+            text: A merge turns each word that contains the pair into one token.
+        feedback: u + g appears once in each word, so 4 + 2 + 1 = 7. Before merging there are 12 + 6 + 4 = 22 tokens; each of the 7 merges saves one, leaving 15 (h·ug ×4, p·ug ×2, h·ug·s).
+      - id: tokenizer-training.base.v3.2
+        prompt: A corpus has "low" 3 times and "slow" 2 times, split into single letters. Merge l + o everywhere. Give the l + o count before merging and the total tokens after.
+        answers:
+          pairs: 5
+          tokens: 12
+        reason_answer: c
+        reason_options:
+          - id: a
+            text: Count each distinct word once, however often it appears.
+          - id: b
+            text: A merge turns each word that contains the pair into one token.
+          - id: c
+            text: Weight pairs by word frequency; each merged pair saves one token.
+        feedback: l + o appears in every copy of both words, 3 + 2 = 5 times. Before merging there are 9 + 8 = 17 tokens, so 17 − 5 = 12 remain (lo·w ×3, s·lo·w ×2).
+      - id: tokenizer-training.base.v3.3
+        prompt: A corpus has "tree" 2 times, "free" 3 times, and "reef" 1 time, split into single letters. Merge e + e everywhere. Give the e + e count before merging and the total tokens after.
+        answers:
+          pairs: 6
+          tokens: 18
+        reason_answer: b
+        reason_options:
+          - id: a
+            text: A merge turns each word that contains the pair into one token.
+          - id: b
+            text: Weight pairs by word frequency; each merged pair saves one token.
+          - id: c
+            text: Count each distinct word once, however often it appears.
+        feedback: Each word contains one e + e, so the count is 2 + 3 + 1 = 6. The 24 starting tokens drop by 6 to 18 (t·r·ee, f·r·ee, r·ee·f).
+      - id: tokenizer-training.base.v3.4
+        prompt: A corpus has "banana" 2 times and "can" 1 time, split into single letters. Merge a + n everywhere. Give the a + n count before merging and the total tokens after.
+        answers:
+          pairs: 5
+          tokens: 10
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Weight pairs by word frequency; each merged pair saves one token.
+          - id: b
+            text: A merge turns each word that contains the pair into one token.
+          - id: c
+            text: Count each distinct word once, however often it appears.
+        feedback: '"banana" contains a + n twice, so it contributes 2 × 2 = 4, and "can" adds 1, for 5. Each "banana" becomes b·an·an·a (4 tokens) and "can" becomes c·an (2), so 8 + 2 = 10.'
+  - id: tokenizer-training.transfer.v3
+    objective_ref: objective.tokenizer-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Training learns the merge list once; encoding replays it, in order, without changing it. Every vocabulary entry costs a row of parameters.
+    remediation_scene: tokenizer-training.s4
+    variants:
+      - id: tokenizer-training.transfer.v3.1
+        prompt: A BPE tokenizer learned three merges, in this order, e + r, then l + o, then lo + w. How does it encode the new word "lower"?
+        options:
+          - id: b
+            text: As one token, "lower"
+          - id: c
+            text: As l | o | w | er
+          - id: a
+            text: As low | er
+        answer: a
+        feedback: Replaying the rules in order gives l·o·w·er, then lo·w·er, then low·er. No rule ever joins low with er, so "lower" can't become one token, and skipping the later rules would leave l, o, and w apart.
+      - id: tokenizer-training.transfer.v3.2
+        prompt: A chatbot's BPE tokenizer and model were trained last year. Today a user types a brand-new slang word. What changes when it's encoded?
+        options:
+          - id: a
+            text: Only the tokens produced for that text; the merge list is unchanged
+          - id: b
+            text: The merge list gains a new rule so the word becomes one token
+          - id: c
+            text: The model's weights update so that it can learn the new word
+        answer: a
+        feedback: Encoding only applies the saved rules, so the new word is split into existing pieces. Adding merges or updating weights would require retraining, which never happens during ordinary use.
+      - id: tokenizer-training.transfer.v3.3
+        prompt: A team grows its vocabulary from 32,000 to 64,000 tokens, with 4,096 numbers per embedding row. What is a direct cost?
+        options:
+          - id: c
+            text: English sentences roughly double in length
+          - id: a
+            text: About 131 million more embedding parameters
+          - id: b
+            text: Rare words can no longer be represented
+        answer: a
+        feedback: 32,000 extra rows × 4,096 = 131,072,000 more parameters, plus as many again in the output layer if it isn't tied. A bigger vocabulary makes sequences shorter, not longer, and rare words can still be spelled from pieces.
+      - id: tokenizer-training.transfer.v3.4
+        prompt: Which description fits a unigram tokenizer (Kudo, 2018) rather than BPE?
+        options:
+          - id: b
+            text: It repeatedly merges the most frequent pair of neighboring pieces
+          - id: a
+            text: It starts with many candidate pieces and prunes the least useful
+          - id: c
+            text: It stops at single characters and never builds larger pieces
+        answer: a
+        feedback: Unigram training goes top-down, dropping pieces whose removal hurts the text's likelihood least. Merging frequent pairs bottom-up is BPE, and both methods end up with multi-character pieces.
+      - id: tokenizer-training.transfer.v3.5
+        prompt: Two pairs tie for the highest count during BPE training. What keeps two training runs on the same data from producing different vocabularies?
+        options:
+          - id: a
+            text: A fixed, documented rule for breaking ties
+          - id: b
+            text: Picking whichever pair a hash table lists first
+          - id: c
+            text: Picking the pair that gives the best test score
+        answer: a
+        feedback: A fixed rule, such as "first pair counted" or "alphabetical," gives the same merge list every time. Hash-table order can change between runs or program versions, and tuning on test scores leaks the test set into the tokenizer.

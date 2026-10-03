@@ -1,219 +1,392 @@
 schema_version: 0.2-draft
 lesson:
   id: reliable-training-operations
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Make a large training run recoverable and auditable
   state: draft
-  summary: Prepare a training run to recover from failure and leave enough evidence for others to understand
-    the resulting model.
+  summary: Meta's Llama 3 run was interrupted about every three hours, mostly by hardware. Learn the arithmetic of failures, how often to checkpoint, and how to spot the failures that don't crash anything.
   slot: M17.8
   category: learning
   sources:
-  - title: The Llama 3 Herd of Models
-    url: https://arxiv.org/abs/2407.21783
-  - title: DeepSeek-V3 Technical Report
-    url: https://arxiv.org/abs/2412.19437
-  - title: Green AI
-    url: https://arxiv.org/abs/1907.10597
+    - title: "A first order approximation to the optimum checkpoint interval (Young, Communications of the ACM, 1974)"
+      url: https://doi.org/10.1145/361147.361115
+    - title: "A higher order estimate of the optimum checkpoint interval for restart dumps (Daly, Future Generation Computer Systems, 2006)"
+      url: https://doi.org/10.1016/j.future.2004.11.016
+    - title: The Llama 3 Herd of Models (Llama Team, Meta, 2024)
+      url: https://arxiv.org/abs/2407.21783
+    - title: "PaLM: Scaling Language Modeling with Pathways (Chowdhery et al., 2022)"
+      url: https://arxiv.org/abs/2204.02311
+    - title: "Silent Data Corruptions at Scale (Dixit et al., 2021)"
+      url: https://arxiv.org/abs/2102.11245
+    - title: "Llama 2: Open Foundation and Fine-Tuned Chat Models (Touvron et al., 2023), table 2 on training energy"
+      url: https://arxiv.org/abs/2307.09288
 objectives:
-- id: objective.reliable-training-operations
-  version: 1-draft
-  statement: Reliable training operations connect health monitoring, checkpoint recovery, reproducible configuration,
-    and resource accounting to the identity and limitations of the resulting model.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - reliable-training-operations.base
-  - reliable-training-operations.transfer
-  prerequisites:
-  - anyOf:
-    - objective.pretraining-budget-and-checkpoints
-  - anyOf:
-    - objective.sharding-and-recomputation
-  - anyOf:
-    - objective.mixed-precision-training
+  - id: objective.reliable-training-operations
+    version: 2-draft
+    statement: Reliable training operations connect health monitoring, checkpoint recovery, reproducible configuration, and resource accounting to the identity and limitations of the resulting model.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - reliable-training-operations.base.v2
+      - reliable-training-operations.transfer.v2
+      - reliable-training-operations.calculate
+    prerequisites:
+      - anyOf:
+          - objective.pretraining-budget-and-checkpoints
+      - anyOf:
+          - objective.sharding-and-recomputation
+      - anyOf:
+          - objective.mixed-precision-training
 scenes:
-- id: reliable-training-operations.s1
-  title: Monitor more than the final loss
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.reliable-training-operations
-  markdown: Track loss by source, gradient norms, nonfinite events, throughput, device failures, and data-loader
-    health. A stalled input pipeline can look like poor accelerator utilization; corrupted batches can create
-    loss spikes. Logs should identify the step and configuration without unnecessarily retaining sensitive
-    raw examples.
-  text_mode: Track loss by source, gradient norms, nonfinite events, throughput, device failures, and data-loader
-    health. A stalled input pipeline can look like poor accelerator utilization; corrupted batches can create
-    loss spikes. Logs should identify the step and configuration without unnecessarily retaining sensitive
-    raw examples.
-  bridges: []
-- id: reliable-training-operations.s2
-  title: Practice recovery before a long run
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reliable-training-operations
-  markdown: 'A checkpoint should be complete, consistent across shards, and linked to code, tokenizer, optimizer,
-    and data progress. Test restoring it into a short continuation. A file existing on disk does not prove
-    that a distributed state can resume coherently after a worker failure.
+  - id: reliable-training-operations.s1
+    title: A failure every eight days, or every three hours
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.reliable-training-operations
+    markdown: |-
+      A single A100 in a well-run data center is reliable. Suppose each GPU, together with its share of host, cables, and switches, fails on average once every 50,000 hours, nearly six years. That average is its **mean time between failures (MTBF)**.
 
+      The team's synchronous job stops if *any* of its 256 GPUs fails. With independent failures, the cluster's failure rate is the sum of the parts' rates, so
 
-    A distributed checkpoint may have one **shard**, or file partition, per worker. All must describe a compatible
-    step. Combining worker A at step 100 with worker B at step 99 can produce a state no actual run had. An
-    **integrity check** detects missing or changed bytes; a restore test checks whether the complete state
-    can be used.'
-  text_mode: 'A checkpoint should be complete, consistent across shards, and linked to code, tokenizer, optimizer,
-    and data progress. Test restoring it into a short continuation. A file existing on disk does not prove
-    that a distributed state can resume coherently after a worker failure.
+      $$\text{MTBF}_{\text{cluster}} \approx \frac{\text{MTBF}_{\text{GPU}}}{N} = \frac{50{,}000 \text{ h}}{256} \approx 195 \text{ hours, about 8 days.}$$
 
+      Over a 30-day run, expect about four crashes.
 
-    A distributed checkpoint may have one **shard**, or file partition, per worker. All must describe a compatible
-    step. Combining worker A at step 100 with worker B at step 99 can produce a state no actual run had. An
-    **integrity check** detects missing or changed bytes; a restore test checks whether the complete state
-    can be used.'
-  bridges: []
-- id: reliable-training-operations.s3
-  title: Describe reproducibility precisely
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reliable-training-operations
-  markdown: 'Fixed seeds help, but parallel reduction order, nondeterministic kernels, hardware, and library
-    versions can alter results. Distinguish bitwise replay from statistically similar reruns. Record what is
-    reproducible and what is merely documented; missing training data prevents some forms of independent reproduction.
+      :::predict Meta trained Llama 3 405B on 16,384 H100 GPUs. With the same 50,000-hour figure, how often would the job fail?
+      50,000 ÷ 16,384 ≈ 3 hours. That's close to what Meta reported: in a 54-day stretch of pretraining, 419 unexpected interruptions, one about every 3.1 hours, with roughly 78% traced to confirmed or suspected hardware problems. At that scale, recovery has to be automatic.
+      :::
+    bridges: []
+  - id: reliable-training-operations.interval
+    title: How often to checkpoint
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reliable-training-operations
+    markdown: |-
+      A checkpoint (the pretraining module listed what goes in one) costs time to write. The team's sharded checkpoint takes $C$ = 2 minutes. Checkpoint too often and you spend all your time writing; too rarely and each crash throws away hours of work. On average a crash lands halfway through an interval $\tau$, losing $\tau/2$ of work, and crashes come once per MTBF $M$. So the fraction of time wasted is about
 
+      $$\text{waste}(\tau) \approx \frac{C}{\tau} + \frac{\tau}{2M}$$
 
-    **Bitwise replay** means exactly matching stored numerical bits. **Statistically similar** means repeated
-    results fall within a documented range under comparable conditions. A seed fixes a random generator''s
-    starting state, but does not by itself fix parallel arithmetic order or every device implementation.'
-  text_mode: 'Fixed seeds help, but parallel reduction order, nondeterministic kernels, hardware, and library
-    versions can alter results. Distinguish bitwise replay from statistically similar reruns. Record what is
-    reproducible and what is merely documented; missing training data prevents some forms of independent reproduction.
+      :::papers Young's optimal checkpoint interval (Young, 1974; refined by Daly, 2006)
+      Setting the derivative of the waste to zero gives
 
+      $$\tau^* = \sqrt{2\,C\,M}$$
 
-    **Bitwise replay** means exactly matching stored numerical bits. **Statistically similar** means repeated
-    results fall within a documented range under comparable conditions. A seed fixes a random generator''s
-    starting state, but does not by itself fix parallel arithmetic order or every device implementation.'
-  bridges: []
-- id: reliable-training-operations.s4
-  title: Account for resources honestly
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reliable-training-operations
-  markdown: 'Report accelerator type and time, utilization assumptions, training stages included, and measurement
-    boundaries. Energy can be measured or estimated from power over time; emissions also depend on electricity
-    and accounting choices. A quoted final-run compute cost is not automatically the total cost of research
-    and deployment.
+      For the team, $M$ = 195.3 hours ≈ 11,719 minutes, so $\tau^* = \sqrt{2 \times 2 \times 11{,}719} \approx 217$ minutes, about every 3.6 hours. At that interval the two costs balance: 2/217 ≈ 0.92% writing plus 217/23,438 ≈ 0.93% lost work, about 1.85% in total. Daly's refinement adds correction terms, including the time to restart, that matter only when $C$ is not small compared with $M$.
+      :::
 
+      The simulation below injects random crashes and compares the measured waste with the formula:
 
-    Power is the rate of energy use; energy accumulates over time. A hypothetical constant 2 kW load running
-    for 3 hours uses 6 kWh. Include the equipment covered by the measurement. A final successful run omits
-    failed experiments and later serving, so call it final-run energy rather than the project''s complete footprint.'
-  text_mode: 'Report accelerator type and time, utilization assumptions, training stages included, and measurement
-    boundaries. Energy can be measured or estimated from power over time; emissions also depend on electricity
-    and accounting choices. A quoted final-run compute cost is not automatically the total cost of research
-    and deployment.
+      ```python run
+      import math, random
 
+      C = 2.0                      # minutes to write one checkpoint
+      M = 50_000 * 60 / 256        # cluster MTBF in minutes (per-GPU 50,000 h, 256 GPUs)
+      print(f"cluster MTBF {M / 60:.0f} h; Young's interval sqrt(2CM) = {math.sqrt(2 * C * M):.0f} min")
 
-    Power is the rate of energy use; energy accumulates over time. A hypothetical constant 2 kW load running
-    for 3 hours uses 6 kWh. Include the equipment covered by the measurement. A final successful run omits
-    failed experiments and later serving, so call it final-run energy rather than the project''s complete footprint.'
-  bridges: []
-- id: reliable-training-operations.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.reliable-training-operations
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A recoverable run needs more than a saved weight file. Test restoration, record the conditions
-    of the run, and state exactly which stages your resource measurements include.
-- id: reliable-training-operations.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.reliable-training-operations
-  markdown: A recoverable run needs more than a saved weight file. Test restoration, record the conditions
-    of the run, and state exactly which stages your resource measurements include.
-  text_mode: A recoverable run needs more than a saved weight file. Test restoration, record the conditions
-    of the run, and state exactly which stages your resource measurements include.
+      def simulate(tau, minutes=20_000_000, seed=0):
+          """Work tau minutes, write a checkpoint (C), repeat; a crash loses the current segment."""
+          rng = random.Random(seed)
+          t, useful = 0.0, 0.0
+          next_fail = rng.expovariate(1 / M)
+          while t < minutes:
+              if t + tau + C <= next_fail:          # segment and checkpoint finish safely
+                  t += tau + C
+                  useful += tau
+              else:                                 # crash: roll back to the last checkpoint
+                  t = next_fail
+                  next_fail = t + rng.expovariate(1 / M)
+          return 1 - useful / t
+
+      for tau in [30, 100, 217, 500, 1500]:
+          formula = C / tau + tau / (2 * M)
+          print(f"every {tau:5d} min: wasted {simulate(tau):6.2%} (formula {formula:6.2%})")
+      ```
+
+      The minimum sits at 217 minutes. Now change 256 to 16384, Llama 3's scale: the best interval drops to about 27 minutes, and even the 30-minute row wastes about 14% of the run. That's why large labs write checkpoints asynchronously, first to CPU memory and then to storage, which shrinks $C$.
+    bridges: []
+  - id: reliable-training-operations.s2
+    title: Practice the restart before you need it
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reliable-training-operations
+    markdown: |-
+      With FSDP, each of the 256 GPUs writes its own **shard**, its slice of the weights and optimizer state. A usable checkpoint is all 256 shards from the *same* step, plus the data loader's position, the learning-rate schedule, and the random-number states. Combining GPU 1's shard from step 1,000 with GPU 2's from step 999 creates a model that never existed. So a checkpoint counts as done only when every shard has been written and verified with a checksum, and a restart loads the newest step for which that's true.
+
+      Test it before the long run: kill a job on purpose, restart from its last checkpoint, and check that the next steps' losses match an uninterrupted run. Restart time adds to each failure's cost too: with four crashes in a month, a 20-minute restart costs about 80 minutes; with 419 crashes, it costs days.
+    bridges: []
+  - id: reliable-training-operations.incidents
+    title: Spikes, silent errors, and stragglers
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reliable-training-operations
+    markdown: |-
+      Crashes are the easy failures, because everyone notices them. Three others don't stop the job:
+
+      | Symptom | Likely cause | What to check and do |
+      | --- | --- | --- |
+      | Loss jumps far above its recent average, gradient norm spikes | Unstable optimization on particular batches | Roll back to a checkpoint before the spike and skip the batches around it |
+      | One replica's weights differ from the others; loss drifts or turns NaN for no clear reason | **Silent data corruption**: hardware returning wrong numbers without raising an error | Compare weight checksums across data-parallel replicas; rerun the step on other hardware; remove the faulty GPU |
+      | Step time creeps up; per-GPU timings show one slow worker | A **straggler**: a hot, throttled, or failing GPU or link | Replace that node from a spare pool and restart from the last checkpoint |
+
+      Loss spikes are well documented. Training the 540B PaLM model (2022), Google saw about 20 spikes despite gradient clipping. They restarted from a checkpoint about 100 steps before each spike and skipped roughly 200–500 batches. The same batches caused no spike when fed from a different starting point, so the data wasn't simply bad. To catch spikes automatically, compare each step's loss with a running mean and standard deviation, and alert when it lands several standard deviations above.
+
+      Whenever several GPUs hold full copies of the same weights (plain data parallelism, or sharding inside each node and replicating across nodes), those copies should be identical after every step. That makes corruption detectable: a replica whose weight checksum disagrees with its peers has computed something wrong. Meta has described such silent corruptions in its fleet (Dixit et al., 2021), and the Llama 3 report counts them among its hardware problems.
+    bridges: []
+  - id: reliable-training-operations.s3
+    title: Say exactly what can be reproduced
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reliable-training-operations
+    markdown: |-
+      **Bitwise replay**, getting exactly the same bits when a step is rerun, needs the same code, data order, seeds, library versions, hardware, and deterministic kernels. Many fast GPU kernels add numbers in whatever order threads finish, and floating-point addition isn't associative, so a rerun can differ in the last digits. Without that, the most you can promise is that reruns are **statistically similar**: they land within a known range of loss and scores. Record which of the two you can promise, and keep the configuration, commit hash, and data manifest with every checkpoint.
+    bridges: []
+  - id: reliable-training-operations.s4
+    title: Account for resources honestly
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reliable-training-operations
+    markdown: |-
+      Energy is power × time. Llama 2's report estimated its emissions from GPU-hours at 400 W per A100, the GPU's peak power rating. For the team: 256 GPUs × 0.4 kW × 720 hours ≈ 74,000 kWh, or 74 MWh, for one 30-day run. State what that number covers: GPU power only, at rated rather than measured draw, for the final run. It leaves out CPUs, networking, cooling, restarts, and every experiment that came before. Report it as "final-run GPU energy," not the model's footprint.
+    bridges: []
+  - id: reliable-training-operations.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.reliable-training-operations
+    markdown: Cluster MTBFs and checkpoint intervals to compute, mismatched shards, a replica whose checksum disagrees, a slow GPU, and an energy report test whether you can keep a long run healthy and honest.
+    takeaway: |-
+      A cluster of N GPUs fails about N times as often as one GPU, so checkpoint about every √(2 × write time × MTBF) and rehearse restarts. Watch for the failures that don't crash: loss spikes, silent data corruption, and stragglers.
+  - id: reliable-training-operations.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.reliable-training-operations
+    markdown: |-
+      A recoverable run needs more than a saved weight file. Test restoration, record the conditions of the run, and state exactly which stages your resource measurements include.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - reliable-training-operations.s1
-    - reliable-training-operations.s2
-    - reliable-training-operations.s3
-    - reliable-training-operations.s4
-    - reliable-training-operations.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - reliable-training-operations.s1
+        - reliable-training-operations.interval
+        - reliable-training-operations.s2
+        - reliable-training-operations.incidents
+        - reliable-training-operations.s3
+        - reliable-training-operations.s4
+        - reliable-training-operations.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     reliable-training-operations.recap: reliable-training-operations.check
 assessment_families:
-- id: reliable-training-operations.base
-  objective_ref: objective.reliable-training-operations
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Practice recovery before a long run: trace the inputs, operation, and result before choosing.'
-  remediation_scene: reliable-training-operations.s2
-  variants:
-  - id: reliable-training-operations.base.1
-    prompt: Why test checkpoint restoration early?
-    options:
-    - id: b
-      text: Because saved files always prove recovery
-    - id: c
-      text: To avoid evaluating any outputs
-    - id: a
-      text: To establish that saved state can actually resume
-    answer: a
-    feedback: Recovery is a behavior that needs verification.
-  - id: reliable-training-operations.base.2
-    prompt: Do fixed seeds guarantee bitwise equality across hardware?
-    options:
-    - id: c
-      text: Only for every GPU operation
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Execution and numerical ordering can still differ.
-- id: reliable-training-operations.transfer
-  objective_ref: objective.reliable-training-operations
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Account for resources honestly: trace the inputs, operation, and result before choosing.'
-  remediation_scene: reliable-training-operations.s4
-  variants:
-  - id: reliable-training-operations.transfer.1
-    prompt: A cost report counts only the final successful run. What should it say?
-    options:
-    - id: c
-      text: That hardware time equals energy exactly
-    - id: a
-      text: That its scope excludes other experiments and costs
-    - id: b
-      text: That it proves total project cost
-    answer: a
-    feedback: Accounting boundaries determine what a number means.
-  - id: reliable-training-operations.transfer.2
-    prompt: Low device utilization appears with empty input queues. What should be inspected?
-    options:
-    - id: a
-      text: The input pipeline and its bottlenecks
-    - id: b
-      text: Only model accuracy
-    - id: c
-      text: Only output token spelling
-    answer: a
-    feedback: The accelerator may be waiting for data rather than lacking arithmetic capacity.
+  - id: reliable-training-operations.base
+    objective_ref: objective.reliable-training-operations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Practice recovery before a long run: trace the inputs, operation, and result before choosing.'
+    remediation_scene: reliable-training-operations.s2
+    variants:
+      - id: reliable-training-operations.base.1
+        prompt: Why test checkpoint restoration early?
+        options:
+          - id: b
+            text: Because saved files always prove recovery
+          - id: c
+            text: To avoid evaluating any outputs
+          - id: a
+            text: To establish that saved state can actually resume
+        answer: a
+        feedback: Recovery is a behavior that needs verification.
+        retired: true
+      - id: reliable-training-operations.base.2
+        prompt: Do fixed seeds guarantee bitwise equality across hardware?
+        options:
+          - id: c
+            text: Only for every GPU operation
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Execution and numerical ordering can still differ.
+        retired: true
+  - id: reliable-training-operations.transfer
+    objective_ref: objective.reliable-training-operations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Account for resources honestly: trace the inputs, operation, and result before choosing.'
+    remediation_scene: reliable-training-operations.s4
+    variants:
+      - id: reliable-training-operations.transfer.1
+        prompt: A cost report counts only the final successful run. What should it say?
+        options:
+          - id: c
+            text: That hardware time equals energy exactly
+          - id: a
+            text: That its scope excludes other experiments and costs
+          - id: b
+            text: That it proves total project cost
+        answer: a
+        feedback: Accounting boundaries determine what a number means.
+        retired: true
+      - id: reliable-training-operations.transfer.2
+        prompt: Low device utilization appears with empty input queues. What should be inspected?
+        options:
+          - id: a
+            text: The input pipeline and its bottlenecks
+          - id: b
+            text: Only model accuracy
+          - id: c
+            text: Only output token spelling
+        answer: a
+        feedback: The accelerator may be waiting for data rather than lacking arithmetic capacity.
+        retired: true
+  - id: reliable-training-operations.base.v2
+    objective_ref: objective.reliable-training-operations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Cluster MTBF is the per-GPU MTBF divided by N, and the best interval is √(2CM), so it moves with the square root of each input. A restart must use shards from a single step.
+    remediation_scene: reliable-training-operations.interval
+    variants:
+      - id: reliable-training-operations.base.v2.1
+        prompt: Each of 1,000 GPUs fails on average once every 40,000 hours, independently. About how often does a job that needs all of them fail?
+        options:
+          - id: b
+            text: About every 40,000 hours, the same as one GPU
+          - id: a
+            text: About every 40 hours
+          - id: c
+            text: About every 40 million hours
+        answer: a
+        feedback: Failure rates add, so the cluster fails 1,000 times as often as one GPU, every 40,000 ÷ 1,000 = 40 hours. Multiplying instead of dividing gives 40 million.
+      - id: reliable-training-operations.base.v2.2
+        prompt: A team's checkpoint write time grows from 1 minute to 4 minutes, with the same MTBF. How should the optimal checkpoint interval change?
+        options:
+          - id: c
+            text: Stay the same, since the failure rate hasn't changed
+          - id: b
+            text: Grow four times longer, to match the write time
+          - id: a
+            text: Double, since it grows with the square root of write time
+        answer: a
+        feedback: τ* = √(2CM), so quadrupling C multiplies τ* by √4 = 2. Checkpoints cost more, so you take them less often, but not four times less often.
+      - id: reliable-training-operations.base.v2.3
+        prompt: After a crash, the checkpoint directory holds step-1,000 shards from 255 GPUs and a step-999 shard from the 256th. How should the job restart?
+        options:
+          - id: a
+            text: From step 999, the newest step with a complete set of shards
+          - id: b
+            text: From step 1,000, reusing the one step-999 shard in its place
+          - id: c
+            text: From each GPU's own newest shard, then let them resync
+        answer: a
+        feedback: A usable checkpoint is every shard from one step. Mixing steps builds a model state that never existed, so fall back to step 999, if its shards are all present and verified.
+      - id: reliable-training-operations.base.v2.4
+        prompt: A large run's loss spikes sharply despite gradient clipping. What did the PaLM team do in this situation?
+        options:
+          - id: c
+            text: Removed those batches from the dataset permanently as bad data
+          - id: a
+            text: Restarted about 100 steps before the spike, skipping those batches
+          - id: b
+            text: Lowered the learning rate permanently and carried on from the spike
+        answer: a
+        feedback: They rolled back to a checkpoint before the spike and skipped roughly 200–500 batches. The same batches didn't cause spikes from a different starting point, so they weren't simply bad data.
+  - id: reliable-training-operations.transfer.v2
+    objective_ref: objective.reliable-training-operations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide whether the problem is a crash, a silent wrong answer, a slow worker, or an accounting boundary, then pick the check that exposes that one.
+    remediation_scene: reliable-training-operations.incidents
+    variants:
+      - id: reliable-training-operations.transfer.v2.1
+        prompt: In a data-parallel run, a periodic checksum shows that replica 117's weights differ from those of the other 255 replicas. What is the likeliest cause?
+        options:
+          - id: b
+            text: Normal rounding differences, which make replicas drift apart
+          - id: a
+            text: Silent data corruption on the hardware behind replica 117
+          - id: c
+            text: A straggler, since slow replicas fall a step behind the others
+        answer: a
+        feedback: Every replica applies the same all-reduced gradient to the same weights, so they should stay identical. One outlier points to hardware computing wrong numbers. A straggler slows the step but ends with the same weights.
+      - id: reliable-training-operations.transfer.v2.2
+        prompt: Over a day, step time creeps from 5.5 s to 7 s. Per-GPU timings show one GPU's backward pass taking 40% longer than the rest, and it's running hot. What should the team do?
+        options:
+          - id: a
+            text: Swap that node for a spare and restart from the last checkpoint
+          - id: b
+            text: Raise the batch size so the slow GPU's delay is spread out
+          - id: c
+            text: Lower the learning rate to make each step's update smaller
+        answer: a
+        feedback: In synchronous training the slowest GPU sets the pace for all of them, so removing the straggler recovers the lost time. Batch size and learning rate don't touch a hardware slowdown.
+      - id: reliable-training-operations.transfer.v2.3
+        prompt: A paper reports "training energy, 74 MWh," computed as GPUs × 400 W rated power × hours of the final run. What should the report make clear?
+        options:
+          - id: c
+            text: That rated power matches measured draw, so the number is exact
+          - id: b
+            text: That this is the model's full energy footprint, start to finish
+          - id: a
+            text: That it covers GPU power in the final run only, estimated from ratings
+        answer: a
+        feedback: The figure leaves out CPUs, networking, cooling, failed runs, and earlier experiments, and rated power isn't measured draw. Naming the boundary makes it a useful number.
+      - id: reliable-training-operations.transfer.v2.4
+        prompt: A company moves a training job from 256 to 4,096 GPUs of the same type, keeping the checkpoint write time at 2 minutes. How should the checkpoint interval change?
+        options:
+          - id: b
+            text: Shrink about 16×, in step with the cluster's MTBF
+          - id: c
+            text: Stay the same, since each GPU is just as reliable
+          - id: a
+            text: Shrink about 4×, the square root of the 16× MTBF drop
+        answer: a
+        feedback: 16 times the GPUs means a 16× shorter cluster MTBF, and τ* = √(2CM) shrinks by √16 = 4. Per-GPU reliability is unchanged, but the job now depends on 16 times as many parts.
+  - id: reliable-training-operations.calculate
+    objective_ref: objective.reliable-training-operations
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Cluster MTBF = per-GPU MTBF ÷ N. Best interval = √(2 × C × M). Waste ≈ C/τ + τ/(2M). Keep minutes with minutes and hours with hours."
+    remediation_scene: reliable-training-operations.interval
+    absolute_tolerance: 0.5
+    variants:
+      - id: reliable-training-operations.calculate.1
+        prompt: Each GPU has an MTBF of 50,000 hours. What is the MTBF, in hours, of a job that needs all of 2,000 such GPUs?
+        answer: 25
+        feedback: 50,000 ÷ 2,000 = 25 hours, so expect about one failure a day.
+      - id: reliable-training-operations.calculate.2
+        prompt: A checkpoint takes C = 1 minute to write and the cluster MTBF is M = 200 minutes. What is Young's optimal checkpoint interval, in minutes?
+        answer: 20
+        feedback: √(2 × 1 × 200) = √400 = 20 minutes.
+      - id: reliable-training-operations.calculate.3
+        prompt: With C = 1 minute, M = 200 minutes and a checkpoint every 20 minutes, what percentage of time is wasted according to C/τ + τ/(2M)?
+        answer: 10
+        feedback: 1/20 = 5% writing checkpoints, plus 20/400 = 5% lost work, gives 10%. At the optimal interval the two parts are equal.
+      - id: reliable-training-operations.calculate.4
+        prompt: A checkpoint takes 2 minutes to write, and the cluster MTBF is 11,700 minutes. What is the optimal checkpoint interval, in minutes?
+        answer: 216
+        feedback: √(2 × 2 × 11,700) = √46,800 ≈ 216 minutes, about every 3.6 hours.
+      - id: reliable-training-operations.calculate.5
+        prompt: A run of 64 GPUs lasts 10 days, and each GPU draws about 0.5 kW. Counting GPU power only, how many MWh (1 MWh = 1,000 kWh) does it use?
+        answer: 7.7
+        feedback: 64 × 0.5 kW × 240 hours = 7,680 kWh ≈ 7.7 MWh, for GPUs alone.
+      - id: reliable-training-operations.calculate.6
+        prompt: A report counts 419 unexpected interruptions in a 54-day stretch of training. On average, how many hours passed between interruptions?
+        answer: 3.1
+        feedback: 54 × 24 = 1,296 hours, divided by 419 ≈ 3.1 hours between interruptions.

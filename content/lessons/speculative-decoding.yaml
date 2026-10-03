@@ -1,195 +1,418 @@
 schema_version: 0.2-draft
 lesson:
   id: speculative-decoding
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Let a cheap draft propose tokens for a target model to verify
   state: draft
-  summary: Use cheap proposals to reduce sequential work without changing the intended sampling distribution.
+  summary: A small model guesses the next four tokens, and the big model checks all four in the time it takes to write one. The answers come out exactly as the big model would write them.
   slot: M27.6
   category: learning
   sources:
-  - title: Fast Inference from Transformers via Speculative Decoding
-    url: https://arxiv.org/abs/2211.17192
+    - title: Fast Inference from Transformers via Speculative Decoding (Leviathan, Kalman & Matias, 2023)
+      url: https://arxiv.org/abs/2211.17192
+    - title: Accelerating Large Language Model Decoding with Speculative Sampling (Chen et al., 2023)
+      url: https://arxiv.org/abs/2302.01318
+    - title: "Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads (Cai et al., 2024)"
+      url: https://arxiv.org/abs/2401.10774
 objectives:
-- id: objective.speculative-decoding
-  version: 1-draft
-  statement: Speculative decoding proposes several tokens and verifies them with a target model; distribution-preserving
-    variants require an exact acceptance/correction rule, while speed depends on acceptance and execution cost.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - speculative-decoding.base
-  - speculative-decoding.transfer
-  prerequisites:
-  - anyOf:
-    - objective.decoding-and-sampling
-  - anyOf:
-    - objective.probability
+  - id: objective.speculative-decoding
+    version: 2-draft
+    statement: Speculative decoding proposes several tokens and verifies them with a target model; distribution-preserving variants require an exact acceptance/correction rule, while speed depends on acceptance and execution cost.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - speculative-decoding.base.v2
+      - speculative-decoding.transfer.v2
+      - speculative-decoding.expected-tokens
+    prerequisites:
+      - anyOf:
+          - objective.decoding-and-sampling
+      - anyOf:
+          - objective.probability
 scenes:
-- id: speculative-decoding.s1
-  title: Propose more than one step cheaply
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.speculative-decoding
-  markdown: A draft model or other proposal mechanism generates candidate tokens. The target evaluates candidates
-    in a parallelizable verification computation. If enough proposals are accepted, the system can emit several
-    tokens while paying fewer sequential target steps than ordinary decoding.
-  text_mode: A draft model or other proposal mechanism generates candidate tokens. The target evaluates candidates
-    in a parallelizable verification computation. If enough proposals are accepted, the system can emit several
-    tokens while paying fewer sequential target steps than ordinary decoding.
-  bridges: []
-- id: speculative-decoding.s2
-  title: Acceptance must match the stated guarantee
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speculative-decoding
-  markdown: 'A distribution-preserving sampling method compares target and proposal probabilities with a defined
-    acceptance rule and correction distribution after rejection. Simply accepting tokens that look plausible
-    can change the target distribution. Greedy-equivalence variants have their own exact matching conditions.
+  - id: speculative-decoding.s1
+    title: Guess four, check them in one pass
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.speculative-decoding
+    markdown: |-
+      Many of Fern's replies are predictable. After "Water your monstera when the top", almost any model would guess "two inches of soil". So why pay the 8B model 8 ms for every one of those easy tokens?
 
+      Recall the key fact from the lesson on prefill and decode: a decode step is limited by reading the 16 GB of weights, not by arithmetic. Running the 8B model over 5 positions costs about the same 8 ms as running it over 1. So let a small, fast **draft model** guess ahead, and let the big model, called the **target**, check all the guesses in a single pass. Fern's team uses Llama 3.2 1B as the small model. It shares the 8B model's tokenizer, and at about 2.5 GB of weights each of its steps takes about 1.2 ms.
 
-    For a tiny example, let the draft probabilities for [A, B] be [0.8, 0.2] and the target probabilities be
-    [0.6, 0.4]. Accept a proposed token with probability min(1, target/draft): A is accepted with 0.75 and
-    B with 1. Rejections therefore occur only for A. The correction distribution is proportional to the positive
-    part of target minus draft: [0, 0.2], so rejection produces B. Final probabilities are A: 0.8 × 0.75 =
-    0.6; B: 0.2 + 0.8 × 0.25 = 0.4. This illustrates the rule at one position; a full algorithm also handles
-    accepted prefixes, stopping, and the next target token.'
-  text_mode: 'A distribution-preserving sampling method compares target and proposal probabilities with a defined
-    acceptance rule and correction distribution after rejection. Simply accepting tokens that look plausible
-    can change the target distribution. Greedy-equivalence variants have their own exact matching conditions.
+      One round of **speculative decoding** looks like this:
 
+      1. The small model generates $k = 4$ tokens the ordinary way, one at a time: "two", " inches", " of", " soil". Cost: about 5 ms.
+      2. The target runs once over all four guesses, using its KV cache for the context. That gives the target's own probabilities at 5 positions: after each guess, plus one more after the last. Cost: about 8 ms.
+      3. Going left to right, an acceptance rule keeps or rejects each guess. At the first rejection, the target's probabilities pick a replacement token and the rest of the guesses are thrown away. If all four survive, the fifth position gives one bonus token for free.
 
-    For a tiny example, let the draft probabilities for [A, B] be [0.8, 0.2] and the target probabilities be
-    [0.6, 0.4]. Accept a proposed token with probability min(1, target/draft): A is accepted with 0.75 and
-    B with 1. Rejections therefore occur only for A. The correction distribution is proportional to the positive
-    part of target minus draft: [0, 0.2], so rejection produces B. Final probabilities are A: 0.8 × 0.75 =
-    0.6; B: 0.2 + 0.8 × 0.25 = 0.4. This illustrates the rule at one position; a full algorithm also handles
-    accepted prefixes, stopping, and the next target token.'
-  bridges:
-  - probability
-- id: speculative-decoding.s3
-  title: Trace the cost tradeoff
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speculative-decoding
-  markdown: Suppose drafting and verification together cost the equivalent of two ordinary target steps and
-    yield four accepted output tokens on average. That suggests a benefit under those assumptions. If only
-    one token is accepted, overhead can dominate. Batch size, model placement, and memory traffic change the
-    calculation.
-  text_mode: Suppose drafting and verification together cost the equivalent of two ordinary target steps and
-    yield four accepted output tokens on average. That suggests a benefit under those assumptions. If only
-    one token is accepted, overhead can dominate. Batch size, model placement, and memory traffic change the
-    calculation.
-  bridges: []
-- id: speculative-decoding.s4
-  title: Evaluate correctness and speed separately
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speculative-decoding
-  markdown: Check output-distribution or greedy-equivalence claims against a reference implementation, including
-    filtering and stopping rules. Then benchmark acceptance, latency, throughput, and memory. A fast approximate
-    method may be useful, but should not inherit an exactness claim from a different algorithm.
-  text_mode: Check output-distribution or greedy-equivalence claims against a reference implementation, including
-    filtering and stopping rules. Then benchmark acceptance, latency, throughput, and memory. A fast approximate
-    method may be useful, but should not inherit an exactness claim from a different algorithm.
-  bridges: []
-- id: speculative-decoding.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.speculative-decoding
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A draft proposes tokens and a target verifies them. Preserving the target distribution requires
-    the specified acceptance and correction rules; speed depends on how much work those rules save.
-- id: speculative-decoding.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.speculative-decoding
-  markdown: A draft proposes tokens and a target verifies them. Preserving the target distribution requires
-    the specified acceptance and correction rules; speed depends on how much work those rules save.
-  text_mode: A draft proposes tokens and a target verifies them. Preserving the target distribution requires
-    the specified acceptance and correction rules; speed depends on how much work those rules save.
+      If "two", " inches", and " of" pass and " soil" fails, this round emits four tokens, three guesses plus the target's fix, in about 13 ms instead of 32.
+    diagram:
+      caption: One round of speculative decoding. The small model guesses; one target pass checks every guess.
+      description: The context so far goes to the small model, which guesses four tokens one at a time. The four guessed tokens go to the target model, which scores all five positions in one pass and sends its probabilities to the acceptance rule. The rule keeps guesses left to right and replaces the first rejected one using the target's probabilities. The accepted tokens, plus one token from the target, are appended to the context for the next round.
+      nodes:
+        - id: context
+          label: Context so far
+          col: 0
+          row: 0
+          tone: data
+        - id: small
+          label: Small model
+          note: 4 guesses, 1.2 ms each
+          col: 1
+          row: 0
+        - id: guesses
+          label: 4 guessed tokens
+          col: 2
+          row: 0
+          tone: data
+        - id: target
+          label: Target model
+          note: one pass, 5 positions
+          col: 2
+          row: 1
+          tone: accent
+        - id: rule
+          label: Acceptance rule
+          note: keep, or fix the first miss
+          col: 1
+          row: 1
+          tone: warn
+        - id: out
+          label: Accepted tokens + 1
+          col: 0
+          row: 1
+      edges:
+        - from: context
+          to: small
+        - from: small
+          to: guesses
+        - from: guesses
+          to: target
+        - from: target
+          to: rule
+        - from: rule
+          to: out
+        - from: out
+          to: context
+          label: append
+    bridges: []
+  - id: speculative-decoding.s2
+    title: The acceptance rule keeps the target's odds exact
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speculative-decoding
+    markdown: |-
+      With sampling, "does the guess match?" isn't enough, because the target has no single right answer. The rule from Leviathan and colleagues (2023) and Chen and colleagues (2023) compares probabilities. Call the small model's probabilities $q$ and the target's $p$.
+
+      Take a position with two candidates. The small model gives [A, B] the probabilities [0.8, 0.2]; the target gives [0.6, 0.4].
+
+      - **Accept** a guessed token $x$ with probability $\min(1, p(x)/q(x))$. A is accepted with probability 0.6/0.8 = 0.75, and B always, since 0.4/0.2 > 1.
+      - **On a rejection**, sample from the leftover target probability, $\max(0, p - q)$, renormalized. Here that's [0, 0.2], so a rejection always produces B.
+
+      Now add up how each token comes out. A: guessed 0.8 of the time and kept 0.75 of those, so 0.8 × 0.75 = 0.6. B: guessed directly 0.2 of the time, plus every rejected A, 0.8 × 0.25 = 0.2, for a total of 0.4. That's [0.6, 0.4], exactly the target's distribution.
+
+      :::papers Speculative sampling, the acceptance rule
+      $$\text{accept } x \sim q \text{ with probability } \min\!\Big(1, \frac{p(x)}{q(x)}\Big); \quad \text{otherwise sample from } \frac{\max(0,\ p - q)}{\sum_x \max(0,\ p(x) - q(x))}$$
+
+      Leviathan and colleagues prove that the emitted token is distributed exactly as $p$, whatever $q$ is. The chance that a guess survives is $\alpha = \sum_x \min(p(x), q(x))$, here $\min(0.6, 0.8) + \min(0.4, 0.2) = 0.8$.
+      :::
+
+      :::mixup "Speculative decoding trades a little quality for speed."
+      The small model decides only how many tokens each target pass yields. Every emitted token follows the target's own distribution, so a poor small model makes decoding slower, never worse. With greedy decoding the rule is simpler still: keep guesses while they equal the target's top token.
+      :::
+    bridges:
+      - probability
+  - id: speculative-decoding.s3
+    title: How many tokens per pass?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speculative-decoding
+    markdown: |-
+      Suppose each guess survives independently with probability $\alpha$. A round with $k$ guesses emits the accepted guesses plus the target's one token, whether a fix or a bonus. On average that's
+
+      $$E[\text{tokens per pass}] = 1 + \alpha + \alpha^2 + \dots + \alpha^k = \frac{1 - \alpha^{k+1}}{1 - \alpha}$$
+
+      For Fern's support replies, $\alpha = 0.8$ and $k = 4$: $(1 - 0.8^5)/0.2 = (1 - 0.32768)/0.2 \approx 3.36$ tokens per target pass. Each round also pays for $k$ small-model steps, each costing $c \approx 0.15$ of a target step (1.2 ms against 8 ms). Leviathan and colleagues give the expected speedup as
+
+      $$\text{speedup} = \frac{1 - \alpha^{k+1}}{(1 - \alpha)(kc + 1)} = \frac{3.36}{1.6} \approx 2.1$$
+
+      ```python run
+      import numpy as np
+
+      def expected_tokens(alpha, k):          # tokens emitted per target pass
+          return (1 - alpha ** (k + 1)) / (1 - alpha)
+
+      def speedup(alpha, k, c):               # c = cost of one small-model step / one target step
+          return expected_tokens(alpha, k) / (k * c + 1)
+
+      alpha, c = 0.8, 0.15
+      for k in [1, 2, 4, 6, 8]:
+          print(f"k = {k}: {expected_tokens(alpha, k):.2f} tokens per pass, speedup {speedup(alpha, k, c):.2f}x")
+
+      # Check the formula by simulation: each guess survives with probability alpha
+      rng = np.random.default_rng(0)
+      k, passes, total = 4, 100_000, 0
+      for _ in range(passes):
+          accepted = 0
+          while accepted < k and rng.random() < alpha:
+              accepted += 1
+          total += accepted + 1               # +1: the target's own token (a fix or a bonus)
+      print(f"simulated, k = 4: {total / passes:.2f} tokens per pass")
+      ```
+
+      Longer guesses help less and less, because the chance that every guess so far survives shrinks as $\alpha^k$. Here the speedup peaks around $k = 4$ to 6. Set `alpha = 0.5` and watch the best $k$ drop.
+
+      :::predict A customer asks Fern for a poem about her cactus, and α falls to 0.6. What does k = 4 give now?
+      $(1 - 0.6^5)/0.4 = (1 - 0.07776)/0.4 \approx 2.31$ tokens per pass, and a speedup of $2.31/1.6 \approx 1.44$. Still faster, but creative text is harder to guess.
+      :::
+    bridges: []
+  - id: speculative-decoding.s4
+    title: When guessing doesn't pay
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speculative-decoding
+    markdown: |-
+      Speculation spends spare arithmetic to save memory reads, so it pays when the target is memory-bound. At batch 1 or small batches, that's true. At large batches, the GPU approaches the compute limit from the roofline lesson, and checking $k$ extra positions for every request adds work it has no room for. Servers often scale speculation back as load rises.
+
+      It also needs guesses that survive. The acceptance rate falls when the small model's style or domain differs from the target's, and at high temperatures, where the target spreads its probability widely. Other ways to guess help here:
+
+      - **Prompt lookup** copies candidate tokens from matching text earlier in the prompt. It is nearly free, and it works well when the answer repeats the input, as in editing code or quoting a document.
+      - **Medusa** (Cai et al., 2024) adds a few extra output heads to the target itself, each predicting a token further ahead, so no second model is needed.
+
+      Before shipping, Fern's team runs one test: with greedy decoding, the replies with and without speculation must match token for token on 500 saved conversations, apart from the rare near-ties that the decoding lesson showed can flip. Then they measure the speed.
+    bridges: []
+  - id: speculative-decoding.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.speculative-decoding
+    markdown: Tokens per pass to compute, an acceptance probability, a code editor, a big batch job, and a poetry app test whether you can predict when speculation speeds things up and why it never changes the output.
+    takeaway: |-
+      A small model guesses k tokens and the target checks them all in one pass. The acceptance rule makes every token follow the target's own distribution, and each pass yields (1 − αᵏ⁺¹)/(1 − α) tokens on average.
+  - id: speculative-decoding.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.speculative-decoding
+    markdown: |-
+      A draft proposes tokens and a target verifies them. Preserving the target distribution requires the specified acceptance and correction rules; speed depends on how much work those rules save.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - speculative-decoding.s1
-    - speculative-decoding.s2
-    - speculative-decoding.s3
-    - speculative-decoding.s4
-    - speculative-decoding.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - speculative-decoding.s1
+        - speculative-decoding.s2
+        - speculative-decoding.s3
+        - speculative-decoding.s4
+        - speculative-decoding.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     speculative-decoding.recap: speculative-decoding.check
 assessment_families:
-- id: speculative-decoding.base
-  objective_ref: objective.speculative-decoding
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Acceptance must match the stated guarantee: trace the inputs, operation, and result before choosing.'
-  remediation_scene: speculative-decoding.s2
-  variants:
-  - id: speculative-decoding.base.1
-    prompt: What is the draft’s role?
-    options:
-    - id: a
-      text: Propose candidate tokens cheaply
-    - id: b
-      text: Replace all target verification by definition
-    - id: c
-      text: Provide human-written labels live
-    answer: a
-    feedback: The target then checks proposals under the algorithm.
-  - id: speculative-decoding.base.2
-    prompt: Does accepting merely plausible tokens preserve the target distribution automatically?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the draft is smaller
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Exact preservation needs the specified acceptance and correction math.
-- id: speculative-decoding.transfer
-  objective_ref: objective.speculative-decoding
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate correctness and speed separately: trace the inputs, operation, and result before choosing.'
-  remediation_scene: speculative-decoding.s4
-  variants:
-  - id: speculative-decoding.transfer.1
-    prompt: Draft plus verification cost two target steps and yield one token. Is speedup guaranteed?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only output count matters
-    - id: a
-      text: No; overhead may dominate
-    answer: a
-    feedback: Benefit depends on accepted progress per total cost.
-  - id: speculative-decoding.transfer.2
-    prompt: Why test correctness independently from speed?
-    options:
-    - id: c
-      text: Only model names affect correctness
-    - id: a
-      text: A fast implementation can violate the claimed sampling contract
-    - id: b
-      text: Runtime proves distribution equality
-    answer: a
-    feedback: Execution efficiency and algorithmic equivalence are different properties.
+  - id: speculative-decoding.base
+    objective_ref: objective.speculative-decoding
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Acceptance must match the stated guarantee: trace the inputs, operation, and result before choosing.'
+    remediation_scene: speculative-decoding.s2
+    variants:
+      - id: speculative-decoding.base.1
+        retired: true
+        prompt: What is the draft’s role?
+        options:
+          - id: a
+            text: Propose candidate tokens cheaply
+          - id: b
+            text: Replace all target verification by definition
+          - id: c
+            text: Provide human-written labels live
+        answer: a
+        feedback: The target then checks proposals under the algorithm.
+      - id: speculative-decoding.base.2
+        retired: true
+        prompt: Does accepting merely plausible tokens preserve the target distribution automatically?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the draft is smaller
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Exact preservation needs the specified acceptance and correction math.
+  - id: speculative-decoding.transfer
+    objective_ref: objective.speculative-decoding
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate correctness and speed separately: trace the inputs, operation, and result before choosing.'
+    remediation_scene: speculative-decoding.s4
+    variants:
+      - id: speculative-decoding.transfer.1
+        retired: true
+        prompt: Draft plus verification cost two target steps and yield one token. Is speedup guaranteed?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only output count matters
+          - id: a
+            text: No; overhead may dominate
+        answer: a
+        feedback: Benefit depends on accepted progress per total cost.
+      - id: speculative-decoding.transfer.2
+        retired: true
+        prompt: Why test correctness independently from speed?
+        options:
+          - id: c
+            text: Only model names affect correctness
+          - id: a
+            text: A fast implementation can violate the claimed sampling contract
+          - id: b
+            text: Runtime proves distribution equality
+        answer: a
+        feedback: Execution efficiency and algorithmic equivalence are different properties.
+  - id: speculative-decoding.base.v2
+    objective_ref: objective.speculative-decoding
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Keep a guessed token with probability min(1, p/q), where p is the target's probability and q the small model's; on a rejection, sample from what's left of p.
+    remediation_scene: speculative-decoding.s2
+    variants:
+      - id: speculative-decoding.base.v2.1
+        prompt: Why does checking four guessed tokens cost the target model about as much time as generating one token?
+        options:
+          - id: b
+            text: The target checks only the last of the four guessed tokens
+          - id: a
+            text: Decode is memory-bound, and one read of the weights serves all positions
+          - id: c
+            text: The draft model's KV cache replaces the target's for those positions
+        answer: a
+        feedback: The step's time goes into reading the weights, and a pass over five positions reads them once, like a pass over one. The target scores every guessed position, with its own cache.
+      - id: speculative-decoding.base.v2.2
+        prompt: The draft model gives token A probability 0.5 and proposes it. The target gives A probability 0.3. With what probability is A accepted?
+        options:
+          - id: c
+            text: 1, since the target gives A a nonzero probability
+          - id: b
+            text: 0.3, the target's own probability for A
+          - id: a
+            text: 0.6, the target's probability over the draft's
+        answer: a
+        feedback: min(1, 0.3/0.5) = 0.6. The draft proposes A half the time and 0.6 of those survive, so A comes out 0.5 × 0.6 = 0.3 of the time, matching the target. Using 0.3 alone would undercount A.
+      - id: speculative-decoding.base.v2.3
+        prompt: Why does speculative sampling produce the same output distribution as sampling from the target alone?
+        options:
+          - id: a
+            text: Rejections resample from the target's leftover probability, so each token follows p
+          - id: b
+            text: The draft model is fine-tuned until it matches the target on held-out text
+          - id: c
+            text: Tokens the target finds unlikely are rejected before they can be emitted
+        answer: a
+        feedback: Acceptance with min(1, p/q) plus resampling from max(0, p − q) adds up to exactly p for every token, whatever the draft model is. Matching the draft to the target raises speed, not correctness, and unlikely tokens are still emitted at their target rate.
+      - id: speculative-decoding.base.v2.4
+        prompt: In one round, all k tokens proposed by the draft model are accepted. What does the round emit?
+        options:
+          - id: b
+            text: Exactly k tokens, and then the draft model starts guessing again
+          - id: a
+            text: The k guesses plus one more token sampled from the target's last position
+          - id: c
+            text: The k guesses, after a second target pass confirms that they fit
+        answer: a
+        feedback: The verification pass scores k + 1 positions, so when every guess survives, the last position yields a bonus token at no extra cost. That's why the formula 1 + α + … + αᵏ starts with a 1.
+  - id: speculative-decoding.transfer.v2
+    objective_ref: objective.speculative-decoding
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Speculation pays when the target is memory-bound and guesses often survive. Ask which of those fails, or how to get better guesses.
+    remediation_scene: speculative-decoding.s4
+    variants:
+      - id: speculative-decoding.transfer.v2.1
+        prompt: A code-editing assistant rewrites files, and most of each output copies the input with small changes. Which way of guessing tokens fits?
+        options:
+          - id: a
+            text: Copy candidate tokens from matching text in the prompt
+          - id: b
+            text: Use a draft model trained on poetry, for more variety
+          - id: c
+            text: Use a draft model larger than the target, for accuracy
+        answer: a
+        feedback: When the output repeats the input, prompt lookup guesses long stretches correctly at almost no cost. A poetry-trained model would guess badly, and a draft model larger than the target would cost more per guess than it saves.
+      - id: speculative-decoding.transfer.v2.2
+        prompt: An offline batch job runs at batch size 256 and is already compute-bound. Turning on speculative decoding makes it slower. Why?
+        options:
+          - id: c
+            text: Large batches turn off the KV cache that speculation relies on
+          - id: a
+            text: Checking extra positions adds arithmetic that the GPU has no room for
+          - id: b
+            text: Acceptance rates fall because requests in a batch see each other
+        answer: a
+        feedback: Speculation trades spare compute for fewer memory-bound steps. A compute-bound GPU has no spare compute, so the extra verified positions just add time. Batching keeps each request's cache and doesn't mix requests.
+      - id: speculative-decoding.transfer.v2.3
+        prompt: A story-writing app samples at temperature 1.3 and measures an acceptance rate of about 0.3, with almost no speedup. What best explains it?
+        options:
+          - id: b
+            text: High temperature makes the target's verification pass run twice as long
+          - id: c
+            text: Speculative decoding is built for greedy decoding and skips sampled steps
+          - id: a
+            text: Guesses rarely survive when the target spreads probability so widely
+        answer: a
+        feedback: With a flat target distribution, min(p, q) summed over tokens is small, so few guesses are kept and each pass yields little more than one token. The pass costs the same at any temperature, and the acceptance rule was designed for sampling.
+      - id: speculative-decoding.transfer.v2.4
+        prompt: A team enables speculative decoding for a greedy-decoding translation service and wants to confirm the outputs haven't changed. Which test fits?
+        options:
+          - id: a
+            text: Compare outputs token by token with plain greedy decoding on saved inputs
+          - id: b
+            text: Check that the measured acceptance rate stays above 50 percent
+          - id: c
+            text: Check that throughput at least doubled on the team's benchmark
+        answer: a
+        feedback: With greedy decoding, speculation should reproduce the plain output exactly, apart from rare near-ties, so a token-by-token comparison is the direct test. Acceptance rate and throughput measure speed, not correctness.
+  - id: speculative-decoding.expected-tokens
+    objective_ref: objective.speculative-decoding
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Expected tokens per target pass = (1 − α^(k+1)) ÷ (1 − α), which is the same as 1 + α + α² + … + αᵏ.
+    remediation_scene: speculative-decoding.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: speculative-decoding.expected-tokens.1
+        prompt: Each guess survives with probability α = 0.8, and the small model guesses k = 4 tokens per round. How many tokens does each target pass emit on average? Give two decimal places.
+        answer: 3.3616
+        feedback: (1 − 0.8⁵) ÷ 0.2 = (1 − 0.32768) ÷ 0.2 ≈ 3.36.
+      - id: speculative-decoding.expected-tokens.2
+        prompt: With α = 0.6 and k = 4, how many tokens does each target pass emit on average? Give two decimal places.
+        answer: 2.3056
+        feedback: (1 − 0.6⁵) ÷ 0.4 = (1 − 0.07776) ÷ 0.4 ≈ 2.31.
+      - id: speculative-decoding.expected-tokens.3
+        prompt: With α = 0.5 and k = 3, how many tokens does each target pass emit on average?
+        answer: 1.875
+        feedback: 1 + 0.5 + 0.25 + 0.125 = 1.875, the same as (1 − 0.5⁴) ÷ 0.5.
+      - id: speculative-decoding.expected-tokens.4
+        prompt: With α = 0.9 and k = 5, how many tokens does each target pass emit on average? Give two decimal places.
+        answer: 4.68559
+        feedback: (1 − 0.9⁶) ÷ 0.1 = (1 − 0.531441) ÷ 0.1 ≈ 4.69.
+      - id: speculative-decoding.expected-tokens.5
+        prompt: With α = 0.7 and just one guess per round (k = 1), how many tokens does each target pass emit on average?
+        answer: 1.7
+        feedback: 1 + 0.7 = 1.7. The target always contributes one token, and the single guess adds 0.7 on average.

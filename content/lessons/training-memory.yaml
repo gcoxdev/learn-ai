@@ -1,218 +1,383 @@
 schema_version: 0.2-draft
 lesson:
   id: training-memory
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Account for everything that occupies accelerator memory
   state: draft
-  summary: Build a memory budget that includes the temporary and optimizer values as well as the model’s weights.
+  summary: A 7B model's weights fill just 14 GB, yet training it won't fit on an 80 GB GPU. Find the other 100+ gigabytes, line by line.
   slot: M17.2
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: ZeRO
-    url: https://arxiv.org/abs/1910.02054
+    - title: "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models (Rajbhandari et al., 2019)"
+      url: https://arxiv.org/abs/1910.02054
+    - title: "Reducing Activation Recomputation in Large Transformer Models (Korthikanti et al., 2022), section 4.1"
+      url: https://arxiv.org/abs/2205.05198
+    - title: "Mixed Precision Training (Micikevicius et al., 2017)"
+      url: https://arxiv.org/abs/1710.03740
 objectives:
-- id: objective.training-memory
-  version: 1-draft
-  statement: Training memory includes parameters, gradients, optimizer state, activations, buffers, and allocator
-    overhead; inference has a different budget including its key/value cache.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - training-memory.base
-  - training-memory.transfer
-  prerequisites:
-  - anyOf:
-    - objective.neural-training-loop
-  - anyOf:
-    - objective.compute-and-bandwidth
+  - id: objective.training-memory
+    version: 2-draft
+    statement: Training memory includes parameters, gradients, optimizer state, activations, buffers, and allocator overhead; inference has a different budget including its key/value cache.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - training-memory.base.v2
+      - training-memory.transfer.v2
+      - training-memory.calculate
+    prerequisites:
+      - anyOf:
+          - objective.neural-training-loop
+      - anyOf:
+          - objective.compute-and-bandwidth
 scenes:
-- id: training-memory.s1
-  title: Weights are one line in the budget
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.training-memory
-  markdown: A parameter is a learned number. Training also produces gradients and may keep momentum or second-moment
-    estimates for the optimizer. Mixed-precision recipes can keep master weights or selected state at higher
-    precision. Count each actual tensor, rather than multiplying parameters by one assumed universal factor.
-  text_mode: A parameter is a learned number. Training also produces gradients and may keep momentum or second-moment
-    estimates for the optimizer. Mixed-precision recipes can keep master weights or selected state at higher
-    precision. Count each actual tensor, rather than multiplying parameters by one assumed universal factor.
-  bridges: []
-- id: training-memory.s2
-  title: Add the state arrays one at a time
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-memory
-  markdown: 'Take a model with one million parameters. Suppose each has two-byte weights, two-byte gradients,
-    and two four-byte optimizer moment values. These **moments** store gradient direction and squared-gradient
-    scale, as in Adam.
+  - id: training-memory.s1
+    title: 14 GB of weights, out of memory on 80 GB
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.training-memory
+    markdown: |-
+      The team's 7B model stores each weight in bf16, a 2-byte number format, so the weights take 7 billion × 2 bytes = 14 GB. Each A100 has 80 GB. An engineer loads the model on one GPU, starts training with Adam, and gets an out-of-memory error before the first step finishes. The weights left 66 GB free. What filled it, and then some?
 
+      A running training step holds four kinds of data in GPU memory:
 
-    The total per parameter is 2 + 2 + 4 + 4 = 12 bytes, giving 12 million bytes. A four-byte master-weight
-    copy would add another four million.
+      | Kind | What it is | Depends on |
+      | --- | --- | --- |
+      | Weights | The model's parameters, sometimes in two formats | Parameter count |
+      | Gradients | One slope per parameter, from the backward pass | Parameter count |
+      | Optimizer state | Adam's running averages, two per parameter | Parameter count |
+      | Activations | Intermediate values from the forward pass, kept for the backward pass | Batch, sequence length, layers, width |
 
+      The first three together are called the **model states**. They grow with the number of parameters and don't care how much data you feed in. Activations are the opposite: they grow with the batch and the sequence and don't care about the optimizer.
 
-    This is only a partial budget. Activations, temporary buffers, framework overhead, and any other stored
-    copies must be counted separately. State the formats and components rather than treating this factor as
-    universal.'
-  text_mode: 'Take a model with one million parameters. Suppose each has two-byte weights, two-byte gradients,
-    and two four-byte optimizer moment values. These **moments** store gradient direction and squared-gradient
-    scale, as in Adam.
+      On top of these sit temporary **buffers** (scratch space a kernel needs for a moment) and memory the **allocator**, the code that hands out GPU memory, has reserved but not yet filled. Those typically add a few gigabytes.
+    bridges: []
+  - id: training-memory.s2
+    title: Sixteen bytes per parameter
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-memory
+    markdown: |-
+      The usual recipe is mixed-precision training with Adam, from the optimization module. The forward and backward passes use bf16 copies of the weights for speed, but updates are applied to an fp32 **master copy**, because an update of 0.0001 added to a weight of 1.0 in bf16 simply rounds away (the mixed-precision lesson shows this). Adam then keeps two fp32 numbers per parameter: the running average of gradients, $m$, and of squared gradients, $v$.
 
+      | Item | Bytes per parameter | For 7 billion parameters |
+      | --- | ---: | ---: |
+      | bf16 weights | 2 | 14 GB |
+      | bf16 gradients | 2 | 14 GB |
+      | fp32 master weights | 4 | 28 GB |
+      | Adam $m$ (fp32) | 4 | 28 GB |
+      | Adam $v$ (fp32) | 4 | 28 GB |
+      | **Total model states** | **16** | **112 GB** |
 
-    The total per parameter is 2 + 2 + 4 + 4 = 12 bytes, giving 12 million bytes. A four-byte master-weight
-    copy would add another four million.
+      So the model states alone need 112 GB, well over one GPU's 80 GB, before a single activation is stored. The weights everyone quotes are 1/8 of the bill.
 
+      :::papers The ZeRO paper's memory count (Rajbhandari et al., 2019)
+      For a model with $\Psi$ parameters trained with mixed-precision Adam, model states need $2\Psi + 2\Psi + K\Psi$ bytes, with $K = 12$ for the fp32 master weights, $m$, and $v$. That's $16\Psi$: for our $\Psi$ = 7 billion, 112 GB. The paper's own example is GPT-2 with 1.5 billion parameters, which needs at least 24 GB just for model states.
+      :::
 
-    This is only a partial budget. Activations, temporary buffers, framework overhead, and any other stored
-    copies must be counted separately. State the formats and components rather than treating this factor as
-    universal.'
-  bridges: []
-- id: training-memory.s3
-  title: Activations depend on the workload
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-memory
-  markdown: 'Backward differentiation needs intermediate information from the forward pass, unless it is recomputed.
-    Batch size, sequence length, hidden width, and layer count affect activation memory. Attention implementations
-    can avoid materializing some large intermediate matrices, but they do not remove every long-sequence cost.
+      :::predict Before mixed precision, people trained entirely in fp32 with Adam. How many bytes per parameter did that need?
+      fp32 weights (4) + fp32 gradients (4) + $m$ (4) + $v$ (4) = 16 bytes, the same total. Mixed precision swaps a 4-byte weight for a 2-byte copy plus a 4-byte master, and halves the gradients. It pays off in speed and in activation memory, not in model states.
+      :::
 
+      :::mixup "Mixed precision halves training memory."
+      It halves the size of activations and of the weights and gradients used in the math, but the fp32 master weights and Adam moments stay. Model states stay at about 16 bytes per parameter either way.
+      :::
+    bridges: []
+  - id: training-memory.s3
+    title: Activations grow with batch, sequence, layers, and width
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-memory
+    markdown: |-
+      The backward pass needs values computed during the forward pass: to get the gradient of $y = Wx$ with respect to $W$, you need $x$. So every layer saves its inputs and a few intermediate results until backward reaches it. These saved values are the activations, and they scale with sequence length $s$, sequences per GPU $b$, width $h$ (the model dimension, $d_{\text{model}}$), and number of layers $L$.
 
-    **Activations** are temporary values calculated for examples; parameters are stored model settings. A **buffer**
-    is temporary working storage. The **allocator** manages memory blocks and can reserve space beyond the
-    tensors currently holding useful values. This is why summing weight-file sizes can underestimate peak device
-    memory.'
-  text_mode: 'Backward differentiation needs intermediate information from the forward pass, unless it is recomputed.
-    Batch size, sequence length, hidden width, and layer count affect activation memory. Attention implementations
-    can avoid materializing some large intermediate matrices, but they do not remove every long-sequence cost.
+      :::papers Activation memory per transformer layer (Korthikanti et al., 2022)
+      For a GPT-style layer with $a$ attention heads, a GELU MLP four times as wide as the model, dropout, and 16-bit activations (1-byte dropout masks), the bytes saved per layer are
 
+      $$\text{activations per layer} = s\,b\,h\left(34 + \frac{5\,a\,s}{h}\right)$$
 
-    **Activations** are temporary values calculated for examples; parameters are stored model settings. A **buffer**
-    is temporary working storage. The **allocator** manages memory blocks and can reserve space beyond the
-    tensors currently holding useful values. This is why summing weight-file sizes can underestimate peak device
-    memory.'
-  bridges: []
-- id: training-memory.s4
-  title: Separate capacity from speed
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-memory
-  markdown: 'A configuration fitting in memory may still be slow. Offloading state saves accelerator capacity
-    but transfers data; recomputation trades extra arithmetic for storage. During inference, optimizer state
-    disappears, while caches, concurrent requests, and temporary computation can become major memory consumers.
+      The $34\,sbh$ part covers the saved inputs to every matrix multiply, norm, and GELU, plus the dropout masks. The $5\,a\,s^2 b$ part is one $s \times s$ matrix per head saved three ways: the softmax output (2 bytes per entry), its dropout mask (1 byte), and the dropped-out copy (2 bytes). It grows with the square of the sequence length.
+      :::
 
+      For the team's model, $L$ = 32, $h$ = 4,096, $a$ = 32, with one 4,096-token sequence ($b$ = 1):
 
-    **Offloading** moves selected values to another memory tier, such as CPU memory. **Recomputation** recalculates
-    a value instead of retaining it. One trades transfers for capacity; the other trades additional arithmetic.
-    Ask which allocation caused the memory shortage before choosing either.'
-  text_mode: 'A configuration fitting in memory may still be slow. Offloading state saves accelerator capacity
-    but transfers data; recomputation trades extra arithmetic for storage. During inference, optimizer state
-    disappears, while caches, concurrent requests, and temporary computation can become major memory consumers.
+      - $34\,sbh$ = 34 × 4,096 × 4,096 ≈ 0.57 GB per layer, or 18.3 GB across 32 layers.
+      - $5\,a\,s^2 b$ = 5 × 32 × 4,096² ≈ 2.7 GB per layer, or 85.9 GB across 32 layers.
 
+      Storing the attention matrices would need 104 GB of activations for one sequence. Fused attention kernels, covered in the lesson on efficient attention later in this module, never store them, leaving 18.3 GB. Either way, the total is at least 112 + 18.3 ≈ 130 GB.
 
-    **Offloading** moves selected values to another memory tier, such as CPU memory. **Recomputation** recalculates
-    a value instead of retaining it. One trades transfers for capacity; the other trades additional arithmetic.
-    Ask which allocation caused the memory shortage before choosing either.'
-  bridges: []
-- id: training-memory.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.training-memory
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A weight file is only part of the training memory budget. Count gradients, optimizer state, activations,
-    and working storage, then identify which part causes the peak.
-- id: training-memory.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.training-memory
-  markdown: A weight file is only part of the training memory budget. Count gradients, optimizer state, activations,
-    and working storage, then identify which part causes the peak.
-  text_mode: A weight file is only part of the training memory budget. Count gradients, optimizer state, activations,
-    and working storage, then identify which part causes the peak.
+      ```python run
+      P = 7e9                  # parameters
+      L, h, a = 32, 4096, 32   # layers, width (d_model), attention heads
+      s, b = 4096, 1           # sequence length, sequences per GPU
+
+      states = {"bf16 weights": 2, "bf16 gradients": 2, "fp32 master weights": 4,
+                "Adam m (fp32)": 4, "Adam v (fp32)": 4}
+      total = 0
+      for name, nbytes in states.items():
+          print(f"{name:21s} {P * nbytes / 1e9:6.1f} GB")
+          total += P * nbytes
+      print(f"{'model states':21s} {total / 1e9:6.1f} GB")
+
+      # Activations saved for backward (Korthikanti et al. 2022, 16-bit, GPT-style layer)
+      per_layer = 34 * s * b * h      # layer inputs, norms, MLP, dropout masks
+      scores = 5 * a * s * s * b      # attention score and softmax matrices
+      for label, act in [("activations, scores kept", L * (per_layer + scores)),
+                         ("activations, fused attn", L * per_layer)]:
+          print(f"{label:24s} {act / 1e9:6.1f} GB -> total {(total + act) / 1e9:6.1f} GB")
+      ```
+
+      Set `s = 8192`. The fused-attention activations double to 36.5 GB, while the scores-kept line jumps to 380 GB, because its attention part quadruples from 86 GB to 344 GB. Then set `b = 4` and notice that the model states don't move at all.
+    bridges: []
+  - id: training-memory.s4
+    title: Four ways out, and a different budget for serving
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-memory
+    markdown: |-
+      The team needs about 130 GB and has 80 GB per GPU. The rest of this module is really a list of ways out, each aimed at a different line of the budget:
+
+      | Lever | Line it shrinks | What it costs | Lesson |
+      | --- | --- | --- | --- |
+      | Split the model across GPUs | Everything, per GPU | Communication and idle time | Model parallelism |
+      | Shard model states across GPUs | Master weights, $m$, $v$, gradients | Communication | Sharding |
+      | Recompute activations | Activations | About a third more compute | Sharding |
+      | Offload to CPU memory | Whatever you move | Slow PCIe transfers | Sharding |
+
+      **Offloading** means parking tensors in the CPU's larger, slower memory and copying them back when needed. **Recomputation** means discarding activations after the forward pass and computing them again during backward. Pick the lever that matches your biggest line: if activations dominate, sharding the optimizer barely helps.
+
+      Serving the finished model has a different budget. There are no gradients or optimizer state: 14 GB of bf16 weights plus the **KV cache**, the keys and values that attention stores for every token already processed. For this model (32 layers, width 4,096), each token needs 2 × 32 × 4,096 × 2 bytes ≈ 0.5 MB. One 4,096-token conversation takes 2.1 GB, so 16 of them at once take 34 GB, more than twice the weights.
+    bridges: []
+  - id: training-memory.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.training-memory
+    markdown: Memory budgets for models from 1.5 to 13 billion parameters, a longer context, a chat server, and a stubborn out-of-memory error test whether you can find the line that fills the GPU.
+    takeaway: |-
+      Mixed-precision Adam needs about 16 bytes per parameter before any activations: 112 GB for a 7B model. Activations add memory that grows with batch × sequence × layers × width, so find the biggest line before choosing a fix.
+  - id: training-memory.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.training-memory
+    markdown: |-
+      A weight file is only part of the training memory budget. Count gradients, optimizer state, activations, and working storage, then identify which part causes the peak.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - training-memory.s1
-    - training-memory.s2
-    - training-memory.s3
-    - training-memory.s4
-    - training-memory.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - training-memory.s1
+        - training-memory.s2
+        - training-memory.s3
+        - training-memory.s4
+        - training-memory.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     training-memory.recap: training-memory.check
 assessment_families:
-- id: training-memory.base
-  objective_ref: objective.training-memory
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Calculate a toy state total: trace the inputs, operation, and result before choosing.'
-  remediation_scene: training-memory.s2
-  variants:
-  - id: training-memory.base.1
-    prompt: Are weights the entire training memory budget?
-    options:
-    - id: c
-      text: Only for every transformer
-    - id: a
-      text: No; gradients, optimizer state, activations, and buffers also matter
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Training retains multiple kinds of state.
-  - id: training-memory.base.2
-    prompt: One million parameters use 12 bytes each in a simplified estimate. Total?
-    options:
-    - id: a
-      text: 12 million bytes
-    - id: b
-      text: 12 bytes
-    - id: c
-      text: One million bits
-    answer: a
-    feedback: Multiply count by bytes per parameter under the stated assumptions.
-- id: training-memory.transfer
-  objective_ref: objective.training-memory
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Separate capacity from speed: trace the inputs, operation, and result before choosing.'
-  remediation_scene: training-memory.s4
-  variants:
-  - id: training-memory.transfer.1
-    prompt: What does activation recomputation trade?
-    options:
-    - id: a
-      text: Extra computation for less saved activation memory
-    - id: b
-      text: More labels for fewer parameters
-    - id: c
-      text: All gradients for higher accuracy
-    answer: a
-    feedback: Intermediate values are recreated during backward execution.
-  - id: training-memory.transfer.2
-    prompt: What inference allocation can grow with active sequence lengths?
-    options:
-    - id: b
-      text: Adam moments that are always required at inference
-    - id: c
-      text: The fixed tokenizer vocabulary file alone
-    - id: a
-      text: The key/value cache
-    answer: a
-    feedback: Cached attention states accumulate across retained tokens.
+  - id: training-memory.base
+    objective_ref: objective.training-memory
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Calculate a toy state total: trace the inputs, operation, and result before choosing.'
+    remediation_scene: training-memory.s2
+    variants:
+      - id: training-memory.base.1
+        prompt: Are weights the entire training memory budget?
+        options:
+          - id: c
+            text: Only for every transformer
+          - id: a
+            text: No; gradients, optimizer state, activations, and buffers also matter
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Training retains multiple kinds of state.
+        retired: true
+      - id: training-memory.base.2
+        prompt: One million parameters use 12 bytes each in a simplified estimate. Total?
+        options:
+          - id: a
+            text: 12 million bytes
+          - id: b
+            text: 12 bytes
+          - id: c
+            text: One million bits
+        answer: a
+        feedback: Multiply count by bytes per parameter under the stated assumptions.
+        retired: true
+  - id: training-memory.transfer
+    objective_ref: objective.training-memory
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Separate capacity from speed: trace the inputs, operation, and result before choosing.'
+    remediation_scene: training-memory.s4
+    variants:
+      - id: training-memory.transfer.1
+        prompt: What does activation recomputation trade?
+        options:
+          - id: a
+            text: Extra computation for less saved activation memory
+          - id: b
+            text: More labels for fewer parameters
+          - id: c
+            text: All gradients for higher accuracy
+        answer: a
+        feedback: Intermediate values are recreated during backward execution.
+        retired: true
+      - id: training-memory.transfer.2
+        prompt: What inference allocation can grow with active sequence lengths?
+        options:
+          - id: b
+            text: Adam moments that are always required at inference
+          - id: c
+            text: The fixed tokenizer vocabulary file alone
+          - id: a
+            text: The key/value cache
+        answer: a
+        feedback: Cached attention states accumulate across retained tokens.
+        retired: true
+  - id: training-memory.base.v2
+    objective_ref: objective.training-memory
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Sort each item into model states (grow with parameter count) or activations (grow with batch, sequence, layers, and width). Mixed-precision Adam's model states are 2 + 2 + 4 + 4 + 4 bytes per parameter.
+    remediation_scene: training-memory.s2
+    variants:
+      - id: training-memory.base.v2.1
+        prompt: In a mixed-precision Adam budget, which line takes the most bytes per parameter?
+        options:
+          - id: b
+            text: The bf16 weights used in the forward and backward passes
+          - id: c
+            text: The fp32 master copy of the weights
+          - id: a
+            text: Adam's two fp32 moment estimates, m and v, together
+        answer: a
+        feedback: m and v are 4 bytes each, 8 together. The master weights are 4 bytes and the bf16 weights only 2, so the optimizer's moments outweigh either copy of the weights.
+      - id: training-memory.base.v2.2
+        prompt: A 7B model's bf16 weights take 14 GB, yet Adam training runs out of memory on an 80 GB GPU. What accounts for most of the gap?
+        options:
+          - id: a
+            text: Gradients, fp32 master weights, and Adam moments raise model states to about 112 GB
+          - id: c
+            text: The optimizer keeps copies of the weights from each earlier step it has taken
+          - id: b
+            text: Training stores the weights in fp32, which takes 28 GB, plus a few activations
+        answer: a
+        feedback: Mixed-precision Adam needs about 16 bytes per parameter, 112 GB for 7B, before activations. Adam keeps running averages, not a history of past weights, and 28 GB plus a few activations would still fit in 80 GB.
+      - id: training-memory.base.v2.3
+        prompt: A model trains with attention matrices stored. The sequence length doubles from 4,096 to 8,192 tokens. How does its memory change?
+        options:
+          - id: c
+            text: Every activation grows 4×, because attention is quadratic in length
+          - id: a
+            text: Attention-score memory grows 4×, other activations 2×, model states not at all
+          - id: b
+            text: All activations double, and the optimizer states double along with them
+        answer: a
+        feedback: The 5·a·s²·b term is quadratic in s, so it quadruples; the 34·s·b·h term is linear, so it doubles. Model states depend only on parameter count. Only the attention scores are quadratic.
+      - id: training-memory.base.v2.4
+        prompt: An engineer doubles the number of sequences each GPU processes per step. Which part of training memory grows?
+        options:
+          - id: b
+            text: The gradients, because each sequence adds its own gradient copy
+          - id: c
+            text: The Adam moments, because they average over more examples
+          - id: a
+            text: The activations saved for the backward pass
+        answer: a
+        feedback: Activations scale with b, the number of sequences. Gradients are summed into one value per parameter, and Adam's m and v are one value each per parameter, so neither depends on batch size.
+  - id: training-memory.transfer.v2
+    objective_ref: objective.training-memory
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask which line of the budget is biggest in this situation, and whether the change in question touches that line at all.
+    remediation_scene: training-memory.s4
+    variants:
+      - id: training-memory.transfer.v2.1
+        prompt: A company serves the finished 7B model for chat in bf16, with many long conversations at once. Beyond the 14 GB of weights, what fills the GPU?
+        options:
+          - id: a
+            text: The KV cache, which grows with every token of every active conversation
+          - id: b
+            text: Adam's moment estimates, which are kept so that the model can keep learning
+          - id: c
+            text: fp32 master weights, which are needed to keep the replies numerically stable
+        answer: a
+        feedback: Serving runs no backward pass and no optimizer, so there are no gradients, moments, or master weights. The KV cache, about 0.5 MB per token for this model, grows with conversation length and concurrency.
+      - id: training-memory.transfer.v2.2
+        prompt: A team halves the batch size of a 2B-parameter model, but training still runs out of memory at exactly the same point. What's the most likely reason?
+        options:
+          - id: c
+            text: Gradients scale with batch size, and they didn't shrink by enough
+          - id: a
+            text: Model states, which don't depend on batch size, fill most of the memory
+          - id: b
+            text: A smaller batch means more steps, and each step adds to memory use
+        answer: a
+        feedback: At 16 bytes per parameter a 2B model needs 32 GB of model states whatever the batch. Halving the batch shrinks only activations. Gradients are one value per parameter, and memory doesn't accumulate across steps.
+      - id: training-memory.transfer.v2.3
+        prompt: A lab moves its training from pure fp32 with Adam to bf16 mixed precision with fp32 master weights. What happens to model-state memory per parameter?
+        options:
+          - id: b
+            text: It halves, from 16 bytes to 8, since every tensor is now half the size
+          - id: c
+            text: It quarters, from 16 bytes to about 4, since bf16 is so compact
+          - id: a
+            text: It stays about 16 bytes; the savings show up mainly in activations
+        answer: a
+        feedback: fp32 Adam needs 4 + 4 + 4 + 4 = 16 bytes; mixed precision needs 2 + 2 + 4 + 4 + 4 = 16. The master weights and moments stay fp32. Activations do halve, and the math runs faster.
+      - id: training-memory.transfer.v2.4
+        prompt: A profiler shows peak memory about 6 GB higher than the sum of the weights, gradients, optimizer state, and activations in your budget. What is the likeliest explanation?
+        options:
+          - id: a
+            text: Temporary kernel buffers and memory the allocator reserved but hasn't filled
+          - id: b
+            text: Weights are compressed on disk and expand to twice their size in memory
+          - id: c
+            text: Each layer keeps its own private copy of the whole optimizer state
+        answer: a
+        feedback: Kernels need scratch space, and the allocator holds reserved blocks that can fragment, so real peaks run a few gigabytes above the tensor total. Weights aren't stored compressed, and optimizer state isn't duplicated per layer.
+  - id: training-memory.calculate
+    objective_ref: objective.training-memory
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Multiply parameters by bytes per parameter (16 for mixed-precision Adam). For activations use 34 × s × b × h bytes per layer, times L. Give answers in GB, where 1 GB = 10⁹ bytes."
+    remediation_scene: training-memory.s3
+    absolute_tolerance: 0.5
+    variants:
+      - id: training-memory.calculate.1
+        prompt: A 13-billion-parameter model trains with mixed-precision Adam at 16 bytes per parameter. How many GB do its model states need?
+        answer: 208
+        feedback: 13 billion × 16 bytes = 208 billion bytes = 208 GB, before any activations.
+      - id: training-memory.calculate.2
+        prompt: GPT-2's largest version has 1.5 billion parameters. With mixed-precision Adam (16 bytes per parameter), how many GB do its model states need?
+        answer: 24
+        feedback: 1.5 billion × 16 = 24 billion bytes = 24 GB, the figure the ZeRO paper uses to show that even a 1.5B model strains a 32 GB GPU.
+      - id: training-memory.calculate.3
+        prompt: How many GB do Adam's two fp32 moment estimates alone take for a 7-billion-parameter model?
+        answer: 56
+        feedback: Two 4-byte values per parameter is 8 bytes; 7 billion × 8 = 56 GB, half of the 112 GB model-state total.
+      - id: training-memory.calculate.4
+        prompt: Using 34 × s × b × h bytes per layer (attention scores not stored), how many GB of activations does a 32-layer model with h = 4,096 need for b = 2 sequences of s = 2,048 tokens?
+        answer: 18.3
+        feedback: 34 × 2,048 × 2 × 4,096 ≈ 570 million bytes per layer; × 32 layers ≈ 18.3 GB. It matches one 4,096-token sequence, because only the product s × b matters in this term.
+      - id: training-memory.calculate.5
+        prompt: Serving the 7B model (32 layers, width 4,096, bf16), each token's KV cache takes 2 × 32 × 4,096 × 2 bytes. How many GB does the cache need for 16 conversations of 4,096 tokens each?
+        answer: 34.4
+        feedback: Per token, 2 × 32 × 4,096 × 2 = 524,288 bytes. Times 16 × 4,096 = 65,536 tokens gives about 34.4 GB, far more than the 14 GB of weights.

@@ -1,358 +1,555 @@
 schema_version: 0.2-draft
 lesson:
   id: robotics-system-project
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: 'Project: trace a robot sensing and control loop'
   state: draft
-  summary: Trace a bounded controller on paper, account for sensor error, and compare classical control with
-    optional learned policies.
+  summary: Tidy must cross the kitchen, around the island, in 25 seconds, without speeding or scraping anything. Plan the route, tune the controller, and prove it with 50 trials and an honest interval.
   slot: M36.12
   category: destination
   archetype: project
   minutes: 35
   sources:
-  - title: 'Lynch and Park: Modern Robotics'
-    url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
-  - title: 'Octo: a generalist robot policy (2024)'
-    url: https://arxiv.org/abs/2405.12213
+    - title: 'Lynch and Park: Modern Robotics'
+      url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
+    - title: A Formal Basis for the Heuristic Determination of Minimum Cost Paths (Hart, Nilsson & Raphael, 1968)
+      url: https://doi.org/10.1109/TSSC.1968.300136
+    - title: 'Octo: a generalist robot policy (2024)'
+      url: https://arxiv.org/abs/2405.12213
 objectives:
-- id: objective.robotics-system-project
-  version: 1-draft
-  statement: Calculate a bounded proportional-control step and identify why observed feedback, constraints,
-    and closed-loop evaluation matter to a robot system.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - robotics-system-project.base
-  - robotics-system-project.transfer
-  prerequisites:
-  - anyOf:
-    - objective.feedback-and-robot-control
-  - anyOf:
-    - objective.localization-mapping-and-slam
-  - anyOf:
-    - objective.kinematics-and-motion-planning
-  - anyOf:
-    - objective.physical-ai-evaluation
+  - id: objective.robotics-system-project
+    version: 2-draft
+    statement: Combine a grid planner and a feedback controller for a simulated 2-D robot, check every trial against safety limits, and report success over many trials with a confidence interval.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - robotics-system-project.base.v2
+      - robotics-system-project.transfer.v2
+      - robotics-system-project.command.v2
+    prerequisites:
+      - anyOf:
+          - objective.feedback-and-robot-control
+      - anyOf:
+          - objective.localization-mapping-and-slam
+      - anyOf:
+          - objective.kinematics-and-motion-planning
+      - anyOf:
+          - objective.physical-ai-evaluation
 scenes:
-- id: robotics-system-project.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.robotics-system-project
-  title: Start with a robot small enough to reason about
-  markdown: 'Our toy robot moves along a numbered line toward target position 2. Its true position starts at
-    0. A sensor reports an observed position, and the controller produces a movement command. A **controller**
-    is a rule for choosing actions from a goal and feedback. A **policy** also maps available information to
-    actions; it may be written by people or learned.
+  - id: robotics-system-project.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.robotics-system-project
+    title: Tidy crosses the kitchen
+    markdown: |-
+      Tidy, the kitchen robot from module 30, has to carry clean mugs from the sink to the table. The kitchen island sits in the way. The household has three rules: arrive within 25 seconds, never drive faster than 0.5 m/s, and never come within 0.2 m of the island. Last week's version arrived every time, and scraped the island every time.
 
+      **Your brief**
 
-    This is a hand simulation, not instructions for operating hardware. Deliver a table of observations, actions,
-    and resulting positions, plus a diagram connecting sensing, planning, control, and evaluation.'
-  text_mode: 'Our toy robot moves along a numbered line toward target position 2. Its true position starts
-    at 0. A sensor reports an observed position, and the controller produces a movement command. A **controller**
-    is a rule for choosing actions from a goal and feedback. A **policy** also maps available information to
-    actions; it may be written by people or learned.
+      | | |
+      | --- | --- |
+      | Goal | Plan a route around the island, drive it with feedback control, and find a setup that meets all three rules |
+      | Audience | The family, who want a yes or no, and the engineer who will tune the real robot |
+      | Done looks like | A planned path, a table of four setups over 50 simulated trials each with 95% intervals, and a recommendation that names the setup and its evidence |
+      | Time | About 35 minutes |
 
+      A robot system is a loop of three jobs. A **planner** chooses a route before moving. A **controller** turns the gap between where the robot is and where it should be into motor commands, many times a second. A **safety check** watches every moment of every trial. You'll build each one, then measure the loop as a whole.
+  - id: robotics-system-project.s2
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.robotics-system-project
+    title: Warm up on a line
+    markdown: |-
+      **Milestone 1: one dimension, by hand.** Before the kitchen, trace the simplest feedback loop, the one in the simulation below. A robot on a line starts at 0; the target is 2.
 
-    This is a hand simulation, not instructions for operating hardware. Deliver a table of observations, actions,
-    and resulting positions, plus a diagram connecting sensing, planning, control, and evaluation.'
-  bridges: []
-- id: robotics-system-project.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.robotics-system-project
-  title: Calculate one bounded control rule
-  markdown: 'Use error = target − observed position. Choose raw command = 0.5 × error, then limit that command
-    to the interval from −1 to +1. Limiting a command this way is **clipping**. In our simplified dynamics,
-    next true position = current true position + clipped command.
+      - Error = target − observed position.
+      - Command = 0.5 × error, then **clipped** (limited) to the range −1 to +1.
+      - Next position = current position + command.
 
+      | Step | Observed | Error | 0.5 × error | Clipped command | Next position |
+      | ---: | ---: | ---: | ---: | ---: | ---: |
+      | 1 | 0 | 2 | 1.0 | 1.0 | 1.0 |
+      | 2 | 1.0 | 1.0 | 0.5 | 0.5 | 1.5 |
+      | 3 | 1.5 | 0.5 | 0.25 | 0.25 | 1.75 |
 
-    With an accurate sensor at 0 and target 2, error is 2 and command is 1, giving next position 1. At the
-    next step, error is 1 and command is 0.5, giving position 1.5. A third step reaches 1.75. State the units
-    and assumptions: instant commands, one-dimensional motion, and no unmodeled forces.'
-  text_mode: 'Use error = target − observed position. Choose raw command = 0.5 × error, then limit that command
-    to the interval from −1 to +1. Limiting a command this way is **clipping**. In our simplified dynamics,
-    next true position = current true position + clipped command.
+      Each step closes half the gap: the proportional control of *Correct motion using measured error*.
 
+      :::predict At step 2 the sensor is late and still reports 0, though the robot is really at 1. Where does the robot end up?
+      At 2. The controller sees error 2, sends the clipped command 1, and the robot moves from its *true* position 1 to 2. Here the stale reading happened to help, but a late sensor near an obstacle pushes the robot on when it should slow down. The controller only ever acts on what it observes.
+      :::
+    bridges:
+      - arithmetic
+      - feedback-and-robot-control
+    figure:
+      kind: robot
+      caption: This simulation uses the same bounded one-dimensional controller as the paper project.
+      description: Observe a position, subtract it from the target, multiply by a gain, and clip the command to the allowed step. Take one step and observe again. A stale observation can move the robot differently from a current observation.
+  - id: robotics-system-project.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robotics-system-project
+    title: Plan a route that leaves room
+    markdown: |-
+      **Milestone 2: the planner.** The supplied map is a 6 m × 4 m kitchen, cut into a grid of 12 × 8 cells, each 0.5 m square. Cells are numbered from (0, 0) at the sink corner.
 
-    With an accurate sensor at 0 and target 2, error is 2 and command is 1, giving next position 1. At the
-    next step, error is 1 and command is 0.5, giving position 1.5. A third step reaches 1.75. State the units
-    and assumptions: instant commands, one-dimensional motion, and no unmodeled forces.'
-  bridges:
-  - arithmetic
-  - feedback-and-robot-control
-  figure:
-    kind: robot
-    caption: This simulation uses the same bounded one-dimensional controller as the paper project.
-    description: Observe a position, subtract it from the target, multiply by a gain, and clip the command
-      to the allowed step. Take one step and observe again. A stale observation can move the robot differently
-      from a current observation.
-- id: robotics-system-project.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robotics-system-project
-  title: Put sensing and planning around the controller
-  markdown: 'A **coordinate frame** specifies the origin and directions used to express a position. An observation
-    in a camera’s frame must be related to the robot’s working frame before it can support an action. **State
-    estimation** combines measurements and a model to estimate quantities that are not known exactly.
+      | Item | Cells | In meters |
+      | --- | --- | --- |
+      | Start, by the sink | (1, 1) | (0.75, 0.75) |
+      | Goal, at the table | (10, 6) | (5.25, 3.25) |
+      | Island | x 4 to 7, y 2 to 4 | x 2.0 to 4.0 m, y 1.0 to 2.5 m |
 
+      Search the grid with **A\*** from *Use an estimate without confusing it with a guarantee*: moves go to the 8 neighboring cells, costing 1 cell straight or √2 diagonally, and the heuristic is straight-line distance to the goal, which never overestimates. The path becomes a list of **waypoints**, the centers of the cells it passes through.
 
-    A planner might choose a route around an obstacle while a controller follows the next target. These are
-    different responsibilities. Label where your toy removed obstacles, orientation, changing sensor quality,
-    and motion delay. Omitting these details makes the arithmetic inspectable; it does not show that a physical
-    robot can safely omit them.'
-  text_mode: 'A **coordinate frame** specifies the origin and directions used to express a position. An observation
-    in a camera’s frame must be related to the robot’s working frame before it can support an action. **State
-    estimation** combines measurements and a model to estimate quantities that are not known exactly.
+      Plan it twice:
 
+      - **Hug:** block only the island's own cells. The path is 5.83 m, with 11 waypoints, and it passes 0.25 m from the island.
+      - **Wide berth:** first **inflate** the island, blocking every cell next to it too. The path is 6.41 m, with 13 waypoints, and it stays 0.75 m away.
 
-    A planner might choose a route around an obstacle while a controller follows the next target. These are
-    different responsibilities. Label where your toy removed obstacles, orientation, changing sensor quality,
-    and motion delay. Omitting these details makes the arithmetic inspectable; it does not show that a physical
-    robot can safely omit them.'
-  bridges: []
-- id: robotics-system-project.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robotics-system-project
-  title: Break one assumption and inspect the consequence
-  markdown: 'Suppose the true position is 1 but a delayed sensor still reports 0. The target remains 2. The
-    controller uses the observation, computes command 1, and our toy dynamics reaches true position 2. With
-    the fresh observation 1, it would choose 0.5 and reach 1.5 instead.
+      Inflating obstacles by the robot's size is the grid version of planning in configuration space from *Turn a desired pose into feasible movement*: it leaves room for the body, and for the controller's mistakes. The wide path is 10% longer. Keep both; the trials will decide.
+  - id: robotics-system-project.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robotics-system-project
+    title: Follow the waypoints with a PD controller
+    markdown: |-
+      **Milestone 3: the controller.** Tidy's base is simulated as a mass you push: every 0.05 s the controller picks an acceleration, which changes the velocity, which moves the position. It chases the current waypoint and moves on to the next one when the waypoint is within 0.25 m.
 
+      The command is the P and D parts of PID, applied to each axis:
 
-    The delayed measurement happened to produce the target in this example, but the mismatch shows why an old
-    command can be inappropriate for a changed state. Test both directions of sensor error and include stopping
-    conditions. A favorable single outcome is not evidence that delay is beneficial or safe in general.'
-  text_mode: 'Suppose the true position is 1 but a delayed sensor still reports 0. The target remains 2. The
-    controller uses the observation, computes command 1, and our toy dynamics reaches true position 2. With
-    the fresh observation 1, it would choose 0.5 and reach 1.5 instead.
+      $$a = \text{clip}\big(K_p\,(\text{waypoint} - \text{seen}) - K_d\,v,\; -1,\; 1\big)$$
 
+      Here "seen" is the position from a sensor with 2 cm of noise, $v$ is the velocity, and the clip is the motor limit of 1 m/s². The simulator then adds random wheel slip. Worked first step for the brisk gains $K_p = 1.5$, $K_d = 2$: Tidy is at rest at (0.75, 0.75) and the waypoint is (1.25, 1.25), so $a = 1.5 \times (0.5, 0.5) - 2 \times (0, 0) = (0.75, 0.75)$ m/s². After 0.05 s, before slip, $v = (0.0375, 0.0375)$ m/s.
 
-    The delayed measurement happened to produce the target in this example, but the mismatch shows why an old
-    command can be inappropriate for a changed state. Test both directions of sensor error and include stopping
-    conditions. A favorable single outcome is not evidence that delay is beneficial or safe in general.'
-  bridges: []
-- id: robotics-system-project.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robotics-system-project
-  title: Locate learned policies without making them compulsory
-  markdown: 'A learned perception system can estimate object positions; imitation learning can fit actions
-    from demonstrations; reinforcement learning can use rewards to adjust a policy. Vision-language-action
-    models can connect instructions and visual inputs to an action representation. These are alternative or
-    additional components, not mandatory parts of every controller.
+      Why no integral term? The integral fixes a steady push, like the mug's weight on the lift in *Correct motion using measured error*. Here nothing pushes steadily, and while driving the waypoint error is always large, so an integral would pile up and cause the windup that lesson warned about. $K_i = 0$ is a choice, not an omission.
 
+      :::predict Once Tidy is cruising, $a \approx 0$, so $K_p \times \text{error} \approx K_d \times v$. Just after Tidy switches waypoints on a straight stretch, the next one is 0.75 m away. Which gains risk breaking the 0.5 m/s limit?
+      Cruising speed is about $(K_p / K_d) \times \text{error}$, and the error is largest right after a switch, so this is a ceiling. Gentle gains, $K_p = 1$ and $K_d = 2$, give at most $0.5 \times 0.75 = 0.375$ m/s: safe, but slow. Brisk gains, $K_p = 1.5$ and $K_d = 2$, give up to $0.75 \times 0.75 \approx 0.56$ m/s: over the limit. The error shrinks before Tidy reaches that ceiling, so without slip brisk Tidy stays just under the limit, with very little room to spare. Add wheel slip and it goes past 0.5 m/s in most trials. Faster arrival and the speed limit pull in opposite directions.
+      :::
+  - id: robotics-system-project.trials
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robotics-system-project
+    title: Fifty trials, three rules, one interval
+    markdown: |-
+      **Milestone 4: evaluate the loop.** One good run proves little; slip and sensor noise differ every time. The reference solution runs 50 trials of four setups. A trial is a **success** only if Tidy gets within 0.1 m of the table within 25 s, never comes within 0.2 m of the island, and never exceeds 0.5 m/s. The fourth setup adds a **speed governor**: a safety layer that scales the velocity down whenever it would pass 0.45 m/s.
 
-    Octo is a documented generalist robot policy example with adaptation to different observation and action
-    interfaces. Its research results do not turn our simple controller into that policy. If you choose a learned
-    extension, state its input/action units, training data, adaptation stage, and where conventional control
-    or explicit constraints remain.'
-  text_mode: 'A learned perception system can estimate object positions; imitation learning can fit actions
-    from demonstrations; reinforcement learning can use rewards to adjust a policy. Vision-language-action
-    models can connect instructions and visual inputs to an action representation. These are alternative or
-    additional components, not mandatory parts of every controller.
+      Success rates get a Wilson 95% interval, from *Evaluate closed-loop behavior under physical uncertainty*, because small samples near 0% or 100% need it.
 
+      ```python run
+      import heapq, math
+      import numpy as np
 
-    Octo is a documented generalist robot policy example with adaptation to different observation and action
-    interfaces. Its research results do not turn our simple controller into that policy. If you choose a learned
-    extension, state its input/action units, training data, adaptation stage, and where conventional control
-    or explicit constraints remain.'
-  bridges: []
-- id: robotics-system-project.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robotics-system-project
-  title: Evaluate the whole loop and review the project
-  markdown: 'Define success as reaching a stated tolerance of the goal while respecting movement limits. Record
-    interventions, failures, delayed observations, and recovery attempts, rather than reporting only completed
-    trials. Test changed starting positions and sensor errors on paper.
+      W, H, CELL = 12, 8, 0.5                              # kitchen: 12 x 8 cells of 0.5 m
+      ISLAND = [(x, y) for x in range(4, 8) for y in range(2, 5)]
+      BOX = np.array([4, 8, 2, 5]) * CELL                  # island edges in metres: x0, x1, y0, y1
+      STEPS = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)]
 
+      def astar(start, goal, blocked):                     # A* over grid cells, straight-line heuristic
+          frontier, came, cost = [(0, start)], {start: None}, {start: 0}
+          while frontier:
+              cur = heapq.heappop(frontier)[1]
+              for dx, dy in STEPS:
+                  nxt = (cur[0] + dx, cur[1] + dy)
+                  if 0 <= nxt[0] < W and 0 <= nxt[1] < H and nxt not in blocked:
+                      c = cost[cur] + math.hypot(dx, dy)
+                      if c < cost.get(nxt, 1e9):
+                          cost[nxt], came[nxt] = c, cur
+                          heapq.heappush(frontier, (c + math.dist(nxt, goal), nxt))
+          path = [goal]
+          while came[path[-1]]:
+              path.append(came[path[-1]])
+          return (np.array(path[::-1]) + 0.5) * CELL, cost[goal] * CELL   # waypoints (m), length (m)
 
-    For self or peer review, save the accurate-sensor trace, the delayed-sensor comparison, and a block diagram
-    with clear boundaries. A reviewer should be able to recompute each action and distinguish true state from
-    observation. Explain why success in this one-dimensional simulation cannot establish performance for a
-    robot arm or autonomous vehicle. A driving extension additionally needs road-specific perception, prediction,
-    rules, and validation. The quiz checks these distinctions and calculations, not real-world operating competence.'
-  text_mode: 'Define success as reaching a stated tolerance of the goal while respecting movement limits. Record
-    interventions, failures, delayed observations, and recovery attempts, rather than reporting only completed
-    trials. Test changed starting positions and sensor errors on paper.
+      def run(path, kp, kd, cap=None, n=50, dt=0.05, limit=25.0):
+          rng = np.random.default_rng(0)
+          pos, vel, i = np.tile(path[0], (n, 1)), np.zeros((n, 2)), np.zeros(n, int)
+          t_done, closest, fastest = np.full(n, np.inf), np.full(n, 9.0), np.zeros(n)
+          for step in range(int(limit / dt)):
+              seen = pos + rng.normal(0, 0.02, (n, 2))                     # noisy position sensor
+              i += (np.linalg.norm(path[i] - seen, axis=1) < 0.25) & (i < len(path) - 1)
+              acc = np.clip(kp * (path[i] - seen) - kd * vel, -1, 1)       # PD command, motor limit
+              vel = vel + (acc + rng.normal(0, 0.3, (n, 2))) * dt          # plus wheel slip
+              if cap:                                                      # speed governor
+                  vel *= np.minimum(1, cap / np.maximum(np.linalg.norm(vel, axis=1), 1e-9))[:, None]
+              moving = np.isinf(t_done)
+              pos = pos + vel * dt * moving[:, None]
+              gap = np.hypot(np.maximum.reduce([BOX[0] - pos[:, 0], 0 * pos[:, 0], pos[:, 0] - BOX[1]]),
+                             np.maximum.reduce([BOX[2] - pos[:, 1], 0 * pos[:, 1], pos[:, 1] - BOX[3]]))
+              closest = np.minimum(closest, gap)
+              fastest = np.maximum(fastest, np.linalg.norm(vel, axis=1) * moving)
+              there = moving & (i == len(path) - 1) & (np.linalg.norm(pos - path[-1], axis=1) < 0.1)
+              t_done[there] = (step + 1) * dt
+          return t_done, closest, fastest
 
+      def wilson(k, n, z=1.96):
+          p = k / n
+          centre = (p + z**2 / (2 * n)) / (1 + z**2 / n)
+          half = z / (1 + z**2 / n) * math.sqrt(p * (1 - p) / n + z**2 / (4 * n**2))
+          return centre - half, centre + half
 
-    For self or peer review, save the accurate-sensor trace, the delayed-sensor comparison, and a block diagram
-    with clear boundaries. A reviewer should be able to recompute each action and distinguish true state from
-    observation. Explain why success in this one-dimensional simulation cannot establish performance for a
-    robot arm or autonomous vehicle. A driving extension additionally needs road-specific perception, prediction,
-    rules, and validation. The quiz checks these distinctions and calculations, not real-world operating competence.'
-  bridges: []
-- id: robotics-system-project.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.robotics-system-project
-  markdown: Try these questions to check the ideas behind your project. Use the lesson’s rubric for self or
-    peer review of your work; the app does not grade the project artifact.
-  text_mode: Try these questions to check the ideas behind your project. Use the lesson’s rubric for self or
-    peer review of your work; the app does not grade the project artifact.
-  takeaway: Robotics connects sensing, decisions, and physical consequences. A controller needs fresh observations
-    and appropriate constraints whether or not it uses a learned policy.
+      hug, hug_m = astar((1, 1), (10, 6), set(ISLAND))
+      wide, wide_m = astar((1, 1), (10, 6), {(x + dx, y + dy) for x, y in ISLAND for dx, dy in STEPS})
+      print(f"planned: hug {len(hug)} waypoints, {hug_m:.2f} m;  wide berth {len(wide)} waypoints, {wide_m:.2f} m")
+      for name, path, kp, kd, cap in [("hug island, gentle", hug, 1, 2, None), ("wide berth, gentle", wide, 1, 2, None),
+                                      ("wide berth, brisk", wide, 1.5, 2, None), ("wide, brisk, capped", wide, 1.5, 2, 0.45)]:
+          t, gap, v = run(path, kp, kd, cap)
+          ok = (t < np.inf) & (gap >= 0.2) & (v <= 0.5)
+          lo, hi = wilson(ok.sum(), len(ok))
+          print(f"{name:19s} arrive {np.mean(t < np.inf):.2f} clear {np.mean(gap >= 0.2):.2f} "
+                f"speed {np.mean(v <= 0.5):.2f} | success {ok.sum():2d}/50, 95% CI {lo:.0%}-{hi:.0%},  median time {np.median(t[t < np.inf]):.1f} s")
+      ```
+
+      **Expected output:**
+
+      | Setup | Arrived | Clear of island | Under speed limit | Success | 95% interval | Median time |
+      | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+      | Hug island, gentle | 1.00 | 0.00 | 1.00 | 0/50 | 0–7% | 22.4 s |
+      | Wide berth, gentle | 0.12 | 1.00 | 1.00 | 6/50 | 6–24% | 25.0 s |
+      | Wide berth, brisk | 1.00 | 1.00 | 0.30 | 15/50 | 19–44% | 17.2 s |
+      | Wide, brisk, capped | 1.00 | 1.00 | 1.00 | 50/50 | 93–100% | 17.4 s |
+
+      (The median time counts only the trials that arrived.) Read it row by row:
+
+      1. **Hugging the island arrives every time and fails every time.** Its waypoints are 0.25 m away, but Tidy drives straight between them, and the line between two diagonal waypoints passes right over the island's corner. Even a run with no slip touches it.
+      2. **Gentle gains are safe but late.** Only 6 of 50 arrive within 25 s.
+      3. **Brisk gains are on time but speed in 35 of 50 trials**, as the cruising-speed estimate warned.
+      4. **The governor fixes speeding without losing time.** 17.4 s against 17.2 s, and every trial passes.
+
+      :::mixup "50 out of 50 means Tidy never fails on this route."
+      It means failures are rare *in these conditions*. The interval runs from 93% to 100%, so a true failure rate as high as about 7% fits the data; the rule of three gives the same bound, 3/50 = 6%. And a simulator's slip isn't a real floor. Test on the real robot before telling the family "always".
+      :::
+  - id: robotics-system-project.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robotics-system-project
+    title: Mistakes that make a robot look safe
+    markdown: |-
+      | Mistake | How to spot it | Fix |
+      | --- | --- | --- |
+      | Reporting arrival only | Your table has no safety columns | A trial succeeds only if every rule held at every moment |
+      | Checking safety at waypoints | Clearance is computed from the plan, not the trajectory | Check the simulated position at every time step |
+      | Planning the robot as a point | The path touches obstacle edges | Inflate obstacles by the robot's radius plus a margin |
+      | One trial per setup | Rerunning changes the verdict | Many seeded trials, with an interval |
+      | Fixing speeding by detuning | Speed passes, arrival fails | Add a governor so the controller can stay brisk |
+
+      **Where a learned policy fits.** You could replace the PD controller with a policy learned by imitation or reinforcement learning (module 30), or with a large pretrained robot policy such as Octo (2024), which turns camera images and a text instruction into actions. Keep everything else: the same map, the same three rules, the same 50 seeded trials and interval. Then the comparison is fair, and the governor still guards the speed limit whatever the policy does.
+  - id: robotics-system-project.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robotics-system-project
+    title: Recommend a setup, then score your work
+    markdown: |-
+      **Milestone 5: recommend.** Write it for both audiences. For example: "Use the wide-berth route with brisk gains and the 0.45 m/s speed governor. It met all three rules in 50 of 50 simulated trials (95% interval 93–100%) with a median time of 17.4 s. Hugging the island failed the clearance rule every time, and brisk gains without the governor sped in 70% of trials. Next: 20 supervised runs on the real robot, counting any human intervention as a failure."
+
+      **No-code option.** Trace milestone 1's table and the stale-sensor case by hand. Draw the grid, block the island, and find a route by hand with and without inflation. Compute the cruising speeds from the predict question for both gain settings. Then use the expected-output table to write the recommendation, and check two of its intervals with the Wilson formula.
+
+      **Rubric.** Score yourself, or ask a friend to check your numbers.
+
+      | Criterion | Not yet | Solid | Excellent |
+      | --- | --- | --- | --- |
+      | Warm-up | Missing | 1-D trace correct | Explains the stale-sensor case |
+      | Planner | No obstacle margin | Inflated grid, A* path | Compares hug and wide paths with lengths |
+      | Controller | Gains picked at random | PD with clipping, gains stated | Predicts cruising speed from the gains |
+      | Evaluation | One run | 50 trials, all three rules | Wilson intervals, and every failure traced to a cause |
+      | Recommendation | "It works" | Names a setup | Setup, evidence, interval, and the next real-world test |
+
+      The questions below check the concepts; the rubric is how you judge your own project.
+  - id: robotics-system-project.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.robotics-system-project
+    markdown: |-
+      Compute a few PD commands, explain Tidy's four results, then advise a warehouse robot, a speeding delivery robot, a lawn mower's planner, and a drone team with a perfect simulator score.
+    takeaway: |-
+      Plan with room to spare, control with feedback, and check every safety rule at every moment. Judge the whole loop over many trials, and report the success rate with its interval.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - robotics-system-project.s1
-    - robotics-system-project.s2
-    - robotics-system-project.s3
-    - robotics-system-project.s4
-    - robotics-system-project.s5
-    - robotics-system-project.s6
-    - robotics-system-project.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - robotics-system-project.s1
+        - robotics-system-project.s2
+        - robotics-system-project.s3
+        - robotics-system-project.s4
+        - robotics-system-project.trials
+        - robotics-system-project.s5
+        - robotics-system-project.s6
+        - robotics-system-project.check
+      gate_refs:
+        - gate.core
 assessment_families:
-- id: robotics-system-project.base
-  objective_ref: objective.robotics-system-project
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: robotics-system-project.s4
-  variants:
-  - prompt: The true position is 1 but the sensor reports 0. Which value does our specified controller use
-      in target minus observation?
-    answer: a
-    options:
-    - id: b
-      text: The hidden true 1, even though the controller has not observed it.
-    - id: c
-      text: The average of target and true position by definition.
-    - id: a
-      text: The reported 0; true state is used separately in the toy dynamics.
-    feedback: The controller acts on its available observation; the simulation tracks the separate true state.
-    id: robotics-system-project.base.1
-  - prompt: Does the paper controller require a transformer or reinforcement learning to choose its next action?
-    answer: a
-    options:
-    - id: c
-      text: Yes; proportional feedback is a reward-training algorithm.
-    - id: a
-      text: No; its explicit error-and-clipping rule already specifies the action.
-    - id: b
-      text: Yes; every physical action is a learned token.
-    feedback: Feedback control and learned policy training are different mechanisms.
-    id: robotics-system-project.base.2
-  - prompt: A trial reaches the goal after a person resets the robot twice. What should the evaluation record?
-    answer: a
-    options:
-    - id: a
-      text: The completion and the two interventions.
-    - id: b
-      text: Only completion, because resets occur outside the model.
-    - id: c
-      text: Two extra autonomous successes.
-    feedback: Human assistance affects what the observed success demonstrates.
-    id: robotics-system-project.base.3
-  - prompt: Which claim is supported by the hand simulation?
-    answer: a
-    options:
-    - id: b
-      text: The same rule is sufficient to drive a vehicle on public roads.
-    - id: c
-      text: Sensor delay is beneficial because one delayed example reached the target.
-    - id: a
-      text: The specified controller produces the calculated states under the stated toy assumptions.
-    feedback: The trace checks a simplified mechanism, not a broad operating guarantee.
-    id: robotics-system-project.base.4
-- id: robotics-system-project.transfer
-  objective_ref: objective.robotics-system-project
-  task: transfer
-  response_type: numeric_fields_with_reason
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: robotics-system-project.s2
-  variants:
-  - prompt: Use target=3, observed position=0, and true position=0. Error = target − observed; raw command
-      = 0.5 × error; clip command to [−1, 1]; next true position = true position + clipped command. Give error,
-      clipped command, and next true position.
-    answers:
-      error: 3
-      command: 1
-      next: 1
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Compute the command from the hidden true state instead of the observation.
-    - id: c
-      text: Apply the unclipped command to the observed position.
-    - id: a
-      text: Compute the command from the observation, clip it, then apply it to the true state.
-    feedback: Keep observed and true positions distinct, and respect the command limit.
-    id: robotics-system-project.transfer.1
-  - prompt: Use target=0, observed position=3, and true position=2. Error = target − observed; raw command
-      = 0.5 × error; clip command to [−1, 1]; next true position = true position + clipped command. Give error,
-      clipped command, and next true position.
-    answers:
-      error: -3
-      command: -1
-      next: 1
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: Apply the unclipped command to the observed position.
-    - id: a
-      text: Compute the command from the observation, clip it, then apply it to the true state.
-    - id: b
-      text: Compute the command from the hidden true state instead of the observation.
-    feedback: Keep observed and true positions distinct, and respect the command limit.
-    id: robotics-system-project.transfer.2
-  - prompt: Use target=2, observed position=1, and true position=1. Error = target − observed; raw command
-      = 0.5 × error; clip command to [−1, 1]; next true position = true position + clipped command. Give error,
-      clipped command, and next true position.
-    answers:
-      error: 1
-      command: 0.5
-      next: 1.5
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Compute the command from the observation, clip it, then apply it to the true state.
-    - id: b
-      text: Compute the command from the hidden true state instead of the observation.
-    - id: c
-      text: Apply the unclipped command to the observed position.
-    feedback: Keep observed and true positions distinct, and respect the command limit.
-    id: robotics-system-project.transfer.3
-  - prompt: Use target=2, observed position=0, and true position=1. Error = target − observed; raw command
-      = 0.5 × error; clip command to [−1, 1]; next true position = true position + clipped command. Give error,
-      clipped command, and next true position.
-    answers:
-      error: 2
-      command: 1
-      next: 2
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Compute the command from the hidden true state instead of the observation.
-    - id: c
-      text: Apply the unclipped command to the observed position.
-    - id: a
-      text: Compute the command from the observation, clip it, then apply it to the true state.
-    feedback: Keep observed and true positions distinct, and respect the command limit.
-    id: robotics-system-project.transfer.4
-  numeric_fields:
-  - id: error
-    label: Observed error
-  - id: command
-    label: Clipped command
-  - id: next
-    label: Next true position
-  absolute_tolerance: 1.0e-06
+  - id: robotics-system-project.base
+    objective_ref: objective.robotics-system-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: robotics-system-project.s4
+    variants:
+      - prompt: The true position is 1 but the sensor reports 0. Which value does our specified controller use in target minus observation?
+        answer: a
+        options:
+          - id: b
+            text: The hidden true 1, even though the controller has not observed it.
+          - id: c
+            text: The average of target and true position by definition.
+          - id: a
+            text: The reported 0; true state is used separately in the toy dynamics.
+        feedback: The controller acts on its available observation; the simulation tracks the separate true state.
+        id: robotics-system-project.base.1
+        retired: true
+      - prompt: Does the paper controller require a transformer or reinforcement learning to choose its next action?
+        answer: a
+        options:
+          - id: c
+            text: Yes; proportional feedback is a reward-training algorithm.
+          - id: a
+            text: No; its explicit error-and-clipping rule already specifies the action.
+          - id: b
+            text: Yes; every physical action is a learned token.
+        feedback: Feedback control and learned policy training are different mechanisms.
+        id: robotics-system-project.base.2
+        retired: true
+      - prompt: A trial reaches the goal after a person resets the robot twice. What should the evaluation record?
+        answer: a
+        options:
+          - id: a
+            text: The completion and the two interventions.
+          - id: b
+            text: Only completion, because resets occur outside the model.
+          - id: c
+            text: Two extra autonomous successes.
+        feedback: Human assistance affects what the observed success demonstrates.
+        id: robotics-system-project.base.3
+        retired: true
+      - prompt: Which claim is supported by the hand simulation?
+        answer: a
+        options:
+          - id: b
+            text: The same rule is sufficient to drive a vehicle on public roads.
+          - id: c
+            text: Sensor delay is beneficial because one delayed example reached the target.
+          - id: a
+            text: The specified controller produces the calculated states under the stated toy assumptions.
+        feedback: The trace checks a simplified mechanism, not a broad operating guarantee.
+        id: robotics-system-project.base.4
+        retired: true
+  - id: robotics-system-project.transfer
+    objective_ref: objective.robotics-system-project
+    task: transfer
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: robotics-system-project.s2
+    variants:
+      - prompt: Use target=3, observed position=0, and true position=0. Error = target − observed; raw command = 0.5 × error; clip command to [−1, 1]; next true position = true position + clipped command. Give error, clipped command, and next true position.
+        answers:
+          error: 3
+          command: 1
+          next: 1
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Compute the command from the hidden true state instead of the observation.
+          - id: c
+            text: Apply the unclipped command to the observed position.
+          - id: a
+            text: Compute the command from the observation, clip it, then apply it to the true state.
+        feedback: Keep observed and true positions distinct, and respect the command limit.
+        id: robotics-system-project.transfer.1
+        retired: true
+      - prompt: Use target=0, observed position=3, and true position=2. Error = target − observed; raw command = 0.5 × error; clip command to [−1, 1]; next true position = true position + clipped command. Give error, clipped command, and next true position.
+        answers:
+          error: -3
+          command: -1
+          next: 1
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: Apply the unclipped command to the observed position.
+          - id: a
+            text: Compute the command from the observation, clip it, then apply it to the true state.
+          - id: b
+            text: Compute the command from the hidden true state instead of the observation.
+        feedback: Keep observed and true positions distinct, and respect the command limit.
+        id: robotics-system-project.transfer.2
+        retired: true
+      - prompt: Use target=2, observed position=1, and true position=1. Error = target − observed; raw command = 0.5 × error; clip command to [−1, 1]; next true position = true position + clipped command. Give error, clipped command, and next true position.
+        answers:
+          error: 1
+          command: 0.5
+          next: 1.5
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Compute the command from the observation, clip it, then apply it to the true state.
+          - id: b
+            text: Compute the command from the hidden true state instead of the observation.
+          - id: c
+            text: Apply the unclipped command to the observed position.
+        feedback: Keep observed and true positions distinct, and respect the command limit.
+        id: robotics-system-project.transfer.3
+        retired: true
+      - prompt: Use target=2, observed position=0, and true position=1. Error = target − observed; raw command = 0.5 × error; clip command to [−1, 1]; next true position = true position + clipped command. Give error, clipped command, and next true position.
+        answers:
+          error: 2
+          command: 1
+          next: 2
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Compute the command from the hidden true state instead of the observation.
+          - id: c
+            text: Apply the unclipped command to the observed position.
+          - id: a
+            text: Compute the command from the observation, clip it, then apply it to the true state.
+        feedback: Keep observed and true positions distinct, and respect the command limit.
+        id: robotics-system-project.transfer.4
+        retired: true
+    numeric_fields:
+      - id: error
+        label: Observed error
+      - id: command
+        label: Clipped command
+      - id: next
+        label: Next true position
+    absolute_tolerance: 1e-6
+  - id: robotics-system-project.base.v2
+    objective_ref: objective.robotics-system-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Trace which part of the loop produced the result (planner, controller, or safety layer), and remember that cruising speed is about (Kp ÷ Kd) × error.
+    remediation_scene: robotics-system-project.trials
+    variants:
+      - id: robotics-system-project.base.v2.1
+        prompt: Every waypoint on the hug path is 0.25 m from the island, yet every trial breaks the 0.2 m clearance rule. Why?
+        options:
+          - id: b
+            text: A* returns an inadmissible path when obstacles are not inflated
+          - id: a
+            text: Tidy cuts corners between waypoints, and slip pushes it closer still
+          - id: c
+            text: The clearance check measures from waypoints instead of from Tidy
+        answer: a
+        feedback: The robot drives straight between waypoints, and the line between two diagonal ones crosses the island's corner, so the 5 cm of spare room is gone before slip adds more. A* is still optimal on its grid, and the check measures the simulated position at every step.
+      - id: robotics-system-project.base.v2.2
+        prompt: Brisk gains (Kp 1.5, Kd 2) break the 0.5 m/s limit in most trials, while gentle gains (Kp 1, Kd 2) never do. Why?
+        options:
+          - id: a
+            text: Cruising speed is about (Kp ÷ Kd) × error, so brisk gains cruise 50% faster
+          - id: b
+            text: A higher Kp lets the command exceed the motor's 1 m/s² limit
+          - id: c
+            text: Brisk gains make the simulator add more wheel slip to each step
+        answer: a
+        feedback: At cruise the P push balances the D brake, so v ≈ (Kp ÷ Kd) × error, about 0.56 m/s for brisk against 0.375 m/s for gentle with a 0.75 m error. The motor clip and the slip are the same for both.
+      - id: robotics-system-project.base.v2.3
+        prompt: The governed setup succeeds in 50 of 50 trials. What can the report claim?
+        options:
+          - id: c
+            text: Success is exactly 100%, with no uncertainty left
+          - id: b
+            text: Tidy never fails on this route in this kitchen
+          - id: a
+            text: The success rate is plausibly between 93% and 100%
+        answer: a
+        feedback: The Wilson interval for 50/50 is 93–100%, so a failure rate up to about 7% still fits the data. Fifty successes can't show a rate of exactly 100%.
+      - id: robotics-system-project.base.v2.4
+        prompt: The controller uses Kp and Kd but sets Ki = 0. Why is that reasonable for this task?
+        options:
+          - id: a
+            text: Nothing pushes steadily, and the large waypoint error would wind up an integral
+          - id: b
+            text: Integral terms only work for one-dimensional systems like the lift
+          - id: c
+            text: The motor's acceleration limit already removes steady-state error
+        answer: a
+        feedback: An integral cancels a steady push, like the mug's weight on the lift. Chasing waypoints keeps the error large the whole way, so an integral would keep growing and overshoot. Integrals work fine in 2-D, and clipping doesn't remove a steady offset.
+  - id: robotics-system-project.transfer.v2
+    objective_ref: objective.robotics-system-project
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Count a trial as a success only if every rule held with no help, and fix the part of the loop that caused the failure.
+    remediation_scene: robotics-system-project.s5
+    variants:
+      - id: robotics-system-project.transfer.v2.1
+        prompt: A warehouse robot reaches its shelf in 47 of 50 trials, but 5 of those 47 needed a person to nudge it free. What should the report say?
+        options:
+          - id: b
+            text: 47/50, because the nudges happened outside the controller
+          - id: c
+            text: 47/55, counting every nudge as an extra failed trial
+          - id: a
+            text: 42/50 unassisted, with the 5 assisted runs listed apart
+        answer: a
+        feedback: A nudge is help, so those runs aren't unassisted successes; report them separately so readers see what the robot did alone. Adding nudges as extra trials changes the denominator without answering the question.
+      - id: robotics-system-project.transfer.v2.2
+        prompt: A delivery robot tuned for speed arrives on time but exceeds its speed limit in 70% of trials. Which fix keeps it on time?
+        options:
+          - id: a
+            text: Add a speed governor below the limit, then rerun the trials
+          - id: b
+            text: Lower the gains until it stops speeding, whatever the delay
+          - id: c
+            text: Raise the speed limit to match the speeds it reaches
+        answer: a
+        feedback: Tidy's governor removed speeding and cost only 0.2 s. Detuning trades one failed rule for another, like the gentle gains that arrived late, and raising the limit changes the rule rather than meeting it.
+      - id: robotics-system-project.transfer.v2.3
+        prompt: A lawn-mowing robot 0.4 m wide plans with A* on a grid, treating itself as a point, and keeps clipping flower beds. What should the planner change?
+        options:
+          - id: c
+            text: Add more waypoints along the same planned path
+          - id: a
+            text: Inflate obstacles by the robot's radius before searching
+          - id: b
+            text: Use a heuristic that overestimates near the beds
+        answer: a
+        feedback: Inflating obstacles leaves room for the body, like Tidy's wide berth. More waypoints follow the same too-close path, and an overestimating heuristic makes A* lose its optimality without adding clearance.
+      - id: robotics-system-project.transfer.v2.4
+        prompt: A drone lands perfectly in 20 of 20 simulated trials, and the team wants to announce "100% reliable landings". What should they say instead?
+        options:
+          - id: a
+            text: 20/20 in simulation (Wilson 84–100%), with hardware tests still to come
+          - id: b
+            text: 100% reliable, since the simulator uses the real equations of flight
+          - id: c
+            text: 95% reliable, subtracting five points to allow for the simulator gap
+        answer: a
+        feedback: Twenty successes still allow a failure rate up to about 16%, and simulation leaves out real wind, sensors, and batteries. An arbitrary deduction is no more honest than 100%.
+  - id: robotics-system-project.command.v2
+    objective_ref: objective.robotics-system-project
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Compute Kp × error − Kd × velocity, then clip the result to the motor limit of −1 to +1 m/s².
+    remediation_scene: robotics-system-project.s4
+    absolute_tolerance: 0.01
+    variants:
+      - id: robotics-system-project.command.v2.1
+        prompt: 'With Kp = 1.5 and Kd = 2, the waypoint is 0.5 m ahead on this axis and the robot is at rest. What acceleration (m/s²) does the PD controller command? The motor limit is ±1.'
+        answer: 0.75
+        feedback: 1.5 × 0.5 − 2 × 0 = 0.75, inside the ±1 limit.
+      - id: robotics-system-project.command.v2.2
+        prompt: 'With Kp = 1 and Kd = 2, the waypoint is 0.4 m ahead on this axis and the robot moves toward it at 0.3 m/s. What acceleration (m/s²) does the PD controller command? The motor limit is ±1.'
+        answer: -0.2
+        feedback: 1 × 0.4 − 2 × 0.3 = −0.2. The D term brakes, because the robot is already closing fast.
+      - id: robotics-system-project.command.v2.3
+        prompt: 'With Kp = 2 and Kd = 1, the waypoint is 0.8 m ahead on this axis and the robot moves toward it at 0.1 m/s. What acceleration (m/s²) does the PD controller command? The motor limit is ±1.'
+        answer: 1
+        feedback: 2 × 0.8 − 1 × 0.1 = 1.5, clipped to the motor limit of 1.
+      - id: robotics-system-project.command.v2.4
+        prompt: 'With Kp = 1.5 and Kd = 2, the waypoint is 0.6 m behind on this axis (error −0.6) and the robot still moves away from it at 0.2 m/s. What acceleration (m/s²) does the PD controller command? The motor limit is ±1.'
+        answer: -1
+        feedback: 1.5 × (−0.6) − 2 × 0.2 = −1.3, clipped to −1.

@@ -1,196 +1,466 @@
 schema_version: 0.2-draft
 lesson:
   id: contrastive-image-text-learning
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Bring matching images and descriptions closer in representation space
   state: draft
-  summary: Match pictures with words, then test what the match really tells you.
+  summary: In 2021, a model trained on 400 million captioned web images learned to recognize things it was never given a label for. Build its loss by hand from a 3 × 3 table.
   slot: M23.2
   category: learning
   sources:
-  - title: Learning Transferable Visual Models From Natural Language Supervision
-    url: https://arxiv.org/abs/2103.00020
+    - title: "Learning Transferable Visual Models From Natural Language Supervision (CLIP; Radford et al., 2021)"
+      url: https://arxiv.org/abs/2103.00020
+    - title: "Multimodal Neurons in Artificial Neural Networks (Goh et al., Distill, 2021)"
+      url: https://distill.pub/2021/multimodal-neurons/
+    - title: "Sigmoid Loss for Language Image Pre-Training (SigLIP; Zhai et al., 2023)"
+      url: https://arxiv.org/abs/2303.15343
+    - title: "Scaling Up Visual and Vision-Language Representation Learning With Noisy Text Supervision (ALIGN; Jia et al., 2021)"
+      url: https://arxiv.org/abs/2102.05918
 objectives:
-- id: objective.contrastive-image-text-learning
-  version: 1-draft
-  statement: CLIP-style contrastive training learns image and text representations by comparing paired and
-    unpaired examples; similarity supports retrieval and prompted classification but is not calibrated truth.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - contrastive-image-text-learning.base
-  - contrastive-image-text-learning.transfer
-  prerequisites:
-  - anyOf:
-    - objective.multimodal-alignment-and-fusion
-  - anyOf:
-    - objective.self-supervised-representations
+  - id: objective.contrastive-image-text-learning
+    version: 2-draft
+    statement: CLIP-style contrastive training learns image and text representations by comparing paired and unpaired examples; similarity supports retrieval and prompted classification but is not calibrated truth.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - contrastive-image-text-learning.base.v2
+      - contrastive-image-text-learning.transfer.v2
+      - contrastive-image-text-learning.calculate
+      - contrastive-image-text-learning.zeroshot
+    prerequisites:
+      - anyOf:
+          - objective.multimodal-alignment-and-fusion
+      - anyOf:
+          - objective.self-supervised-representations
 scenes:
-- id: contrastive-image-text-learning.s1
-  title: Encode both sides of a pair
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.contrastive-image-text-learning
-  markdown: An image encoder and a text encoder produce vectors with compatible dimensions. Training compares
-    similarities across a batch, rewarding the associated image-caption pairs relative to other pairings. The
-    model learns from the data’s descriptions and omissions, not from complete labels for every visual fact.
-  text_mode: An image encoder and a text encoder produce vectors with compatible dimensions. Training compares
-    similarities across a batch, rewarding the associated image-caption pairs relative to other pairings. The
-    model learns from the data’s descriptions and omissions, not from complete labels for every visual fact.
-  bridges: []
-- id: contrastive-image-text-learning.s2
-  title: Read a small similarity table
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.contrastive-image-text-learning
-  markdown: 'Imagine two images, a dog and a bicycle, paired with captions “dog” and “bicycle.” Comparing every
-    image with every caption gives four similarity scores.
+  - id: contrastive-image-text-learning.s1
+    title: Captions as a free teacher
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.contrastive-image-text-learning
+    markdown: |-
+      Amara photographs her pantry shelf and asks Lumen, "Is this the oat milk?" A classic image classifier can't help unless "oat milk" was one of its training labels. ImageNet classifiers know exactly 1,000 labels, and "oat milk carton" isn't one of them.
 
+      The web, though, is full of images with their own descriptions: product titles, news captions, alt text. In 2021 OpenAI's **CLIP** (Contrastive Language–Image Pre-training; Radford et al.) learned from 400 million such image–text pairs. The visual pretraining lesson met it briefly; here we build it.
 
-    Suppose the dog image scores 3 with “dog” and 1 with “bicycle.” The bicycle image scores 0 with “dog” and
-    4 with “bicycle.” Each intended pair has the larger score in both its row and its column.
+      CLIP has two separate networks, often called **two towers**:
 
+      - An **image encoder** (a ResNet or a Vision Transformer) turns a photo into a vector.
+      - A **text encoder** (a transformer) turns a caption into a vector of the same length.
 
-    A symmetric contrastive objective encourages each image to select its paired caption and each caption to
-    select its paired image. It encourages relative scores like these; it does not require matching scores
-    to equal 1. Also, an unpaired caption is not necessarily false: another caption in a larger batch could
-    genuinely describe something in the same image.'
-  text_mode: 'Imagine two images, a dog and a bicycle, paired with captions “dog” and “bicycle.” Comparing
-    every image with every caption gives four similarity scores.
+      Training pulls each photo's vector toward its own caption's vector and pushes it away from every other caption in the batch. Afterwards "a photo of oat milk" and a photo of an oat-milk carton land close together in this shared **joint embedding space**, though no one ever labeled a carton "oat milk".
+    diagram:
+      caption: CLIP's two towers. Photos and captions meet only in the similarity table.
+      description: A batch of photos goes into the image encoder, which outputs one vector per photo. The matching batch of captions goes into the text encoder, which outputs one vector per caption. Both sets of vectors are normalized and compared in an N by N table of cosine similarities. The table feeds the contrastive loss, which rewards the diagonal where each photo meets its own caption.
+      nodes:
+        - id: photos
+          label: N photos
+          col: 0
+          row: 0
+          tone: data
+        - id: captions
+          label: N captions
+          col: 0
+          row: 2
+          tone: data
+        - id: ienc
+          label: Image encoder
+          note: ResNet or ViT
+          col: 1
+          row: 0
+        - id: tenc
+          label: Text encoder
+          note: transformer
+          col: 1
+          row: 2
+        - id: table
+          label: N × N similarity table
+          note: cosine of every photo with every caption
+          col: 2
+          row: 1
+          tone: accent
+        - id: loss
+          label: Symmetric contrastive loss
+          note: reward the diagonal
+          col: 3
+          row: 1
+          tone: warn
+      edges:
+        - from: photos
+          to: ienc
+        - from: captions
+          to: tenc
+        - from: ienc
+          to: table
+          label: image vectors
+        - from: tenc
+          to: table
+          label: text vectors
+        - from: table
+          to: loss
+  - id: contrastive-image-text-learning.s2
+    title: Build the similarity table
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.contrastive-image-text-learning
+    markdown: |-
+      Take a batch of three pairs: a mug photo with "a mug of coffee", a dog photo with "a dog on a sofa", and a sign photo with "a bus stop sign". Each vector is scaled to length 1, so an image vector's dot product with a text vector is their **cosine similarity**: 1 when they point the same way, 0 when they're unrelated. Compare every photo with every caption:
 
+      | | "a mug of coffee" | "a dog on a sofa" | "a bus stop sign" |
+      | --- | ---: | ---: | ---: |
+      | mug photo | **0.30** | 0.10 | 0.00 |
+      | dog photo | 0.10 | **0.25** | 0.15 |
+      | sign photo | 0.05 | 0.10 | **0.20** |
 
-    Suppose the dog image scores 3 with “dog” and 1 with “bicycle.” The bicycle image scores 0 with “dog” and
-    4 with “bicycle.” Each intended pair has the larger score in both its row and its column.
+      The bold diagonal holds the true pairs, the **positives**. The six other cells are **negatives**: pairings that merely share a batch. $N$ pairs give $N^2$ cells, $N$ positives and $N^2 - N$ negatives. CLIP used batches of 32,768, so each photo met 32,767 wrong captions at every step.
 
+      Notice two things. The best match scores only 0.30, far from 1. That's fine: the loss cares whether 0.30 beats its row and column, not how big it is. And the dog photo scores 0.15 with the bus-stop caption; maybe the dog sat near a sign. A "negative" isn't necessarily false, just not the caption that came with this photo.
+  - id: contrastive-image-text-learning.s5
+    title: Score the table in both directions
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.contrastive-image-text-learning
+    markdown: |-
+      Treat each row as a multiple-choice question: "Which caption is mine?" Divide the similarities by a **temperature** $\tau$ and apply softmax, exactly as in SimCLR's loss from the visual pretraining lesson. With $\tau = 0.1$, the mug row becomes logits 3, 1, 0:
 
-    A symmetric contrastive objective encourages each image to select its paired caption and each caption to
-    select its paired image. It encourages relative scores like these; it does not require matching scores
-    to equal 1. Also, an unpaired caption is not necessarily false: another caption in a larger batch could
-    genuinely describe something in the same image.'
-  bridges: []
-- id: contrastive-image-text-learning.s3
-  title: Use text as a classification interface
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.contrastive-image-text-learning
-  markdown: Encode prompts such as “a photo of a bicycle” and compare them with the image embedding. This allows
-    a classifier defined by candidate text rather than a fixed learned output head for those labels. Prompt
-    wording and candidate set affect the result.
-  text_mode: Encode prompts such as “a photo of a bicycle” and compare them with the image embedding. This
-    allows a classifier defined by candidate text rather than a fixed learned output head for those labels.
-    Prompt wording and candidate set affect the result.
-  bridges: []
-- id: contrastive-image-text-learning.s4
-  title: Recognize the limits of similarity
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.contrastive-image-text-learning
-  markdown: A high similarity is relative to the representation and alternatives; it is not automatically a
-    probability that every statement in a caption is true. Counting, negation, spatial relationships, and rare
-    concepts can fail. Evaluate the exact task and inspect errors rather than treating proximity as complete
-    visual understanding.
-  text_mode: A high similarity is relative to the representation and alternatives; it is not automatically
-    a probability that every statement in a caption is true. Counting, negation, spatial relationships, and
-    rare concepts can fail. Evaluate the exact task and inspect errors rather than treating proximity as complete
-    visual understanding.
-  bridges: []
-- id: contrastive-image-text-learning.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.contrastive-image-text-learning
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Contrastive training brings paired images and text closer relative to alternatives. Similarity
-    can support search and classification without proving every claim in a caption.
-- id: contrastive-image-text-learning.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.contrastive-image-text-learning
-  markdown: Contrastive training brings paired images and text closer relative to alternatives. Similarity
-    can support search and classification without proving every claim in a caption.
-  text_mode: Contrastive training brings paired images and text closer relative to alternatives. Similarity
-    can support search and classification without proving every claim in a caption.
+      $$p(\text{mug caption}) = \frac{e^{3}}{e^{3} + e^{1} + e^{0}} = \frac{20.09}{20.09 + 2.72 + 1} = \frac{20.09}{23.80} = 0.844$$
+
+      and that row's loss is $-\ln 0.844 = 0.170$. Do the same for every row (image → text) and every *column* (text → image: "which photo is mine?"), and average the two. That's CLIP's **symmetric** contrastive loss.
+
+      :::papers The CLIP loss (a symmetric InfoNCE)
+      With normalized image vectors $I_i$, text vectors $T_j$, and batch size $N$:
+
+      $$\mathcal{L} = \frac{1}{2N}\sum_{i=1}^{N}\left[-\ln\frac{e^{I_i\cdot T_i/\tau}}{\sum_{j} e^{I_i\cdot T_j/\tau}} \;-\; \ln\frac{e^{I_i\cdot T_i/\tau}}{\sum_{j} e^{I_j\cdot T_i/\tau}}\right]$$
+
+      The first term is our row softmax (0.170 for the mug), the second the column softmax. CLIP *learns* $\tau$ along with the weights, starting at 0.07 and capped so that $1/\tau$ never exceeds 100.
+      :::
+
+      ```python run
+      import numpy as np
+
+      S = np.array([[0.30, 0.10, 0.00],    # mug photo vs the three captions
+                    [0.10, 0.25, 0.15],    # dog photo
+                    [0.05, 0.10, 0.20]])   # bus-stop-sign photo
+
+      def diag_probs(logits):
+          """Softmax along each row; return the probability on the diagonal."""
+          e = np.exp(logits - logits.max(axis=1, keepdims=True))
+          return np.diag(e / e.sum(axis=1, keepdims=True))
+
+      def clip_loss(S, tau):
+          p_img = diag_probs(S / tau)      # each photo picks a caption
+          p_txt = diag_probs(S.T / tau)    # each caption picks a photo
+          return (-np.log(p_img).mean() - np.log(p_txt).mean()) / 2, p_img, p_txt
+
+      loss, p_img, p_txt = clip_loss(S, tau=0.1)
+      print("photo -> caption:", p_img.round(3))
+      print("caption -> photo:", p_txt.round(3))
+      print(f"symmetric loss at tau=0.1: {loss:.3f}")
+      for tau in [1.0, 0.07, 0.01]:
+          print(f"tau={tau:<5} loss={clip_loss(S, tau)[0]:.3f}")
+      ```
+
+      The mug row is easy (0.844). The dog and sign rows are harder (0.629 each), because their positives beat the runner-up by only 0.10. The whole batch costs 0.370.
+
+      :::predict At τ = 1, the logits are just the raw similarities (0.30, 0.10, 0.00). Is the loss closer to 0 or to ln 3 ≈ 1.10?
+      Close to ln 3: the program prints 0.991. Gaps of 0.1 barely move a softmax, so every row is nearly a three-way coin toss. At $\tau = 0.07$ the loss falls to 0.235, and at 0.01 to 0.001. A small temperature turns small cosine gaps into confident choices and focuses the gradient on the negatives closest to winning, like the dog photo's 0.15.
+      :::
+
+      Try raising the dog photo's similarity with the sign caption from 0.15 to 0.25, a tie with its own caption. The loss at τ = 0.1 rises from 0.370 to 0.504.
+  - id: contrastive-image-text-learning.s3
+    title: Classify with a sentence
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.contrastive-image-text-learning
+    markdown: |-
+      Trained CLIP can sort images into labels it never trained on: **zero-shot classification**, with zero labeled examples.
+
+      Write one prompt per label from a template such as "a photo of a {label}.", and encode each with the text encoder. Then take the photo vector's cosine with each prompt vector, multiply by CLIP's learned scale of 100 (that's $1/\tau$), and apply softmax. Amara asks, "What room am I in?"
+
+      | Prompt | Cosine | × 100 | Softmax |
+      | --- | ---: | ---: | ---: |
+      | "a photo of a kitchen." | 0.28 | 28 | 0.982 |
+      | "a photo of a bathroom." | 0.24 | 24 | 0.018 |
+      | "a photo of a bedroom." | 0.19 | 19 | 0.000 |
+
+      The kitchen's share is $1 / (1 + e^{-4} + e^{-9}) = 0.982$.
+
+      :::mixup "0.982 means CLIP is 98% sure this is a kitchen."
+      The softmax only splits belief among the prompts you wrote. Add "a photo of a garage." at cosine 0.27, and the kitchen drops to 0.721 while the garage takes 0.265. A laundry-room photo would still spread 1.0 across your list, because "none of these" isn't a choice. Offer an "other" option, or require a minimum cosine.
+      :::
+
+      Web captions are rarely a bare word, so the template matters. In the CLIP paper, "a photo of a {label}." beat the bare label on ImageNet, and context fixed words with two meanings: "boxer" is a dog breed or an athlete, so pet photos got "a photo of a {label}, a type of pet." Averaging many templates' text vectors (**prompt ensembling**) helped further. Zero-shot, CLIP's largest model matched the original ResNet-50 on ImageNet without seeing any of its 1.28 million labeled images.
+  - id: contrastive-image-text-learning.s4
+    title: Where similarity misleads
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.contrastive-image-text-learning
+    markdown: |-
+      Captions rarely count objects, give exact positions, or mention what's absent, so CLIP rarely learned to. Its text vector for "a mug to the left of a laptop" often lands very close to "a laptop to the left of a mug": it knows *which things* are present far better than *how they're arranged*. The CLIP paper itself reports weak zero-shot counting.
+
+      :::story The apple labeled "iPod"
+      In 2021, researchers studying CLIP's neurons (Goh et al., *Multimodal Neurons*) stuck a handwritten note reading "iPod" on a Granny Smith apple, and CLIP classified the photo as an iPod. Web images often contain text, so reading words became one of CLIP's strongest cues. The researchers called these **typographic attacks**.
+      :::
+
+      For Amara this cuts both ways: CLIP-style models read cans and bottles well, but name a reused cereal box by its print, not its contents. So Lumen's team tests relabeled containers, left/right swaps, and counts.
+
+      :::deeper Losses after CLIP
+      ALIGN (Google, 2021) trained the same way on over a billion noisier alt-text pairs. SigLIP (Zhai et al., 2023) swapped the softmax for an independent yes/no sigmoid per cell, so each cell asks "is this pair a match?" without normalizing over the batch.
+      :::
+  - id: contrastive-image-text-learning.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.contrastive-image-text-learning
+    markdown: A few softmax calculations by hand, then a shoe shop, a bird guide, and a batch with duplicate captions test whether you can train and use a CLIP-style model.
+    takeaway: |-
+      CLIP fills an N × N table of photo–caption similarities and trains each photo to pick its caption, and each caption its photo, with a temperature-scaled softmax. Then any list of written labels becomes a classifier, but its scores only compare the options you offered.
+  - id: contrastive-image-text-learning.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.contrastive-image-text-learning
+    markdown: |-
+      Contrastive training brings paired images and text closer relative to alternatives. Similarity can support search and classification without proving every claim in a caption.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - contrastive-image-text-learning.s1
-    - contrastive-image-text-learning.s2
-    - contrastive-image-text-learning.s3
-    - contrastive-image-text-learning.s4
-    - contrastive-image-text-learning.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - contrastive-image-text-learning.s1
+        - contrastive-image-text-learning.s2
+        - contrastive-image-text-learning.s5
+        - contrastive-image-text-learning.s3
+        - contrastive-image-text-learning.s4
+        - contrastive-image-text-learning.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     contrastive-image-text-learning.recap: contrastive-image-text-learning.check
 assessment_families:
-- id: contrastive-image-text-learning.base
-  objective_ref: objective.contrastive-image-text-learning
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Read a small similarity table: trace the inputs, operation, and result before choosing.'
-  remediation_scene: contrastive-image-text-learning.s2
-  variants:
-  - id: contrastive-image-text-learning.base.1
-    prompt: Three images and three captions create how many pairwise similarities?
-    options:
-    - id: b
-      text: Three
-    - id: c
-      text: Six
-    - id: a
-      text: Nine
-    answer: a
-    feedback: Every image is compared with every caption.
-  - id: contrastive-image-text-learning.base.2
-    prompt: What are the positive pairs in the basic training setup?
-    options:
-    - id: c
-      text: Only captions of the same length
-    - id: a
-      text: The associated image-caption pairs
-    - id: b
-      text: Every pair equally
-    answer: a
-    feedback: Pairing defines the contrastive target.
-- id: contrastive-image-text-learning.transfer
-  objective_ref: objective.contrastive-image-text-learning
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Recognize the limits of similarity: trace the inputs, operation, and result before choosing.'
-  remediation_scene: contrastive-image-text-learning.s4
-  variants:
-  - id: contrastive-image-text-learning.transfer.1
-    prompt: Why can prompt wording alter zero-shot classification?
-    options:
-    - id: c
-      text: It retrains all weights immediately
-    - id: a
-      text: It changes the text representation used for comparison
-    - id: b
-      text: The image file is necessarily rewritten
-    answer: a
-    feedback: The classification interface depends on encoded candidate text.
-  - id: contrastive-image-text-learning.transfer.2
-    prompt: Does high similarity certify every caption detail?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if similarity is positive
-    answer: a
-    feedback: Embedding proximity is an imperfect task-dependent signal.
+  - id: contrastive-image-text-learning.base
+    objective_ref: objective.contrastive-image-text-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Read a small similarity table: trace the inputs, operation, and result before choosing.'
+    remediation_scene: contrastive-image-text-learning.s2
+    variants:
+      - id: contrastive-image-text-learning.base.1
+        prompt: Three images and three captions create how many pairwise similarities?
+        options:
+          - id: b
+            text: Three
+          - id: c
+            text: Six
+          - id: a
+            text: Nine
+        answer: a
+        feedback: Every image is compared with every caption.
+        retired: true
+      - id: contrastive-image-text-learning.base.2
+        prompt: What are the positive pairs in the basic training setup?
+        options:
+          - id: c
+            text: Only captions of the same length
+          - id: a
+            text: The associated image-caption pairs
+          - id: b
+            text: Every pair equally
+        answer: a
+        feedback: Pairing defines the contrastive target.
+        retired: true
+  - id: contrastive-image-text-learning.transfer
+    objective_ref: objective.contrastive-image-text-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Recognize the limits of similarity: trace the inputs, operation, and result before choosing.'
+    remediation_scene: contrastive-image-text-learning.s4
+    variants:
+      - id: contrastive-image-text-learning.transfer.1
+        prompt: Why can prompt wording alter zero-shot classification?
+        options:
+          - id: c
+            text: It retrains all weights immediately
+          - id: a
+            text: It changes the text representation used for comparison
+          - id: b
+            text: The image file is necessarily rewritten
+        answer: a
+        feedback: The classification interface depends on encoded candidate text.
+        retired: true
+      - id: contrastive-image-text-learning.transfer.2
+        prompt: Does high similarity certify every caption detail?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if similarity is positive
+        answer: a
+        feedback: Embedding proximity is an imperfect task-dependent signal.
+        retired: true
+  - id: contrastive-image-text-learning.base.v2
+    objective_ref: objective.contrastive-image-text-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Picture the N × N table. Each row is a softmax over captions, each column a softmax over photos, and the temperature sets how sharply small gaps count.
+    remediation_scene: contrastive-image-text-learning.s5
+    variants:
+      - id: contrastive-image-text-learning.base.v2.1
+        prompt: A CLIP-style batch holds 5 photo–caption pairs. In the image-to-text direction, how many negatives does each photo's softmax compare its caption against?
+        options:
+          - id: b
+            text: 20, the off-diagonal cells of the whole table
+          - id: a
+            text: 4, the other captions in its row
+          - id: c
+            text: 5, the captions in the batch
+        answer: a
+        feedback: A photo's row has 5 captions, one of them its own, so 4 negatives. The table has 20 off-diagonal cells in total, but each row's softmax sees only its own row.
+      - id: contrastive-image-text-learning.base.v2.2
+        prompt: After training, a matching photo and caption have cosine similarity 0.31. What does that tell you?
+        options:
+          - id: c
+            text: The pair matches poorly, since a good match should score near 1
+          - id: b
+            text: The temperature was set too high for the model to learn well
+          - id: a
+            text: Little on its own; what matters is how 0.31 ranks against other captions
+        answer: a
+        feedback: The loss rewards the positive beating its row and column, not reaching 1. CLIP's small learned temperature turns modest cosine gaps into confident choices, so 0.31 can be a strong match.
+      - id: contrastive-image-text-learning.base.v2.3
+        prompt: CLIP averages an image-to-text loss with a text-to-image loss. What does the second direction add?
+        options:
+          - id: a
+            text: Each caption must also pick out its own photo from the other photos
+          - id: b
+            text: The text encoder gets trained, which the first direction leaves frozen
+          - id: c
+            text: It doubles the batch size by adding captions from other batches
+        answer: a
+        feedback: The column softmax asks "which photo is mine?" for each caption. Both directions send gradients into both encoders, and neither adds new examples; they score the same table two ways.
+      - id: contrastive-image-text-learning.base.v2.4
+        prompt: Training switches from temperature 1.0 to 0.07 on the same similarity table. What happens?
+        options:
+          - id: b
+            text: The similarities shrink, so the loss falls toward zero for every row
+          - id: c
+            text: Fewer negatives are included, so each softmax becomes easier
+          - id: a
+            text: Small similarity gaps become large logit gaps, so hard negatives dominate
+        answer: a
+        feedback: Dividing by 0.07 multiplies every similarity by about 14, so a 0.1 gap becomes a 1.4 logit gap. Rows with a clear winner then cost almost nothing, and the loss concentrates on near-miss negatives. The similarities and the set of negatives don't change.
+  - id: contrastive-image-text-learning.transfer.v2
+    objective_ref: objective.contrastive-image-text-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Remember what CLIP learned from web captions (which things appear, and printed text) and what captions rarely give it (counts, positions, and "none of these").
+    remediation_scene: contrastive-image-text-learning.s4
+    variants:
+      - id: contrastive-image-text-learning.transfer.v2.1
+        prompt: A shoe shop has a CLIP-style model and 50,000 product photos with no tags. A shopper types "red trail-running shoes". What is the simplest way to find matches?
+        options:
+          - id: c
+            text: Train a new classifier with one output for each shoe style in stock
+          - id: a
+            text: Encode the text once and rank the stored photo vectors by cosine similarity
+          - id: b
+            text: Generate captions for all photos, then search the captions for the words
+        answer: a
+        feedback: Text and photos share one embedding space, so a text query can rank photo vectors directly, and the photo vectors can be computed once in advance. A new classifier needs labels the shop doesn't have; captioning first adds a lossy extra step.
+      - id: contrastive-image-text-learning.transfer.v2.2
+        prompt: A bird-guide team uses zero-shot CLIP with prompts "a photo of a {label}." Photos of cranes are often labeled as construction sites. What is the best first fix?
+        options:
+          - id: a
+            text: Add context to the template, such as "a photo of a {label}, a type of bird."
+          - id: b
+            text: Lower the temperature so the crane prompt wins by a wider margin
+          - id: c
+            text: Remove "crane" from the label list, since the model cannot learn it
+        answer: a
+        feedback: The word "crane" has two meanings, and the bare template lets the machine sense win. Context in the prompt moves the text vector toward the bird. A lower temperature sharpens whatever ranking already exists, including the wrong one.
+      - id: contrastive-image-text-learning.transfer.v2.3
+        prompt: A product dataset has many near-identical photos of the same mug, each captioned "white ceramic mug". Several land in one training batch. What goes wrong?
+        options:
+          - id: b
+            text: The batch becomes too small for the softmax to work at all
+          - id: c
+            text: The text encoder learns to ignore the word "mug" in later captions
+          - id: a
+            text: True matches are treated as negatives and pushed apart
+        answer: a
+        feedback: Each photo is trained to prefer only its own copy of the caption, so identical captions from other photos count as negatives even though they describe it perfectly. Deduplicating, or spreading duplicates across batches, avoids this false-negative problem.
+      - id: contrastive-image-text-learning.transfer.v2.4
+        prompt: A warehouse uses zero-shot CLIP to sort boxes by photographing them. Boxes reused from another product are sorted by their old printed brand name. Why?
+        options:
+          - id: c
+            text: The image encoder's resolution is too low to see the contents
+          - id: a
+            text: CLIP learned to rely heavily on printed text, since web images often contain it
+          - id: b
+            text: The temperature is too high, so every box gets a similar score
+        answer: a
+        feedback: This is the typographic effect behind the apple labeled "iPod". Printed words strongly steer CLIP's image vector. Higher resolution would make the print even easier to read, and temperature only rescales the ranking the model already produced.
+  - id: contrastive-image-text-learning.calculate
+    objective_ref: objective.contrastive-image-text-learning
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Divide each similarity by τ, then take e to each result. The matching caption's probability is its exponential divided by the sum of all of them.
+    remediation_scene: contrastive-image-text-learning.s5
+    absolute_tolerance: 0.005
+    variants:
+      - id: contrastive-image-text-learning.calculate.1
+        prompt: A photo's similarities with the three captions in its batch are 0.30 (its own), 0.20, and 0.10. With τ = 0.1, what probability does the softmax give its own caption? Answer to three decimals.
+        answer: 0.665
+        feedback: The logits are 3, 2, 1. The probability is e³ / (e³ + e² + e¹) = 20.09 / (20.09 + 7.39 + 2.72) = 20.09 / 30.19 = 0.665.
+      - id: contrastive-image-text-learning.calculate.2
+        prompt: In a batch of two pairs, a photo scores 0.30 with its own caption and 0.10 with the other. With τ = 0.1, what probability does the softmax give its own caption? Answer to three decimals.
+        answer: 0.881
+        feedback: The logits are 3 and 1, so the probability is 1 / (1 + e⁻²) = 1 / 1.135 = 0.881.
+      - id: contrastive-image-text-learning.calculate.3
+        prompt: A photo scores 0.25 with its own caption and 0.20 with each of two other captions. With τ = 0.05, what probability goes to its own caption? Answer to three decimals.
+        answer: 0.576
+        feedback: The logits are 5, 4, 4. The probability is 1 / (1 + 2e⁻¹) = 1 / (1 + 0.736) = 0.576.
+      - id: contrastive-image-text-learning.calculate.4
+        prompt: A caption scores 0.30 with its own photo and 0.25, 0.20, and 0.10 with three other photos. With τ = 0.05, what probability does the text-to-image softmax give its own photo? Answer to three decimals.
+        answer: 0.657
+        feedback: The logits are 6, 5, 4, 2. The probability is 1 / (1 + e⁻¹ + e⁻² + e⁻⁴) = 1 / (1 + 0.368 + 0.135 + 0.018) = 1 / 1.521 = 0.657.
+  - id: contrastive-image-text-learning.zeroshot
+    objective_ref: objective.contrastive-image-text-learning
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Multiply each prompt's cosine by 100, subtract the largest so the numbers stay small, exponentiate, and divide the asked-about label's value by the total.
+    remediation_scene: contrastive-image-text-learning.s3
+    absolute_tolerance: 0.005
+    variants:
+      - id: contrastive-image-text-learning.zeroshot.1
+        prompt: A photo's cosine similarities with "a photo of a cat." and "a photo of a dog." are 0.22 and 0.21. With CLIP's scale of 100, what probability does zero-shot classification give "cat"? Answer to three decimals.
+        answer: 0.731
+        feedback: The logits are 22 and 21, a gap of 1, so the probability is 1 / (1 + e⁻¹) = 0.731. A 0.01 cosine gap becomes a clear preference.
+      - id: contrastive-image-text-learning.zeroshot.2
+        prompt: Three room prompts score cosines 0.25 (living room), 0.23 (office), and 0.23 (bedroom). With scale 100, what probability goes to "living room"? Answer to three decimals.
+        answer: 0.787
+        feedback: The logits are 25, 23, 23, so the probability is 1 / (1 + 2e⁻²) = 1 / (1 + 0.271) = 0.787.
+      - id: contrastive-image-text-learning.zeroshot.3
+        prompt: Prompts for kitchen, bathroom, and bedroom score 0.28, 0.24, and 0.19. A fourth prompt, garage, scores 0.27. With scale 100, what probability goes to "kitchen" once the garage is added? Answer to three decimals.
+        answer: 0.721
+        feedback: Relative to 28, the logits give 1, e⁻⁴, e⁻⁹, e⁻¹, so the probability is 1 / (1 + 0.018 + 0.0001 + 0.368) = 0.721. Adding one close option cut the kitchen from 0.982.
+      - id: contrastive-image-text-learning.zeroshot.4
+        prompt: A medicine photo scores 0.30 with "a photo of ibuprofen tablets.", 0.27 with "a photo of vitamin tablets.", and 0.22 with "a photo of cough syrup.". With scale 100, what probability goes to ibuprofen? Answer to three decimals.
+        answer: 0.952
+        feedback: Relative to 30, the logits give 1, e⁻³, e⁻⁸, so the probability is 1 / (1 + 0.0498 + 0.0003) = 0.952.

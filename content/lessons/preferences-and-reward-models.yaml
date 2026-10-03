@@ -1,199 +1,366 @@
 schema_version: 0.2-draft
 lesson:
   id: preferences-and-reward-models
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn a scoring signal from response comparisons
   state: draft
-  summary: Learn from comparisons of two answers while keeping the scoring rule separate from truth or universal
-    preference.
+  summary: Nobody can say an answer is worth "7.3". But people can say which of two answers is better, and one small formula turns thousands of those choices into a score.
   slot: M20.4
   category: learning
   sources:
-  - title: InstructGPT
-    url: https://arxiv.org/abs/2203.02155
-  - title: Learning to summarize from human feedback
-    url: https://arxiv.org/abs/2009.01325
+    - title: "Training language models to follow instructions with human feedback (InstructGPT; Ouyang et al., 2022)"
+      url: https://arxiv.org/abs/2203.02155
+    - title: "Learning to summarize from human feedback (Stiennon et al., 2020)"
+      url: https://arxiv.org/abs/2009.01325
+    - title: "Deep reinforcement learning from human preferences (Christiano et al., 2017)"
+      url: https://arxiv.org/abs/1706.03741
+    - title: "Rank analysis of incomplete block designs: I. The method of paired comparisons (Bradley & Terry, Biometrika, 1952)"
+      url: https://doi.org/10.2307/2334029
+    - title: "A Long Way to Go: Investigating Length Correlations in RLHF (Singhal et al., 2023)"
+      url: https://arxiv.org/abs/2310.03716
 objectives:
-- id: objective.preferences-and-reward-models
-  version: 1-draft
-  statement: Preference data records judgments under a rubric, and reward models fit those judgments; disagreement,
-    sampling bias, and reward exploitation limit what a high score establishes.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - preferences-and-reward-models.base
-  - preferences-and-reward-models.transfer
-  prerequisites:
-  - anyOf:
-    - objective.supervised-fine-tuning
-  - anyOf:
-    - objective.logistic-regression
+  - id: objective.preferences-and-reward-models
+    version: 2-draft
+    statement: Reward models learn to predict which answer people prefer; disagreement, biased samples, and exploitation mean a high reward score isn't proof of a good answer.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - preferences-and-reward-models.base.v2
+      - preferences-and-reward-models.transfer.v2
+      - preferences-and-reward-models.calculate
+    prerequisites:
+      - anyOf:
+          - objective.supervised-fine-tuning
+      - anyOf:
+          - objective.logistic-regression
 scenes:
-- id: preferences-and-reward-models.s1
-  title: Compare responses to the same prompt
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.preferences-and-reward-models
-  markdown: 'Suppose two answers give different closing times for a library. A reviewer compares them using
-    a **rubric**, a set of judging criteria. The rubric might favor a correct time supported by the supplied
-    schedule and penalize an invented time.
+  - id: preferences-and-reward-models.s1
+    title: Two answers, one winner
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.preferences-and-reward-models
+    markdown: |-
+      A customer asks Ferncliff's assistant, "Can I get my bike back by Saturday?" The SFT model writes two different answers:
 
+      > **A:** Most repairs take two to three days. Call your shop and they'll confirm whether Saturday works.
+      > **B:** Yes, definitely! We'll have it ready Saturday.
 
-    A preference record can mark answer A as better than B, or record a tie or uncertainty. Reviewers may disagree,
-    especially when criteria such as brevity and detail compete. Keep the judging instructions and information
-    about how the answers were selected: a preference label records a judgment under those conditions.'
-  text_mode: 'Suppose two answers give different closing times for a library. A reviewer compares them using
-    a **rubric**, a set of judging criteria. The rubric might favor a correct time supported by the supplied
-    schedule and penalize an invented time.
+      Ask a staff member to score answer A from 1 to 10 and you'll get a shrug. Ask which answer is better and you'll get "A" in two seconds: B promises something nobody checked. That judgment, saved as a record of (prompt, chosen answer, rejected answer), is a **preference pair**.
 
+      Ferncliff speeds things up the way InstructGPT did: the model writes four answers to each question and a staff member ranks them. A ranking of 4 answers contains $\binom{4}{2} = 6$ pairs (also written C(4, 2): the number of ways to choose 2 of 4), since every answer is compared with every other. InstructGPT's labelers ranked between 4 and 9 answers at a time; 9 answers give 36 pairs.
 
-    A preference record can mark answer A as better than B, or record a tie or uncertainty. Reviewers may disagree,
-    especially when criteria such as brevity and detail compete. Keep the judging instructions and information
-    about how the answers were selected: a preference label records a judgment under those conditions.'
-  bridges: []
-- id: preferences-and-reward-models.s2
-  title: Fit relative scores
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.preferences-and-reward-models
-  markdown: 'A **reward model** learns to score answers from comparisons like these. In a common pairwise setup,
-    it subtracts B''s score from A''s and passes the difference through a logistic, or sigmoid, function to
-    predict how likely A is to be preferred.
+      Judges follow a **rubric**, a short written list of what "better" means. Ferncliff's says: correct facts first, then no promises the shop can't keep, then brevity. Without it, one person rewards friendliness and another rewards detail, and the data mixes both.
 
+      :::story Teaching a backflip with clicks
+      Preference learning began outside language. In 2017, Christiano and colleagues trained a simulated robot to do a backflip without ever writing a reward for it. A person watched pairs of short clips and clicked the one that looked more like a backflip, about 900 times in all. The system learned a reward from those clicks, then learned the flip by reinforcement learning.
+      :::
+    bridges: []
+  - id: preferences-and-reward-models.s2
+    title: Turn a score gap into a probability
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.preferences-and-reward-models
+    markdown: |-
+      A **reward model** reads a prompt and an answer and outputs one number, its score. Usually it's a copy of the SFT model whose final layer has been swapped: instead of probabilities for the next token, it outputs a single number. InstructGPT's reward model had 6 billion parameters.
 
-    If both answers score 2, the difference is zero and the predicted preference probability is 0.5. Raising
-    both scores to 12 leaves the difference and prediction unchanged. This explains why a raw reward score
-    is not automatically a probability that an answer is correct.'
-  text_mode: 'A **reward model** learns to score answers from comparisons like these. In a common pairwise
-    setup, it subtracts B''s score from A''s and passes the difference through a logistic, or sigmoid, function
-    to predict how likely A is to be preferred.
+      How can single scores learn from pairs? By assuming that the bigger the score gap, the more likely people prefer the higher-scoring answer. Squash the gap with the sigmoid function $\sigma(z) = 1/(1 + e^{-z})$, familiar from logistic regression:
 
+      $$P(A \succ B) = \sigma(r_A - r_B)$$
 
-    If both answers score 2, the difference is zero and the predicted preference probability is 0.5. Raising
-    both scores to 12 leaves the difference and prediction unchanged. This explains why a raw reward score
-    is not automatically a probability that an answer is correct.'
-  bridges: []
-- id: preferences-and-reward-models.s3
-  title: Watch shortcuts in the data
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.preferences-and-reward-models
-  markdown: If preferred answers are consistently longer or formatted differently, a reward model may use those
-    cues instead of correctness. Split by prompts and sources to reduce leakage, inspect disagreement, and
-    test intentionally challenging pairs. Preference quality depends on which alternatives were shown.
-  text_mode: If preferred answers are consistently longer or formatted differently, a reward model may use
-    those cues instead of correctness. Split by prompts and sources to reduce leakage, inspect disagreement,
-    and test intentionally challenging pairs. Preference quality depends on which alternatives were shown.
-  bridges: []
-- id: preferences-and-reward-models.s4
-  title: Do not equate reward with the real goal
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.preferences-and-reward-models
-  markdown: Optimizing a learned reward can push the policy toward outputs outside the reward model’s reliable
-    training distribution. Audit factual errors, style exploitation, and subgroup effects with independent
-    evaluations. The reward is a proxy used for training, not a certificate that the response is good.
-  text_mode: Optimizing a learned reward can push the policy toward outputs outside the reward model’s reliable
-    training distribution. Audit factual errors, style exploitation, and subgroup effects with independent
-    evaluations. The reward is a proxy used for training, not a certificate that the response is good.
-  bridges: []
-- id: preferences-and-reward-models.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.preferences-and-reward-models
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A reward model learns the preferences represented in its comparisons. A high score can reflect
-    the judging rules or a shortcut, so check quality independently.
-- id: preferences-and-reward-models.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.preferences-and-reward-models
-  markdown: A reward model learns the preferences represented in its comparisons. A high score can reflect
-    the judging rules or a shortcut, so check quality independently.
-  text_mode: A reward model learns the preferences represented in its comparisons. A high score can reflect
-    the judging rules or a shortcut, so check quality independently.
+      Here $A \succ B$ means "A is preferred to B" and $r_A$, $r_B$ are the two scores. Suppose the reward model gives Ferncliff's answer A $r_A = 2.0$ and answer B $r_B = 0.5$. The gap is 1.5, so $P(A \succ B) = \sigma(1.5) = 0.818$.
+
+      Training pushes that probability toward the staff's choice. The loss is $-\ln$ of the probability given to the answer they actually chose. They chose A, so the loss is $-\ln 0.818 = 0.201$. Had they chosen B, it would be $-\ln(1 - 0.818) = 1.701$: a confident wrong prediction costs a lot.
+
+      ```python run
+      import numpy as np
+
+      def sigmoid(z):
+          return 1 / (1 + np.exp(-z))
+
+      r_A, r_B = 2.0, 0.5                  # reward-model scores for answers A and B
+      p = sigmoid(r_A - r_B)
+      print(f"P(A preferred) = sigmoid({r_A - r_B}) = {p:.3f}")
+      print(f"loss if staff chose A: {-np.log(p):.3f}")
+      print(f"loss if staff chose B: {-np.log(1 - p):.3f}")
+      print(f"add 10 to both scores: P = {sigmoid((r_A + 10) - (r_B + 10)):.3f}")
+
+      # four staff judge one pair: three pick A, one picks B
+      for margin in [0.0, 0.5, 1.0, np.log(3), 1.5, 3.0]:
+          avg = (3 * -np.log(sigmoid(margin)) + 1 * -np.log(sigmoid(-margin))) / 4
+          print(f"margin {margin:.2f}: P(A) = {sigmoid(margin):.3f}, average loss {avg:.3f}")
+      ```
+
+      Adding 10 to both scores changes nothing, because only the gap enters the formula. So a reward of 12 means nothing on its own; it only says which answers the model ranks above which.
+
+      :::papers The Bradley–Terry model and the reward-model loss
+      $$P(y_w \succ y_l \mid x) = \sigma\big(r_\phi(x, y_w) - r_\phi(x, y_l)\big) \qquad \mathcal{L}(\phi) = -\mathbb{E}\Big[\log \sigma\big(r_\phi(x, y_w) - r_\phi(x, y_l)\big)\Big]$$
+
+      $x$ is the prompt, $y_w$ the chosen ("winning") answer, $y_l$ the rejected ("losing") one, and $r_\phi$ the reward model with weights $\phi$. With $r_\phi(x, y_w) = 2.0$ and $r_\phi(x, y_l) = 0.5$, one pair's loss is $-\log \sigma(1.5) = 0.201$. The probability model comes from Bradley and Terry (1952), who built it to rank items from paired comparisons. InstructGPT and the summarization work before it (Stiennon et al., 2020) trained their reward models with exactly this loss.
+      :::
+    bridges: []
+  - id: preferences-and-reward-models.s3
+    title: When the staff disagree
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.preferences-and-reward-models
+    markdown: |-
+      People often disagree about which answer is better. InstructGPT reported that its trained labelers agreed with each other about 73% of the time. At Ferncliff, four staff judge one pair about a customer who asks for "everything about disc brakes." Three prefer the short answer; one prefers the detailed one.
+
+      :::predict What gap between the two scores gives the lowest average loss on those four labels?
+      The gap where $\sigma(\text{gap}) = 0.75$, matching the 3-to-1 vote: $\text{gap} = \ln 3 \approx 1.10$. The last lines of the code show it. The average loss is 0.562 there, and it rises on both sides: 0.693 at a gap of 0, and 0.799 at a gap of 3.
+      :::
+
+      So a reward model trained on split votes learns a *modest* preference, not certainty. That's the right outcome, and a reason to keep disagreements in the data instead of throwing them out. Disagreement also tells you something: if staff split 50–50 on "short or detailed," the rubric hasn't settled that question. Settle it in the rubric, or accept that the reward model will learn whatever mix of opinions your judges happen to hold.
+
+      :::mixup "Majority vote cleans the data, so train on the winner with full confidence."
+      Turning a 3-to-1 vote into a unanimous label tells the reward model to push the gap toward infinity for a question where a quarter of your staff disagree. It learns false certainty. Keep each judgment as its own pair, or train toward 0.75.
+      :::
+    bridges: []
+  - id: preferences-and-reward-models.s4
+    title: The reward model learns your judges' shortcuts
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.preferences-and-reward-models
+    markdown: |-
+      The reward model learns whatever predicts the labels, whether you meant it or not. Ferncliff checks its 5,000 pairs and finds that the chosen answer is the longer one 70% of the time. Longer answers were often more complete, but the reward model can't tell completeness from length, so it learns that length pays.
+
+      This is a well-documented pattern. Studies of RLHF found that reward models often favor longer answers, and that a lot of what RLHF "improves" can come from answers simply getting longer (Singhal et al., 2023).
+
+      The test is to build **contrast pairs**, where the shortcut and the real goal disagree. Ferncliff writes 50 pairs in which the shorter answer is the correct one, such as a two-line correct price against a five-line wrong one. The reward model picks the correct answer in only 31 of them, 62%. That number is the one to fix before any training uses this reward model, because the next lesson optimizes hard against it, and every shortcut it rewards will be found.
+
+      A reward model also knows only the kinds of answers it was shown. Ferncliff's pairs came from the SFT model, so if the assistant later writes much better, or much stranger, answers, the scores there are guesswork. When that happens, judge fresh pairs from the newer model.
+    bridges: []
+  - id: preferences-and-reward-models.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.preferences-and-reward-models
+    markdown: Turn a few score gaps into preference probabilities, then diagnose reward models for a cooking app, a tax helper, and a code reviewer.
+    takeaway: |-
+      A reward model scores answers so that σ(r_chosen − r_rejected) matches how often people prefer the chosen one. Only gaps matter, split votes should give modest gaps, and whatever shortcut the judges' choices contain, the reward model learns too.
+  - id: preferences-and-reward-models.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.preferences-and-reward-models
+    markdown: |-
+      A reward model learns the preferences represented in its comparisons. A high score can reflect the judging rules or a shortcut, so check quality independently.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - preferences-and-reward-models.s1
-    - preferences-and-reward-models.s2
-    - preferences-and-reward-models.s3
-    - preferences-and-reward-models.s4
-    - preferences-and-reward-models.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - preferences-and-reward-models.s1
+        - preferences-and-reward-models.s2
+        - preferences-and-reward-models.s3
+        - preferences-and-reward-models.s4
+        - preferences-and-reward-models.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     preferences-and-reward-models.recap: preferences-and-reward-models.check
 assessment_families:
-- id: preferences-and-reward-models.base
-  objective_ref: objective.preferences-and-reward-models
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Fit relative scores: trace the inputs, operation, and result before choosing.'
-  remediation_scene: preferences-and-reward-models.s2
-  variants:
-  - id: preferences-and-reward-models.base.1
-    prompt: What does a preference label represent?
-    options:
-    - id: b
-      text: Universal agreement by definition
-    - id: c
-      text: A guaranteed factual proof
-    - id: a
-      text: A judgment under a particular comparison and rubric
-    answer: a
-    feedback: Judgments depend on criteria and annotators.
-  - id: preferences-and-reward-models.base.2
-    prompt: Adding five to both pairwise reward scores changes their difference how?
-    options:
-    - id: c
-      text: It reverses it
-    - id: a
-      text: It leaves it unchanged
-    - id: b
-      text: It doubles it
-    answer: a
-    feedback: Relative-score models depend on differences.
-- id: preferences-and-reward-models.transfer
-  objective_ref: objective.preferences-and-reward-models
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Do not equate reward with the real goal: trace the inputs, operation, and result before choosing.'
-  remediation_scene: preferences-and-reward-models.s4
-  variants:
-  - id: preferences-and-reward-models.transfer.1
-    prompt: Preferred examples are nearly always longer. What shortcut should be tested?
-    options:
-    - id: c
-      text: A guaranteed improvement in truth
-    - id: a
-      text: Rewarding length instead of the intended quality
-    - id: b
-      text: Ignoring every response token
-    answer: a
-    feedback: Correlated superficial cues can predict labels.
-  - id: preferences-and-reward-models.transfer.2
-    prompt: A policy obtains very high learned reward. What is still needed?
-    options:
-    - id: a
-      text: Independent evaluation of intended behavior and failures
-    - id: b
-      text: No further measurement
-    - id: c
-      text: Only printing the reward more precisely
-    answer: a
-    feedback: A proxy can be exploited or fail under distribution shift.
+  - id: preferences-and-reward-models.base
+    objective_ref: objective.preferences-and-reward-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Fit relative scores: trace the inputs, operation, and result before choosing.'
+    remediation_scene: preferences-and-reward-models.s2
+    variants:
+      - id: preferences-and-reward-models.base.1
+        prompt: What does a preference label represent?
+        options:
+          - id: b
+            text: Universal agreement by definition
+          - id: c
+            text: A guaranteed factual proof
+          - id: a
+            text: A judgment under a particular comparison and rubric
+        answer: a
+        feedback: Judgments depend on criteria and annotators.
+        retired: true
+      - id: preferences-and-reward-models.base.2
+        prompt: Adding five to both pairwise reward scores changes their difference how?
+        options:
+          - id: c
+            text: It reverses it
+          - id: a
+            text: It leaves it unchanged
+          - id: b
+            text: It doubles it
+        answer: a
+        feedback: Relative-score models depend on differences.
+        retired: true
+  - id: preferences-and-reward-models.transfer
+    objective_ref: objective.preferences-and-reward-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Do not equate reward with the real goal: trace the inputs, operation, and result before choosing.'
+    remediation_scene: preferences-and-reward-models.s4
+    variants:
+      - id: preferences-and-reward-models.transfer.1
+        prompt: Preferred examples are nearly always longer. What shortcut should be tested?
+        options:
+          - id: c
+            text: A guaranteed improvement in truth
+          - id: a
+            text: Rewarding length instead of the intended quality
+          - id: b
+            text: Ignoring every response token
+        answer: a
+        feedback: Correlated superficial cues can predict labels.
+        retired: true
+      - id: preferences-and-reward-models.transfer.2
+        prompt: A policy obtains very high learned reward. What is still needed?
+        options:
+          - id: a
+            text: Independent evaluation of intended behavior and failures
+          - id: b
+            text: No further measurement
+          - id: c
+            text: Only printing the reward more precisely
+        answer: a
+        feedback: A proxy can be exploited or fail under distribution shift.
+        retired: true
+  - id: preferences-and-reward-models.base.v2
+    objective_ref: objective.preferences-and-reward-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Only the gap between two scores enters σ(r_chosen − r_rejected). Ask what the gap means, and what gap the labels are pushing toward."
+    remediation_scene: preferences-and-reward-models.s2
+    variants:
+      - id: preferences-and-reward-models.base.v2.1
+        prompt: "A reward model scores answer A at 14.2 and answer B at 13.2 for the same prompt. What does it predict?"
+        options:
+          - id: b
+            text: Both answers are very good, since both scores are high
+          - id: c
+            text: A is 14.2% likely to be correct and B is 13.2% likely
+          - id: a
+            text: People prefer A about 73% of the time, since σ(1) ≈ 0.73
+        answer: a
+        feedback: Only the gap of 1 matters, and σ(1) ≈ 0.73. The raw level of 14 carries no meaning, because adding the same number to every score changes no prediction; and the scores aren't probabilities of correctness.
+      - id: preferences-and-reward-models.base.v2.2
+        prompt: "During training, a pair's chosen answer scores 0.2 and its rejected answer scores 1.8. What does the loss do?"
+        options:
+          - id: a
+            text: It is large, and pushes the chosen score up and the rejected one down
+          - id: c
+            text: It is zero, since both scores are small positive numbers
+          - id: b
+            text: It is small, since the model is confident about this pair
+        answer: a
+        feedback: The model gives the chosen answer only σ(−1.6) ≈ 0.17, so the loss −ln 0.17 ≈ 1.8 is large, and its gradient widens the gap in the right direction. The model is confident, but confidently wrong.
+      - id: preferences-and-reward-models.base.v2.3
+        prompt: "Across many judges, answer A beats answer B in 3 of every 4 votes. After enough training on these votes, what score gap should the reward model settle on?"
+        options:
+          - id: c
+            text: As large as possible, since A wins the majority
+          - id: a
+            text: About ln 3 ≈ 1.1, so that σ(gap) = 0.75
+          - id: b
+            text: About 0.75, the fraction of votes A won
+        answer: a
+        feedback: The loss is lowest when the predicted probability matches the vote share, σ(gap) = 0.75, which gives gap = ln 3 ≈ 1.1. A huge gap overcommits against the one-in-four voters, and 0.75 is the probability, not the gap.
+      - id: preferences-and-reward-models.base.v2.4
+        prompt: "A labeler ranks five answers to one prompt from best to worst. How many preference pairs does that ranking give?"
+        options:
+          - id: b
+            text: 4, one for each neighbouring pair in the ranking
+          - id: a
+            text: 10, one for every pair of answers
+          - id: c
+            text: 25, one for each answer paired with each answer
+        answer: a
+        feedback: A full ranking says how every answer compares with every other, so it gives C(5, 2) = 10 pairs. Counting only neighbours (4) throws away information the ranking contains, and 25 wrongly counts each answer against itself and each pair twice.
+  - id: preferences-and-reward-models.transfer.v2
+    objective_ref: objective.preferences-and-reward-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: The reward model learns whatever predicts the judges' choices. Look for a pattern in the data that is easier to spot than real quality.
+    remediation_scene: preferences-and-reward-models.s4
+    variants:
+      - id: preferences-and-reward-models.transfer.v2.1
+        prompt: "A cooking app's reward model gives its highest scores to recipes that include step-by-step photos, even when the photos don't match the steps. Most chosen answers in its training pairs had photos. What should the team do first?"
+        options:
+          - id: a
+            text: Test it on pairs where the answer with photos is the worse one
+          - id: b
+            text: Collect more pairs in the same way to average out the effect
+          - id: c
+            text: Raise the reward model's size so it can see past the photos
+        answer: a
+        feedback: Contrast pairs, where the shortcut and real quality disagree, show how much the reward model relies on photos. More pairs of the same kind carry the same bias, and a bigger model learns the same shortcut if the data still rewards it.
+      - id: preferences-and-reward-models.transfer.v2.2
+        prompt: "A tax helper's labelers split roughly 50–50 on whether answers should cite tax-code sections or explain in plain words. What is the best next step?"
+        options:
+          - id: c
+            text: Keep only the pairs where most labelers agreed and drop the rest
+          - id: a
+            text: Decide the rule in the rubric and relabel the affected pairs
+          - id: b
+            text: Pick one labeler's votes, since consistency matters most
+        answer: a
+        feedback: A 50–50 split means the rubric hasn't said what "better" is on this point, so the reward model would learn a coin flip. Settling it in the rubric fixes the cause. Dropping split pairs hides the question, and one labeler's taste is a different kind of bias.
+      - id: preferences-and-reward-models.transfer.v2.3
+        prompt: "A code-review assistant's reward model prefers reviews that list many issues. On 40 contrast pairs where a short review catches the one real bug and a long review lists trivial style nits, it picks the short review 18 times. What does this show?"
+        options:
+          - id: b
+            text: The reward model is well calibrated, since 18 of 40 is close to half
+          - id: a
+            text: It mostly rewards length, picking the real bug only 45% of the time
+          - id: c
+            text: Contrast pairs are too artificial to tell us anything useful
+        answer: a
+        feedback: On pairs built so that length and quality disagree, it chose the correct review only 18 / 40 = 45% of the time, worse than a coin flip. Calibration is about matching vote shares, not about hitting 50%, and contrast pairs are exactly the test that reveals shortcuts.
+      - id: preferences-and-reward-models.transfer.v2.4
+        prompt: "A team collects pairs by showing labelers two answers from the same weak early model. Later they use the reward model to score answers from a much stronger model. What risk should they check?"
+        options:
+          - id: c
+            text: The scores will all be shifted up, which breaks the sigmoid
+          - id: b
+            text: The stronger model's answers will all get the same score
+          - id: a
+            text: The reward model never saw answers this good and may rank them poorly
+        answer: a
+        feedback: A reward model learns to rank the kinds of answers it was shown. Much better answers are outside that range, so its ranking there can be unreliable; add pairs from the newer model. A uniform shift wouldn't matter, since only gaps count.
+  - id: preferences-and-reward-models.calculate
+    objective_ref: objective.preferences-and-reward-models
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Subtract B's score from A's, then apply σ(z) = 1 / (1 + e^(−z)). A gap of 0 gives 0.5, and a negative gap gives less than 0.5."
+    remediation_scene: preferences-and-reward-models.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: preferences-and-reward-models.calculate.1
+        prompt: A reward model scores answer A at 1.0 and answer B at 0.0. Under the Bradley–Terry model, what is P(A preferred to B)? Give a decimal.
+        answer: 0.731
+        feedback: The gap is 1.0, and σ(1) = 1 / (1 + e^(−1)) = 1 / 1.368 ≈ 0.731.
+      - id: preferences-and-reward-models.calculate.2
+        prompt: A reward model scores answer A at 3.2 and answer B at 1.2. What is P(A preferred to B)? Give a decimal.
+        answer: 0.881
+        feedback: The gap is 2.0, and σ(2) = 1 / (1 + e^(−2)) = 1 / 1.135 ≈ 0.881.
+      - id: preferences-and-reward-models.calculate.3
+        prompt: A reward model scores answer A at 0.5 and answer B at 1.5. What is P(A preferred to B)? Give a decimal.
+        answer: 0.269
+        feedback: The gap r_A − r_B is −1.0, and σ(−1) = 1 / (1 + e^1) ≈ 0.269. B is favoured, so A's probability is below one half.
+      - id: preferences-and-reward-models.calculate.4
+        prompt: A reward model scores answer A at 10.3 and answer B at 10.0. What is P(A preferred to B)? Give a decimal.
+        answer: 0.574
+        feedback: Only the gap of 0.3 matters, not the large scores. σ(0.3) = 1 / (1 + e^(−0.3)) ≈ 0.574.
+      - id: preferences-and-reward-models.calculate.5
+        prompt: A reward model scores answer A at −0.8 and answer B at −2.3. What is P(A preferred to B)? Give a decimal.
+        answer: 0.818
+        feedback: The gap is −0.8 − (−2.3) = 1.5, and σ(1.5) ≈ 0.818. Negative scores are fine; only the difference counts.

@@ -1,211 +1,409 @@
 schema_version: 0.2-draft
 lesson:
   id: proof-search
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Search for a proof or a satisfying assignment
   state: draft
-  summary: Try true/false settings to satisfy some rules, then see how a proof differs from an unfinished search.
+  summary: Plan a party where Ana won't come without Ben and Ben won't come with Cai. Solve it by brute force, then the clever way modern chip-checking solvers do, and prove what can't happen.
   slot: M04.4
   category: learning
   sources:
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
 objectives:
-- id: objective.proof-search
-  version: 1-draft
-  statement: Proof search applies formal rules, while satisfiability asks whether any interpretation meets
-    the constraints; computational limits depend on the language and procedure.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - proof-search.base
-  - proof-search.transfer
-  prerequisites:
-  - anyOf:
-    - objective.first-order-logic
-  - anyOf:
-    - objective.search-growth
+  - id: objective.proof-search
+    version: 2-draft
+    statement: Proof search applies formal rules, while satisfiability asks whether any interpretation meets the constraints; computational limits depend on the language and procedure.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - proof-search.base.v2
+      - proof-search.transfer.v2
+      - proof-search.calc
+    prerequisites:
+      - anyOf:
+          - objective.first-order-logic
+      - anyOf:
+          - objective.search-growth
 scenes:
-- id: proof-search.s1
-  title: A proof is a checkable sequence
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.proof-search
-  markdown: A formal proof derives a conclusion from premises using permitted rules. Searching for a proof
-    can be much harder than checking a supplied proof. Automated theorem proving separates the representation
-    language, inference rules, and strategy for choosing which inference to try next.
-  text_mode: A formal proof derives a conclusion from premises using permitted rules. Searching for a proof
-    can be much harder than checking a supplied proof. Automated theorem proving separates the representation
-    language, inference rules, and strategy for choosing which inference to try next.
-  bridges: []
-- id: proof-search.s2
-  title: Can all the requirements hold together?
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.proof-search
-  markdown: 'An **assignment** gives each letter a value of true or false. A **clause** here joins alternatives
-    with OR. The **satisfiability** problem, or SAT, asks whether some assignment makes all the requirements
-    true.
+  - id: proof-search.s1
+    title: Easy to check, hard to find
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.proof-search
+    markdown: |-
+      You're planning a party, and three friends have conditions. Ana will only come if Ben comes. Ben and Cai have fallen out, so they won't both come. And you need Ana or Cai, because they're bringing the food.
 
+      Write A for "Ana comes," B for Ben, C for Cai. Each condition becomes a **clause**: options joined by OR, at least one of which must hold.
 
-    Try the clauses “A OR B” and “NOT A.” Set A to false and B to true: B satisfies the first clause, and false
-    A satisfies the second. Add “NOT B,” however, and there is no assignment that satisfies all three. Any
-    proposed solution can be checked clause by clause.'
-  text_mode: 'An **assignment** gives each letter a value of true or false. A **clause** here joins alternatives
-    with OR. The **satisfiability** problem, or SAT, asks whether some assignment makes all the requirements
-    true.
+      | Condition | Clause |
+      | --- | --- |
+      | Ana only comes if Ben does | $\lnot A \lor B$ |
+      | Ben and Cai won't both come | $\lnot B \lor \lnot C$ |
+      | Ana or Cai must come | $A \lor C$ |
 
+      A set of clauses that must all hold is said to be in **conjunctive normal form** (CNF). An **assignment** gives each letter true or false: one possible guest list.
 
-    Try the clauses “A OR B” and “NOT A.” Set A to false and B to true: B satisfies the first clause, and false
-    A satisfies the second. Add “NOT B,” however, and there is no assignment that satisfies all three. Any
-    proposed solution can be checked clause by clause.'
-  bridges:
-  - discrete-math
-- id: proof-search.s3
-  title: Resolution combines clauses
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.proof-search
-  markdown: 'From “A OR B” and “NOT A OR C,” resolution can derive “B OR C.” A proof by contradiction adds
-    the negation of the desired conclusion and seeks inconsistency. The empty clause represents a contradiction.
-    In first-order settings, variable substitution and quantifiers make the process more involved.
+      If a friend suggests "Ana and Ben, no Cai," you can check it clause by clause in seconds. *Finding* a list that works is harder. A **proof** is similar: a sequence of steps, each following from earlier ones by a fixed rule, that anyone can check line by line, however long it took to find.
+    bridges: []
+  - id: proof-search.s2
+    title: Brute force tries all eight guest lists
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.proof-search
+    markdown: |-
+      The **satisfiability problem** (SAT) asks: is there an assignment that makes every clause true? Three letters give $2^3 = 8$ assignments, so just try them all:
 
+      ```python run
+      from itertools import product
 
-    Why can we remove A in this example? If A is false, the first clause requires B. If A is true, the second
-    requires C. Either way, at least one of B and C must hold. This two-case explanation is the reason for
-    the resolution step; the rule is more than a symbol-shuffling trick.'
-  text_mode: 'From “A OR B” and “NOT A OR C,” resolution can derive “B OR C.” A proof by contradiction adds
-    the negation of the desired conclusion and seeks inconsistency. The empty clause represents a contradiction.
-    In first-order settings, variable substitution and quantifiers make the process more involved.
+      # A clause is a list of (letter, wanted value). It holds if ANY of them matches.
+      clauses = [
+          [("A", False), ("B", True)],    # not A or B:      Ana only comes if Ben does
+          [("B", False), ("C", False)],   # not B or not C:  Ben and Cai won't both come
+          [("A", True), ("C", True)],     # A or C:          Ana or Cai must come
+      ]
 
+      count = 0
+      for a, b, c in product([True, False], repeat=3):
+          world = {"A": a, "B": b, "C": c}
+          if all(any(world[v] == want for v, want in cl) for cl in clauses):
+              count += 1
+              print("works:", world)
+      print(count, "of 8 guest lists satisfy every clause")
+      ```
 
-    Why can we remove A in this example? If A is false, the first clause requires B. If A is true, the second
-    requires C. Either way, at least one of B and C must hold. This two-case explanation is the reason for
-    the resolution step; the rule is more than a symbol-shuffling trick.'
-  bridges: []
-- id: proof-search.s4
-  title: An unfinished search leaves the answer open
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.proof-search
-  markdown: 'A solver that runs out of time may simply need longer; it has not proved that no solution exists.
-    Report “unknown” separately from a proof, a counterexample, or evidence that the requirements cannot all
-    hold.
+      Two lists work: Ana and Ben without Cai, or Cai alone.
 
+      :::predict Ana says she can't come after all, so you add the clause ¬A. Then Cai cancels too (add ¬C). How many lists work after each change?
+      After ¬A, one list works: Cai alone. After ¬C as well, none do: the clauses are **unsatisfiable**. Add `[("A", False)]`, then `[("C", False)]`, to the list and run it to check.
+      :::
 
-    A **decision procedure** is guaranteed to finish with the correct yes/no answer for its stated class of
-    problems. Propositional satisfiability has such procedures. Unrestricted first-order validity does not
-    have one that handles every possible input. This is what “undecidable in general” means; many individual
-    cases can still be solved. Practical provers use specialized methods and search strategies within a resource
-    budget.'
-  text_mode: 'A solver that runs out of time may simply need longer; it has not proved that no solution exists.
-    Report “unknown” separately from a proof, a counterexample, or evidence that the requirements cannot all
-    hold.
+      Brute force doubles its work with every letter, and chip-verification problems can have millions of letters. Real solvers search smarter.
+    bridges:
+      - discrete-math
+  - id: proof-search.dpll
+    title: 'DPLL: guess, propagate, back up'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.proof-search
+    markdown: |-
+      Ana adds a new condition: she'll only come if Cai comes too ($\lnot A \lor C$). The **DPLL** algorithm (Davis, Putnam, Logemann, and Loveland, 1960–62) solves this with three moves. *Guess* a value for one letter. Then apply **unit propagation**: whenever a clause has only one option left, that option is forced. If a clause ends up with no options left, you've hit a *conflict*, so *back up* and try the other value.
 
+      | Step | Move | Effect on the clauses |
+      | --- | --- | --- |
+      | 1 | Guess A = true | $\lnot A \lor B$ forces B; $\lnot A \lor C$ forces C |
+      | 2 | Propagate B = true, C = true | $\lnot B \lor \lnot C$ is now false: conflict |
+      | 3 | Back up: A = false | $A \lor C$ forces C |
+      | 4 | Propagate C = true | $\lnot B \lor \lnot C$ forces B = false |
+      | 5 | Propagate B = false | every clause holds: Cai alone ✓ |
 
-    A **decision procedure** is guaranteed to finish with the correct yes/no answer for its stated class of
-    problems. Propositional satisfiability has such procedures. Unrestricted first-order validity does not
-    have one that handles every possible input. This is what “undecidable in general” means; many individual
-    cases can still be solved. Practical provers use specialized methods and search strategies within a resource
-    budget.'
-  bridges: []
-- id: proof-search.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.proof-search
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A proof shows why a conclusion follows. A satisfying assignment shows how requirements can hold
-    together. Running out of search time establishes neither.
-- id: proof-search.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.proof-search
-  markdown: A proof shows why a conclusion follows. A satisfying assignment shows how requirements can hold
-    together. Running out of search time establishes neither.
-  text_mode: A proof shows why a conclusion follows. A satisfying assignment shows how requirements can hold
-    together. Running out of search time establishes neither.
+      One wrong guess; forced moves did the rest. Modern solvers add **conflict-driven clause learning** (CDCL, late 1990s): after a conflict, record a clause explaining it (here, "not A") so the search never repeats that mistake. That's how solvers handle problems with millions of clauses.
+
+      :::story A division bug and a new habit
+      In 1994 a mathematician noticed that Intel's new Pentium chip occasionally divided incorrectly. Intel set aside about \$475 million to replace the chips, and chip makers invested heavily in formal verification afterwards. Today SAT solvers check circuits against their designs: "the circuit differs from the design" is encoded as clauses, and any satisfying assignment is an input that exposes a bug.
+      :::
+    bridges: []
+  - id: proof-search.s3
+    title: 'Resolution: prove it by contradiction'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.proof-search
+    markdown: |-
+      Sometimes you want a proof that something *can't* happen. Using the original three clauses, prove that Ana and Cai never both come.
+
+      **Resolution** combines two clauses with opposite options: from $\lnot A \lor B$ and $A$, it derives $B$, because with A true the first clause needs B. **Refutation** turns this into a proof method: add the *opposite* of what you want to prove, and resolve until you reach the **empty clause** (a clause with no options left, which can never be true). A contradiction means the opposite was impossible.
+
+      | # | Clause | Where it comes from |
+      | --- | --- | --- |
+      | 1 | $\lnot A \lor B$ | condition |
+      | 2 | $\lnot B \lor \lnot C$ | condition |
+      | 3 | $A \lor C$ | condition |
+      | 4 | $A$ | opposite of the goal: suppose both come |
+      | 5 | $C$ | opposite of the goal |
+      | 6 | $B$ | resolve 1 and 4 on A |
+      | 7 | $\lnot C$ | resolve 2 and 6 on B |
+      | 8 | empty | resolve 5 and 7 on C: contradiction |
+
+      :::papers The resolution rule
+      $$\frac{\ell \lor \alpha \qquad \lnot \ell \lor \beta}{\alpha \lor \beta}$$
+
+      Here $\ell$ is one letter, and $\alpha$, $\beta$ are the rest of each clause. In step 7, $\ell$ is B, $\alpha$ is empty (clause 6 is just B), and $\beta$ is $\lnot C$. J. A. Robinson (1965) combined this rule with unification from the first-order logic lesson, so resolution works on first-order logic too.
+      :::
+    bridges: []
+  - id: proof-search.s4
+    title: Out of time means "unknown"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.proof-search
+    markdown: |-
+      A solver can end in three ways: *satisfiable* (here's an assignment), *unsatisfiable* (here's a refutation), or *out of time*.
+
+      :::mixup "The solver ran all night and found no guest list, so none exists."
+      Only a finished search or a refutation says "none exists." A timeout means "not found yet": report unknown, then try a longer run or a stronger solver.
+      :::
+
+      A **decision procedure** always finishes with the right yes-or-no answer. SAT has one (brute force, if nothing else), but in 1971 Stephen Cook showed SAT is *NP-complete*: a fast method for every SAT case would give fast methods for a huge family of other hard problems, and nobody has found one. Full first-order logic is worse: Alonzo Church and Alan Turing showed in 1936 that no decision procedure exists for it. If a proof exists, resolution will eventually find it; if not, the search may never stop. So "unknown" is sometimes the permanent honest answer.
+    bridges: []
+  - id: proof-search.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.proof-search
+    markdown: Timetables, chip checks, package installs, and a few clause sets to count test whether you can search, propagate, resolve, and read a timeout correctly.
+    takeaway: |-
+      SAT asks whether any assignment satisfies every clause; DPLL finds one by guessing, propagating forced values, and backing up. Resolution proves something impossible by deriving the empty clause, and a timeout is simply "unknown."
+  - id: proof-search.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.proof-search
+    markdown: |-
+      A proof shows why a conclusion follows. A satisfying assignment shows how requirements can hold together. Running out of search time establishes neither.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - proof-search.s1
-    - proof-search.s2
-    - proof-search.s3
-    - proof-search.s4
-    - proof-search.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - proof-search.s1
+        - proof-search.s2
+        - proof-search.dpll
+        - proof-search.s3
+        - proof-search.s4
+        - proof-search.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     proof-search.recap: proof-search.check
 assessment_families:
-- id: proof-search.base
-  objective_ref: objective.proof-search
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Try a satisfiability example: trace the inputs, operation, and result before choosing.'
-  remediation_scene: proof-search.s2
-  variants:
-  - id: proof-search.base.1
-    prompt: A OR B together with NOT A requires which assignment?
-    options:
-    - id: c
-      text: Both A and B false
-    - id: a
-      text: B true
-    - id: b
-      text: B false
-    answer: a
-    feedback: The first clause still needs B when A is false.
-  - id: proof-search.base.2
-    prompt: What does SAT ask?
-    options:
-    - id: a
-      text: Whether a propositional formula has a satisfying assignment
-    - id: b
-      text: Whether every neural network is accurate
-    - id: c
-      text: Whether a sentence sounds convincing
-    answer: a
-    feedback: Satisfiability is an existence question over interpretations.
-- id: proof-search.transfer
-  objective_ref: objective.proof-search
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'A timeout is not a theorem: trace the inputs, operation, and result before choosing.'
-  remediation_scene: proof-search.s4
-  variants:
-  - id: proof-search.transfer.1
-    prompt: A solver reaches its time limit without a proof. What result is justified?
-    options:
-    - id: a
-      text: Unknown within the budget
-    - id: b
-      text: The theorem is false
-    - id: c
-      text: No possible solver could succeed
-    answer: a
-    feedback: Failure to find evidence within a budget is not evidence of impossibility.
-  - id: proof-search.transfer.2
-    prompt: A system produces a long natural-language argument. Is that automatically a formal proof?
-    options:
-    - id: b
-      text: Yes; length guarantees validity
-    - id: c
-      text: Only if it mentions mathematics
-    - id: a
-      text: No; a formal proof needs a precise language and checkable rule steps
-    answer: a
-    feedback: Fluency does not substitute for a verified derivation.
+  - id: proof-search.base
+    objective_ref: objective.proof-search
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Try a satisfiability example: trace the inputs, operation, and result before choosing.'
+    remediation_scene: proof-search.s2
+    variants:
+      - id: proof-search.base.1
+        prompt: A OR B together with NOT A requires which assignment?
+        options:
+          - id: c
+            text: Both A and B false
+          - id: a
+            text: B true
+          - id: b
+            text: B false
+        answer: a
+        feedback: The first clause still needs B when A is false.
+        retired: true
+      - id: proof-search.base.2
+        prompt: What does SAT ask?
+        options:
+          - id: a
+            text: Whether a propositional formula has a satisfying assignment
+          - id: b
+            text: Whether every neural network is accurate
+          - id: c
+            text: Whether a sentence sounds convincing
+        answer: a
+        feedback: Satisfiability is an existence question over interpretations.
+        retired: true
+  - id: proof-search.transfer
+    objective_ref: objective.proof-search
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'A timeout is not a theorem: trace the inputs, operation, and result before choosing.'
+    remediation_scene: proof-search.s4
+    variants:
+      - id: proof-search.transfer.1
+        prompt: A solver reaches its time limit without a proof. What result is justified?
+        options:
+          - id: a
+            text: Unknown within the budget
+          - id: b
+            text: The theorem is false
+          - id: c
+            text: No possible solver could succeed
+        answer: a
+        feedback: Failure to find evidence within a budget is not evidence of impossibility.
+        retired: true
+      - id: proof-search.transfer.2
+        prompt: A system produces a long natural-language argument. Is that automatically a formal proof?
+        options:
+          - id: b
+            text: Yes; length guarantees validity
+          - id: c
+            text: Only if it mentions mathematics
+          - id: a
+            text: No; a formal proof needs a precise language and checkable rule steps
+        answer: a
+        feedback: Fluency does not substitute for a verified derivation.
+        retired: true
+  - id: proof-search.base.v2
+    objective_ref: objective.proof-search
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Look for clauses with a single option left (they force a value) and for pairs of clauses with opposite options (they can be resolved).
+    remediation_scene: proof-search.dpll
+    variants:
+      - id: proof-search.base.v2.1
+        prompt: 'Clauses: (A ∨ B) and (¬A). What does unit propagation force?'
+        options:
+          - id: b
+            text: A = false, then B = false
+          - id: a
+            text: A = false, then B = true
+          - id: c
+            text: Nothing until the solver makes a guess
+        answer: a
+        feedback: (¬A) has one option, so A = false is forced. That leaves (A ∨ B) with only B, so B = true is forced too, with no guessing at all.
+      - id: proof-search.base.v2.2
+        prompt: You resolve (A ∨ B) with (¬A ∨ C). Which clause results?
+        options:
+          - id: c
+            text: A ∨ C
+          - id: b
+            text: B ∧ C
+          - id: a
+            text: B ∨ C
+        answer: a
+        feedback: The opposite options A and ¬A cancel, and the rest of both clauses is joined with OR. If A is false the first clause needs B; if A is true the second needs C; so at least one of B, C holds, but not necessarily both.
+      - id: proof-search.base.v2.3
+        prompt: To prove Q from some clauses by resolution refutation, what do you do?
+        options:
+          - id: a
+            text: Add ¬Q, then resolve until you reach the empty clause
+          - id: b
+            text: Add Q, then resolve until you reach the empty clause
+          - id: c
+            text: Add ¬Q, then resolve until a clause containing Q appears
+        answer: a
+        feedback: Refutation assumes the opposite of the goal and derives a contradiction (the empty clause). Adding Q itself and finding a contradiction would show the clauses rule Q out, the reverse of what you want.
+      - id: proof-search.base.v2.4
+        prompt: A DPLL solver guesses X = true, and unit propagation then produces a clause with no options left. What does it do next?
+        options:
+          - id: c
+            text: Report that the clauses are unsatisfiable
+          - id: a
+            text: Undo that guess and try X = false
+          - id: b
+            text: Keep X = true and skip the empty clause
+        answer: a
+        feedback: A conflict shows the current guesses fail, not that every assignment does. DPLL backs up and tries the other value. It reports unsatisfiable only when both values of every guess have failed.
+      - id: proof-search.base.v2.5
+        prompt: A colleague hands you an assignment and says it satisfies all 5,000 clauses of a problem. How hard is that to check?
+        options:
+          - id: a
+            text: Quick, since you evaluate each clause once with those values
+          - id: b
+            text: Slow, since you must also try the other assignments
+          - id: c
+            text: Slow, since each clause needs its own resolution proof
+        answer: a
+        feedback: Checking one assignment is a single pass over the clauses. That's the gap at the heart of SAT; finding an assignment can be hard, but checking a given one is easy.
+  - id: proof-search.transfer.v2
+    objective_ref: objective.proof-search
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Sort each outcome into satisfiable (an assignment you can check), unsatisfiable (a refutation), or unknown (the search stopped early).
+    remediation_scene: proof-search.s4
+    variants:
+      - id: proof-search.transfer.v2.1
+        prompt: A tool searching a chip design for inputs that cause a wrong answer runs for 12 hours and hits its time limit. What should the report say?
+        options:
+          - id: b
+            text: The design is correct, since no failing input turned up
+          - id: a
+            text: Unknown, since there's neither a failing input nor a proof
+          - id: c
+            text: The design has a bug too subtle for the tool to show
+        answer: a
+        feedback: A timeout finishes neither search. A correctness claim needs the "no failing input" case proved (unsatisfiable), and a bug claim needs a concrete failing input.
+      - id: proof-search.transfer.v2.2
+        prompt: A school timetabling solver finishes and reports UNSATISFIABLE for next term's constraints. What does that mean?
+        options:
+          - id: a
+            text: No timetable meets all the constraints, so one must be relaxed
+          - id: c
+            text: The solver stopped before it could finish trying timetables
+          - id: b
+            text: A timetable exists, though it bends one of the constraints
+        answer: a
+        feedback: Unsatisfiable is a finished answer backed by a refutation. Stopping early would be reported as unknown, and a timetable that breaks a constraint doesn't satisfy the clauses.
+      - id: proof-search.transfer.v2.3
+        prompt: A chatbot writes a fluent two-page argument that a puzzle has no solution. A SAT solver then outputs a satisfying assignment, which you check. What do you conclude?
+        options:
+          - id: c
+            text: The solver erred, since a written argument outranks a search
+          - id: b
+            text: Both could be right, since they used different methods
+          - id: a
+            text: The argument contains a mistake somewhere
+        answer: a
+        feedback: A checked assignment settles it; the puzzle has a solution, so the argument must have a wrong step. Fluent prose isn't a proof you can check line by line, and two contradictory answers can't both be right.
+      - id: proof-search.transfer.v2.4
+        prompt: A package manager must pick versions for 200 libraries so that no two installed versions conflict. Why do some package managers hand this to a SAT solver?
+        options:
+          - id: a
+            text: '"Version v is installed" is a true/false letter, and each conflict is a clause'
+          - id: b
+            text: With 200 libraries, trying each combination in turn is fast enough
+          - id: c
+            text: The solver learns from past installs which versions people prefer
+        answer: a
+        feedback: Choosing versions is a satisfiability problem once each choice is a letter and each conflict a clause. Even a single yes/no letter per library would give 2^200 combinations, far too many to try in turn, and SAT solvers search rather than learn preferences.
+      - id: proof-search.transfer.v2.5
+        prompt: A prover for full first-order logic finds no proof after a day. A colleague says, "Then no proof exists." What is the best reply?
+        options:
+          - id: b
+            text: Right, because first-order provers stop once no proof is left
+          - id: c
+            text: Right, as long as the prover used resolution rather than DPLL
+          - id: a
+            text: A proof may exist but need a longer search
+        answer: a
+        feedback: For first-order logic, a proof that exists will eventually be found, but a missing proof may keep the search running forever (Church and Turing, 1936). Neither resolution nor any other method changes that.
+  - id: proof-search.calc
+    objective_ref: objective.proof-search
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Start with forced values (single-option clauses), then count the remaining choices. Or list all 8 assignments of A, B, C and check each clause.
+    remediation_scene: proof-search.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: proof-search.calc.1
+        prompt: 'Letters A, B, C. Clauses: (A ∨ B), (¬A ∨ C). How many of the 8 assignments satisfy both clauses?'
+        answer: 4
+        feedback: 'If A is true, C must be true and B is free: 2 assignments. If A is false, B must be true and C is free: 2 more. Total 4.'
+      - id: proof-search.calc.2
+        prompt: 'Letters A, B, C. Clause: (A ∨ B ∨ C). How many of the 8 assignments satisfy it?'
+        answer: 7
+        feedback: The clause fails only when all three letters are false, so 8 − 1 = 7.
+      - id: proof-search.calc.3
+        prompt: 'Letters A, B, C. Clauses: (A ∨ B), (¬A), (¬B ∨ C). How many of the 8 assignments satisfy all three clauses?'
+        answer: 1
+        feedback: Unit propagation does everything. ¬A forces A false, then (A ∨ B) forces B true, then (¬B ∨ C) forces C true. One assignment.
+      - id: proof-search.calc.4
+        prompt: 'Letters A, B, C. Clauses: (A ∨ B), (¬A ∨ ¬B), (C). How many of the 8 assignments satisfy all three clauses?'
+        answer: 2
+        feedback: C is forced true. The first two clauses say exactly one of A and B is true, which gives 2 choices.
+      - id: proof-search.calc.5
+        prompt: 'Letters A, B, C. Clauses: (¬A ∨ B), (¬B ∨ C), (¬C ∨ A). How many of the 8 assignments satisfy all three clauses?'
+        answer: 2
+        feedback: The clauses say A leads to B, B to C, and C back to A, so all three must match. All true or all false gives 2 assignments.
+      - id: proof-search.calc.6
+        prompt: 'Letters A, B, C. Clauses: (A), (¬A ∨ B), (¬B). How many of the 8 assignments satisfy all three clauses?'
+        answer: 0
+        feedback: A is forced true, which forces B true, which breaks (¬B). The clauses are unsatisfiable, so the count is 0.

@@ -1,210 +1,435 @@
 schema_version: 0.2-draft
 lesson:
   id: time-series
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Predict the future without borrowing information from it
   state: draft
-  summary: Forecast the next observation using only information that was available when the prediction was
-    made.
+  summary: A café has to order tomorrow's milk tonight. Beat "same as last week" at forecasting its rush hours, and learn why shuffling the data makes any forecast look brilliant.
   slot: M13.1
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: An Introduction to Statistical Learning — authors’ materials
-    url: https://www.statlearning.com/
+    - title: "Forecasting: Principles and Practice, 3rd edition, §5.2 Some simple forecasting methods (Hyndman & Athanasopoulos, 2021)"
+      url: https://otexts.com/fpp3/simple-methods.html
+    - title: "Forecasting: Principles and Practice, 3rd edition, §5.10 Time series cross-validation (Hyndman & Athanasopoulos, 2021)"
+      url: https://otexts.com/fpp3/tscv.html
+    - title: Dive into Deep Learning — authors’ open textbook
+      url: https://d2l.ai/
+    - title: An Introduction to Statistical Learning — authors’ materials
+      url: https://www.statlearning.com/
 objectives:
-- id: objective.time-series
-  version: 1-draft
-  statement: Time-series forecasting uses ordered observations, horizons, and temporal features; seasonal baselines
-    and rolling evaluation expose leakage and changing behavior.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - time-series.base
-  - time-series.transfer
-  prerequisites:
-  - anyOf:
-    - objective.splits-and-leakage
-  - anyOf:
-    - objective.baselines-and-success
+  - id: objective.time-series
+    version: 2-draft
+    statement: Time-series forecasting uses ordered observations, horizons, and temporal features; seasonal baselines and rolling evaluation expose leakage and changing behavior.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - time-series.base.v2
+      - time-series.transfer.v2
+      - time-series.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.splits-and-leakage
+      - anyOf:
+          - objective.baselines-and-success
 scenes:
-- id: time-series.s1
-  title: What was known when the forecast was made?
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.time-series
-  markdown: 'A **time series** records observations in order, such as hourly electricity demand. The **forecast
-    origin** is when you make the prediction; the **horizon** is how far ahead it reaches. At noon, a one-hour-ahead
-    forecast predicts 1 p.m.
+  - id: time-series.s1
+    title: Order the milk before the rush
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.time-series
+    markdown: |-
+      It's 3 p.m. on Tuesday and Pebble Café is closing. Before she leaves, Ana has to order milk and decide how many croissants to bake for Wednesday. Here is what she sold on Tuesday, hour by hour:
 
+      | Hour starting | 7 | 8 | 9 | 10 | 11 | 12 | 1 | 2 |
+      | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+      | Cups sold | 22 | 51 | 33 | 24 | 27 | 44 | 28 | 15 |
 
-    The noon measurement is available, but the 1 p.m. measurement is not. A future holiday can be a valid input
-    if its calendar date was already known at noon. The rule is to use information available at the forecast
-    origin, not to exclude every fact about the future.'
-  text_mode: 'A **time series** records observations in order, such as hourly electricity demand. The **forecast
-    origin** is when you make the prediction; the **horizon** is how far ahead it reaches. At noon, a one-hour-ahead
-    forecast predicts 1 p.m.
+      A list of measurements kept in time order like this is a **time series**. Ana's problem is a forecast, and every forecast has two coordinates. The **forecast origin** is the moment the forecast is made: Tuesday at 3 p.m. The **horizon** is how far ahead each prediction reaches. Wednesday's 7 a.m. hour is one step ahead; Wednesday's 2 p.m. hour is eight steps ahead.
 
+      The golden rule: a forecast may use only what was known at its origin. That rules out less than you might think:
 
-    The noon measurement is available, but the 1 p.m. measurement is not. A future holiday can be a valid input
-    if its calendar date was already known at noon. The rule is to use information available at the forecast
-    origin, not to exclude every fact about the future.'
-  bridges: []
-- id: time-series.s2
-  title: Start with a temporal baseline
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.time-series
-  markdown: A persistence baseline predicts the latest observed value. A seasonal baseline reuses a value from
-    the corresponding previous cycle, such as last Monday for next Monday. If the last four weekly values are
-    10, 12, 11, and 13, a one-week persistence forecast is 13. More complex models must improve a relevant
-    baseline.
-  text_mode: A persistence baseline predicts the latest observed value. A seasonal baseline reuses a value
-    from the corresponding previous cycle, such as last Monday for next Monday. If the last four weekly values
-    are 10, 12, 11, and 13, a one-week persistence forecast is 13. More complex models must improve a relevant
-    baseline.
-  bridges: []
-- id: time-series.s3
-  title: Separate recurring patterns from change
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.time-series
-  markdown: 'A **trend** is a longer-term movement. **Seasonality** is a pattern that repeats over a stated
-    period. Calendar effects, missing observations, and changes in the underlying process can complicate both.
+      - **Allowed:** every sale up to 3 p.m. Tuesday, the fact that Wednesday is market day in town (it's on the calendar), and the weather forecast published Tuesday afternoon.
+      - **Not allowed:** Wednesday's actual rainfall, Wednesday's sales, or any number calculated from them.
 
+      The weather is the subtle case. The rain *forecast* is fair game because Ana has it at 3 p.m. The rain that actually falls isn't, even though it will sit in the same spreadsheet row by Thursday.
+    bridges: []
+  - id: time-series.s2
+    title: Two forecasts you can write in one line
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.time-series
+    markdown: |-
+      Before building anything clever, write down the forecasts any fancy model has to beat. Café sales follow a **season**: a pattern that repeats with a fixed period, here one day of 8 opening hours.
 
-    A model may use earlier measurements, called **lagged values**, alongside other available predictors. Smoothing
-    and normalization must also respect time: a calculation that looks ahead can accidentally include the outcome
-    being predicted.'
-  text_mode: 'A **trend** is a longer-term movement. **Seasonality** is a pattern that repeats over a stated
-    period. Calendar effects, missing observations, and changes in the underlying process can complicate both.
+      - The **naive forecast** repeats the last value you saw: 15 cups, for every hour of Wednesday.
+      - The **seasonal naive forecast** repeats the value from one period ago. Wednesday at 8 a.m. gets Tuesday's 8 a.m. value, 51.
 
+      Here are both forecasts against what Wednesday actually sold:
 
-    A model may use earlier measurements, called **lagged values**, alongside other available predictors. Smoothing
-    and normalization must also respect time: a calculation that looks ahead can accidentally include the outcome
-    being predicted.'
-  bridges: []
-- id: time-series.s4
-  title: Evaluate in the order information arrives
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.time-series
-  markdown: '**Rolling-origin evaluation** moves the forecast origin forward. For example, train on days 1–7
-    and predict day 8, then train on days 1–8 and predict day 9. Refit learned preprocessing only on the training
-    portion at each step. For longer horizons, every predicted target must remain after that step’s origin.
+      | Hour | Wed actual | Naive | Miss | Seasonal naive | Miss |
+      | ---: | ---: | ---: | ---: | ---: | ---: |
+      | 7 | 21 | 15 | 6 | 22 | 1 |
+      | 8 | 50 | 15 | 35 | 51 | 1 |
+      | 9 | 36 | 15 | 21 | 33 | 3 |
+      | 10 | 23 | 15 | 8 | 24 | 1 |
+      | 11 | 26 | 15 | 11 | 27 | 1 |
+      | 12 | 46 | 15 | 31 | 44 | 2 |
+      | 1 | 31 | 15 | 16 | 28 | 3 |
+      | 2 | 13 | 15 | 2 | 15 | 2 |
 
+      The **mean absolute error (MAE)** is the average size of the misses, ignoring sign. Naive: 130 ÷ 8 = 16.25 cups. Seasonal naive: 14 ÷ 8 = 1.75 cups. Copying the quiet 2 p.m. hour into the morning rush is a terrible idea, and the seasonal version avoids it for free.
 
-    Report errors by horizon, series, and important conditions. Overlapping windows can make results dependent.
-    A random row split may test filling gaps among familiar periods rather than forecasting a genuinely later
-    period.'
-  text_mode: '**Rolling-origin evaluation** moves the forecast origin forward. For example, train on days 1–7
-    and predict day 8, then train on days 1–8 and predict day 9. Refit learned preprocessing only on the training
-    portion at each step. For longer horizons, every predicted target must remain after that step’s origin.
+      :::predict It's Friday at close, and on weekends the rush comes at 11 a.m. instead of 8 a.m. What will "same hour yesterday" predict for Saturday, and what should Ana use instead?
+      It copies Friday's weekday profile, so it expects a big 8 a.m. rush that never comes and misses the late-morning brunch crowd. Café sales have a second season: the week. Use "same hour last Saturday" (a period of 7 × 8 = 56 opening hours) instead.
+      :::
 
+      :::papers The seasonal naive forecast
+      Forecasting textbooks write it as
+      $$\hat{y}_{T+h \mid T} = y_{T+h-m(k+1)}, \qquad k = \left\lfloor \tfrac{h-1}{m} \right\rfloor$$
+      $T$ is the origin, $h$ the horizon, and $m$ the season length. For Ana, $m = 8$ and $h = 2$ (Wednesday 8 a.m.): $k = 0$, so the forecast is $y_{T-6}$, which is Tuesday's 8 a.m. value, 51. The $k$ term only matters when the horizon reaches past one full season and you have to copy from further back.
+      :::
+    bridges: []
+  - id: time-series.s3
+    title: Lag features that don't peek
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.time-series
+    markdown: |-
+      A learned model will want more than one number. Pebble Café's sales have a **trend**, a slow drift (more regulars since an office opened nearby), and two **seasonalities**, the daily rush and the weekend shape. Models usually see these through **lag features**: past values of the series itself, such as the same hour yesterday (lag 8) or the same hour last week (lag 56).
 
-    Report errors by horizon, series, and important conditions. Overlapping windows can make results dependent.
-    A random row split may test filling gaps among familiar periods rather than forecasting a genuinely later
-    period.'
-  bridges: []
-- id: time-series.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.time-series
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A forecast must use what was known when it was made. Compare temporal baselines and evaluate by
-    moving forward through time as the real system would.
-- id: time-series.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.time-series
-  markdown: A forecast must use what was known when it was made. Compare temporal baselines and evaluate by
-    moving forward through time as the real system would.
-  text_mode: A forecast must use what was known when it was made. Compare temporal baselines and evaluate by
-    moving forward through time as the real system would.
+      Each feature has to pass the golden rule from the first scene. Check them against a 3 p.m. Tuesday origin:
+
+      | Feature for Wednesday 9 a.m. | Known at the origin? |
+      | --- | --- |
+      | Sales at 9 a.m. Tuesday (lag 8) | Yes |
+      | Sales at 9 a.m. last Wednesday (lag 56) | Yes |
+      | Weather forecast issued Tuesday afternoon | Yes |
+      | Average of the 8, 9, and 10 a.m. Wednesday sales | No: it contains the answer |
+      | Sales scaled by the mean of the whole data set | No: that mean includes future weeks |
+
+      The last two rows are how real projects leak. A "smoothed sales" column built with a centered window quietly averages in the hour being predicted. Scaling with statistics from the whole file lets a busy December nudge every earlier row. The fix is the same for both: compute every feature, and every scaling number, from data before the origin.
+
+      :::mixup "It's just a data set. Shuffle the rows and hold out a random 20% for testing."
+      Then a held-out Wednesday 9 a.m. sits between a Tuesday and a Thursday that are both in the training data. The model gets to see both sides of the gap and fill it in, which is far easier than forecasting a day nobody has seen. The test score looks great, and the real forecasts will be worse. For time series, test on periods that come *after* everything you trained on, as the splits lesson warned.
+      :::
+    bridges: []
+  - id: time-series.s4
+    title: Backtest by replaying the past one day at a time
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.time-series
+    markdown: |-
+      One Wednesday is a lucky or unlucky day. To judge a method, Ana needs many forecasts, each made exactly the way it would have been made in real life. **Rolling-origin evaluation**, often called a **backtest**, does that. Pretend it's the end of day 14: fit on days 1–14, forecast day 15, and score it. Then move the origin to the end of day 15, fit on days 1–15, forecast day 16, and so on. Every forecast uses only its own past.
+
+      The program below backtests three baselines on four weeks of simulated Pebble Café sales, with weekday and weekend profiles plus random noise. It makes 14 day-ahead forecasts per method.
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(0)
+      weekday = np.array([20, 50, 35, 23, 26, 44, 30, 14])   # cups sold, 7 a.m. to 2 p.m.
+      weekend = np.array([8, 15, 30, 45, 48, 40, 25, 12])
+      days = [weekend if d % 7 in (5, 6) else weekday for d in range(28)]
+      sales = np.concatenate([p + rng.normal(0, 3, 8) for p in days]).round()
+
+      H = 8                                   # forecast the whole next day (8 hours)
+      errors = {"naive": [], "seasonal m=8": [], "seasonal m=56": []}
+      for origin in range(14 * H, 28 * H, H):         # walk forward one day at a time
+          past, actual = sales[:origin], sales[origin:origin + H]
+          forecasts = {"naive": np.repeat(past[-1], H),   # last hour, repeated
+                       "seasonal m=8": past[-8:],         # same hour yesterday
+                       "seasonal m=56": past[-56:-48]}    # same hour last week
+          for name, f in forecasts.items():
+              errors[name].append(np.abs(actual - f).mean())
+
+      for name, e in errors.items():
+          print(f"{name:14s} MAE over {len(e)} forecast days: {np.mean(e):5.2f} cups")
+      ```
+
+      The weekly seasonal naive wins, 3.29 cups against 6.37 for "same hour yesterday" and 17.44 for plain naive. That 3.29 is now the bar: a neural network that can't beat it in the same backtest isn't worth running. Try setting `weekend = weekday`. With no weekend shape, "same hour yesterday" nearly ties the weekly version (3.35 against 3.29).
+
+      Report the error by horizon too: 7 a.m. is one step from the origin and 2 p.m. is eight, and the busy hours drive the milk order.
+    bridges: []
+    diagram:
+      caption: Rolling-origin evaluation. Each fold trains only on the past, forecasts the next day, and adds its error to the average.
+      description: Three folds are stacked vertically. Fold one trains on days 1 to 14 and forecasts day 15. Fold two trains on days 1 to 15 and forecasts day 16. Fold three trains on days 1 to 16 and forecasts day 17. Each forecast is scored against the actual day, and all three scores flow into one average error.
+      nodes:
+        - id: train1
+          label: Train on days 1–14
+          col: 0
+          row: 0
+          tone: data
+        - id: fc1
+          label: Forecast day 15
+          col: 2
+          row: 0
+          tone: accent
+        - id: train2
+          label: Train on days 1–15
+          col: 0
+          row: 1
+          tone: data
+        - id: fc2
+          label: Forecast day 16
+          col: 2
+          row: 1
+          tone: accent
+        - id: train3
+          label: Train on days 1–16
+          col: 0
+          row: 2
+          tone: data
+        - id: fc3
+          label: Forecast day 17
+          col: 2
+          row: 2
+          tone: accent
+        - id: score
+          label: Average error
+          note: MAE over all folds
+          col: 4
+          row: 1
+      edges:
+        - from: train1
+          to: fc1
+        - from: train2
+          to: fc2
+        - from: train3
+          to: fc3
+        - from: fc1
+          to: score
+          label: score vs actual
+        - from: fc2
+          to: score
+        - from: fc3
+          to: score
+  - id: time-series.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.time-series
+    markdown: A bike-rental shop, an emergency room, an ice-cream kiosk, and a few MAE calculations test whether you can forecast from the past and judge a forecast fairly.
+    takeaway: |-
+      A forecast may use only what was known at its origin. Start from the seasonal naive baseline, and judge every method with a backtest that walks forward through time.
+  - id: time-series.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.time-series
+    markdown: |-
+      A forecast must use what was known when it was made. Compare temporal baselines and evaluate by moving forward through time as the real system would.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - time-series.s1
-    - time-series.s2
-    - time-series.s3
-    - time-series.s4
-    - time-series.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - time-series.s1
+        - time-series.s2
+        - time-series.s3
+        - time-series.s4
+        - time-series.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     time-series.recap: time-series.check
 assessment_families:
-- id: time-series.base
-  objective_ref: objective.time-series
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Start with a temporal baseline: trace the inputs, operation, and result before choosing.'
-  remediation_scene: time-series.s2
-  variants:
-  - id: time-series.base.1
-    prompt: What does a forecast horizon specify?
-    options:
-    - id: a
-      text: How far into the future the prediction targets
-    - id: b
-      text: Only the number of model layers
-    - id: c
-      text: The color of the time axis
-    answer: a
-    feedback: The horizon defines the temporal distance from forecast origin to target.
-  - id: time-series.base.2
-    prompt: Latest value is 18. What does a simple persistence forecast predict?
-    options:
-    - id: b
-      text: 0 necessarily
-    - id: c
-      text: The average of all future values
-    - id: a
-      text: '18'
-    answer: a
-    feedback: Persistence reuses the most recent observation.
-- id: time-series.transfer
-  objective_ref: objective.time-series
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate as forecasting would operate: trace the inputs, operation, and result before choosing.'
-  remediation_scene: time-series.s4
-  variants:
-  - id: time-series.transfer.1
-    prompt: A rolling feature averages yesterday, today, and tomorrow for a prediction made today. What is
-      wrong?
-    options:
-    - id: b
-      text: It has too few arithmetic operations
-    - id: c
-      text: It is automatically seasonal
-    - id: a
-      text: It uses future information
-    answer: a
-    feedback: The feature crosses the prediction-time information boundary.
-  - id: time-series.transfer.2
-    prompt: Why evaluate errors separately at one-hour and one-week horizons?
-    options:
-    - id: c
-      text: Only the output file size changes
-    - id: a
-      text: The tasks have different uncertainty and available predictive signal
-    - id: b
-      text: All horizons must have equal error
-    answer: a
-    feedback: Forecast difficulty and practical consequences vary with horizon.
+  - id: time-series.base
+    objective_ref: objective.time-series
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Start with a temporal baseline: trace the inputs, operation, and result before choosing.'
+    remediation_scene: time-series.s2
+    variants:
+      - id: time-series.base.1
+        prompt: What does a forecast horizon specify?
+        options:
+          - id: a
+            text: How far into the future the prediction targets
+          - id: b
+            text: Only the number of model layers
+          - id: c
+            text: The color of the time axis
+        answer: a
+        feedback: The horizon defines the temporal distance from forecast origin to target.
+        retired: true
+      - id: time-series.base.2
+        prompt: Latest value is 18. What does a simple persistence forecast predict?
+        options:
+          - id: b
+            text: 0 necessarily
+          - id: c
+            text: The average of all future values
+          - id: a
+            text: '18'
+        answer: a
+        feedback: Persistence reuses the most recent observation.
+        retired: true
+  - id: time-series.transfer
+    objective_ref: objective.time-series
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate as forecasting would operate: trace the inputs, operation, and result before choosing.'
+    remediation_scene: time-series.s4
+    variants:
+      - id: time-series.transfer.1
+        prompt: A rolling feature averages yesterday, today, and tomorrow for a prediction made today. What is wrong?
+        options:
+          - id: b
+            text: It has too few arithmetic operations
+          - id: c
+            text: It is automatically seasonal
+          - id: a
+            text: It uses future information
+        answer: a
+        feedback: The feature crosses the prediction-time information boundary.
+        retired: true
+      - id: time-series.transfer.2
+        prompt: Why evaluate errors separately at one-hour and one-week horizons?
+        options:
+          - id: c
+            text: Only the output file size changes
+          - id: a
+            text: The tasks have different uncertainty and available predictive signal
+          - id: b
+            text: All horizons must have equal error
+        answer: a
+        feedback: Forecast difficulty and practical consequences vary with horizon.
+        retired: true
+  - id: time-series.base.v2
+    objective_ref: objective.time-series
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Stand at the forecast origin. Which numbers exist yet, and which value does each baseline copy?
+    remediation_scene: time-series.s2
+    variants:
+      - id: time-series.base.v2.1
+        prompt: At 9 p.m. a bike-rental shop forecasts tomorrow's 5 p.m. rentals. Today it rented 40 bikes at 5 p.m. and 12 at 8 p.m.; last week, the same weekday had 38 at 5 p.m. What does the daily seasonal naive forecast say?
+        options:
+          - id: b
+            text: 12, the most recent hour the shop recorded
+          - id: c
+            text: 38, the same hour on the same weekday last week
+          - id: a
+            text: 40, the same hour one day earlier
+        answer: a
+        feedback: A daily seasonal naive forecast copies the value one season (one day) back, so 5 p.m. today predicts 5 p.m. tomorrow. 12 is the plain naive forecast, and 38 would be the weekly seasonal version.
+      - id: time-series.base.v2.2
+        prompt: Ana forecasts Wednesday's sales at 3 p.m. on Tuesday. Which input may her model use?
+        options:
+          - id: c
+            text: Wednesday's recorded rainfall from the weather station
+          - id: a
+            text: The weather forecast for Wednesday published Tuesday morning
+          - id: b
+            text: Sales scaled by the average of the full year's data
+        answer: a
+        feedback: A published forecast exists at the origin, so it's fair to use. The recorded rainfall only exists after Wednesday, and a full-year average includes future weeks, so both leak the future.
+      - id: time-series.base.v2.3
+        prompt: For Pebble Café, the naive forecast misses Wednesday's 8 a.m. hour by 35 cups while the seasonal naive misses by 1. What causes the naive forecast's huge miss?
+        options:
+          - id: b
+            text: It uses information that wasn't available at the forecast origin
+          - id: a
+            text: It copies the quiet 2 p.m. hour into the morning rush hour
+          - id: c
+            text: Its horizon of one hour is too short for a daily pattern
+        answer: a
+        feedback: The naive forecast repeats the last value seen, 15 cups at 2 p.m., for every hour, so it ignores the daily shape. It uses only past data, and 8 a.m. is two steps ahead, not one.
+      - id: time-series.base.v2.4
+        prompt: A feature called "smoothed sales" is the average of hours t − 1, t, and t + 1, and the model predicts sales at hour t. What's wrong with it?
+        options:
+          - id: a
+            text: It averages in the target hour and the hour after it
+          - id: b
+            text: Averaging three hours removes the daily seasonal pattern
+          - id: c
+            text: It needs a longer window, such as a full day of hours
+        answer: a
+        feedback: A centered window reaches into hours t and t + 1, which aren't known when forecasting hour t, so the feature leaks the answer. A longer centered window would leak even more; a trailing window (t − 3 to t − 1) is safe.
+  - id: time-series.transfer.v2
+    objective_ref: objective.time-series
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask whether each test forecast was made the way it would be in real use, from the past only, with the future still unknown.
+    remediation_scene: time-series.s4
+    variants:
+      - id: time-series.transfer.v2.1
+        prompt: A hospital shuffles three years of daily emergency-room visits, trains on a random 80%, and tests on the rest. Test error is low, but live forecasts are much worse. What is the most likely reason?
+        options:
+          - id: c
+            text: The test set was too small to give a stable error estimate
+          - id: b
+            text: The model overfit to a handful of unusual holiday days
+          - id: a
+            text: Test days sat between training days, so it filled gaps
+        answer: a
+        feedback: With a random split, each test day has training days on both sides, so the model interpolates instead of forecasting. A backtest that only trains on the past gives an honest error. A small test set would make the score noisy, not consistently too rosy.
+      - id: time-series.transfer.v2.2
+        prompt: An ice-cream kiosk's daily sales are high every weekend and low on weekdays. A team builds a neural forecaster. Which baseline should it be required to beat?
+        options:
+          - id: b
+            text: Yesterday's sales, repeated for tomorrow
+          - id: a
+            text: Sales on the same weekday one week earlier
+          - id: c
+            text: The average daily sales over the past year
+        answer: a
+        feedback: The strongest repeating pattern is weekly, so the weekly seasonal naive forecast is the fair bar. Yesterday's value predicts a weekday for Saturday, and a yearly average ignores the weekend pattern completely.
+      - id: time-series.transfer.v2.3
+        prompt: Each Sunday, a grocery chain forecasts the next seven days of demand. Which evaluation copies how the forecasts will really be used?
+        options:
+          - id: a
+            text: For each past Sunday, fit on earlier data and score the next 7 days
+          - id: b
+            text: Split the days into five random folds and cross-validate the model
+          - id: c
+            text: Fit on all the data, then score the model on the most recent month
+        answer: a
+        feedback: A rolling-origin backtest repeats the real routine many times and never lets a forecast see its own future. Random folds mix future days into training, and scoring on data the model was fitted to measures memory, not forecasting.
+      - id: time-series.transfer.v2.4
+        prompt: Before running a backtest, a team standardizes every value using the mean and standard deviation of the full three-year file. What should they change?
+        options:
+          - id: c
+            text: Compute a separate standard deviation for each hour of the day
+          - id: a
+            text: Recompute the scaling at each origin from earlier data only
+          - id: b
+            text: Skip scaling, since it removes the seasonal pattern from sales
+        answer: a
+        feedback: Statistics from the full file include future values, so each fold's inputs quietly carry information from after its origin. Refit the scaling on each fold's past. Scaling doesn't remove seasonality, and per-hour statistics from the full file would leak the same way.
+  - id: time-series.calc.v2
+    objective_ref: objective.time-series
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Write each forecast next to its actual value, take the size of each miss (ignore the sign), then average the misses.
+    remediation_scene: time-series.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: time-series.calc.v2.1
+        prompt: 'Yesterday a café sold 30, 52, 41, and 18 cups in its first four hours. Today it sold 28, 55, 41, and 22. What is the MAE of the seasonal naive forecast (same hour yesterday) for these four hours?'
+        answer: 2.25
+        feedback: The misses are 2, 3, 0, and 4, which add to 9. Dividing by 4 hours gives 2.25 cups.
+      - id: time-series.calc.v2.2
+        prompt: 'A café''s last recorded hour sold 16 cups. The next four hours actually sell 20, 48, 35, and 22. What is the MAE of the naive forecast over these four hours?'
+        answer: 15.25
+        feedback: The naive forecast is 16 for every hour. The misses are 4, 32, 19, and 6, which add to 61, and 61 ÷ 4 = 15.25 cups.
+      - id: time-series.calc.v2.3
+        prompt: 'Last Saturday a café sold 10, 16, 31, and 44 cups in its first four hours. This Saturday it sold 8, 15, 30, and 45. What is the MAE of the weekly seasonal naive forecast for these hours?'
+        answer: 1.25
+        feedback: The misses are 2, 1, 1, and 1, which add to 5, and 5 ÷ 4 = 1.25 cups.
+      - id: time-series.calc.v2.4
+        prompt: A model forecasts 40 cups for each of three hours. The hours actually sell 38, 45, and 33. What is its MAE? Give two decimal places.
+        answer: 4.67
+        feedback: The misses are 2, 5, and 7, which add to 14, and 14 ÷ 3 ≈ 4.67 cups.

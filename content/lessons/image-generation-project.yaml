@@ -1,247 +1,487 @@
 schema_version: 0.2-draft
 lesson:
   id: image-generation-project
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: 'Project: specify and test a conditional image generator'
   state: draft
-  summary: Design a tiny image generator and test whether it follows the requested condition.
+  summary: Build a diffusion generator for 8×8 pictures in NumPy, ask it for squares, and watch it earn perfect scores by photocopying its training set. Then catch it.
   slot: M36.9
   category: learning
   minutes: 45
   sources:
-  - title: Latent Diffusion Models
-    url: https://arxiv.org/abs/2112.10752
-  - title: Flow Matching
-    url: https://arxiv.org/abs/2210.02747
+    - title: Denoising Diffusion Probabilistic Models (Ho, Jain & Abbeel, 2020)
+      url: https://arxiv.org/abs/2006.11239
+    - title: Extracting Training Data from Diffusion Models (Carlini et al., 2023)
+      url: https://arxiv.org/abs/2301.13188
+    - title: High-Resolution Image Synthesis with Latent Diffusion Models (Rombach et al., 2022)
+      url: https://arxiv.org/abs/2112.10752
 objectives:
-- id: objective.image-generation-project
-  version: 1-draft
-  statement: Design a small conditional generation task, trace a transparent toy sampler, and write tests for
-    conditioning, diversity, and failures without mistaking the toy for a trained image model.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - image-generation-project.base
-  - image-generation-project.transfer
-  prerequisites:
-  - anyOf:
-    - objective.latent-diffusion
-  - anyOf:
-    - objective.multimodal-grounding-evaluation
+  - id: objective.image-generation-project
+    version: 2-draft
+    statement: Build a tiny class-conditional diffusion generator, and evaluate its outputs separately for following the condition, variety, image quality, and copying of training images.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - image-generation-project.base.v2
+      - image-generation-project.transfer.v2
+      - image-generation-project.recover.v2
+    prerequisites:
+      - anyOf:
+          - objective.latent-diffusion
+      - anyOf:
+          - objective.multimodal-grounding-evaluation
 scenes:
-- id: image-generation-project.s1
-  title: Define a small image world
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.image-generation-project
-  markdown: Draw 2×2 grids. Each cell is either white (0) or black (1). For the condition “top row,” use image
-    A=[1,1;0,0]. For “left column,” use B=[1,0;1,0]. A third image C=[1,0;0,1] is diagonal. A condition is
-    information specifying what kind of result is wanted. Save these definitions on paper or in a local file.
-    You need no model download or paid service for this project.
-  text_mode: Draw 2×2 grids. Each cell is either white (0) or black (1). For the condition “top row,” use image
-    A=[1,1;0,0]. For “left column,” use B=[1,0;1,0]. A third image C=[1,0;0,1] is diagonal. A condition is
-    information specifying what kind of result is wanted. Save these definitions on paper or in a local file.
-    You need no model download or paid service for this project.
-  bridges: []
-- id: image-generation-project.s2
-  title: Trace a transparent toy sampler
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.image-generation-project
-  markdown: 'For the condition “top row,” define a toy generator that chooses A with probability 0.75 and B
-    with probability 0.25. To trace it on paper, use fixed draw values 0.10, 0.80, 0.30, and 0.95.
+  - id: image-generation-project.s1
+    title: Eighteen tiny pictures and a request
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.image-generation-project
+    markdown: |-
+      A colleague shows you a demo. "Ask it for a square," she says, and it draws a crisp square. Ask again: a different square. Every output is sharp, every one matches the request, and the squares keep changing. "Perfect scores," she says. "Ship it?"
 
+      In this project you'll build that generator yourself, from noise to picture, and find out what those perfect scores were hiding.
 
-    Choose A when the draw is below 0.75 and B otherwise. The four outputs are **A, B, A, B**.
+      **Your brief**
 
+      | | |
+      | --- | --- |
+      | Goal | Build a diffusion generator for 8×8 images that takes a condition ("row", "column", or "square"), then evaluate it honestly |
+      | Audience | The colleague who's about to ship the demo |
+      | Done looks like | Working generator code (or a hand trace), a score table with four separate measures, sample pictures, and one paragraph on what the scores can and can't tell her |
+      | Time | About 45 minutes |
 
-    For “left column,” reverse the output choices: choose B below 0.75 and A otherwise. The same draws produce
-    **B, A, B, A**. For any unsupported condition, return “condition not supported.”
+      You'll reuse three ideas from module 22, the generative-models module: the forward process that adds noise, the reverse step that removes it (*How an image can emerge from noise*), and conditioning on a prompt (*Why image generators work in latent space*). Everything runs in NumPy on 64-pixel images, so each run takes under a second.
+  - id: image-generation-project.s2
+    title: The dataset, and one noisy pixel
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.image-generation-project
+    markdown: |-
+      **The supplied data.** As in the vision module, an image is a grid of numbers, one per pixel. Here each image is an 8×8 grid with pixels at −1 (off) or +1 (on). There are 18 training images, six per class:
 
+      | Class | The six images |
+      | --- | --- |
+      | row | A full horizontal line in row 1, 2, 3, 4, 5, or 6 |
+      | column | A full vertical line in column 1, 2, 3, 4, 5, or 6 |
+      | square | A filled 3×3 square with its top-left corner at (row 1 or 4, column 1, 3, or 5) |
 
-    These hand-written rules make the exercise reproducible. The fixed draws are a practice example, not an
-    independent random sample, and this sampler is not a trained diffusion model.'
-  text_mode: 'For the condition “top row,” define a toy generator that chooses A with probability 0.75 and
-    B with probability 0.25. To trace it on paper, use fixed draw values 0.10, 0.80, 0.30, and 0.95.
+      Rows and columns are numbered 0 to 7 from the top left. Sketch all 18 on squared paper; you'll need them to judge the outputs.
 
+      **Milestone 1: the forward process.** Diffusion training adds noise with the closed form from *How an image can emerge from noise*:
 
-    Choose A when the draw is below 0.75 and B otherwise. The four outputs are **A, B, A, B**.
+      $$x_t = \sqrt{\bar\alpha_t}\,x_0 + \sqrt{1 - \bar\alpha_t}\,\varepsilon$$
 
+      This project uses $T = 50$ steps, with the fresh noise per step $\beta_t$ rising evenly from 0.001 to 0.2, so $\bar\alpha_t$, the fraction of signal left, falls from 0.999 to about 0.005 by step 50: almost pure noise. Work one pixel: an "on" pixel $x_0 = 1$, at a level where $\bar\alpha_t = 0.64$, with a noise draw $\varepsilon = -0.5$. Then $x_t = 0.8 \times 1 + 0.6 \times (-0.5) = 0.5$. The pixel is still brighter than zero, but only just.
+  - id: image-generation-project.denoiser
+    title: The best possible denoiser, written down
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.image-generation-project
+    markdown: |-
+      **Milestone 2: the denoiser.** A real generator trains a network to guess the clean image from a noisy one. With only 18 training images, you can skip training and write down the *best possible* guess directly. It's a weighted average of the training images: each one is weighted by how likely it is to have produced the noisy image you see.
 
-    For “left column,” reverse the output choices: choose B below 0.75 and A otherwise. The same draws produce
-    **B, A, B, A**. For any unsupported condition, return “condition not supported.”
+      Work it on a one-pixel world with two training "images", $+1$ and $-1$. You observe $x_t = 0.3$ at $\bar\alpha_t = 0.64$.
 
+      1. Where would each training image sit before noise? At $0.8 \times (+1) = 0.8$ and $0.8 \times (-1) = -0.8$.
+      2. Squared distances from 0.3: $(0.3 - 0.8)^2 = 0.25$ and $(0.3 + 0.8)^2 = 1.21$.
+      3. Weights $\propto \exp(-d^2 / (2(1 - \bar\alpha_t)))$ with $2 \times 0.36 = 0.72$: $e^{-0.347} = 0.707$ and $e^{-1.681} = 0.186$, which normalize to 0.79 and 0.21.
+      4. Best guess: $0.79 \times (+1) + 0.21 \times (-1) = 0.58$.
 
-    These hand-written rules make the exercise reproducible. The fixed draws are a practice example, not an
-    independent random sample, and this sampler is not a trained diffusion model.'
-  bridges: []
-- id: image-generation-project.s3
-  title: Separate quality questions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.image-generation-project
-  markdown: Two of the four fixture outputs match “top row,” so exact condition adherence on this fixture is
-    2/4. There are two distinct outputs, A and B, giving some variety but also incorrect conditioning. A generator
-    returning A on every top-row request would have perfect adherence in this tiny world yet no within-condition
-    variety. Define a richer world if you want multiple valid top-row images. Do not reward diversity that
-    breaks the requested condition.
-  text_mode: Two of the four fixture outputs match “top row,” so exact condition adherence on this fixture
-    is 2/4. There are two distinct outputs, A and B, giving some variety but also incorrect conditioning. A
-    generator returning A on every top-row request would have perfect adherence in this tiny world yet no within-condition
-    variety. Define a richer world if you want multiple valid top-row images. Do not reward diversity that
-    breaks the requested condition.
-  bridges: []
-- id: image-generation-project.s4
-  title: Connect the toy to a learned pipeline
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.image-generation-project
-  markdown: 'Draw a second diagram for a latent image generator: condition encoding, starting noise, repeated
-    learned denoising or velocity prediction, and image decoding. Label which pieces would need training data,
-    objectives, and checkpoints. State that your paper sampler implements none of those learned components.
-    The comparison shows what the toy can test—an output contract—and which architectural claims require separate
-    evidence from a real artifact.'
-  text_mode: 'Draw a second diagram for a latent image generator: condition encoding, starting noise, repeated
-    learned denoising or velocity prediction, and image decoding. Label which pieces would need training data,
-    objectives, and checkpoints. State that your paper sampler implements none of those learned components.
-    The comparison shows what the toy can test—an output contract—and which architectural claims require separate
-    evidence from a real artifact.'
-  bridges: []
-- id: image-generation-project.s5
-  title: Write failure and review cases
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.image-generation-project
-  markdown: 'Supply five tests: the two known conditions, an unsupported condition, repeated generation under
-    a fixed seed or fixture, and a condition with several valid outputs in an extended image world. Specify
-    what to do when a condition is unsupported. Keep training examples separate from any evaluation of a learned
-    extension. Review correctness of the fixture, condition adherence, meaningful diversity, reproducibility,
-    and stated limitations, scoring each 0–2. The in-app quiz checks concepts, not your unseen project.'
-  text_mode: 'Supply five tests: the two known conditions, an unsupported condition, repeated generation under
-    a fixed seed or fixture, and a condition with several valid outputs in an extended image world. Specify
-    what to do when a condition is unsupported. Keep training examples separate from any evaluation of a learned
-    extension. Review correctness of the fixture, condition adherence, meaningful diversity, reproducibility,
-    and stated limitations, scoring each 0–2. The in-app quiz checks concepts, not your unseen project.'
-  bridges: []
-- id: image-generation-project.s6
-  title: Deliver a small research note
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.image-generation-project
-  markdown: Save your grid definitions, probability rule, four traced outputs, metric calculations, proposed
-    learned-system diagram, and review table. Paper work is a complete route; an optional local script can
-    reproduce the fixture. Write one paragraph explaining why a high toy score cannot establish realistic image
-    quality. Ask a peer to reproduce one calculation and challenge one test criterion. Improve the artifact
-    where their interpretation differs from your intention.
-  text_mode: Save your grid definitions, probability rule, four traced outputs, metric calculations, proposed
-    learned-system diagram, and review table. Paper work is a complete route; an optional local script can
-    reproduce the fixture. Write one paragraph explaining why a high toy score cannot establish realistic image
-    quality. Ask a peer to reproduce one calculation and challenge one test criterion. Improve the artifact
-    where their interpretation differs from your intention.
-  bridges: []
-- id: image-generation-project.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.image-generation-project
-  markdown: Try these questions to check the ideas behind your project. Use the lesson’s rubric for self or
-    peer review of your work; the app does not grade the project artifact.
-  text_mode: Try these questions to check the ideas behind your project. Use the lesson’s rubric for self or
-    peer review of your work; the app does not grade the project artifact.
-  takeaway: Test whether outputs fit the requested condition, show meaningful variety, and can be reproduced.
-    Keep the hand-written sampler’s results separate from claims about a learned generator.
-- id: image-generation-project.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.image-generation-project
-  markdown: Test whether outputs fit the requested condition, show meaningful variety, and can be reproduced.
-    Keep the hand-written sampler’s results separate from claims about a learned generator.
-  text_mode: Test whether outputs fit the requested condition, show meaningful variety, and can be reproduced.
-    Keep the hand-written sampler’s results separate from claims about a learned generator.
+      :::predict Near the end of generation, $\bar\alpha_t$ is about 0.99. With the same $x_t = 0.3$, what does the best guess become?
+      Almost exactly +1. The divisor $2(1 - 0.99) = 0.02$ is tiny, so the squared distances 0.48 and 1.68 become $e^{-24}$ against $e^{-84}$: the nearer image takes essentially all the weight. As the noise fades, this denoiser stops averaging and picks one training image. Hold on to that; it's the key to the whole project.
+      :::
+
+      **Conditioning** is now one line: to generate a "square", average over the six square images only. The condition changes which images the denoiser believes in, at every step.
+
+      :::papers The ideal denoiser
+      For training images $x^{(1)}, \dots, x^{(N)}$ and Gaussian noise, the best guess in squared error is the posterior mean
+
+      $$\hat x_0(x_t) = \sum_{i=1}^{N} w_i\, x^{(i)}, \qquad w_i \propto \exp\!\left(-\frac{\lVert x_t - \sqrt{\bar\alpha_t}\,x^{(i)} \rVert^2}{2(1 - \bar\alpha_t)}\right)$$
+
+      In the one-pixel example, $N = 2$, the weights are 0.79 and 0.21, and $\hat x_0 = 0.58$. The sampler turns this into a noise estimate with $\hat\varepsilon = (x_t - \sqrt{\bar\alpha_t}\,\hat x_0) / \sqrt{1 - \bar\alpha_t}$ and takes a DDPM reverse step, exactly as in the denoising lesson.
+      :::
+  - id: image-generation-project.s3
+    title: Generate, then score four ways
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.image-generation-project
+    markdown: |-
+      **Milestone 3: generate and measure.** The reference solution draws 30 samples per class from pure noise, with two denoisers: the ideal one, and a smoother one that pretends the training images form a single bell-shaped cloud. That second one is the best guess for a Gaussian fitted to the six images, so it can blend them. It then scores every sample four separate ways:
+
+      | Measure | Question it answers | How it's computed |
+      | --- | --- | --- |
+      | On-condition | Did it draw what was asked? | Share of samples whose nearest training image has the requested class |
+      | Distinct | Does it vary? | How many different training images are nearest, out of 6 |
+      | Crisp | Does it look like the data? | Share of pixels within 0.2 of −1 or +1 |
+      | Copy distance | Is it new? | Average distance to the nearest training image; 0 means an exact copy |
+
+      ```python run
+      import numpy as np
+
+      # 18 training images, 8x8, pixels -1 (off) or +1 (on): six per class
+      train = {"row": [], "column": [], "square": []}
+      for k in range(1, 7):
+          row = -np.ones((8, 8)); row[k, :] = 1
+          col = -np.ones((8, 8)); col[:, k] = 1
+          r, c = divmod(k - 1, 3)                         # squares sit on a 2 x 3 grid of positions
+          sq = -np.ones((8, 8)); sq[1 + 3 * r:4 + 3 * r, 1 + 2 * c:4 + 2 * c] = 1
+          for cls, img in [("row", row), ("column", col), ("square", sq)]:
+              train[cls].append(img.ravel())
+      train = {cls: np.array(v) for cls, v in train.items()}
+
+      T = 50
+      betas = np.linspace(1e-3, 0.2, T)                  # noise schedule
+      alphas, abar = 1 - betas, np.cumprod(1 - betas)
+
+      def ideal_denoiser(xt, ab, imgs):                   # best guess of x0: weighted average of training images
+          d2 = ((xt[:, None] - np.sqrt(ab) * imgs) ** 2).sum(-1)
+          w = np.exp(-(d2 - d2.min(1, keepdims=True)) / (2 * (1 - ab)))
+          return (w / w.sum(1, keepdims=True)) @ imgs
+
+      def gaussian_denoiser(xt, ab, imgs):                # best guess if images were a smooth bell-shaped cloud
+          mu, C = imgs.mean(0), np.cov(imgs.T) + 1e-3 * np.eye(64)
+          gain = np.sqrt(ab) * C @ np.linalg.inv(ab * C + (1 - ab) * np.eye(64))
+          return mu + (xt - np.sqrt(ab) * mu) @ gain.T
+
+      def generate(cls, n, denoiser, seed):
+          rng = np.random.default_rng(seed)
+          x = rng.normal(size=(n, 64))                    # start from pure noise
+          for t in reversed(range(T)):                    # DDPM reverse steps
+              eps = (x - np.sqrt(abar[t]) * denoiser(x, abar[t], train[cls])) / np.sqrt(1 - abar[t])
+              x = (x - betas[t] / np.sqrt(1 - abar[t]) * eps) / np.sqrt(alphas[t])
+              if t > 0:
+                  x += np.sqrt(betas[t]) * rng.normal(size=x.shape)
+          return x
+
+      every = np.concatenate(list(train.values()))
+      labels = np.repeat(list(train), 6)
+      for name, den in [("ideal", ideal_denoiser), ("gaussian", gaussian_denoiser)]:
+          for i, cls in enumerate(train):
+              x = generate(cls, 30, den, seed=i)
+              dist = np.sqrt(((x[:, None] - every) ** 2).sum(-1))       # distance to each training image
+              nearest = dist.argmin(1)
+              print(f"{name:8s} {cls:6s} on-condition {np.mean(labels[nearest] == cls):.2f}  "
+                    f"distinct {len(set(nearest))}/6  crisp {np.mean(abs(abs(x) - 1) < 0.2):.2f}  "
+                    f"copy distance {dist.min(1).mean():.2f}")
+          for row in x[3].reshape(8, 8):                  # one generated square: # on, . off, + in between
+              print("".join("#" if v > 0.6 else "." if v < -0.6 else "+" for v in row))
+      ```
+
+      **Expected output:**
+
+      | Denoiser | Class | On-condition | Distinct | Crisp | Copy distance |
+      | --- | --- | ---: | ---: | ---: | ---: |
+      | Ideal | row | 1.00 | 6/6 | 1.00 | 0.00 |
+      | Ideal | column | 1.00 | 6/6 | 1.00 | 0.00 |
+      | Ideal | square | 1.00 | 6/6 | 1.00 | 0.00 |
+      | Gaussian | row | 1.00 | 6/6 | 0.39 | 4.53 |
+      | Gaussian | column | 1.00 | 6/6 | 0.43 | 4.47 |
+      | Gaussian | square | 1.00 | 6/6 | 0.49 | 4.53 |
+
+      The sample pictures match too: the ideal denoiser draws a clean 3×3 square in rows 1–3, columns 3–5, which is training square number 2, pixel for pixel. The Gaussian one draws a ghostly blend of several square positions, all in `+` marks, with no pixel fully on.
+
+      :::predict Ask the ideal generator for 300 squares instead of 30 (change `30` to `300`). How many distinct squares will you get?
+      Still 6. Its outputs are always one of the six training squares, so no number of samples can produce a seventh. More samples raise your confidence in the scores; they can't create variety the generator doesn't have.
+      :::
+  - id: image-generation-project.s4
+    title: A perfect score from a photocopier
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.image-generation-project
+    markdown: |-
+      **Milestone 4: interpret.** Look at the ideal row of the table the way your colleague would: perfect adherence, full variety, perfectly crisp. Then look at the last column. Every single sample is an exact copy of a training image. The generator is a photocopier with a random page picker.
+
+      That isn't a bug in your code. It's what the *best possible* denoiser for a finite training set does, as the predict question in the denoiser milestone showed: once noise is low, it snaps to the nearest training image. A trained network never fits this ideal exactly, which is part of why it can make new images; studies of diffusion models trained on small datasets have found they copy much more often. The Gaussian denoiser shows the opposite failure: every sample is new (copy distance about 4.5), but blurry.
+
+      | | Ideal denoiser | Gaussian denoiser | What you want |
+      | --- | --- | --- | --- |
+      | Follows the condition | Yes | Yes | Yes |
+      | Looks like the data | Perfectly | No, blurry blends | Yes |
+      | New images | Never | Always | Yes |
+
+      Real systems face the same tension. Carlini and colleagues (2023) showed that Stable Diffusion and Google's Imagen can reproduce some of their training images almost exactly. Standard scores wouldn't catch it: **FID** (Fréchet Inception Distance, from *Predicting a label, generating a possibility*) compares the statistics of generated and real images, so a model that returns real images scores very well.
+
+      :::mixup "If outputs follow the prompt, look sharp, and vary, the generator is good."
+      All three are true of a photocopier. Always add a copy check: find each output's nearest training image and count near-duplicates. For real images, compare in a feature space as well as by pixels, since a copy can be shifted or recolored.
+      :::
+
+      :::key The evaluation in one sentence
+      Score condition, variety, quality, and novelty separately, because a generator can ace any three by failing the fourth.
+      :::
+  - id: image-generation-project.s5
+    title: Mistakes that fake a good result
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.image-generation-project
+    markdown: |-
+      | Mistake | How to spot it | Fix |
+      | --- | --- | --- |
+      | No copy check | Your table has no novelty column | Add distance to the nearest training image |
+      | Testing adherence with the generator's own training images as the judge, and nothing else | A copy scores a perfect match by construction | Also judge with a rule or classifier that never saw the training set, e.g. "exactly one full row lit" |
+      | Averaging classes together | One overall number hides a weak class | Report every measure per condition |
+      | Mistaking a lucky threshold for quality | A blurry sample looks clean when printed as just on/off | Print a middle level (`+`) too, as the code does |
+      | Too few samples to judge variety | Distinct looks low at n = 5 | Draw enough samples; 30 per class here hits every mode |
+
+      :::try Build an honest judge
+      Write `is_row(x)`: true if exactly one row has all 8 pixels above 0 and every other pixel is below 0. Run it on both denoisers' row samples. All 30 ideal samples pass, but only 16 of the 30 Gaussian ones do: in the rest, the blend leaves stray pixels on or part of the row off. This judge knows nothing about the training images, so it checks the shape without trusting the training set; pair it with the copy distance to catch copying.
+      :::
+  - id: image-generation-project.s6
+    title: Write the note, then score it
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.image-generation-project
+    markdown: |-
+      **Milestone 5: report.** Your note for the colleague has four parts: the score table, two sample pictures (one per denoiser), one paragraph explaining why the ideal generator's perfect scores mean copying, and a test list she can run on her real demo: condition adherence per prompt, variety, quality, and a nearest-training-image search on 100 outputs.
+
+      **No-code option.** Work the one-pixel denoiser by hand at $\bar\alpha_t$ = 0.64 and 0.99 (milestone 2). Then take a 3×3 "image" world with two training squares, draw five outputs that would score perfectly on adherence, variety, and crispness while all being copies, and write the paragraph. The reasoning is the same as the full run.
+
+      **Extension.** Swap diffusion for a tiny autoencoder, as in *Learn a latent representation and a way back to data*: compress each 64-pixel image to 2 numbers with a linear map fitted by least squares, decode points between the training codes, and apply the same four scores.
+
+      **Rubric.** Score your note, or trade with a friend.
+
+      | Criterion | Not yet | Solid | Excellent |
+      | --- | --- | --- | --- |
+      | Generator | Doesn't run or trace | Generates on-condition samples | Explains why the ideal denoiser snaps to training images |
+      | Separate measures | One overall score | Condition, variety, quality reported | Plus a copy check, per class |
+      | Evidence | Scores only | Scores and sample pictures | Pictures chosen to show both failure modes |
+      | Caveats | "Looks good" | Names memorization | Explains why FID-style scores miss it and what test catches it |
+      | Advice | None | A test list | A test list with pass marks the colleague can run this week |
+
+      The questions below check the concepts; judge your note itself with this rubric.
+  - id: image-generation-project.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.image-generation-project
+    markdown: |-
+      Recover a few clean pixels from noisy ones, explain the photocopier, and evaluate a face generator, a logo generator, and a sharpness-only report.
+    takeaway: |-
+      A generator must follow the condition, vary, look right, and make something new. Measure all four separately, because the best possible denoiser for a small dataset aces the first three by copying.
+  - id: image-generation-project.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.image-generation-project
+    markdown: |-
+      Test whether outputs fit the requested condition, show meaningful variety, and can be reproduced. Keep the hand-written sampler’s results separate from claims about a learned generator.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - image-generation-project.s1
-    - image-generation-project.s2
-    - image-generation-project.s3
-    - image-generation-project.s4
-    - image-generation-project.s5
-    - image-generation-project.s6
-    - image-generation-project.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - image-generation-project.s1
+        - image-generation-project.s2
+        - image-generation-project.denoiser
+        - image-generation-project.s3
+        - image-generation-project.s4
+        - image-generation-project.s5
+        - image-generation-project.s6
+        - image-generation-project.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     image-generation-project.recap: image-generation-project.check
 assessment_families:
-- id: image-generation-project.base
-  objective_ref: objective.image-generation-project
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a transparent toy sampler: trace the inputs, operation, and result before choosing.'
-  remediation_scene: image-generation-project.s2
-  variants:
-  - id: image-generation-project.base.1
-    prompt: Under the toy top-row rule, fixture value 0.80 selects which image?
-    options:
-    - id: a
-      text: B
-    - id: b
-      text: A
-    - id: c
-      text: C
-    answer: a
-    feedback: 0.80 is not below the 0.75 cutoff, so the rule selects B.
-  - id: image-generation-project.base.2
-    prompt: Which fraction of the four fixture outputs matches top row exactly?
-    options:
-    - id: b
-      text: 3/4
-    - id: c
-      text: 4/4
-    - id: a
-      text: 2/4
-    answer: a
-    feedback: The fixture A,B,A,B contains two matching A images.
-- id: image-generation-project.transfer
-  objective_ref: objective.image-generation-project
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Deliver a small research note: trace the inputs, operation, and result before choosing.'
-  remediation_scene: image-generation-project.s6
-  variants:
-  - id: image-generation-project.transfer.1
-    prompt: Which comparison separates adherence from diversity?
-    options:
-    - id: b
-      text: A varied set satisfies the condition because it varies
-    - id: c
-      text: An adherence score measures the number of distinct outputs
-    - id: a
-      text: A repeated valid image can satisfy the condition but lack variety
-    answer: a
-    feedback: Correctness under the condition and variety are different measurements.
-  - id: image-generation-project.transfer.2
-    prompt: Which description accurately labels the paper sampler?
-    options:
-    - id: c
-      text: A reproduced large-scale image training experiment
-    - id: a
-      text: A hand-specified toy with an explicit probability rule
-    - id: b
-      text: A trained latent diffusion model with learned weights
-    answer: a
-    feedback: The toy does not implement learned denoising or realistic image training.
+  - id: image-generation-project.base
+    objective_ref: objective.image-generation-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a transparent toy sampler: trace the inputs, operation, and result before choosing.'
+    remediation_scene: image-generation-project.s2
+    variants:
+      - id: image-generation-project.base.1
+        prompt: Under the toy top-row rule, fixture value 0.80 selects which image?
+        options:
+          - id: a
+            text: B
+          - id: b
+            text: A
+          - id: c
+            text: C
+        answer: a
+        feedback: 0.80 is not below the 0.75 cutoff, so the rule selects B.
+        retired: true
+      - id: image-generation-project.base.2
+        prompt: Which fraction of the four fixture outputs matches top row exactly?
+        options:
+          - id: b
+            text: 3/4
+          - id: c
+            text: 4/4
+          - id: a
+            text: 2/4
+        answer: a
+        feedback: The fixture A,B,A,B contains two matching A images.
+        retired: true
+  - id: image-generation-project.transfer
+    objective_ref: objective.image-generation-project
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Deliver a small research note: trace the inputs, operation, and result before choosing.'
+    remediation_scene: image-generation-project.s6
+    variants:
+      - id: image-generation-project.transfer.1
+        prompt: Which comparison separates adherence from diversity?
+        options:
+          - id: b
+            text: A varied set satisfies the condition because it varies
+          - id: c
+            text: An adherence score measures the number of distinct outputs
+          - id: a
+            text: A repeated valid image can satisfy the condition but lack variety
+        answer: a
+        feedback: Correctness under the condition and variety are different measurements.
+        retired: true
+      - id: image-generation-project.transfer.2
+        prompt: Which description accurately labels the paper sampler?
+        options:
+          - id: c
+            text: A reproduced large-scale image training experiment
+          - id: a
+            text: A hand-specified toy with an explicit probability rule
+          - id: b
+            text: A trained latent diffusion model with learned weights
+        answer: a
+        feedback: The toy does not implement learned denoising or realistic image training.
+        retired: true
+  - id: image-generation-project.base.v2
+    objective_ref: objective.image-generation-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: The ideal denoiser is a weighted average of training images whose weights sharpen as noise falls. Ask which images it averages and what that does at low noise.
+    remediation_scene: image-generation-project.s4
+    variants:
+      - id: image-generation-project.base.v2.1
+        prompt: Every sample from the ideal-denoiser generator is an exact copy of a training image. Why?
+        options:
+          - id: b
+            text: The noise schedule removes all randomness during the final few steps
+          - id: a
+            text: At low noise its weighted average puts nearly all weight on one image
+          - id: c
+            text: The sampler starts from a training image instead of from pure noise
+        answer: a
+        feedback: As $\bar\alpha_t$ nears 1, the weights $\exp(-d^2/2(1-\bar\alpha_t))$ become extremely sharp, so the nearest training image wins outright. Randomness is still added until the last step, and sampling starts from pure noise.
+      - id: image-generation-project.base.v2.2
+        prompt: How does the condition "square" enter the ideal-denoiser generator?
+        options:
+          - id: a
+            text: The denoiser averages over the six square training images only
+          - id: b
+            text: A faint square pattern is added to the starting noise image
+          - id: c
+            text: Finished samples that aren't squares are thrown away and redrawn
+        answer: a
+        feedback: Conditioning changes which images the denoiser believes in at every step. The starting noise is the same kind for every class, and nothing is filtered after the fact.
+      - id: image-generation-project.base.v2.3
+        prompt: In the score table, which measure reveals that the ideal generator only copies?
+        options:
+          - id: c
+            text: Distinct outputs, which reach 6 of the 6 possible training squares
+          - id: b
+            text: On-condition rate, which is a perfect 1.00 for each class
+          - id: a
+            text: Copy distance, the mean distance to the nearest training image
+        answer: a
+        feedback: A copy distance of 0.00 means every sample sits exactly on a training image. Perfect adherence and full variety are also what a photocopier with a random page picker would score.
+      - id: image-generation-project.base.v2.4
+        prompt: The Gaussian denoiser's samples have copy distance about 4.5 and crispness 0.39 to 0.49. What does that describe?
+        options:
+          - id: a
+            text: New images that are blurry blends rather than clean shapes
+          - id: b
+            text: Training images copied exactly, then given a little extra noise
+          - id: c
+            text: Sharp new shapes that the training set never contained
+        answer: a
+        feedback: A large copy distance means the samples are new; low crispness means most pixels sit between off and on. Slightly noisy copies would have a small copy distance, and sharp shapes would score near 1.00 on crispness.
+  - id: image-generation-project.transfer.v2
+    objective_ref: objective.image-generation-project
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide which of the four questions (condition, variety, quality, novelty) the evidence answers, and which it leaves open.
+    remediation_scene: image-generation-project.s5
+    variants:
+      - id: image-generation-project.transfer.v2.1
+        prompt: A startup's face generator gets an excellent FID against its 5,000 training faces, and it plans to advertise "brand-new faces". What check should come first?
+        options:
+          - id: b
+            text: Recompute FID on a larger batch of generated faces
+          - id: a
+            text: Find each output's nearest training face and count near-copies
+          - id: c
+            text: Ask raters whether the generated faces look realistic
+        answer: a
+        feedback: FID compares statistics, so returning training faces scores well, and raters would find copies realistic too. Only a nearest-neighbor search tests the "brand-new" claim.
+      - id: image-generation-project.transfer.v2.2
+        prompt: A logo generator asked for "circle" produces 50 varied, crisp logos, and 12 of them are triangles. Which measure captures the problem?
+        options:
+          - id: a
+            text: Condition adherence, since 38 of 50 match the request
+          - id: b
+            text: Variety, since the 50 logos are all different designs
+          - id: c
+            text: Quality, since the logos have clean and sharp edges
+        answer: a
+        feedback: The outputs vary and look good, but a quarter ignore the request. Variety that breaks the condition shouldn't count in the generator's favor.
+      - id: image-generation-project.transfer.v2.3
+        prompt: A generator trained on 20 icons makes outputs that are all new but smeared, with no crisp edges. What does this project suggest is going on?
+        options:
+          - id: c
+            text: It's memorizing, so the training set should be made smaller
+          - id: b
+            text: It's a sampler bug, since correct diffusion gives sharp images
+          - id: a
+            text: It behaves like the Gaussian denoiser, blending training images
+        answer: a
+        feedback: New but blurry is the Gaussian denoiser's signature. Memorizing produces crisp copies, the opposite symptom, and a correct sampler with a too-smooth denoiser still gives blur.
+      - id: image-generation-project.transfer.v2.4
+        prompt: A team evaluates its text-to-image model with one number, average image sharpness. What is the most important thing missing?
+        options:
+          - id: b
+            text: A larger test set to narrow the error bars on the sharpness score
+          - id: c
+            text: A finer sharpness metric computed at a higher image resolution
+          - id: a
+            text: Separate scores for prompt-following, variety, and copying
+        answer: a
+        feedback: Sharpness is one of four questions. A generator can be sharp while ignoring prompts, repeating itself, or copying training images, and a more precise sharpness number won't reveal any of those.
+  - id: image-generation-project.recover.v2
+    objective_ref: objective.image-generation-project
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Solve the forward formula for the clean value, x̂₀ = (x_t − √(1 − ᾱ) · ε̂) ÷ √ᾱ, exactly as the sampler does before each reverse step.
+    remediation_scene: image-generation-project.denoiser
+    absolute_tolerance: 0.01
+    variants:
+      - id: image-generation-project.recover.v2.1
+        prompt: 'A noisy pixel is x_t = 0.5 at a level where ᾱ = 0.36, and the denoiser estimates the noise as ε̂ = 0.25. What clean value x̂₀ does that imply?'
+        answer: 0.5
+        feedback: √0.36 = 0.6 and √0.64 = 0.8, so x̂₀ = (0.5 − 0.8 × 0.25) ÷ 0.6 = 0.3 ÷ 0.6 = 0.5.
+      - id: image-generation-project.recover.v2.2
+        prompt: 'A noisy pixel is x_t = −0.2 at a level where ᾱ = 0.64, and the denoiser estimates the noise as ε̂ = −0.5. What clean value x̂₀ does that imply?'
+        answer: 0.125
+        feedback: √0.64 = 0.8 and √0.36 = 0.6, so x̂₀ = (−0.2 + 0.6 × 0.5) ÷ 0.8 = 0.1 ÷ 0.8 = 0.125.
+      - id: image-generation-project.recover.v2.3
+        prompt: 'A noisy pixel is x_t = −0.7 at a level where ᾱ = 0.36, and the denoiser estimates the noise as ε̂ = −0.5. What clean value x̂₀ does that imply?'
+        answer: -0.5
+        feedback: √0.36 = 0.6 and √0.64 = 0.8, so x̂₀ = (−0.7 + 0.8 × 0.5) ÷ 0.6 = −0.3 ÷ 0.6 = −0.5.
+      - id: image-generation-project.recover.v2.4
+        prompt: 'A noisy pixel is x_t = 1.0 at a level where ᾱ = 0.64, and the denoiser estimates the noise as ε̂ = 0.5. What clean value x̂₀ does that imply?'
+        answer: 0.875
+        feedback: √0.64 = 0.8 and √0.36 = 0.6, so x̂₀ = (1.0 − 0.6 × 0.5) ÷ 0.8 = 0.7 ÷ 0.8 = 0.875.

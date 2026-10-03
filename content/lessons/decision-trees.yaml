@@ -1,213 +1,436 @@
 schema_version: 0.2-draft
 lesson:
   id: decision-trees
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Split a dataset into simpler regions
   state: draft
-  summary: Follow a branching checklist from an input to a prediction, then decide when extra branches stop
-    helping.
+  summary: Which free-trial users will pay? Grow a flowchart of yes-or-no questions from data, score each question by how well it sorts people, and stop before it memorizes.
   slot: M07.4
   category: learning
   sources:
-  - title: An Introduction to Statistical Learning — authors’ materials
-    url: https://www.statlearning.com/
+    - title: An Introduction to Statistical Learning — authors’ materials
+      url: https://www.statlearning.com/
 objectives:
-- id: objective.decision-trees
-  version: 1-draft
-  statement: Decision trees make predictions through feature tests; split criteria, depth, leaf size, and pruning
-    control how closely they fit the training data.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - decision-trees.base
-  - decision-trees.transfer
-  prerequisites:
-  - anyOf:
-    - objective.data
-  - anyOf:
-    - objective.probability
+  - id: objective.decision-trees
+    version: 2-draft
+    statement: Decision trees make predictions through feature tests; split criteria, depth, leaf size, and pruning control how closely they fit the training data.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - decision-trees.base.v2
+      - decision-trees.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.data
+      - anyOf:
+          - objective.probability
 scenes:
-- id: decision-trees.s1
-  title: Follow a branching checklist
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.decision-trees
-  markdown: 'For a parcel, ask “weight under 2 kg?” and then “local address?” Each question is a **node**,
-    and its answers lead along **branches**. A **leaf** is an endpoint that supplies a category, a class distribution,
-    or a numerical estimate.
+  - id: decision-trees.s1
+    title: A free trial and a few yes-or-no questions
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.decision-trees
+    markdown: |-
+      A streaming service gives new users a free month. A week in, the marketing team wants to guess who will pay, so they can offer the doubtful ones a discount. Their model is a flowchart (below), grown from ten trial users' records.
 
+      Each question is a **node** that tests one feature. Its answers lead down **branches**, and an endpoint with no more questions is a **leaf**, which holds a prediction: here, the majority outcome and the share who paid. A user who watched 4 shows answers yes, then no, and lands in the leaf where 2 of 3 users paid, so the tree predicts "will pay."
 
-    A light local parcel might reach one price estimate while a heavy parcel reaches another. The model uses
-    the leaf reached by this input, rather than averaging all leaves. Each path defines one region of the possible
-    inputs, so the model uses different rules in different regions.'
-  text_mode: 'For a parcel, ask “weight under 2 kg?” and then “local address?” Each question is a **node**,
-    and its answers lead along **branches**. A **leaf** is an endpoint that supplies a category, a class distribution,
-    or a numerical estimate.
+      Every path carves out a region of the inputs: "3 or 4 shows" is one region, "5 or more" another. A tree like this is a **decision tree**. When the target is a number, say minutes watched next month, each leaf predicts the average of its training examples instead, and the tree is called a regression tree.
 
+      Nobody drew this tree by hand: an algorithm chose each question from the data.
+    diagram:
+      caption: A two-question tree for free-trial users. Each leaf shows how many of its training users paid.
+      description: The root node asks whether the user watched 3 or more shows in week 1. If no, the user reaches a leaf predicting cancel, where 0 of 4 paid. If yes, a second node asks whether they watched 5 or more shows. If yes, the leaf predicts pay, with 3 of 3 paid. If no, the leaf predicts pay, with 2 of 3 paid.
+      nodes:
+        - id: root
+          label: Watched 3+ shows in week 1?
+          col: 1
+          row: 0
+          tone: accent
+        - id: cancel
+          label: "Leaf: cancel"
+          note: 0 of 4 paid
+          col: 0
+          row: 1
+          tone: muted
+        - id: second
+          label: Watched 5+ shows?
+          col: 2
+          row: 1
+          tone: accent
+        - id: pay-sure
+          label: "Leaf: pay"
+          note: 3 of 3 paid
+          col: 3
+          row: 2
+          tone: data
+        - id: pay-likely
+          label: "Leaf: pay"
+          note: 2 of 3 paid
+          col: 1
+          row: 2
+          tone: data
+      edges:
+        - from: root
+          to: cancel
+          label: "no"
+        - from: root
+          to: second
+          label: "yes"
+        - from: second
+          to: pay-sure
+          label: "yes"
+        - from: second
+          to: pay-likely
+          label: "no"
+    bridges: []
+  - id: decision-trees.s2
+    title: Score a question by how mixed it leaves the groups
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decision-trees
+    markdown: |-
+      A good question separates payers from cancellers. Trees measure this with **impurity**, a score for how mixed the labels in a group are. A group where everyone shares one label is **pure** and scores 0. The most common score is **Gini impurity**:
 
-    A light local parcel might reach one price estimate while a heavy parcel reaches another. The model uses
-    the leaf reached by this input, rather than averaging all leaves. Each path defines one region of the possible
-    inputs, so the model uses different rules in different regions.'
-  bridges: []
-- id: decision-trees.s2
-  title: Choose a split that improves a criterion
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.decision-trees
-  markdown: 'Classification splits may reduce Gini impurity or entropy; regression splits may reduce squared
-    error. Suppose four labels are [A, A, B, B]. A feature test separating the first pair from the second creates
-    two pure leaves. A test producing [A, B] on each side does not improve purity.
+      $$G = 1 - \sum_k p_k^2$$
 
+      where $p_k$ is the fraction of the group in class $k$. The ten users are 5 payers and 5 cancellers, so $G = 1 - 0.5^2 - 0.5^2 = 0.5$, as mixed as two classes can get. Compare two candidate first questions:
 
-    **Pure** means the examples in a leaf all have the same label. **Impurity** measures their mixing. For
-    Gini impurity, square each class fraction, add the squares, and subtract from 1. A half-A, half-B leaf
-    scores 1 − 0.25 − 0.25 = 0.5; an all-A leaf scores 0. Splitting seeks a reduction in the size-weighted
-    child impurity.'
-  text_mode: 'Classification splits may reduce Gini impurity or entropy; regression splits may reduce squared
-    error. Suppose four labels are [A, A, B, B]. A feature test separating the first pair from the second creates
-    two pure leaves. A test producing [A, B] on each side does not improve purity.
+      | Question | Yes group | No group | Weighted Gini |
+      | --- | --- | --- | ---: |
+      | Watched 3+ shows? | 5 paid, 1 not: 0.278 | 0 paid, 4 not: 0 | 0.167 |
+      | Signed up on a phone? | 3 paid, 2 not: 0.48 | 2 paid, 3 not: 0.48 | 0.48 |
 
+      Each group counts by its share of the users: 0.6 × 0.278 + 0.4 × 0 = 0.167 for the shows question, since 6 of 10 said yes.
 
-    **Pure** means the examples in a leaf all have the same label. **Impurity** measures their mixing. For
-    Gini impurity, square each class fraction, add the squares, and subtract from 1. A half-A, half-B leaf
-    scores 1 − 0.25 − 0.25 = 0.5; an all-A leaf scores 0. Splitting seeks a reduction in the size-weighted
-    child impurity.'
-  bridges:
-  - probability
-- id: decision-trees.s3
-  title: Control the temptation to memorize
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.decision-trees
-  markdown: 'A sufficiently deep tree can isolate individual training examples, including noise. Maximum depth,
-    minimum leaf size, and pruning restrict that complexity. A shallow tree may miss interactions. Use validation
-    to select a useful level of complexity rather than rewarding training purity alone.
+      :::predict Which question should the tree ask first, and how much does it cut impurity?
+      "Watched 3+ shows?" It takes the Gini from 0.5 to 0.167, a drop of 0.333. The phone question drops it only 0.02: both its groups stay almost as mixed as before.
+      :::
 
+      :::papers What CART and C4.5 compute
+      CART (Breiman, Friedman, Olshen and Stone, 1984) splits on Gini impurity. Quinlan's ID3 (1986) and its successor C4.5 (1993) use **entropy**, $H = -\sum_k p_k \log_2 p_k$, measured in bits. A split's **information gain** is the parent's entropy minus the size-weighted entropy of its children:
 
-    **Pruning** removes selected branches after a larger tree is grown. **Validation** means testing candidate
-    choices on examples not used to fit that candidate. Try a branch that perfectly explains one mislabeled
-    training parcel: would keeping that branch likely help on new parcels?'
-  text_mode: 'A sufficiently deep tree can isolate individual training examples, including noise. Maximum depth,
-    minimum leaf size, and pruning restrict that complexity. A shallow tree may miss interactions. Use validation
-    to select a useful level of complexity rather than rewarding training purity alone.
+      $$\text{IG} = H(\text{parent}) - \sum_{c} \frac{n_c}{n} H(c)$$
 
+      For the shows question, the parent has $H = 1$ bit, the yes group (5 of 6 paid) has $H \approx 0.650$, and the pure no group has $H = 0$. So IG = 1 − 0.6 × 0.650 ≈ 0.61 bits. The phone question gains only about 0.03 bits. The two criteria usually pick the same split.
+      :::
+    bridges:
+      - probability
+  - id: decision-trees.s3
+    title: Grow the tree one greedy question at a time
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decision-trees
+    markdown: |-
+      Growing a tree repeats one step:
 
-    **Pruning** removes selected branches after a larger tree is grown. **Validation** means testing candidate
-    choices on examples not used to fit that candidate. Try a branch that perfectly explains one mislabeled
-    training parcel: would keeping that branch likely help on new parcels?'
-  bridges: []
-- id: decision-trees.s4
-  title: Interpret a path with care
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.decision-trees
-  markdown: A readable path shows how this model reached a prediction, but correlated features can yield different
-    plausible trees. A small data change may change an early split substantially. The tree’s condition is a
-    predictive rule, not necessarily a causal explanation. Evaluate stability and performance outside the training
-    sample.
-  text_mode: A readable path shows how this model reached a prediction, but correlated features can yield different
-    plausible trees. A small data change may change an early split substantially. The tree’s condition is a
-    predictive rule, not necessarily a causal explanation. Evaluate stability and performance outside the training
-    sample.
-  bridges: []
-- id: decision-trees.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.decision-trees
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A decision tree follows feature tests to a prediction. Extra branches can capture useful patterns
-    or memorize noise, so choose the tree’s complexity using validation examples.
-- id: decision-trees.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.decision-trees
-  markdown: A decision tree follows feature tests to a prediction. Extra branches can capture useful patterns
-    or memorize noise, so choose the tree’s complexity using validation examples.
-  text_mode: A decision tree follows feature tests to a prediction. Extra branches can capture useful patterns
-    or memorize noise, so choose the tree’s complexity using validation examples.
+      1. For every feature and every possible threshold, split the group and compute the weighted impurity.
+      2. Keep the split with the lowest score.
+      3. Repeat inside each new group until it is pure or a stopping rule says halt.
+
+      The method is **greedy**: each question is the best one right now, with no looking ahead. Here is step 1 for the ten trial users, trying every threshold on shows watched, plus the phone question:
+
+      ```python run
+      import numpy as np
+
+      shows  = np.array([0, 1, 1, 2, 3, 4, 4, 5, 6, 8])   # shows watched in the first week
+      mobile = np.array([1, 0, 0, 0, 1, 1, 1, 1, 0, 0])   # 1 = signed up on a phone
+      paid   = np.array([0, 0, 0, 0, 1, 0, 1, 1, 1, 1])   # 1 = subscribed after the trial
+
+      def gini(labels):
+          if len(labels) == 0:
+              return 0.0
+          p = labels.mean()                      # fraction who subscribed
+          return 1 - p**2 - (1 - p)**2
+
+      def split_score(mask):
+          """Size-weighted Gini of the two children."""
+          n = len(paid)
+          return mask.sum() / n * gini(paid[mask]) + (~mask).sum() / n * gini(paid[~mask])
+
+      print(f"root Gini: {gini(paid):.3f}")
+      for t in range(1, 7):
+          print(f"shows >= {t}:  weighted Gini {split_score(shows >= t):.3f}")
+      print(f"mobile:     weighted Gini {split_score(mobile == 1):.3f}")
+      ```
+
+      The winner is shows ≥ 3, at 0.167. Now change the sixth user's `paid` from 0 to 1 and rerun: shows ≥ 3 now separates the users perfectly, with a weighted Gini of 0.000. One changed label moved every score, which is a first hint of how sensitive trees are to their data.
+    bridges: []
+  - id: decision-trees.s4
+    title: Stop before the tree memorizes
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decision-trees
+    markdown: |-
+      Left alone, the loop splits until every leaf is pure. With 10,000 users, some leaves hold one user whose choice was chance: "watched exactly 7 shows, on a tablet, on a Tuesday." Such a tree scores 100% on its own users and worse on next month's. Two cures:
+
+      - **Stop early.** Cap the depth, or require at least, say, 20 users in every leaf.
+      - **Prune.** Grow the full tree, then cut back the branches that don't earn their keep. CART's **cost-complexity pruning** charges a penalty $\alpha$ for each leaf. For a tree $T$ with training error $R(T)$ and $|T|$ leaves, it keeps the tree with the smallest $R_\alpha(T) = R(T) + \alpha\,|T|$.
+
+      Suppose a full tree has 8 leaves and makes 2 training mistakes, and a pruned version has 3 leaves and makes 5. With $\alpha = 1$, the full tree costs 2 + 8 = 10 and the pruned one 5 + 3 = 8, so pruning wins. With $\alpha = 0.25$, the costs are 2 + 2 = 4 and 5 + 0.75 = 5.75, so the full tree stays.
+
+      Who picks $\alpha$ or the depth cap? Not the training data, which always prefers the bigger tree. Keep some **validation** users aside: examples not used to grow the tree, used only to compare settings. Suppose the analyst tries four depths:
+
+      | Maximum depth | Training accuracy | Validation accuracy |
+      | ---: | ---: | ---: |
+      | 1 | 78% | 77% |
+      | 3 | 86% | 84% |
+      | 6 | 94% | 82% |
+      | 12 | 100% | 74% |
+
+      Training accuracy climbs to 100%, but validation peaks at depth 3: keep that tree.
+    bridges: []
+  - id: decision-trees.s5
+    title: Easy to read, quick to wobble
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decision-trees
+    markdown: |-
+      A small tree is a model you can read aloud: "users who watched three or more shows mostly paid." That's why trees are popular where decisions must be explained, as in lending and medicine.
+
+      The same greediness makes single trees jumpy. When two questions score almost the same, a few changed rows can swap which one goes first, and every question below it changes too. The next lesson's fix is to grow many trees and combine them, the idea behind random forests and gradient-boosted trees.
+
+      Before acting on a tree, treat a split as a pattern to test, not a lever to pull. Watching three shows may simply mark people who already liked the service, so emailing everyone show suggestions might not create a single payer. A small experiment will tell you.
+    bridges: []
+  - id: decision-trees.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.decision-trees
+    markdown: Compute Gini impurity for candidate splits by hand, then choose depths, pruning penalties, and next steps for loan, fraud, and hospital trees.
+    takeaway: |-
+      A decision tree grows by repeatedly asking the question that leaves its groups least mixed. Limit its depth or prune it, and pick those settings on validation data so it doesn't memorize noise.
+  - id: decision-trees.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.decision-trees
+    markdown: |-
+      A decision tree follows feature tests to a prediction. Extra branches can capture useful patterns or memorize noise, so choose the tree’s complexity using validation examples.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - decision-trees.s1
-    - decision-trees.s2
-    - decision-trees.s3
-    - decision-trees.s4
-    - decision-trees.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - decision-trees.s1
+        - decision-trees.s2
+        - decision-trees.s3
+        - decision-trees.s4
+        - decision-trees.s5
+        - decision-trees.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     decision-trees.recap: decision-trees.check
 assessment_families:
-- id: decision-trees.base
-  objective_ref: objective.decision-trees
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Choose a split that improves a criterion: trace the inputs, operation, and result before choosing.'
-  remediation_scene: decision-trees.s2
-  variants:
-  - id: decision-trees.base.1
-    prompt: A tree leaf normally supplies what?
-    options:
-    - id: c
-      text: A guarantee of causal effect
-    - id: a
-      text: A prediction or class distribution for its region
-    - id: b
-      text: A new raw input feature automatically
-    answer: a
-    feedback: The leaf summarizes the target behavior for examples routed there.
-  - id: decision-trees.base.2
-    prompt: Which split is purer for labels [A, A, B, B]?
-    options:
-    - id: a
-      text: '[A, A] versus [B, B]'
-    - id: b
-      text: '[A, B] versus [A, B]'
-    - id: c
-      text: Both always equal
-    answer: a
-    feedback: Separating classes removes within-leaf label mixing in this example.
-- id: decision-trees.transfer
-  objective_ref: objective.decision-trees
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Interpret a path with care: trace the inputs, operation, and result before choosing.'
-  remediation_scene: decision-trees.s4
-  variants:
-  - id: decision-trees.transfer.1
-    prompt: A tree has one leaf per training example and zero training error. What needs checking?
-    options:
-    - id: a
-      text: Generalization and complexity control
-    - id: b
-      text: Whether zero training error proves perfect deployment
-    - id: c
-      text: Only the number of printed branches
-    answer: a
-    feedback: A deep tree can memorize noise and idiosyncrasies.
-  - id: decision-trees.transfer.2
-    prompt: A decision path uses income to predict an outcome. Does that establish changing income would cause
-      the predicted change?
-    options:
-    - id: b
-      text: Yes; tree rules are causal by definition
-    - id: c
-      text: Only if the threshold is an integer
-    - id: a
-      text: No; predictive splits do not establish interventions
-    answer: a
-    feedback: Causal claims require additional assumptions and evidence.
+  - id: decision-trees.base
+    objective_ref: objective.decision-trees
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Choose a split that improves a criterion: trace the inputs, operation, and result before choosing.'
+    remediation_scene: decision-trees.s2
+    variants:
+      - id: decision-trees.base.1
+        prompt: A tree leaf normally supplies what?
+        options:
+          - id: c
+            text: A guarantee of causal effect
+          - id: a
+            text: A prediction or class distribution for its region
+          - id: b
+            text: A new raw input feature automatically
+        answer: a
+        feedback: The leaf summarizes the target behavior for examples routed there.
+        retired: true
+      - id: decision-trees.base.2
+        prompt: Which split is purer for labels [A, A, B, B]?
+        options:
+          - id: a
+            text: '[A, A] versus [B, B]'
+          - id: b
+            text: '[A, B] versus [A, B]'
+          - id: c
+            text: Both always equal
+        answer: a
+        feedback: Separating classes removes within-leaf label mixing in this example.
+        retired: true
+  - id: decision-trees.transfer
+    objective_ref: objective.decision-trees
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Interpret a path with care: trace the inputs, operation, and result before choosing.'
+    remediation_scene: decision-trees.s4
+    variants:
+      - id: decision-trees.transfer.1
+        prompt: A tree has one leaf per training example and zero training error. What needs checking?
+        options:
+          - id: a
+            text: Generalization and complexity control
+          - id: b
+            text: Whether zero training error proves perfect deployment
+          - id: c
+            text: Only the number of printed branches
+        answer: a
+        feedback: A deep tree can memorize noise and idiosyncrasies.
+        retired: true
+      - id: decision-trees.transfer.2
+        prompt: A decision path uses income to predict an outcome. Does that establish changing income would cause the predicted change?
+        options:
+          - id: b
+            text: Yes; tree rules are causal by definition
+          - id: c
+            text: Only if the threshold is an integer
+          - id: a
+            text: No; predictive splits do not establish interventions
+        answer: a
+        feedback: Causal claims require additional assumptions and evidence.
+        retired: true
+  - id: decision-trees.base.v2
+    objective_ref: objective.decision-trees
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: For each child, Gini = 1 − (sum of the squared class fractions). Then weight each child by its share of the examples before adding.
+    remediation_scene: decision-trees.s2
+    variants:
+      - id: decision-trees.base.v2.1
+        prompt: 'A split sends 8 examples into two children. Left: 4 of class A, 0 of class B. Right: 1 of A, 3 of B. Find each child''s Gini impurity and the size-weighted Gini of the split.'
+        feedback: Left is pure, so its Gini is 0. Right is 1 − (1/4)² − (3/4)² = 1 − 0.0625 − 0.5625 = 0.375. Each child holds half the examples, so the weighted Gini is 0.5 × 0 + 0.5 × 0.375 ≈ 0.19.
+        answers:
+          left: 0
+          right: 0.375
+          weighted: 0.1875
+        reason_answer: share
+        reason_options:
+          - id: share
+            text: Each child counts in proportion to how many examples it holds.
+          - id: equal
+            text: The two children count equally, whatever their sizes.
+          - id: sum
+            text: The two children's impurities are simply added together.
+      - id: decision-trees.base.v2.2
+        prompt: 'A split sends 10 examples into two children. Left: 4 paid, 1 cancelled. Right: 1 paid, 4 cancelled. Find each child''s Gini impurity and the size-weighted Gini of the split.'
+        feedback: Each child is 1 − 0.8² − 0.2² = 1 − 0.64 − 0.04 = 0.32. They are the same size, so the weighted Gini is also 0.32, down from 0.5 before the split.
+        answers:
+          left: 0.32
+          right: 0.32
+          weighted: 0.32
+        reason_answer: share
+        reason_options:
+          - id: equal
+            text: The two children count equally, whatever their sizes.
+          - id: share
+            text: Each child counts in proportion to how many examples it holds.
+          - id: sum
+            text: The two children's impurities are simply added together.
+      - id: decision-trees.base.v2.3
+        prompt: 'A split sends 10 examples into two children. Left: 1 spam, 1 not spam. Right: 0 spam, 8 not spam. Find each child''s Gini impurity and the size-weighted Gini of the split.'
+        feedback: Left is 1 − 0.5² − 0.5² = 0.5; right is pure, 0. Left holds only 2 of the 10 examples, so the weighted Gini is 0.2 × 0.5 + 0.8 × 0 = 0.1. An unweighted average would give 0.25, overstating the small mixed group.
+        answers:
+          left: 0.5
+          right: 0
+          weighted: 0.1
+        reason_answer: share
+        reason_options:
+          - id: sum
+            text: The two children's impurities are simply added together.
+          - id: equal
+            text: The two children count equally, whatever their sizes.
+          - id: share
+            text: Each child counts in proportion to how many examples it holds.
+      - id: decision-trees.base.v2.4
+        prompt: 'A split sends 10 examples into two children. Left: 3 defective, 3 fine. Right: 4 defective, 0 fine. Find each child''s Gini impurity and the size-weighted Gini of the split.'
+        feedback: Left is 1 − 0.5² − 0.5² = 0.5, and the pure right child is 0. Left holds 6 of the 10 examples, so the weighted Gini is 0.6 × 0.5 + 0.4 × 0 = 0.3.
+        answers:
+          left: 0.5
+          right: 0
+          weighted: 0.3
+        reason_answer: share
+        reason_options:
+          - id: share
+            text: Each child counts in proportion to how many examples it holds.
+          - id: sum
+            text: The two children's impurities are simply added together.
+          - id: equal
+            text: The two children count equally, whatever their sizes.
+    absolute_tolerance: 0.005
+    numeric_fields:
+      - id: left
+        label: Gini of the left child
+      - id: right
+        label: Gini of the right child
+      - id: weighted
+        label: Size-weighted Gini of the split
+  - id: decision-trees.transfer.v2
+    objective_ref: objective.decision-trees
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Compare splits by size-weighted impurity, choose depth and pruning on validation data, and read a split as a pattern to test rather than a cause.
+    remediation_scene: decision-trees.s4
+    variants:
+      - id: decision-trees.transfer.v2.1
+        prompt: 'A bank tries three loan-approval trees. Depth 2: 80% training, 79% validation accuracy. Depth 5: 88% training, 85% validation. Depth 15: 99% training, 78% validation. Which should it keep?'
+        options:
+          - id: a
+            text: Depth 15, since it fits the training loans best
+          - id: b
+            text: Depth 5, since it does best on the validation loans
+          - id: c
+            text: Depth 2, since its two scores are the closest together
+        answer: b
+        feedback: Validation accuracy stands in for new loans, and depth 5 leads there. Depth 15's 99% training score is memorization; depth 2 has the smallest gap but underfits, trailing depth 5 on both sets.
+      - id: decision-trees.transfer.v2.2
+        prompt: A fraud team raises the pruning penalty α (the cost per leaf) from 0.1 to 5 before pruning its tree. What should they expect?
+        options:
+          - id: a
+            text: A bigger tree, since a larger α rewards each extra split made
+          - id: b
+            text: The same leaves with new thresholds inside each split
+          - id: c
+            text: A smaller tree, with perhaps a few more training errors
+        answer: c
+        feedback: Each leaf now costs 5 instead of 0.1, so a branch survives only if it removes more than 5 training errors per extra leaf. Most don't, so the tree shrinks and trades a few training errors for simplicity. α changes how many leaves are kept, not the thresholds.
+      - id: decision-trees.transfer.v2.3
+        prompt: Two analysts grow trees on the same 5,000 customers, but one accidentally dropped 20 rows. One tree's first split is on income, the other's is on age. What is the most likely explanation?
+        options:
+          - id: b
+            text: One analyst has a bug, since the same data must give the same tree
+          - id: c
+            text: Age must be the true cause, since it held up with fewer rows
+          - id: a
+            text: Income and age nearly tied, so a few rows flipped the choice
+        answer: a
+        feedback: Greedy splitting picks the single best-scoring question, so near-ties can swap when a few rows change, and everything below the first split changes too. The data weren't the same (20 rows differed), and winning a split says nothing about cause.
+      - id: decision-trees.transfer.v2.4
+        prompt: A hospital's readmission tree splits first on "visited the pharmacy within 3 days of discharge." A manager proposes requiring every patient to visit the pharmacy. What is the best response?
+        options:
+          - id: c
+            text: Run a trial first; the split shows a pattern, not a cause
+          - id: a
+            text: Go ahead, since this is the feature that reduces impurity most
+          - id: b
+            text: Prune the tree first, then trust whichever splits remain
+        answer: c
+        feedback: Patients who visit the pharmacy may differ in many ways, such as being healthier or better supported, so the split may mark them rather than help them. A trial shows whether the requirement changes readmissions. Impurity and pruning describe prediction, not cause.
+      - id: decision-trees.transfer.v2.5
+        prompt: 'Split A gives children with Gini 0.1 (20 examples) and 0.4 (80 examples). Split B gives two children of 50 examples with Gini 0.3 each. Which split does a Gini-based tree choose?'
+        options:
+          - id: c
+            text: A, since its children's Gini values average 0.25, below 0.3
+          - id: a
+            text: A, since one of its two children is very nearly pure
+          - id: b
+            text: B, since its weighted Gini is 0.3 against A's 0.34
+        answer: b
+        feedback: Weighted by size, A scores 0.2 × 0.1 + 0.8 × 0.4 = 0.34 and B scores 0.3, so B wins. The simple average of 0.25 ignores that A's nearly pure child holds only 20 of the 100 examples.

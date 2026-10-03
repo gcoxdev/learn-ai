@@ -1,210 +1,394 @@
 schema_version: 0.2-draft
 lesson:
   id: mdps-and-bellman-equations
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Relate the value of a state to its next step
   state: draft
-  summary: Build a long-term value estimate from one step and what comes next.
+  summary: How much is it worth to be standing on a slippery rug two moves from the dock? One equation answers that for every square at once, and it powers nearly all of RL.
   slot: M24.3
   category: learning
   sources:
-  - title: Dive into Deep Learning — reinforcement learning
-    url: https://d2l.ai/chapter_reinforcement-learning/index.html
+    - title: "Reinforcement Learning: An Introduction, 2nd edition, chapters 3–4 (Sutton & Barto, 2018)"
+      url: http://incompleteideas.net/book/the-book-2nd.html
+    - title: Dive into Deep Learning — reinforcement learning
+      url: https://d2l.ai/chapter_reinforcement-learning/index.html
 objectives:
-- id: objective.mdps-and-bellman-equations
-  version: 1-draft
-  statement: A Markov decision process specifies states, actions, transitions, and rewards; Bellman equations
-    connect immediate reward to discounted future value and support planning when the model is known.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - mdps-and-bellman-equations.base
-  - mdps-and-bellman-equations.transfer
-  prerequisites:
-  - anyOf:
-    - objective.reinforcement-learning-loop
-  - anyOf:
-    - objective.planning-under-uncertainty
+  - id: objective.mdps-and-bellman-equations
+    version: 2-draft
+    statement: A Markov decision process specifies states, actions, transitions, and rewards; Bellman equations connect immediate reward to discounted future value and support planning when the model is known.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - mdps-and-bellman-equations.base.v2
+      - mdps-and-bellman-equations.transfer.v2
+      - mdps-and-bellman-equations.calculate
+    prerequisites:
+      - anyOf:
+          - objective.reinforcement-learning-loop
+      - anyOf:
+          - objective.planning-under-uncertainty
 scenes:
-- id: mdps-and-bellman-equations.s1
-  title: State the Markov assumption
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.mdps-and-bellman-equations
-  markdown: 'A **Markov decision process**, or **MDP**, describes a decision problem using states, actions,
-    transition probabilities, rewards, and a decision horizon.
+  - id: mdps-and-bellman-equations.s1
+    title: Pip's hallway, written down exactly
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.mdps-and-bellman-equations
+    markdown: |-
+      Pip's hallway has three squares in a row: the Door, a Rug, then the Dock. From the Door, "forward" always reaches the Rug. On the Rug the wheels slip: "forward" reaches the Dock 80% of the time and leaves Pip on the Rug 20% of the time. From the Rug, Pip can also go "back" to the Door. Every move costs −1, except the move onto the Dock, which earns +10 and ends the episode. We use $\gamma = 0.9$.
 
+      That description is a complete **Markov decision process (MDP)**, the standard way to write down a sequential decision problem:
 
-    Its **Markov assumption** says that the current state and action contain the information needed to describe
-    the distribution of the next state and reward. Earlier history adds nothing further once that state is
-    known.
+      | Part | Symbol | Pip's hallway |
+      | --- | --- | --- |
+      | States | $\mathcal{S}$ | Door, Rug, Dock |
+      | Actions | $\mathcal{A}$ | forward, back |
+      | Transition probabilities | $p(s' \mid s, a)$ | Rug + forward → Dock 0.8, Rug 0.2 |
+      | Rewards | $r$ | −1 per move, +10 for docking |
+      | Discount | $\gamma$ | 0.9 |
 
+      The word *Markov* names one assumption: the next state and reward depend only on the current state and action, not on how Pip got here. It would break if a slip left a wet patch that made the *next* try slipperier. Then "on the Rug" wouldn't predict what happens next. The usual fix is to put the missing information ("slipped last time") into the state.
+    bridges: []
+  - id: mdps-and-bellman-equations.s2
+    title: A state's value is one step plus the rest
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mdps-and-bellman-equations
+    markdown: |-
+      Take the simple policy "always go forward". How good is it to be on the Rug? The **value** of a state under a policy, $v_\pi(s)$, is the expected return from that state if you follow the policy. The recursive return from the first lesson, $G_t = R_{t+1} + \gamma G_{t+1}$, turns into a recursive equation for values.
 
-    A state representation can fail this assumption. For example, a moving cart''s position alone may not be
-    enough to predict its next position if its speed is missing.'
-  text_mode: 'A **Markov decision process**, or **MDP**, describes a decision problem using states, actions,
-    transition probabilities, rewards, and a decision horizon.
+      From the Rug, 80% of the time Pip earns +10 and stops. 20% of the time it earns −1 and is back on the Rug, facing the same future:
 
+      $$v(\text{Rug}) = 0.8 \times 10 + 0.2 \times (-1 + 0.9\, v(\text{Rug}))$$
 
-    Its **Markov assumption** says that the current state and action contain the information needed to describe
-    the distribution of the next state and reward. Earlier history adds nothing further once that state is
-    known.
+      So $v = 7.8 + 0.18\,v$, which gives $0.82\,v = 7.8$ and $v(\text{Rug}) \approx 9.512$. The Door is one certain move behind it: $v(\text{Door}) = -1 + 0.9 \times 9.512 \approx 7.561$.
 
+      :::papers The Bellman expectation equation
+      $$v_\pi(s) = \sum_a \pi(a \mid s) \sum_{s',\,r} p(s', r \mid s, a)\,\big[r + \gamma\, v_\pi(s')\big]$$
 
-    A state representation can fail this assumption. For example, a moving cart''s position alone may not be
-    enough to predict its next position if its speed is missing.'
-  bridges: []
-- id: mdps-and-bellman-equations.s2
-  title: Decompose value recursively
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.mdps-and-bellman-equations
-  markdown: 'A policy''s **state value** is the expected return from starting in that state and following the
-    policy. The Bellman relationship splits it into immediate reward plus discounted value of the next state.
+      Average over the actions the policy picks ($\pi$ always picks forward here), then over what the world does ($0.8$ to the Dock, $0.2$ back to the Rug). Each bracket is one step's reward plus the discounted value of where you land, exactly the two terms in our Rug calculation.
+      :::
 
+      :::predict The Rug gets wetter and forward now succeeds only half the time. What is v(Rug)?
+      $v = 0.5 \times 10 + 0.5 \times (-1 + 0.9\,v) = 4.5 + 0.45\,v$, so $v = 4.5 / 0.55 \approx 8.18$, and $v(\text{Door}) = -1 + 0.9 \times 8.18 \approx 6.36$. Slipping costs a little each time, but Pip still expects to dock.
+      :::
 
-    With a certain reward of 2, a certain next-state value of 4, and discount γ = 0.5, the calculation is 2
-    + 0.5 × 4 = 4.
+      :::mixup "The Door is worth −1, because moving from it costs −1."
+      That's its reward, not its value. Reward scores one step; value adds up everything expected afterwards. The Door earns −1 on the next move, but it is worth about 7.56, because the dock lies ahead.
+      :::
+    bridges:
+      - probability
+  - id: mdps-and-bellman-equations.s3
+    title: Value iteration, one sweep at a time
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mdps-and-bellman-equations
+    markdown: |-
+      So far we valued a policy we chose. To find the *best* policy, replace the average over actions with a maximum. That gives the **Bellman optimality equation**:
 
+      $$v_*(s) = \max_a \sum_{s',\,r} p(s', r \mid s, a)\,\big[r + \gamma\, v_*(s')\big]$$
 
-    If the next value is instead 4 or 0 with equal probability, its expected value is 0.5 × 4 + 0.5 × 0 = 2.
-    The calculation becomes 2 + 0.5 × 2 = 3. Recomputing an estimate from possible next steps is called a **backup**.
-    This lets a long decision problem be addressed through repeated one-step calculations.'
-  text_mode: 'A policy''s **state value** is the expected return from starting in that state and following
-    the policy. The Bellman relationship splits it into immediate reward plus discounted value of the next
-    state.
+      **Value iteration** turns that equation into an algorithm. Start with every value at 0. Then sweep through the states, replacing each value with the right-hand side computed from the previous sweep's values. Each replacement is called a **backup**.
 
+      | Sweep | $V(\text{Door})$ | $V(\text{Rug})$ | How $V(\text{Rug})$ was computed |
+      | ---: | ---: | ---: | --- |
+      | 0 | 0 | 0 | start |
+      | 1 | −1 | 7.8 | forward: $0.8 \times 10 + 0.2 \times (-1 + 0.9 \times 0)$; back gives only −1 |
+      | 2 | 6.02 | 9.204 | forward: $8 + 0.2 \times (-1 + 0.9 \times 7.8)$ |
+      | 3 | 7.284 | 9.457 | forward: $8 + 0.2 \times (-1 + 0.9 \times 9.204)$ |
+      | ∞ | 7.561 | 9.512 | the values stop changing |
 
-    With a certain reward of 2, a certain next-state value of 4, and discount γ = 0.5, the calculation is 2
-    + 0.5 × 4 = 4.
+      The values climb toward the numbers we solved for directly, and the action achieving each maximum is the best action. The code runs thirty sweeps.
 
+      ```python run
+      gamma = 0.9
+      # model[state][action] = list of (probability, reward, next_state)
+      model = {
+          "Door": {"forward": [(1.0, -1, "Rug")]},
+          "Rug":  {"forward": [(0.8, 10, "Dock"), (0.2, -1, "Rug")],
+                   "back":    [(1.0, -1, "Door")]},
+      }
+      V = {"Door": 0.0, "Rug": 0.0, "Dock": 0.0}   # the dock is terminal: value 0
 
-    If the next value is instead 4 or 0 with equal probability, its expected value is 0.5 × 4 + 0.5 × 0 = 2.
-    The calculation becomes 2 + 0.5 × 2 = 3. Recomputing an estimate from possible next steps is called a **backup**.
-    This lets a long decision problem be addressed through repeated one-step calculations.'
-  bridges:
-  - probability
-- id: mdps-and-bellman-equations.s3
-  title: Improve choices with dynamic programming
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.mdps-and-bellman-equations
-  markdown: Policy evaluation estimates values for a fixed policy. Policy improvement chooses better actions
-    using those values. Value iteration repeatedly applies an optimality backup that maximizes over actions.
-    Convergence claims depend on assumptions such as finite spaces and discounted returns.
-  text_mode: Policy evaluation estimates values for a fixed policy. Policy improvement chooses better actions
-    using those values. Value iteration repeatedly applies an optimality backup that maximizes over actions.
-    Convergence claims depend on assumptions such as finite spaces and discounted returns.
-  bridges: []
-- id: mdps-and-bellman-equations.s4
-  title: Distinguish planning from learning a model
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.mdps-and-bellman-equations
-  markdown: Dynamic programming assumes access to the required transition and reward information. Model-free
-    learning estimates useful quantities from experience instead. A Bellman equation defines a relationship;
-    an implementation still needs data, representation, and a numerically specified update procedure.
-  text_mode: Dynamic programming assumes access to the required transition and reward information. Model-free
-    learning estimates useful quantities from experience instead. A Bellman equation defines a relationship;
-    an implementation still needs data, representation, and a numerically specified update procedure.
-  bridges: []
-- id: mdps-and-bellman-equations.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.mdps-and-bellman-equations
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Bellman equations connect a state’s value to immediate reward and discounted future value. With
-    known transitions and rewards, those relationships support planning.
-- id: mdps-and-bellman-equations.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.mdps-and-bellman-equations
-  markdown: Bellman equations connect a state’s value to immediate reward and discounted future value. With
-    known transitions and rewards, those relationships support planning.
-  text_mode: Bellman equations connect a state’s value to immediate reward and discounted future value. With
-    known transitions and rewards, those relationships support planning.
+      def backup(s, a, V):
+          return sum(p * (r + gamma * V[s2]) for p, r, s2 in model[s][a])
+
+      for sweep in range(1, 31):
+          V = {**V, **{s: max(backup(s, a, V) for a in model[s]) for s in model}}
+          if sweep <= 3 or sweep == 30:
+              print(f"sweep {sweep:2d}: V(Door) = {V['Door']:.3f}   V(Rug) = {V['Rug']:.3f}")
+
+      policy = {s: max(model[s], key=lambda a: backup(s, a, V)) for s in model}
+      print("greedy policy:", policy)
+      ```
+
+      Try changing the 0.8 to 0.1 and the 0.2 to 0.9. Forward stays best, but V(Door) turns negative: the dock is barely worth the trip.
+    bridges: []
+  - id: mdps-and-bellman-equations.s5
+    title: "Policy iteration: judge the plan, then fix it"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mdps-and-bellman-equations
+    markdown: |-
+      **Policy iteration** alternates two steps until the policy stops changing: **evaluate** the current policy (solve its Bellman expectation equation), then **improve** it by picking, in each state, the action with the best one-step lookahead.
+
+      Suppose Pip starts out timid: forward at the Door, but *back* on the Rug, because it fears slipping.
+
+      1. **Evaluate.** Pip shuttles Door → Rug → Door forever at −1 per move. Both values satisfy $v = -1 + 0.9\,v$, so $v(\text{Door}) = v(\text{Rug}) = -10$.
+      2. **Improve.** On the Rug, forward is worth $0.8 \times 10 + 0.2 \times (-1 + 0.9 \times (-10)) = 8 - 2 = 6$. Back is worth $-1 + 0.9 \times (-10) = -10$. Switch to forward.
+      3. **Evaluate again.** This is the always-forward policy: $v(\text{Rug}) = 9.512$, $v(\text{Door}) = 7.561$.
+      4. **Improve again.** Forward on the Rug: 9.512. Back: $-1 + 0.9 \times 7.561 = 5.805$. No change, so the policy is optimal.
+
+      Two rounds, done. Policy iteration typically needs few rounds, though each evaluation costs more than a value-iteration sweep.
+
+      :::story Where "Bellman" comes from
+      Richard Bellman developed dynamic programming at the RAND Corporation in the 1950s: solve a long decision problem by breaking it into one-step problems that share answers. The equations in this lesson carry his name.
+      :::
+    bridges: []
+  - id: mdps-and-bellman-equations.s4
+    title: Planning needs the map
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mdps-and-bellman-equations
+    markdown: |-
+      Look at what every backup used: the exact probabilities 0.8 and 0.2, and the exact rewards. Value iteration and policy iteration are **dynamic programming** methods, and they are *planning* methods: they compute the best policy from a known model, without Pip taking a single real step.
+
+      A real Pip on a new rug doesn't know the 0.8. It only experiences slips and successes one at a time. The next lesson's methods, temporal-difference learning and Q-learning, use the same Bellman equation but replace the known probabilities with sampled transitions: "on the Rug, went forward, slipped, got −1."
+
+      So with any new sequential problem, ask first: do I know $p(s' \mid s, a)$? If you do (board games, a simulator you wrote), plan with dynamic programming. If not, learn from experience.
+    bridges: []
+  - id: mdps-and-bellman-equations.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.mdps-and-bellman-equations
+    markdown: A few Bellman backups to compute by hand, plus a warehouse, a dice game, and an elevator, test whether you can value a state and tell when planning is possible.
+    takeaway: |-
+      A state's value is the expected reward for the next step plus γ times the value of where you land. With a known model, value iteration or policy iteration solves that equation for the best policy.
+  - id: mdps-and-bellman-equations.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.mdps-and-bellman-equations
+    markdown: |-
+      Bellman equations connect a state’s value to immediate reward and discounted future value. With known transitions and rewards, those relationships support planning.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - mdps-and-bellman-equations.s1
-    - mdps-and-bellman-equations.s2
-    - mdps-and-bellman-equations.s3
-    - mdps-and-bellman-equations.s4
-    - mdps-and-bellman-equations.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - mdps-and-bellman-equations.s1
+        - mdps-and-bellman-equations.s2
+        - mdps-and-bellman-equations.s3
+        - mdps-and-bellman-equations.s5
+        - mdps-and-bellman-equations.s4
+        - mdps-and-bellman-equations.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     mdps-and-bellman-equations.recap: mdps-and-bellman-equations.check
 assessment_families:
-- id: mdps-and-bellman-equations.base
-  objective_ref: objective.mdps-and-bellman-equations
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Decompose value recursively: trace the inputs, operation, and result before choosing.'
-  remediation_scene: mdps-and-bellman-equations.s2
-  variants:
-  - id: mdps-and-bellman-equations.base.1
-    prompt: Reward 2 plus discount 0.5 times next value 4 equals what?
-    options:
-    - id: a
-      text: '4'
-    - id: b
-      text: '6'
-    - id: c
-      text: '3'
-    answer: a
-    feedback: The discounted future contribution is two.
-  - id: mdps-and-bellman-equations.base.2
-    prompt: What is the Markov assumption about?
-    options:
-    - id: b
-      text: Whether the model uses a transformer
-    - id: c
-      text: Whether rewards are always positive
-    - id: a
-      text: Conditional dependence on current state and action
-    answer: a
-    feedback: The chosen state should summarize relevant history.
-- id: mdps-and-bellman-equations.transfer
-  objective_ref: objective.mdps-and-bellman-equations
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Distinguish planning from learning a model: trace the inputs, operation, and result before choosing.'
-  remediation_scene: mdps-and-bellman-equations.s4
-  variants:
-  - id: mdps-and-bellman-equations.transfer.1
-    prompt: Policy evaluation holds what fixed?
-    options:
-    - id: b
-      text: Every possible state value forever
-    - id: c
-      text: The next action’s name only
-    - id: a
-      text: The policy being valued
-    answer: a
-    feedback: It estimates consequences of a specified decision rule.
-  - id: mdps-and-bellman-equations.transfer.2
-    prompt: What does model-based dynamic programming require?
-    options:
-    - id: c
-      text: No environment information
-    - id: a
-      text: The transition and reward model needed for its backups
-    - id: b
-      text: Only a final score
-    answer: a
-    feedback: Expected backups need modeled outcomes.
+  - id: mdps-and-bellman-equations.base
+    objective_ref: objective.mdps-and-bellman-equations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Decompose value recursively: trace the inputs, operation, and result before choosing.'
+    remediation_scene: mdps-and-bellman-equations.s2
+    variants:
+      - id: mdps-and-bellman-equations.base.1
+        prompt: Reward 2 plus discount 0.5 times next value 4 equals what?
+        options:
+          - id: a
+            text: '4'
+          - id: b
+            text: '6'
+          - id: c
+            text: '3'
+        answer: a
+        feedback: The discounted future contribution is two.
+        retired: true
+      - id: mdps-and-bellman-equations.base.2
+        prompt: What is the Markov assumption about?
+        options:
+          - id: b
+            text: Whether the model uses a transformer
+          - id: c
+            text: Whether rewards are always positive
+          - id: a
+            text: Conditional dependence on current state and action
+        answer: a
+        feedback: The chosen state should summarize relevant history.
+        retired: true
+  - id: mdps-and-bellman-equations.transfer
+    objective_ref: objective.mdps-and-bellman-equations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Distinguish planning from learning a model: trace the inputs, operation, and result before choosing.'
+    remediation_scene: mdps-and-bellman-equations.s4
+    variants:
+      - id: mdps-and-bellman-equations.transfer.1
+        prompt: Policy evaluation holds what fixed?
+        options:
+          - id: b
+            text: Every possible state value forever
+          - id: c
+            text: The next action’s name only
+          - id: a
+            text: The policy being valued
+        answer: a
+        feedback: It estimates consequences of a specified decision rule.
+        retired: true
+      - id: mdps-and-bellman-equations.transfer.2
+        prompt: What does model-based dynamic programming require?
+        options:
+          - id: c
+            text: No environment information
+          - id: a
+            text: The transition and reward model needed for its backups
+          - id: b
+            text: Only a final score
+        answer: a
+        feedback: Expected backups need modeled outcomes.
+        retired: true
+  - id: mdps-and-bellman-equations.base.v2
+    objective_ref: objective.mdps-and-bellman-equations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Separate the pieces: reward is one step, value is everything expected after it; the expectation equation averages over the policy's actions, the optimality equation takes the max."
+    remediation_scene: mdps-and-bellman-equations.s2
+    variants:
+      - id: mdps-and-bellman-equations.base.v2.1
+        prompt: In Pip's hallway, the Door's next move always costs −1, yet v(Door) ≈ 7.56 under the always-forward policy. Why the difference?
+        options:
+          - id: b
+            text: The discount factor turns the −1 into a positive number
+          - id: a
+            text: Value counts the expected docking reward that follows the move
+          - id: c
+            text: The −1 is only charged when Pip slips on the Rug
+        answer: a
+        feedback: Reward scores one step; value is the expected discounted sum of all later rewards, including the +10 at the dock. Discounting shrinks rewards but never flips their sign, and every move costs −1, not just slips.
+      - id: mdps-and-bellman-equations.base.v2.2
+        prompt: What does the Bellman optimality equation do that the Bellman expectation equation does not?
+        options:
+          - id: a
+            text: It takes the maximum over actions instead of averaging over a policy
+          - id: b
+            text: It drops the discount factor so that future rewards count fully
+          - id: c
+            text: It ignores the transition probabilities and assumes success
+        answer: a
+        feedback: Both equations average over what the world does next and both discount. The expectation version weights actions by a fixed policy π; the optimality version picks the best action with a max.
+      - id: mdps-and-bellman-equations.base.v2.3
+        prompt: "During policy iteration, a policy is evaluated and then improved, and the improvement step changes nothing. What can you conclude?"
+        options:
+          - id: c
+            text: The evaluation step must have a bug, since values should change
+          - id: b
+            text: Another round of improvement is needed before it can change
+          - id: a
+            text: The current policy is already optimal for this MDP
+        answer: a
+        feedback: If no state's best one-step lookahead action differs from the current action, the policy satisfies the Bellman optimality equation, so it is optimal. Repeating the improvement on the same values would give the same answer.
+      - id: mdps-and-bellman-equations.base.v2.4
+        prompt: A robot's state records its position but not its speed, and a fast robot slides farther than a slow one after the same command. Which MDP assumption is broken?
+        options:
+          - id: a
+            text: The Markov assumption, since position alone can't predict the next state
+          - id: b
+            text: The discount assumption, since speed makes rewards arrive sooner
+          - id: c
+            text: The reward assumption, since sliding should cost more battery
+        answer: a
+        feedback: Two situations with the same recorded state lead to different next states, so the past (how fast it was going) still matters. The usual fix is to add speed to the state. Discount and reward choices don't cause this.
+  - id: mdps-and-bellman-equations.transfer.v2
+    objective_ref: objective.mdps-and-bellman-equations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask whether the transition probabilities are known. If they are, you can plan with backups; if not, you need experience.
+    remediation_scene: mdps-and-bellman-equations.s4
+    variants:
+      - id: mdps-and-bellman-equations.transfer.v2.1
+        prompt: A board game uses two fair dice and fixed rules, and you want the best move in every position. Which approach fits?
+        options:
+          - id: b
+            text: Play thousands of games first, since dice make the model unknown
+          - id: a
+            text: Plan with value iteration, since the dice probabilities are known
+          - id: c
+            text: Use a bandit, since each roll is independent of the last one
+        answer: a
+        feedback: Randomness doesn't mean the model is unknown. Fair dice have exact probabilities, so backups can use them directly. A bandit would ignore how moves change the board position.
+      - id: mdps-and-bellman-equations.transfer.v2.2
+        prompt: A warehouse manager models restocking as an MDP with state "items on the shelf". Deliveries arrive two days after an order. Why might this state break the Markov assumption?
+        options:
+          - id: a
+            text: Orders already on the way affect tomorrow's stock but aren't in the state
+          - id: b
+            text: Restocking rewards are delayed, and MDPs require immediate rewards
+          - id: c
+            text: The shelf count changes every day, so it cannot be a state
+        answer: a
+        feedback: Two days with the same shelf count can lead to different futures depending on pending orders, so the state should include them. MDPs handle delayed rewards through the return, and states are expected to change.
+      - id: mdps-and-bellman-equations.transfer.v2.3
+        prompt: An engineer is building an elevator controller for a new tower. She knows the building layout but has no data on when people arrive at each floor. What does she need before value iteration can run?
+        options:
+          - id: c
+            text: A larger discount factor, so rare arrivals still count
+          - id: a
+            text: A model of arrival probabilities, estimated or assumed
+          - id: b
+            text: A neural network to replace the Bellman equation
+        answer: a
+        feedback: Every backup averages over next states using p(s′|s,a). Without arrival probabilities, there is nothing to average. Changing γ or adding a network doesn't supply the missing model.
+      - id: mdps-and-bellman-equations.transfer.v2.4
+        prompt: "A value-iteration run on a delivery robot's map gives v(A) = 12 and v(B) = 5. From state C, action 1 leads to A and action 2 leads to B, each with certainty and reward −1, and γ = 0.9. Which action is best at C?"
+        options:
+          - id: a
+            text: Action 1, since −1 + 0.9 × 12 beats −1 + 0.9 × 5
+          - id: b
+            text: Action 2, since B's lower value means less risk
+          - id: c
+            text: Either one, since both actions cost −1 right now
+        answer: a
+        feedback: The best action maximizes reward plus discounted next value, 9.8 versus 3.5. Equal immediate rewards don't make actions equal, and a lower value means a worse expected future, not a safer one.
+  - id: mdps-and-bellman-equations.calculate
+    objective_ref: objective.mdps-and-bellman-equations
+    task: base
+    response_type: numeric
+    points: 1
+    hint: For each possible outcome, add its reward to γ times the value of the state you land in, then weight by the outcome's probability and add.
+    remediation_scene: mdps-and-bellman-equations.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: mdps-and-bellman-equations.calculate.1
+        prompt: An action leads with certainty to a state worth 8, with reward −1. With γ = 0.9, what is the backed-up value of taking it?
+        answer: 6.2
+        feedback: −1 + 0.9 × 8 = −1 + 7.2 = 6.2.
+      - id: mdps-and-bellman-equations.calculate.2
+        prompt: On the Rug, forward reaches the Dock (reward +10, value 0) with probability 0.8, and stays on the Rug (reward −1) with probability 0.2. The current estimate V(Rug) is 5 and γ = 0.9. What is the backed-up value of forward?
+        answer: 8.7
+        feedback: 0.8 × 10 + 0.2 × (−1 + 0.9 × 5) = 8 + 0.2 × 3.5 = 8 + 0.7 = 8.7.
+      - id: mdps-and-bellman-equations.calculate.3
+        prompt: An action gives reward 2 and then lands in a state worth 4 or a state worth 0, each with probability 0.5. With γ = 0.5, what is its backed-up value?
+        answer: 3
+        feedback: The expected next value is 0.5 × 4 + 0.5 × 0 = 2, so the backup is 2 + 0.5 × 2 = 3.
+      - id: mdps-and-bellman-equations.calculate.4
+        prompt: A policy keeps an agent in the same state forever, earning −1 every step, with γ = 0.9. Solve v = −1 + 0.9 v. What is v?
+        answer: -10
+        feedback: v − 0.9v = −1, so 0.1v = −1 and v = −10. This is the timid shuttling policy from the policy-iteration example.
+      - id: mdps-and-bellman-equations.calculate.5
+        prompt: In value iteration on Pip's hallway, the previous sweep gave V(Rug) = 7.8 and V(Door) = −1. Compute the next sweep's V(Rug), taking the max of forward (0.8 to the Dock for +10; 0.2 slip for −1 back to the Rug) and back (−1 to the Door), with γ = 0.9.
+        answer: 9.204
+        feedback: Forward is 0.8 × 10 + 0.2 × (−1 + 0.9 × 7.8) = 8 + 1.204 = 9.204. Back is −1 + 0.9 × (−1) = −1.9. The max is 9.204.

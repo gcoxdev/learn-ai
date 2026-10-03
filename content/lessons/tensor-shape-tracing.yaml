@@ -1,401 +1,598 @@
 schema_version: 0.2-draft
 lesson:
   id: tensor-shape-tracing
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Trace an example through a batch
   state: draft
-  summary: Label the axes in arrays, trace a batch through a weighted calculation, and catch errors that shape
-    checks alone miss.
+  summary: '"Size 3 is different from 2." Learn to read the shape of every array in a model, predict each result before running it, and catch the bug that no error message will flag.'
   slot: M02.4
   category: learning
   sources:
-  - title: 'Dive into Deep Learning: linear algebra'
-    url: https://d2l.ai/chapter_preliminaries/linear-algebra.html
+    - title: 'Dive into Deep Learning: linear algebra'
+      url: https://d2l.ai/chapter_preliminaries/linear-algebra.html
+    - title: 'NumPy documentation: broadcasting'
+      url: https://numpy.org/doc/stable/user/basics.broadcasting.html
   archetype: mechanism
 objectives:
-- id: objective.tensor-shape-tracing
-  version: 2-draft
-  statement: Compute the output shape and element count for batched matrix operations, and distinguish dimensional
-    compatibility from correct axis meaning.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - tensor-shape-tracing.base.v2
-  - tensor-shape-tracing.transfer.v2
-  prerequisites:
-  - anyOf:
-    - objective.matrices-tensors
+  - id: objective.tensor-shape-tracing
+    version: 3-draft
+    statement: Compute the output shape and element count for batched matrix operations, and distinguish dimensional compatibility from correct axis meaning.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - tensor-shape-tracing.base.v3
+      - tensor-shape-tracing.transfer.v3
+    prerequisites:
+      - anyOf:
+          - objective.matrices-tensors
 scenes:
-- id: tensor-shape-tracing.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.tensor-shape-tracing
-  title: Give each axis a job
-  markdown: 'An **array** is an organized collection of values. A vector is a one-axis list; a matrix has two
-    axes, like rows and columns. In AI software, **tensor** often means an array with any number of axes. Its
-    **shape** lists the size of each axis in order.
+  - id: tensor-shape-tracing.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.tensor-shape-tracing
+    title: Give each axis a job
+    markdown: |-
+      You send three parcels to a delivery model and get back an error: the sizes *3 and 2 don't match*. No parcel is broken, and neither is the model. The numbers are simply arranged in a grid of the wrong size. Once you can read sizes, messages like this go from baffling to obvious.
 
+      An **array** is a grid of numbers. A list is an array with one direction, or **axis**. A table (a *matrix*) has two axes, rows and columns. AI software calls an array with any number of axes a **tensor**. Its **shape** lists how many entries lie along each axis, in order.
 
-    A table of three parcels with two features per parcel has shape [3, 2]: three example rows and two feature
-    columns. The brackets describe sizes, not the values of the parcels themselves. Always label the axes alongside
-    the numbers; [3, 2] alone does not say what a row represents.'
-  text_mode: 'An **array** is an organized collection of values. A vector is a one-axis list; a matrix has
-    two axes, like rows and columns. In AI software, **tensor** often means an array with any number of axes.
-    Its **shape** lists the size of each axis in order.
+      Three parcels, each described by two features, [distance, weight], make a table of shape [3, 2]: three rows, one per parcel, and two columns, one per feature.
 
+      | | distance (km) | weight (kg) |
+      | --- | ---: | ---: |
+      | parcel 1 | 3 | 1 |
+      | parcel 2 | 5 | 2 |
+      | parcel 3 | 2 | 4 |
 
-    A table of three parcels with two features per parcel has shape [3, 2]: three example rows and two feature
-    columns. The brackets describe sizes, not the values of the parcels themselves. Always label the axes alongside
-    the numbers; [3, 2] alone does not say what a row represents.'
-  bridges:
-  - matrices-tensors
-- id: tensor-shape-tracing.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.tensor-shape-tracing
-  title: Follow one example, then the batch
-  markdown: 'A **batch** is a group of examples processed together. Let our input table X have shape [3, 2].
-    Each row contains [distance, parcel weight]. A weight matrix W with shape [2, 4] converts those two features
-    into four output values per example.
+      The shape [3, 2] tells you the sizes, not what the rows and columns mean. So always label the axes: **[examples, features]**.
+    bridges:
+      - matrices-tensors
+  - id: tensor-shape-tracing.s2
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.tensor-shape-tracing
+    title: The shared size disappears
+    markdown: |-
+      A **batch** is a group of examples processed together, like our table of three parcels. Call it X, with shape [3, 2]. A weight matrix W of shape [2, 4] turns each parcel's 2 features into 4 output numbers. (The matrices lesson shows the multiply-and-add steps inside.)
 
+      Multiplying X by W, written XW, works because the *inner* sizes match: X ends with 2 and W starts with 2. That shared feature axis gets used up in the multiply-and-add, and the outer sizes survive:
 
-    For XW, the input’s feature count 2 matches the weight matrix’s first size 2. The output shape is [3, 4]:
-    three examples, four outputs each. Matrix multiplication combines matching input features; it does not
-    multiply every axis size into one long list. The matrix side lesson shows the individual multiply-and-add
-    steps.'
-  text_mode: 'A **batch** is a group of examples processed together. Let our input table X have shape [3, 2].
-    Each row contains [distance, parcel weight]. A weight matrix W with shape [2, 4] converts those two features
-    into four output values per example.
+      $$[3, \mathbf{2}] \times [\mathbf{2}, 4] \rightarrow [3, 4]$$
 
+      Three parcels in, three rows out, each now holding 4 numbers.
 
-    For XW, the input’s feature count 2 matches the weight matrix’s first size 2. The output shape is [3, 4]:
-    three examples, four outputs each. Matrix multiplication combines matching input features; it does not
-    multiply every axis size into one long list. The matrix side lesson shows the individual multiply-and-add
-    steps.'
-  bridges:
-  - matrices-tensors
-- id: tensor-shape-tracing.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tensor-shape-tracing
-  title: Add an offset without adding examples
-  markdown: 'Suppose a bias vector b contains four offsets, one per output feature. We use the same vector
-    for each example: Y = XW + b. This reuse across rows is called **broadcasting** in array software.
+      :::predict The batch grows to 5 parcels, so X is [5, 2]. W stays [2, 4]. What is the shape of XW?
+      [5, 4]. The batch size passes straight through; only the feature axis has to match W. That's why the same trained weights can handle 1 parcel or 1,000: W cares how many *features* each example has, not how many examples arrive.
+      :::
+    diagram:
+      caption: Shapes through Y = XW + b. The shared size 2 is used up; the batch size 3 passes through.
+      description: The input batch X with shape [3, 2] and the weights W with shape [2, 4] both feed the matrix multiply, which produces XW with shape [3, 4]. XW and the bias b with shape [4] both feed the addition, which copies b onto every row and produces Y with shape [3, 4].
+      nodes:
+        - id: x
+          label: X [3, 2]
+          note: 3 parcels × 2 features
+          col: 0
+          row: 0
+          tone: data
+        - id: w
+          label: W [2, 4]
+          note: 2 features in, 4 outputs
+          col: 0
+          row: 1
+          tone: muted
+        - id: mul
+          label: XW [3, 4]
+          note: inner 2s match and vanish
+          col: 1
+          row: 0
+          tone: accent
+        - id: b
+          label: b [4]
+          note: one offset per output
+          col: 1
+          row: 1
+          tone: muted
+        - id: y
+          label: Y [3, 4]
+          note: b added to every row
+          col: 2
+          row: 0
+          tone: accent
+      edges:
+        - from: x
+          to: mul
+        - from: w
+          to: mul
+        - from: mul
+          to: y
+        - from: b
+          to: y
+          label: broadcast
+  - id: tensor-shape-tracing.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tensor-shape-tracing
+    title: One offset, copied to every row
+    markdown: |-
+      Most layers also add a bias vector b, one offset per output: Y = XW + b. Here b holds 4 numbers, but XW has 3 rows of 4. Array software copies b onto every row for you. That automatic stretching is called **broadcasting**. Here it is in NumPy, the standard Python library for arrays (it writes shapes in round brackets):
 
+      ```python run
+      import numpy as np
 
-    The output still has shape [3, 4], containing 3 × 4 = 12 values. Broadcasting does not append another example
-    or create a fifth output. If X instead has shape [5, 2] with the same W and b, Y has shape [5, 4]. Changing
-    batch size changes how many examples are processed, not how many features the stored weights expect.'
-  text_mode: 'Suppose a bias vector b contains four offsets, one per output feature. We use the same vector
-    for each example: Y = XW + b. This reuse across rows is called **broadcasting** in array software.
+      X = np.array([[3.0, 1.0],       # parcel 1: [distance km, weight kg]
+                    [5.0, 2.0],       # parcel 2
+                    [2.0, 4.0]])      # parcel 3
+      W = np.ones((2, 4))             # 2 input features -> 4 outputs (all 1s keeps the sums easy)
+      b = np.array([10, 20, 30, 40])  # one offset per output
 
+      XW = X @ W                      # matrix multiply: each row meets every column of W
+      Y = XW + b                      # broadcasting: the same b is added to every row
 
-    The output still has shape [3, 4], containing 3 × 4 = 12 values. Broadcasting does not append another example
-    or create a fifth output. If X instead has shape [5, 2] with the same W and b, Y has shape [5, 4]. Changing
-    batch size changes how many examples are processed, not how many features the stored weights expect.'
-  bridges: []
-- id: tensor-shape-tracing.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tensor-shape-tracing
-  title: Compatible sizes can hide the wrong meaning
-  markdown: 'Consider a one-output rule with weights [2, 10] for [distance, parcel weight]. Input [3, 1] gives
-    3 × 2 + 1 × 10 = 16. Accidentally swap the input columns and [1, 3] gives 1 × 2 + 3 × 10 = 32.
+      print("X:", X.shape, " W:", W.shape, " b:", b.shape)
+      print("XW:", XW.shape, " Y:", Y.shape, " values in Y:", Y.size)
+      print(Y)
+      ```
 
+      Parcel 1's row of XW is 3 + 1 = 4 in every column; adding b gives [14, 24, 34, 44]. Y has shape (3, 4) and 3 × 4 = 12 values. Broadcasting added no new parcel and no fifth output.
 
-    Both inputs have shape [1, 2] when stored as one-row matrices. The shape check passes, yet the meanings
-    attached to the columns changed. Swapping both columns and their matching weights would preserve this calculation.
-    Swapping only one side breaks the agreed mapping.'
-  text_mode: 'Consider a one-output rule with weights [2, 10] for [distance, parcel weight]. Input [3, 1] gives
-    3 × 2 + 1 × 10 = 16. Accidentally swap the input columns and [1, 3] gives 1 × 2 + 3 × 10 = 32.
+      Now break it on purpose: change `np.ones((2, 4))` to `np.ones((3, 4))` and run it again. The error complains that 3 and 2 don't match, the same message from the start of the lesson. Read it as "W expects 3 features per parcel, but X has 2."
+    bridges: []
+  - id: tensor-shape-tracing.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tensor-shape-tracing
+    title: Shapes can match while meanings don't
+    markdown: |-
+      Take a one-output model with weights [2, 10]: 2 minutes per kilometer and 10 minutes per kilogram. A parcel [3 km, 1 kg] gives 3 × 2 + 1 × 10 = **16 minutes**.
 
+      Now a new data file lists weight first. The same parcel arrives as [1, 3]:
 
-    Both inputs have shape [1, 2] when stored as one-row matrices. The shape check passes, yet the meanings
-    attached to the columns changed. Swapping both columns and their matching weights would preserve this calculation.
-    Swapping only one side breaks the agreed mapping.'
-  bridges: []
-- id: tensor-shape-tracing.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.tensor-shape-tracing
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A shape tells you how many values lie along each axis. Correct calculations also require knowing
-    what those axes and positions mean.
-- id: tensor-shape-tracing.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.tensor-shape-tracing
-  markdown: Shape tracing tracks the meaning and size of each axis so a model’s numerical operations preserve
-    the intended examples, features, and outputs.
-  text_mode: Shape tracing tracks the meaning and size of each axis so a model’s numerical operations preserve
-    the intended examples, features, and outputs.
-- id: tensor-shape-tracing.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tensor-shape-tracing
-  title: Add an axis for a sequence
-  markdown: 'Text and audio often arrive as ordered sequences. Suppose each example has five positions, and
-    each position is represented by four numbers. A batch of two examples can have shape [2, 5, 4]: examples,
-    positions, features. It contains 2 × 5 × 4 = 40 values.
+      1 × 2 + 3 × 10 = **32 minutes**.
 
+      Both inputs have shape [1, 2]. The multiplication runs. No error appears. The answer is double what it should be, because each number met the other feature's weight.
 
-    A shorter example may be extended with **padding**, extra positions that fill the rectangular array. A
-    **mask** records which positions a particular operation may use. Padding does not create new real words
-    or measurements. Knowing the shape therefore does not tell you how many positions contain genuine observations.'
-  text_mode: 'Text and audio often arrive as ordered sequences. Suppose each example has five positions, and
-    each position is represented by four numbers. A batch of two examples can have shape [2, 5, 4]: examples,
-    positions, features. It contains 2 × 5 × 4 = 40 values.
+      :::mixup "If the shapes line up, the calculation is right."
+      A shape check only counts. It can't tell distance from weight, red from blue, or kilometers from miles. Keep a written list of what each position means, and when you reorder the input columns, reorder the matching weights with them.
+      :::
+    bridges: []
+  - id: tensor-shape-tracing.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.tensor-shape-tracing
+    markdown: Predict output shapes for new batches, then diagnose swapped house-price columns, padded sentences, and a confusing error message.
+    takeaway: |-
+      Label every axis. Matching sizes lets a calculation run; matching meanings makes its answer right.
+  - id: tensor-shape-tracing.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.tensor-shape-tracing
+    markdown: |-
+      Shape tracing tracks the meaning and size of each axis so a model’s numerical operations preserve the intended examples, features, and outputs.
+  - id: tensor-shape-tracing.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tensor-shape-tracing
+    title: Sentences add a third axis
+    markdown: |-
+      Text and audio arrive as sequences, so they need one more axis. Suppose each sentence is split into word pieces, and each piece is described by 4 numbers. A batch of 2 sentences, each stretched to 5 positions, has shape **[2, 5, 4]**: [sentences, positions, features], or 2 × 5 × 4 = 40 values.
 
+      But real sentences have different lengths, and an array must be a perfect box. So short sentences get **padding**: filler positions added to the end to make every row the same length. A **mask** is a matching list of 1s and 0s that marks which positions are real (1) and which are filler (0), so later steps can ignore the filler.
 
-    A shorter example may be extended with **padding**, extra positions that fill the rectangular array. A
-    **mask** records which positions a particular operation may use. Padding does not create new real words
-    or measurements. Knowing the shape therefore does not tell you how many positions contain genuine observations.'
-  bridges: []
-- id: tensor-shape-tracing.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tensor-shape-tracing
-  title: Check the whole input contract
-  markdown: 'Before running a tensor calculation, write down axis order, feature order, units, and which positions
-    are valid. Check the sizes that must match, then calculate the expected output shape and value count.
+      :::predict One sentence has 5 real positions and the other has 3. How many stored positions are real, and how many are padding?
+      The array stores 2 × 5 = 10 positions. 5 + 3 = 8 are real, so 2 are padding, both at the end of the second sentence. Its mask is [1, 1, 1, 0, 0]. The shape alone, [2, 5, 4], can't tell you this; only the mask can.
+      :::
+    bridges: []
+  - id: tensor-shape-tracing.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tensor-shape-tracing
+    title: Write the shape next to every line
+    markdown: |-
+      Experienced practitioners write the shape of each array as a comment beside the code, with axis names, before they run anything. It takes seconds and catches a lot of bugs. Here's a realistic case.
 
+      A photo model takes a batch of 32 color images, each 224 × 224 pixels with 3 channels:
 
-    For raw storage, multiply that value count by bytes per value. Our [2, 5, 4] array needs 160 bytes if each
-    value uses four bytes, excluding storage overhead. This is a size estimate, not a speed estimate: operations
-    and memory movement also matter. The processor lesson will separate those costs. A shape diagram is a practical
-    debugging tool because it exposes assumptions before a long calculation starts.'
-  text_mode: 'Before running a tensor calculation, write down axis order, feature order, units, and which positions
-    are valid. Check the sizes that must match, then calculate the expected output shape and value count.
+      | Question | Answer |
+      | --- | --- |
+      | Shape, with names | [32, 224, 224, 3]: [images, height, width, channels] |
+      | Values | 32 × 224 × 224 × 3 = 4,816,896 |
+      | Memory at 4 bytes per value | 19,267,584 bytes, about 19 MB |
+      | Double the batch to 64 | Twice the values, about 38.5 MB |
 
+      Watch the axis order, too. PyTorch usually puts channels second, [32, 3, 224, 224], while TensorFlow usually puts them last. Both hold the same 4,816,896 numbers. Converting between them with a reshape, instead of a proper swap of axes, scrambles the pixels without any error: the same silent kind of mistake as the swapped columns. It's the storage lesson's channel-order trap again, one level up.
 
-    For raw storage, multiply that value count by bytes per value. Our [2, 5, 4] array needs 160 bytes if each
-    value uses four bytes, excluding storage overhead. This is a size estimate, not a speed estimate: operations
-    and memory movement also matter. The processor lesson will separate those costs. A shape diagram is a practical
-    debugging tool because it exposes assumptions before a long calculation starts.'
-  bridges: []
+      Memory is only part of the cost; how fast the arithmetic runs is the subject of the processors lesson.
+    bridges: []
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - tensor-shape-tracing.s1
-    - tensor-shape-tracing.s2
-    - tensor-shape-tracing.s3
-    - tensor-shape-tracing.s4
-    - tensor-shape-tracing.s5
-    - tensor-shape-tracing.s6
-    - tensor-shape-tracing.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - tensor-shape-tracing.s1
+        - tensor-shape-tracing.s2
+        - tensor-shape-tracing.s3
+        - tensor-shape-tracing.s4
+        - tensor-shape-tracing.s5
+        - tensor-shape-tracing.s6
+        - tensor-shape-tracing.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     tensor-shape-tracing.recap: tensor-shape-tracing.check
 assessment_families:
-- id: tensor-shape-tracing.base
-  objective_ref: objective.tensor-shape-tracing
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Follow a complete linear layer: trace the inputs, operation, and result before choosing.'
-  remediation_scene: tensor-shape-tracing.s2
-  variants:
-  - id: tensor-shape-tracing.base.1
-    prompt: X is [7, 5] and W is [5, 3]. What is XW?
-    options:
-    - id: a
-      text: '[7, 3]'
-    - id: b
-      text: '[5, 5]'
-    - id: c
-      text: '[7, 5, 3]'
-    answer: a
-    feedback: The input-feature axis contracts and output features remain.
-    retired: true
-  - id: tensor-shape-tracing.base.2
-    prompt: Does shape [8, 4] alone identify what each axis means?
-    options:
-    - id: b
-      text: Yes; the first axis is always time
-    - id: c
-      text: Yes; the second axis is always color
-    - id: a
-      text: No; meanings require a convention
-    answer: a
-    feedback: Shape sizes do not encode semantic axis labels.
-    retired: true
-- id: tensor-shape-tracing.transfer
-  objective_ref: objective.tensor-shape-tracing
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Connect shapes to model structure: trace the inputs, operation, and result before choosing.'
-  remediation_scene: tensor-shape-tracing.s4
-  variants:
-  - id: tensor-shape-tracing.transfer.1
-    prompt: A target broadcast creates all-pairs errors instead of per-example errors. What should be checked?
-    options:
-    - id: b
-      text: Only the learning rate
-    - id: c
-      text: Only the final file size
-    - id: a
-      text: Axis alignment and explicit target shape
-    answer: a
-    feedback: A valid broadcast can still implement the wrong objective.
-    retired: true
-  - id: tensor-shape-tracing.transfer.2
-    prompt: A tensor has 100 elements. Is that enough to know its memory in bytes?
-    options:
-    - id: c
-      text: Yes; every element uses 100 bytes
-    - id: a
-      text: No; element type and storage details matter
-    - id: b
-      text: Yes; every element uses one byte
-    answer: a
-    feedback: Element count must be combined with storage format and allocation behavior.
-    retired: true
-- id: tensor-shape-tracing.base.v2
-  objective_ref: objective.tensor-shape-tracing
-  task: base
-  response_type: numeric_fields_with_reason
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: tensor-shape-tracing.s3
-  variants:
-  - prompt: X has shape [2, 3] (examples, input features), W has shape [3, 4], and b has 4 output offsets shared
-      across examples. For XW + b, give output rows, columns, and value count.
-    answers:
-      rows: 2
-      columns: 4
-      values: 8
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Match the input-feature axis; keep the example and output-feature axes.
-    - id: b
-      text: Multiply the example count by the input-feature count for the output rows.
-    - id: c
-      text: Add the bias length as extra output columns.
-    feedback: The matching 3 axis is summed over. The output has shape [2, 4] and 8 values.
-    id: tensor-shape-tracing.base.v2.1
-  - prompt: X has shape [5, 2] (examples, input features), W has shape [2, 3], and b has 3 output offsets shared
-      across examples. For XW + b, give output rows, columns, and value count.
-    answers:
-      rows: 5
-      columns: 3
-      values: 15
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Multiply the example count by the input-feature count for the output rows.
-    - id: c
-      text: Add the bias length as extra output columns.
-    - id: a
-      text: Match the input-feature axis; keep the example and output-feature axes.
-    feedback: The matching 2 axis is summed over. The output has shape [5, 3] and 15 values.
-    id: tensor-shape-tracing.base.v2.2
-  - prompt: X has shape [3, 4] (examples, input features), W has shape [4, 2], and b has 2 output offsets shared
-      across examples. For XW + b, give output rows, columns, and value count.
-    answers:
-      rows: 3
-      columns: 2
-      values: 6
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: Add the bias length as extra output columns.
-    - id: a
-      text: Match the input-feature axis; keep the example and output-feature axes.
-    - id: b
-      text: Multiply the example count by the input-feature count for the output rows.
-    feedback: The matching 4 axis is summed over. The output has shape [3, 2] and 6 values.
-    id: tensor-shape-tracing.base.v2.3
-  - prompt: X has shape [4, 3] (examples, input features), W has shape [3, 1], and b has 1 output offsets shared
-      across examples. For XW + b, give output rows, columns, and value count.
-    answers:
-      rows: 4
-      columns: 1
-      values: 4
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Match the input-feature axis; keep the example and output-feature axes.
-    - id: b
-      text: Multiply the example count by the input-feature count for the output rows.
-    - id: c
-      text: Add the bias length as extra output columns.
-    feedback: The matching 3 axis is summed over. The output has shape [4, 1] and 4 values.
-    id: tensor-shape-tracing.base.v2.4
-  numeric_fields:
-  - id: rows
-    label: Output rows
-  - id: columns
-    label: Output columns
-  - id: values
-    label: Output values
-  absolute_tolerance: 1.0e-06
-- id: tensor-shape-tracing.transfer.v2
-  objective_ref: objective.tensor-shape-tracing
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: tensor-shape-tracing.s4
-  variants:
-  - prompt: Input columns are swapped but their weights are not. The shapes still match. What can happen?
-    answer: a
-    options:
-    - id: a
-      text: The output changes because values now multiply the wrong weights.
-    - id: b
-      text: The output is preserved because dimensional compatibility fixes column meaning.
-    - id: c
-      text: The batch gains one extra example.
-    feedback: Shapes constrain sizes, not the meaning assigned to each column.
-    id: tensor-shape-tracing.transfer.v2.1
-  - prompt: A tensor has shape [2, 5, 4] for examples, positions, and features. What does the 5 count?
-    answer: a
-    options:
-    - id: b
-      text: The number of examples in the batch.
-    - id: c
-      text: The number of features per position.
-    - id: a
-      text: Stored positions per example, including any padding.
-    feedback: The axis labels determine what each dimension counts.
-    id: tensor-shape-tracing.transfer.v2.2
-  - prompt: An example has three real positions and is padded to five. How many real positions did padding
-      add?
-    answer: a
-    options:
-    - id: c
-      text: Five; padding replaces the example with a new one.
-    - id: a
-      text: Zero; the extra positions only fill the storage shape.
-    - id: b
-      text: Two; every stored position is a new observation.
-    feedback: A validity mask distinguishes padding from actual observations.
-    id: tensor-shape-tracing.transfer.v2.3
-  - prompt: Which multiplication has compatible inner dimensions under the taught row-example convention?
-    answer: a
-    options:
-    - id: a
-      text: '[4, 3] multiplied by [3, 2].'
-    - id: b
-      text: '[4, 3] multiplied by [4, 2].'
-    - id: c
-      text: '[4, 3] multiplied by [2, 3].'
-    feedback: The first matrix’s last size must match the second matrix’s first size.
-    id: tensor-shape-tracing.transfer.v2.4
+  - id: tensor-shape-tracing.base
+    objective_ref: objective.tensor-shape-tracing
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Follow a complete linear layer: trace the inputs, operation, and result before choosing.'
+    remediation_scene: tensor-shape-tracing.s2
+    variants:
+      - id: tensor-shape-tracing.base.1
+        prompt: X is [7, 5] and W is [5, 3]. What is XW?
+        options:
+          - id: a
+            text: '[7, 3]'
+          - id: b
+            text: '[5, 5]'
+          - id: c
+            text: '[7, 5, 3]'
+        answer: a
+        feedback: The input-feature axis contracts and output features remain.
+        retired: true
+      - id: tensor-shape-tracing.base.2
+        prompt: Does shape [8, 4] alone identify what each axis means?
+        options:
+          - id: b
+            text: Yes; the first axis is always time
+          - id: c
+            text: Yes; the second axis is always color
+          - id: a
+            text: No; meanings require a convention
+        answer: a
+        feedback: Shape sizes do not encode semantic axis labels.
+        retired: true
+  - id: tensor-shape-tracing.transfer
+    objective_ref: objective.tensor-shape-tracing
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Connect shapes to model structure: trace the inputs, operation, and result before choosing.'
+    remediation_scene: tensor-shape-tracing.s4
+    variants:
+      - id: tensor-shape-tracing.transfer.1
+        prompt: A target broadcast creates all-pairs errors instead of per-example errors. What should be checked?
+        options:
+          - id: b
+            text: Only the learning rate
+          - id: c
+            text: Only the final file size
+          - id: a
+            text: Axis alignment and explicit target shape
+        answer: a
+        feedback: A valid broadcast can still implement the wrong objective.
+        retired: true
+      - id: tensor-shape-tracing.transfer.2
+        prompt: A tensor has 100 elements. Is that enough to know its memory in bytes?
+        options:
+          - id: c
+            text: Yes; every element uses 100 bytes
+          - id: a
+            text: No; element type and storage details matter
+          - id: b
+            text: Yes; every element uses one byte
+        answer: a
+        feedback: Element count must be combined with storage format and allocation behavior.
+        retired: true
+  - id: tensor-shape-tracing.base.v2
+    objective_ref: objective.tensor-shape-tracing
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: tensor-shape-tracing.s3
+    variants:
+      - prompt: X has shape [2, 3] (examples, input features), W has shape [3, 4], and b has 4 output offsets shared across examples. For XW + b, give output rows, columns, and value count.
+        answers:
+          rows: 2
+          columns: 4
+          values: 8
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Match the input-feature axis; keep the example and output-feature axes.
+          - id: b
+            text: Multiply the example count by the input-feature count for the output rows.
+          - id: c
+            text: Add the bias length as extra output columns.
+        feedback: The matching 3 axis is summed over. The output has shape [2, 4] and 8 values.
+        id: tensor-shape-tracing.base.v2.1
+        retired: true
+      - prompt: X has shape [5, 2] (examples, input features), W has shape [2, 3], and b has 3 output offsets shared across examples. For XW + b, give output rows, columns, and value count.
+        answers:
+          rows: 5
+          columns: 3
+          values: 15
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Multiply the example count by the input-feature count for the output rows.
+          - id: c
+            text: Add the bias length as extra output columns.
+          - id: a
+            text: Match the input-feature axis; keep the example and output-feature axes.
+        feedback: The matching 2 axis is summed over. The output has shape [5, 3] and 15 values.
+        id: tensor-shape-tracing.base.v2.2
+        retired: true
+      - prompt: X has shape [3, 4] (examples, input features), W has shape [4, 2], and b has 2 output offsets shared across examples. For XW + b, give output rows, columns, and value count.
+        answers:
+          rows: 3
+          columns: 2
+          values: 6
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: Add the bias length as extra output columns.
+          - id: a
+            text: Match the input-feature axis; keep the example and output-feature axes.
+          - id: b
+            text: Multiply the example count by the input-feature count for the output rows.
+        feedback: The matching 4 axis is summed over. The output has shape [3, 2] and 6 values.
+        id: tensor-shape-tracing.base.v2.3
+        retired: true
+      - prompt: X has shape [4, 3] (examples, input features), W has shape [3, 1], and b has 1 output offsets shared across examples. For XW + b, give output rows, columns, and value count.
+        answers:
+          rows: 4
+          columns: 1
+          values: 4
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Match the input-feature axis; keep the example and output-feature axes.
+          - id: b
+            text: Multiply the example count by the input-feature count for the output rows.
+          - id: c
+            text: Add the bias length as extra output columns.
+        feedback: The matching 3 axis is summed over. The output has shape [4, 1] and 4 values.
+        id: tensor-shape-tracing.base.v2.4
+        retired: true
+    numeric_fields:
+      - id: rows
+        label: Output rows
+      - id: columns
+        label: Output columns
+      - id: values
+        label: Output values
+    absolute_tolerance: 1e-6
+  - id: tensor-shape-tracing.transfer.v2
+    objective_ref: objective.tensor-shape-tracing
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: tensor-shape-tracing.s4
+    variants:
+      - prompt: Input columns are swapped but their weights are not. The shapes still match. What can happen?
+        answer: a
+        options:
+          - id: a
+            text: The output changes because values now multiply the wrong weights.
+          - id: b
+            text: The output is preserved because dimensional compatibility fixes column meaning.
+          - id: c
+            text: The batch gains one extra example.
+        feedback: Shapes constrain sizes, not the meaning assigned to each column.
+        id: tensor-shape-tracing.transfer.v2.1
+        retired: true
+      - prompt: A tensor has shape [2, 5, 4] for examples, positions, and features. What does the 5 count?
+        answer: a
+        options:
+          - id: b
+            text: The number of examples in the batch.
+          - id: c
+            text: The number of features per position.
+          - id: a
+            text: Stored positions per example, including any padding.
+        feedback: The axis labels determine what each dimension counts.
+        id: tensor-shape-tracing.transfer.v2.2
+        retired: true
+      - prompt: An example has three real positions and is padded to five. How many real positions did padding add?
+        answer: a
+        options:
+          - id: c
+            text: Five; padding replaces the example with a new one.
+          - id: a
+            text: Zero; the extra positions only fill the storage shape.
+          - id: b
+            text: Two; every stored position is a new observation.
+        feedback: A validity mask distinguishes padding from actual observations.
+        id: tensor-shape-tracing.transfer.v2.3
+        retired: true
+      - prompt: Which multiplication has compatible inner dimensions under the taught row-example convention?
+        answer: a
+        options:
+          - id: a
+            text: '[4, 3] multiplied by [3, 2].'
+          - id: b
+            text: '[4, 3] multiplied by [4, 2].'
+          - id: c
+            text: '[4, 3] multiplied by [2, 3].'
+        feedback: The first matrix’s last size must match the second matrix’s first size.
+        id: tensor-shape-tracing.transfer.v2.4
+        retired: true
+  - id: tensor-shape-tracing.base.v3
+    objective_ref: objective.tensor-shape-tracing
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: 'Write the shapes side by side: [examples, features] × [features, outputs]. The matching inner size is used up, and b is copied onto every row without adding rows or columns.'
+    remediation_scene: tensor-shape-tracing.s2
+    numeric_fields:
+      - id: rows
+        label: Output rows
+      - id: columns
+        label: Output columns
+      - id: values
+        label: Output values
+    absolute_tolerance: 1e-6
+    variants:
+      - id: tensor-shape-tracing.base.v3.1
+        prompt: X has shape [7, 3] (examples, features), W has shape [3, 4], and b holds 4 offsets, one per output. For Y = XW + b, give the output rows, columns, and total number of values.
+        answers:
+          rows: 7
+          columns: 4
+          values: 28
+        reason_answer: b
+        reason_options:
+          - id: a
+            text: Add b's length as extra columns after the multiply.
+          - id: b
+            text: Keep X's example axis and W's output axis; the shared 3 is used up.
+          - id: c
+            text: Multiply the examples by the features to get the output rows.
+        feedback: '[7, 3] × [3, 4] → [7, 4], and adding b keeps that shape: 7 × 4 = 28 values. Broadcasting copies b onto each row; it never adds 4 more columns.'
+      - id: tensor-shape-tracing.base.v3.2
+        prompt: X has shape [6, 2] (examples, features), W has shape [2, 3], and b holds 3 offsets, one per output. For Y = XW + b, give the output rows, columns, and total number of values.
+        answers:
+          rows: 6
+          columns: 3
+          values: 18
+        reason_answer: c
+        reason_options:
+          - id: a
+            text: Multiply the examples by the features to get the output rows.
+          - id: b
+            text: Keep X's shape, since adding b doesn't change anything.
+          - id: c
+            text: Keep X's example axis and W's output axis; the shared 2 is used up.
+        feedback: '[6, 2] × [2, 3] → [6, 3], or 18 values. The output takes its columns from W, so it has 3 columns, not the 2 features X started with.'
+      - id: tensor-shape-tracing.base.v3.3
+        prompt: X has shape [4, 5] (examples, features), W has shape [5, 2], and b holds 2 offsets, one per output. For Y = XW + b, give the output rows, columns, and total number of values.
+        answers:
+          rows: 4
+          columns: 2
+          values: 8
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Keep X's example axis and W's output axis; the shared 5 is used up.
+          - id: b
+            text: Add b's length as extra columns after the multiply.
+          - id: c
+            text: Multiply the examples by the features to get the output rows.
+        feedback: '[4, 5] × [5, 2] → [4, 2], or 8 values. Adding b''s 2 offsets as new columns would give [4, 4], but broadcasting adds each offset to an existing column.'
+      - id: tensor-shape-tracing.base.v3.4
+        prompt: X has shape [10, 3] (examples, features), W has shape [3, 1], and b holds 1 offset. For Y = XW + b, give the output rows, columns, and total number of values.
+        answers:
+          rows: 10
+          columns: 1
+          values: 10
+        reason_answer: b
+        reason_options:
+          - id: a
+            text: Keep X's shape, since adding b doesn't change anything.
+          - id: b
+            text: Keep X's example axis and W's output axis; the shared 3 is used up.
+          - id: c
+            text: Multiply the examples by the features to get the output rows.
+        feedback: '[10, 3] × [3, 1] → [10, 1]: one prediction per example, 10 values in all. The three features are combined into a single output, so the 3 disappears.'
+      - id: tensor-shape-tracing.base.v3.5
+        prompt: X has shape [8, 4] (examples, features), W has shape [4, 6], and b holds 6 offsets, one per output. For Y = XW + b, give the output rows, columns, and total number of values.
+        answers:
+          rows: 8
+          columns: 6
+          values: 48
+        reason_answer: c
+        reason_options:
+          - id: a
+            text: Add b's length as extra columns after the multiply.
+          - id: b
+            text: Multiply the examples by the features to get the output rows.
+          - id: c
+            text: Keep X's example axis and W's output axis; the shared 4 is used up.
+        feedback: '[8, 4] × [4, 6] → [8, 6], or 48 values. Treating b as 6 extra columns would give [8, 12], but broadcasting only adds to the columns already there.'
+  - id: tensor-shape-tracing.transfer.v3
+    objective_ref: objective.tensor-shape-tracing
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name every axis before you use it. Ask two separate questions, whether the sizes match and whether each position still means what the weights expect.
+    remediation_scene: tensor-shape-tracing.s4
+    variants:
+      - id: tensor-shape-tracing.transfer.v3.1
+        prompt: A house-price model expects [floor area, bedrooms]. A new data file lists bedrooms first. The shapes still match and no error appears. What happens?
+        options:
+          - id: a
+            text: An error appears later, when the prices are saved
+          - id: b
+            text: Prices go wrong, since each number meets the wrong weight
+          - id: c
+            text: Prices stay the same, since the same numbers arrive
+        answer: b
+        feedback: A shape check only counts entries, so the swapped file runs silently. The bedroom count now gets the floor-area weight and vice versa, so predictions go badly wrong without any error.
+      - id: tensor-shape-tracing.transfer.v3.2
+        prompt: A text batch has shape [16, 50, 8], labeled [sentences, positions, features]. What does the 50 count?
+        options:
+          - id: c
+            text: Positions per sentence, including padding
+          - id: a
+            text: Sentences processed together in the batch
+          - id: b
+            text: Real words in every sentence of the batch
+        answer: c
+        feedback: The second axis is positions, and short sentences are padded to fill it, so 50 counts stored positions, real and filler alike. The number of sentences is the 16, and the mask tells you how many positions are real.
+      - id: tensor-shape-tracing.transfer.v3.3
+        prompt: Three sentences have 4, 6, and 2 real positions. They're padded to a common length of 6. How many padding positions does the batch contain?
+        options:
+          - id: a
+            text: '12'
+          - id: b
+            text: '18'
+          - id: c
+            text: '6'
+        answer: c
+        feedback: The batch stores 3 × 6 = 18 positions, of which 4 + 6 + 2 = 12 are real, so 6 are padding. 18 counts every stored position, and 12 counts only the real ones.
+      - id: tensor-shape-tracing.transfer.v3.4
+        prompt: Which matrix multiplication has matching inner sizes?
+        options:
+          - id: b
+            text: '[5, 3] times [5, 2]'
+          - id: a
+            text: '[5, 3] times [3, 2]'
+          - id: c
+            text: '[5, 3] times [2, 3]'
+        answer: a
+        feedback: The last size of the first matrix must equal the first size of the second, so [5, 3] × [3, 2] works and gives [5, 2]. Matching the first sizes (5 and 5) or the last sizes (3 and 3) is a common slip.
+      - id: tensor-shape-tracing.transfer.v3.5
+        prompt: 'X has shape [8, 3] and W has shape [4, 2]. The multiply fails because 4 and 3 don''t match. Which is the best first step?'
+        options:
+          - id: a
+            text: Reshape X to [6, 4], so its sizes line up with W
+          - id: b
+            text: Find the fourth feature that W was built to expect
+          - id: c
+            text: Add a bias of length 1 to make up the difference
+        answer: b
+        feedback: W was built for 4 features per example, but X has 3, so a feature is missing or the wrong W was loaded. Reshaping X to [6, 4] would run, but it scrambles values across examples, a silent bug far worse than the error.
+      - id: tensor-shape-tracing.transfer.v3.6
+        prompt: A batch of 32 images with shape [32, 224, 224, 3] takes about 19 MB at 4 bytes per value. You change the batch size to 64. About how much memory does the batch need now?
+        options:
+          - id: c
+            text: About 19 MB, since each image is the same size
+          - id: b
+            text: About 77 MB, since the number of values quadruples
+          - id: a
+            text: About 38.5 MB, since the number of values doubles
+        answer: a
+        feedback: Only the first axis changes, from 32 to 64, so the value count and the memory double. Each image is the same size, but there are twice as many of them.

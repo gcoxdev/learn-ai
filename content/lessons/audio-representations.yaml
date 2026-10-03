@@ -1,213 +1,414 @@
 schema_version: 0.2-draft
 lesson:
   id: audio-representations
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: From a waveform to time-frequency features
   state: draft
-  summary: Count audio samples and inspect how a waveform becomes a picture of frequency changing over time.
+  summary: Say "buy oat milk" into your phone and it records 16,000 numbers a second. Follow them into the picture of sound that speech models actually read.
   slot: M13.5
   category: learning
   sources:
-  - title: Speech and Language Processing — authors’ draft
-    url: https://web.stanford.edu/~jurafsky/slp3/
+    - title: Speech and Language Processing, 3rd edition draft — chapter on automatic speech recognition (Jurafsky & Martin)
+      url: https://web.stanford.edu/~jurafsky/slp3/
+    - title: "Robust Speech Recognition via Large-Scale Weak Supervision (Radford et al., 2022)"
+      url: https://arxiv.org/abs/2212.04356
+    - title: NumPy documentation — numpy.fft.rfft
+      url: https://numpy.org/doc/stable/reference/generated/numpy.fft.rfft.html
 objectives:
-- id: objective.audio-representations
-  version: 1-draft
-  statement: Waveforms sample amplitude over time; frequency transforms and spectrograms reveal complementary
-    structure, with resolution and sampling assumptions that affect audio learning.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - audio-representations.base
-  - audio-representations.transfer
-  prerequisites:
-  - anyOf:
-    - objective.digital-representations
-  - anyOf:
-    - objective.functions
+  - id: objective.audio-representations
+    version: 2-draft
+    statement: Waveforms sample amplitude over time; frequency transforms and spectrograms reveal complementary structure, with resolution and sampling assumptions that affect audio learning.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - audio-representations.base.v2
+      - audio-representations.transfer.v2
+      - audio-representations.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.digital-representations
+      - anyOf:
+          - objective.functions
 scenes:
-- id: audio-representations.s1
-  title: Measure a sound over time
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.audio-representations
-  markdown: 'A sampled **waveform** records a signal’s **amplitude**, its measured value at each instant, at
-    regular intervals. The **sample rate** is the number of measurements per second. **Frequency** counts repetitions
-    per second, measured in hertz (Hz).
+  - id: audio-representations.s1
+    title: Sixteen thousand numbers a second
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.audio-representations
+    markdown: |-
+      You hold down the record button in Jot, a voice-notes app, and say "buy oat milk." Sound is a wave of tiny air-pressure changes, and your phone's microphone turns it into a voltage that rises and falls with the pressure. To store it, the phone measures that voltage at regular instants and keeps each measurement as a number. The list of numbers is the **waveform**, and each number is a **sample**. How many samples it takes per second is the **sample rate**, measured in hertz (Hz).
 
+      | Where you meet it | Sample rate |
+      | --- | ---: |
+      | Most speech-recognition models | 16,000 Hz |
+      | Music CDs | 44,100 Hz |
+      | Video soundtracks and many phone recorders | 48,000 Hz |
 
-    Different continuous signals can produce the same sampled values, a problem called **aliasing**. Under
-    suitable band-limited sampling assumptions, frequencies above half the sample rate cannot be resolved without
-    aliasing. Recording and resampling therefore use filtering to remove frequencies the new sample rate cannot
-    represent. These measurements describe sound; identifying words is another task.'
-  text_mode: 'A sampled **waveform** records a signal’s **amplitude**, its measured value at each instant,
-    at regular intervals. The **sample rate** is the number of measurements per second. **Frequency** counts
-    repetitions per second, measured in hertz (Hz).
+      Counting is multiplication. A three-minute note at 16,000 Hz in one channel (**mono**) is $180 \times 16{,}000 = 2{,}880{,}000$ samples. Stored at 2 bytes per sample, that's 5.76 MB before any compression. A stereo recording has two channels and doubles it.
 
+      The waveform is exact but hard to read. A vowel looks like a fast, wiggly repeating shape, and two people saying the same word produce completely different wiggles. The rest of this lesson turns the wiggles into something more useful: how much of each **frequency** (repetitions per second, also in Hz) is present, moment by moment.
+    bridges: []
+  - id: audio-representations.s2
+    title: Nyquist, and the tone that changed its pitch
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.audio-representations
+    markdown: |-
+      Sampling has a hard limit. To capture a wave you need at least two samples per cycle, one near each peak and one near each trough. So a sample rate of $f_s$ can represent frequencies only up to $f_s / 2$, called the **Nyquist frequency**:
 
-    Different continuous signals can produce the same sampled values, a problem called **aliasing**. Under
-    suitable band-limited sampling assumptions, frequencies above half the sample rate cannot be resolved without
-    aliasing. Recording and resampling therefore use filtering to remove frequencies the new sample rate cannot
-    represent. These measurements describe sound; identifying words is another task.'
-  bridges: []
-- id: audio-representations.s2
-  title: Count a short recording
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.audio-representations
-  markdown: 'One second of mono audio at 16,000 samples per second contains 16,000 sample values. Stereo has
-    two channels. Storage also depends on numeric format and compression. Resampling changes the grid and requires
-    appropriate filtering; merely relabeling the sample rate changes playback interpretation.
+      - 16,000 Hz sampling → up to 8,000 Hz, which covers the sounds that make speech intelligible.
+      - 44,100 Hz sampling → up to 22,050 Hz, enough to cover the roughly 20,000 Hz upper limit of human hearing.
 
+      What happens to a frequency above the limit? It doesn't vanish. It shows up disguised as a lower one, which is called **aliasing**. A 9,000 Hz whistle sampled at 16,000 Hz produces exactly the same samples as a 7,000 Hz tone ($16{,}000 - 9{,}000$). Once sampled, no program can tell them apart. That's why recorders run the signal through a low-pass filter, which removes everything above the Nyquist frequency, *before* sampling, and why good resampling code filters before it throws samples away.
 
-    Two seconds of stereo at 16,000 samples per second has 2 × 2 × 16,000 = 64,000 stored sample values. At
-    two bytes per value, the raw payload is 128,000 bytes before file headers or compression. Seconds, channels,
-    sample rate and bytes per value each contribute a separate factor.'
-  text_mode: 'One second of mono audio at 16,000 samples per second contains 16,000 sample values. Stereo has
-    two channels. Storage also depends on numeric format and compression. Resampling changes the grid and requires
-    appropriate filtering; merely relabeling the sample rate changes playback interpretation.
+      :::predict Old landline phone calls were sampled at 8,000 Hz. Which sounds suffer most?
+      The Nyquist frequency is 4,000 Hz, so everything above it is filtered out. Much of the energy of "s" and "f" sits above 4 kHz, which is why "sun" and "fun" are easy to confuse on a phone call, and why you spell your name out loud: "S as in Sam."
+      :::
 
+      :::mixup "Jot records at 48 kHz, so just hand those samples to the 16 kHz speech model. More detail can only help."
+      The model assumes 16,000 samples per second. Handed 48,000, it reads one second of speech as three seconds of slow, low-pitched speech, since every frequency looks three times lower than it is. Always **resample**: filter out everything above 8 kHz, then keep one sample in three. Simply changing the sample-rate label in the file header does neither.
+      :::
+    bridges:
+      - functions
+  - id: audio-representations.s3
+    title: "Slice, transform, stack: the spectrogram"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.audio-representations
+    markdown: |-
+      A **Fourier transform** takes a stretch of waveform and reports how strongly each frequency is present in it. The fast algorithm for computing it is the **FFT** (fast Fourier transform). A whole note, though, mixes "buy", "oat", and "milk" into one answer, so speech systems analyze short slices instead:
 
-    Two seconds of stereo at 16,000 samples per second has 2 × 2 × 16,000 = 64,000 stored sample values. At
-    two bytes per value, the raw payload is 128,000 bytes before file headers or compression. Seconds, channels,
-    sample rate and bytes per value each contribute a separate factor.'
-  bridges:
-  - functions
-- id: audio-representations.s3
-  title: Show frequency content across time
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.audio-representations
-  markdown: 'A **Fourier transform** breaks a signal into frequency components. A **spectrogram** applies this
-    analysis to short overlapping windows: time runs along one axis, frequency along the other, and each entry
-    shows the strength of a frequency component in that window.
+      1. Cut the waveform into **frames**: windows of 25 ms (400 samples at 16 kHz).
+      2. Start a new frame every 10 ms, the **hop** (160 samples). Frames overlap.
+      3. Run an FFT on each frame. A 400-sample window gives frequency **bins** $16{,}000 / 400 = 40$ Hz apart, 201 bins from 0 to 8,000 Hz.
+      4. Stack the results side by side. Time runs across, frequency runs up, and brightness shows strength: that's a **spectrogram**.
 
+      The hop sets the frame rate: $16{,}000 / 160 = 100$ frames per second. The program builds a spectrogram of a pure 440 Hz tone and finds its loudest bin.
 
-    Short windows locate rapid changes more precisely but give coarser frequency detail. Longer windows give
-    finer frequency detail while blurring when a change occurred. A spectrogram exposes useful structure, but
-    does not identify words or instruments by itself. The dynamics-and-noise side lesson introduces the wave
-    picture.'
-  text_mode: 'A **Fourier transform** breaks a signal into frequency components. A **spectrogram** applies
-    this analysis to short overlapping windows: time runs along one axis, frequency along the other, and each
-    entry shows the strength of a frequency component in that window.
+      ```python run
+      import numpy as np
 
+      sr = 16000                         # samples per second
+      tone = 440                         # Hz: try 3000, then 9000
+      t = np.arange(sr) / sr             # one second of sample times
+      wave = np.sin(2 * np.pi * tone * t)
 
-    Short windows locate rapid changes more precisely but give coarser frequency detail. Longer windows give
-    finer frequency detail while blurring when a change occurred. A spectrogram exposes useful structure, but
-    does not identify words or instruments by itself. The dynamics-and-noise side lesson introduces the wave
-    picture.'
-  bridges: []
-- id: audio-representations.s4
-  title: Connect the features to the task
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.audio-representations
-  markdown: Mel-scale features summarize frequency information with a perceptually motivated spacing. Learned
-    audio encoders or codecs can produce other representations. Speech recognition, speaker identification,
-    and music generation need different information. A preprocessing choice that helps one can discard cues
-    another task requires.
-  text_mode: Mel-scale features summarize frequency information with a perceptually motivated spacing. Learned
-    audio encoders or codecs can produce other representations. Speech recognition, speaker identification,
-    and music generation need different information. A preprocessing choice that helps one can discard cues
-    another task requires.
-  bridges: []
-- id: audio-representations.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.audio-representations
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Waveforms record amplitude over time; spectrograms show how frequency content changes. Sample rate
-    and analysis-window length affect which details the representation can preserve.
-- id: audio-representations.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.audio-representations
-  markdown: Waveforms record amplitude over time; spectrograms show how frequency content changes. Sample rate
-    and analysis-window length affect which details the representation can preserve.
-  text_mode: Waveforms record amplitude over time; spectrograms show how frequency content changes. Sample
-    rate and analysis-window length affect which details the representation can preserve.
+      win, hop = 400, 160                # 25 ms windows, moved 10 ms at a time
+      frames = np.array([wave[s:s + win] * np.hanning(win)
+                         for s in range(0, len(wave) - win + 1, hop)])
+      spec = np.abs(np.fft.rfft(frames, axis=1))   # one spectrum per frame
+
+      print("spectrogram shape (frames, bins):", spec.shape)
+      print("frames per second:", sr // hop)
+      print("bin spacing:", sr / win, "Hz")
+      peak = spec.mean(axis=0).argmax()
+      print(f"loudest bin: {peak} -> {peak * sr / win:.0f} Hz")
+      ```
+
+      Bin 11 × 40 Hz = 440 Hz: found. (One second yields 98 full frames rather than 100, because the last windows would run past the end.) Now set `tone = 9000`. The loudest bin reports 7,000 Hz: aliasing, caught in the act.
+
+      Window length is a trade. A longer window gives narrower bins, so finer pitch detail, but blurs *when* things happen; a shorter one pins down timing and blurs frequency. The 25 ms window is short enough to catch a quick "t" and long enough to separate the resonances of vowels.
+    bridges: []
+    diagram:
+      caption: From microphone to model input. Each stage turns the previous one into something easier to learn from.
+      description: The waveform, at 16,000 samples per second, is cut into overlapping 25 millisecond frames with a 10 millisecond hop. Each frame goes through an FFT, giving 201 frequency bins. A mel filterbank groups the bins into 80 bands, and a log compresses loudness. The resulting log-mel spectrogram, 100 frames per second by 80 bands, feeds the speech model.
+      nodes:
+        - id: wave
+          label: Waveform
+          note: 16,000 samples/s
+          col: 0
+          row: 0
+          tone: data
+        - id: frames
+          label: Frames
+          note: 25 ms window, 10 ms hop
+          col: 1
+          row: 0
+        - id: fft
+          label: FFT per frame
+          note: 201 bins, 40 Hz apart
+          col: 2
+          row: 0
+        - id: mel
+          label: Mel filterbank + log
+          note: 80 bands
+          col: 3
+          row: 0
+        - id: logmel
+          label: Log-mel spectrogram
+          note: 100 frames/s × 80
+          col: 4
+          row: 0
+          tone: data
+        - id: model
+          label: Speech model
+          col: 5
+          row: 0
+          tone: accent
+      edges:
+        - from: wave
+          to: frames
+        - from: frames
+          to: fft
+        - from: fft
+          to: mel
+        - from: mel
+          to: logmel
+        - from: logmel
+          to: model
+  - id: audio-representations.s4
+    title: Space the frequencies the way ears do
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.audio-representations
+    markdown: |-
+      Your ears hear the step from 500 Hz to 1,000 Hz as a big change in pitch, and the step from 7,500 Hz to 8,000 Hz as barely anything. The FFT's bins are evenly spaced, so they spend most of their detail on high frequencies that matter less for speech. The **mel scale** re-spaces frequencies to match perceived pitch. A common formula is
+
+      $$m = 2595 \log_{10}\!\left(1 + \frac{f}{700}\right)$$
+
+      so 1,000 Hz is 1,000 mels, 4,000 Hz is about 2,146 mels, and 8,000 Hz is about 2,840 mels. A **mel filterbank** groups the FFT bins into bands evenly spaced in mels, usually 80 of them. Then a log compresses loudness, the way hearing does. The result is a **log-mel spectrogram**, the standard input for speech models.
+
+      :::predict With 80 bands evenly spaced in mels from 0 to 8,000 Hz, about what share of them cover 4,000 to 8,000 Hz, the top half of the frequencies?
+      That range spans $2{,}840 - 2{,}146 = 694$ of the 2,840 mels, about 24%, so roughly 20 of the 80 bands. The other 60 go to the lower half, where vowels and voicing carry most of the speech information.
+      :::
+
+      :::papers What Whisper reads
+      OpenAI's Whisper (Radford et al., 2022) resamples all audio to 16,000 Hz and computes an 80-channel log-mel spectrogram with 25 ms windows and a 10 ms stride, exactly the pipeline above. It reads 30-second chunks: $30 \times 100 = 3{,}000$ frames of 80 numbers each, compared with $30 \times 16{,}000 = 480{,}000$ raw samples.
+      :::
+
+      Choose features by task. Transcription wants the log-mel spectrogram, and so, usually, does telling *who* is speaking. Music models usually need the higher sample rates of the table in the first scene, since cymbals and strings go well past 8 kHz. Many newer systems learn their own features straight from the waveform. The next lesson feeds Jot's log-mel frames into a recognizer.
+    bridges: []
+  - id: audio-representations.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.audio-representations
+    markdown: A podcast recorder, a bird-song detector, a call-center system, and some sample-rate arithmetic test whether you can predict what a representation keeps and loses.
+    takeaway: |-
+      A waveform samples pressure thousands of times a second and can hold frequencies only up to half the sample rate. Framing, an FFT, and mel bands turn it into a log-mel spectrogram, about 100 frames a second, that speech models read.
+  - id: audio-representations.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.audio-representations
+    markdown: |-
+      Waveforms record amplitude over time; spectrograms show how frequency content changes. Sample rate and analysis-window length affect which details the representation can preserve.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - audio-representations.s1
-    - audio-representations.s2
-    - audio-representations.s3
-    - audio-representations.s4
-    - audio-representations.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - audio-representations.s1
+        - audio-representations.s2
+        - audio-representations.s3
+        - audio-representations.s4
+        - audio-representations.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     audio-representations.recap: audio-representations.check
 assessment_families:
-- id: audio-representations.base
-  objective_ref: objective.audio-representations
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Count a short recording: trace the inputs, operation, and result before choosing.'
-  remediation_scene: audio-representations.s2
-  variants:
-  - id: audio-representations.base.1
-    prompt: Two seconds of mono audio at 8,000 samples per second contain how many samples?
-    options:
-    - id: a
-      text: 16,000
-    - id: b
-      text: 8,000
-    - id: c
-      text: 4,000
-    answer: a
-    feedback: Multiply duration by sample rate.
-  - id: audio-representations.base.2
-    prompt: What does a spectrogram show?
-    options:
-    - id: b
-      text: Only a transcript of words
-    - id: c
-      text: Every sound source’s true identity
-    - id: a
-      text: Frequency-related content across time windows
-    answer: a
-    feedback: It represents how spectral content varies over time.
-- id: audio-representations.transfer
-  objective_ref: objective.audio-representations
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Connect the features to the task: trace the inputs, operation, and result before choosing.'
-  remediation_scene: audio-representations.s4
-  variants:
-  - id: audio-representations.transfer.1
-    prompt: A window is made much shorter. What time-frequency tradeoff should be expected?
-    options:
-    - id: b
-      text: Perfect resolution in both dimensions
-    - id: c
-      text: No change under any conditions
-    - id: a
-      text: Better time localization with coarser frequency resolution
-    answer: a
-    feedback: Window length controls the granularity of the representation.
-  - id: audio-representations.transfer.2
-    prompt: A file’s sample-rate label is changed without resampling. What can happen?
-    options:
-    - id: c
-      text: The signal becomes a transcript
-    - id: a
-      text: Playback duration and pitch interpretation change
-    - id: b
-      text: New accurate samples appear automatically
-    answer: a
-    feedback: The values are interpreted on a different time grid.
+  - id: audio-representations.base
+    objective_ref: objective.audio-representations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Count a short recording: trace the inputs, operation, and result before choosing.'
+    remediation_scene: audio-representations.s2
+    variants:
+      - id: audio-representations.base.1
+        prompt: Two seconds of mono audio at 8,000 samples per second contain how many samples?
+        options:
+          - id: a
+            text: 16,000
+          - id: b
+            text: 8,000
+          - id: c
+            text: 4,000
+        answer: a
+        feedback: Multiply duration by sample rate.
+        retired: true
+      - id: audio-representations.base.2
+        prompt: What does a spectrogram show?
+        options:
+          - id: b
+            text: Only a transcript of words
+          - id: c
+            text: Every sound source’s true identity
+          - id: a
+            text: Frequency-related content across time windows
+        answer: a
+        feedback: It represents how spectral content varies over time.
+        retired: true
+  - id: audio-representations.transfer
+    objective_ref: objective.audio-representations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Connect the features to the task: trace the inputs, operation, and result before choosing.'
+    remediation_scene: audio-representations.s4
+    variants:
+      - id: audio-representations.transfer.1
+        prompt: A window is made much shorter. What time-frequency tradeoff should be expected?
+        options:
+          - id: b
+            text: Perfect resolution in both dimensions
+          - id: c
+            text: No change under any conditions
+          - id: a
+            text: Better time localization with coarser frequency resolution
+        answer: a
+        feedback: Window length controls the granularity of the representation.
+        retired: true
+      - id: audio-representations.transfer.2
+        prompt: A file’s sample-rate label is changed without resampling. What can happen?
+        options:
+          - id: c
+            text: The signal becomes a transcript
+          - id: a
+            text: Playback duration and pitch interpretation change
+          - id: b
+            text: New accurate samples appear automatically
+        answer: a
+        feedback: The values are interpreted on a different time grid.
+        retired: true
+  - id: audio-representations.base.v2
+    objective_ref: objective.audio-representations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Half the sample rate is the highest frequency a recording can hold; anything above it folds down below it. Window length trades timing detail against frequency detail."
+    remediation_scene: audio-representations.s2
+    variants:
+      - id: audio-representations.base.v2.1
+        prompt: A video camera records audio at 48,000 samples per second. What is the highest frequency the recording can represent?
+        options:
+          - id: b
+            text: 48,000 Hz, the sample rate itself
+          - id: a
+            text: 24,000 Hz, half the sample rate
+          - id: c
+            text: 96,000 Hz, twice the sample rate
+        answer: a
+        feedback: Each cycle needs at least two samples, so the limit is the Nyquist frequency, 48,000 ÷ 2 = 24,000 Hz. Doubling is the rule for choosing a sample rate, not for reading off the limit.
+      - id: audio-representations.base.v2.2
+        prompt: A 12,000 Hz tone is sampled at 16,000 Hz with no filter first. Where does it show up in the spectrogram?
+        options:
+          - id: c
+            text: At 8,000 Hz, clipped to the Nyquist frequency
+          - id: b
+            text: At 12,000 Hz, where it really is
+          - id: a
+            text: At 4,000 Hz, disguised as a lower tone
+        answer: a
+        feedback: Above the 8,000 Hz Nyquist limit, the tone aliases to 16,000 − 12,000 = 4,000 Hz. A 16 kHz recording has no 12,000 Hz bin at all, and aliasing folds frequencies down rather than stacking them at the limit.
+      - id: audio-representations.base.v2.3
+        prompt: You shorten a spectrogram's window from 25 ms to 10 ms. What changes?
+        options:
+          - id: a
+            text: Timing gets sharper and the frequency bins get wider
+          - id: b
+            text: Timing and frequency both become sharper
+          - id: c
+            text: The frequency bins get narrower and timing blurs
+        answer: a
+        feedback: A shorter window pins down when a sound happens, but with fewer samples per window its bins are further apart (100 Hz instead of 40 Hz at 16 kHz). You can't sharpen both at once; the third option describes lengthening the window.
+      - id: audio-representations.base.v2.4
+        prompt: Why do speech systems group FFT bins into mel bands instead of using them directly?
+        options:
+          - id: b
+            text: Mel bands remove background noise before the model sees it
+          - id: a
+            text: Mel bands follow perceived pitch, giving low frequencies more bands
+          - id: c
+            text: Mel bands raise the sample rate so higher frequencies fit
+        answer: a
+        feedback: FFT bins are evenly spaced in Hz, but hearing (and much of speech's information) is concentrated at lower frequencies, so mel bands are narrow there and wide at the top. They don't remove noise, and nothing after sampling can add frequencies above Nyquist.
+  - id: audio-representations.transfer.v2
+    objective_ref: objective.audio-representations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Work out which frequencies the task needs, then check whether the sample rate and features along the pipeline keep them.
+    remediation_scene: audio-representations.s4
+    variants:
+      - id: audio-representations.transfer.v2.1
+        prompt: A podcast app changes the header of its 44,100 Hz recordings to say 16,000 Hz and sends them to a 16 kHz speech recognizer. The transcripts are nonsense. What is the fix?
+        options:
+          - id: c
+            text: Normalize the loudness of each recording before sending it
+          - id: a
+            text: Low-pass filter and resample the audio to 16,000 Hz
+          - id: b
+            text: Trim the silences so the recognizer sees only speech
+        answer: a
+        feedback: Relabeling makes the model read every second as about 2.8 seconds of slow, low speech. Real resampling (filter, then compute new samples) keeps time and pitch intact. Loudness and silence aren't the problem.
+      - id: audio-representations.transfer.v2.2
+        prompt: A bird-song detector must hear calls that reach 10,000 Hz, but the field recorders sample at 16,000 Hz. What is the core problem?
+        options:
+          - id: a
+            text: Calls above 8 kHz are lost or aliased, so record at a higher sample rate
+          - id: b
+            text: The mel scale has too few bands, so use 128 bands instead of 80
+          - id: c
+            text: The frames are too short, so use a 100 ms window instead of 25 ms
+        answer: a
+        feedback: A 16 kHz recording can't hold anything above 8 kHz, and no later feature can recover it. Record at 44.1 or 48 kHz instead. More mel bands or longer windows only rearrange what was captured.
+      - id: audio-representations.transfer.v2.3
+        prompt: A call center sends 8 kHz phone audio to a recognizer trained on 16 kHz audio, first upsampling it to 16 kHz. Accuracy is noticeably worse than in testing. Why?
+        options:
+          - id: b
+            text: Upsampling adds noise above 4 kHz that the model mistakes for speech
+          - id: c
+            text: The model can't read 16 kHz input that began as an 8 kHz recording
+          - id: a
+            text: The upsampled audio has nothing above 4 kHz, which the model never saw
+        answer: a
+        feedback: Upsampling creates a 16 kHz grid but can't restore the frequencies above 4 kHz that the phone line removed, so "s" and "f" sounds lack cues the model learned to use. Fine-tuning on phone-band audio helps. Proper upsampling leaves the top band empty, not noisy.
+      - id: audio-representations.transfer.v2.4
+        prompt: A music tagger reuses a speech pipeline (16 kHz, 80 mel bands up to 8 kHz) and keeps confusing tracks that differ mainly in their cymbals. What should change first?
+        options:
+          - id: c
+            text: Use a smaller hop so the model sees more frames per second
+          - id: b
+            text: Use a longer window so each frequency bin gets narrower
+          - id: a
+            text: Use a higher sample rate and mel bands that extend past 8 kHz
+        answer: a
+        feedback: Cymbals carry much of their energy above 8 kHz, which a 16 kHz pipeline removes. A smaller hop or longer window only reshapes the frequencies that survived.
+  - id: audio-representations.calc.v2
+    objective_ref: objective.audio-representations
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Samples = seconds × sample rate. Nyquist = sample rate ÷ 2. Frames per second = sample rate ÷ hop in samples (or 1,000 ÷ hop in ms). A tone above Nyquist appears at sample rate − tone.
+    remediation_scene: audio-representations.s3
+    absolute_tolerance: 0.5
+    variants:
+      - id: audio-representations.calc.v2.1
+        prompt: A 16,000 Hz spectrogram uses a hop of 320 samples. How many frames does it produce per second?
+        answer: 50
+        feedback: 16,000 ÷ 320 = 50 frames per second, one every 20 ms. Halving the hop to 160 would give 100.
+      - id: audio-representations.calc.v2.2
+        prompt: How many samples does 2.5 seconds of mono audio at 44,100 Hz contain?
+        answer: 110250
+        feedback: 2.5 × 44,100 = 110,250 samples. Stereo would double it.
+      - id: audio-representations.calc.v2.3
+        prompt: A 10,000 Hz tone is sampled at 16,000 Hz with no filter. At what frequency, in Hz, does it appear?
+        answer: 6000
+        feedback: The Nyquist limit is 8,000 Hz, and 10,000 Hz aliases to 16,000 − 10,000 = 6,000 Hz.
+      - id: audio-representations.calc.v2.4
+        prompt: An old sound card samples at 22,050 Hz. What is its Nyquist frequency in Hz?
+        answer: 11025
+        feedback: 22,050 ÷ 2 = 11,025 Hz, half of the CD's 22,050 Hz limit.
+      - id: audio-representations.calc.v2.5
+        prompt: Whisper reads 30-second chunks with a 10 ms hop. How many frames are in one chunk?
+        answer: 3000
+        feedback: A 10 ms hop gives 100 frames per second, and 30 × 100 = 3,000 frames.

@@ -1,261 +1,463 @@
 schema_version: 0.2-draft
 lesson:
   id: next-token
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: How a language model takes its next step
   state: draft
-  summary: Predict one next token, choose it, append it, and repeat until a stated stopping rule is reached.
+  summary: Every chatbot reply is built one token at a time from a list of probabilities. Work the numbers by hand, then turn the temperature, top-k, and top-p dials yourself.
   slot: M14.8
   category: destination
   sources:
-  - title: Attention Is All You Need
-    url: https://arxiv.org/abs/1706.03762
-  - title: 'Artificial Intelligence: A Modern Approach — topic overview'
-    url: https://aima.cs.berkeley.edu/contents.html
-  - title: Speech and Language Processing — language models
-    url: https://web.stanford.edu/~jurafsky/slp3/
+    - title: The Curious Case of Neural Text Degeneration (Holtzman et al., 2019), nucleus (top-p) sampling
+      url: https://arxiv.org/abs/1904.09751
+    - title: Speech and Language Processing, 3rd edition draft, chapters on language models and transformers (Jurafsky & Martin)
+      url: https://web.stanford.edu/~jurafsky/slp3/
+    - title: Hierarchical Neural Story Generation (Fan, Lewis & Dauphin, 2018), top-k sampling
+      url: https://arxiv.org/abs/1805.04833
+    - title: Attention Is All You Need
+      url: https://arxiv.org/abs/1706.03762
 objectives:
-- id: objective.next-token
-  version: 1-draft
-  statement: An autoregressive language model predicts a distribution over the next token from context and
-    generates by repeatedly selecting and appending tokens.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - next-token.base
-  - next-token.transfer
-  prerequisites:
-  - anyOf:
-    - objective.tokenization
-  - anyOf:
-    - objective.embeddings
-  - anyOf:
-    - objective.probability
-  - anyOf:
-    - objective.powers-logs
-  - anyOf:
-    - objective.training-and-inference
+  - id: objective.next-token
+    version: 2-draft
+    statement: An autoregressive language model predicts a distribution over the next token from context and generates by repeatedly selecting and appending tokens.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - next-token.base.v2
+      - next-token.transfer.v2
+      - next-token.temperature
+    prerequisites:
+      - anyOf:
+          - objective.tokenization
+      - anyOf:
+          - objective.embeddings
+      - anyOf:
+          - objective.probability
+      - anyOf:
+          - objective.powers-logs
+      - anyOf:
+          - objective.training-and-inference
 scenes:
-- id: next-token.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.next-token
-  text_mode: 'A tokenizer represents text as a sequence of token IDs. A token can be a word, part of a word,
-    punctuation, or another text unit. The exact pieces depend on the tokenizer.
+  - id: next-token.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.next-token
+    title: One score for every token in the vocabulary
+    markdown: |-
+      You type "The garden is" and a chatbot continues "quiet in the early morning." It didn't plan that sentence. It chose "quiet," then chose again, one token at a time.
 
+      You've seen the first half of the path in this module: text becomes token IDs, and IDs fetch embedding vectors. The model mixes those vectors and ends with one number for *every* token in its vocabulary, tens of thousands of them. These raw scores are called **logits**. A higher logit means "more likely next," but logits aren't probabilities yet: they can be negative, and they don't add up to 1.
 
-    A model looks up learned representations of these IDs and computes from them. Those representations are
-    the numerical inputs to the prediction calculation.'
-  title: Words become pieces
-  markdown: 'A tokenizer represents text as a sequence of token IDs. A token can be a word, part of a word,
-    punctuation, or another text unit. The exact pieces depend on the tokenizer.
+      A model that predicts each token from the tokens before it is called **autoregressive**. The diagram shows its loop: score, turn scores into probabilities, choose, append, and go around again.
+    diagram:
+      caption: The generation loop. Everything after the logits is a choice rule; the model's weights stay fixed.
+      description: The context tokens go into the language model, which outputs one logit per vocabulary token. Softmax, with a temperature, turns the logits into probabilities. A filter such as top-k or top-p removes unlikely tokens. One token is sampled from what remains. It is appended to the context, and the loop repeats until an end token or a length limit.
+      nodes:
+        - id: context
+          label: Context tokens
+          note: '"The garden is"'
+          col: 0
+          row: 0
+          tone: data
+        - id: model
+          label: Language model
+          note: fixed weights
+          col: 1
+          row: 0
+        - id: logits
+          label: Logits
+          note: one score per token
+          col: 2
+          row: 0
+          tone: data
+        - id: softmax
+          label: Softmax ÷ temperature
+          note: scores → probabilities
+          col: 3
+          row: 0
+          tone: accent
+        - id: filter
+          label: Top-k / top-p filter
+          note: drop unlikely tokens
+          col: 3
+          row: 1
+          tone: accent
+        - id: sample
+          label: Sample one token
+          note: '"quiet"'
+          col: 2
+          row: 1
+        - id: stop
+          label: Stop?
+          note: end token or length limit
+          col: 1
+          row: 1
+          tone: warn
+      edges:
+        - from: context
+          to: model
+        - from: model
+          to: logits
+        - from: logits
+          to: softmax
+        - from: softmax
+          to: filter
+        - from: filter
+          to: sample
+        - from: sample
+          to: stop
+        - from: stop
+          to: context
+          label: no, append and repeat
+  - id: next-token.s2
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.next-token
+    title: From scores to chances with softmax
+    markdown: |-
+      Pretend the vocabulary has four entries, with "other" standing for every remaining word. After "The garden is," the model's logits are:
 
+      | | quiet | green | beautiful | other |
+      | --- | ---: | ---: | ---: | ---: |
+      | logit $z$ | 1.5 | 1.1 | 0.4 | 0.0 |
+      | $e^{z}$ | 4.482 | 3.004 | 1.492 | 1.000 |
+      | probability | 0.449 | 0.301 | 0.150 | 0.100 |
 
-    A model looks up learned representations of these IDs and computes from them. Those representations are
-    the numerical inputs to the prediction calculation.'
-- id: next-token.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.next-token
-  text_mode: 'An **autoregressive** model predicts the next piece using pieces already available. Given earlier
-    tokens, it computes a score for every candidate next token. **Softmax** turns those scores into nonnegative
-    numbers that sum to one: a probability distribution.
+      **Softmax** makes the conversion: raise $e$ to each logit, so every value is positive, then divide by the total, 9.978, so they sum to 1. The widget below shows this distribution rounded to 45%, 30%, 15%, and 10%. Pick a word to append it.
 
+      :::mixup "The model decided the next word is 'quiet.'"
+      The model only produced the four chances. "Green" is a perfectly good continuation that a sampler will pick about 30% of the time. Which word appears is decided by the choice rule, which you'll tune next.
+      :::
+    simulation: tokens
+  - id: next-token.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.next-token
+    title: Three dials on the choice
+    markdown: |-
+      **Temperature** $T$ divides every logit before softmax. With $T = 0.5$ the logits double to 3.0, 2.2, 0.8, 0.0, and "quiet" climbs from 0.449 to 0.621. With $T = 2$ they halve, and the chances flatten toward equal.
 
-    If a toy distribution gives “cat” 0.6, “dog” 0.3 and an ending marker 0.1, those are alternative next choices.
-    They describe continuation under this model, not the truth of an entire sentence.'
-  title: A distribution, not a single inevitable word
-  markdown: 'An **autoregressive** model predicts the next piece using pieces already available. Given earlier
-    tokens, it computes a score for every candidate next token. **Softmax** turns those scores into nonnegative
-    numbers that sum to one: a probability distribution.
+      :::papers Softmax with temperature
+      $$P(w_i) = \frac{e^{z_i / T}}{\sum_j e^{z_j / T}}$$
 
+      $z_i$ is token $i$'s logit and the sum runs over the whole vocabulary. At $T = 0.5$: $e^{3.0} = 20.09$ out of a total of $20.09 + 9.03 + 2.23 + 1 \approx 32.34$ gives 0.621.
+      :::
 
-    If a toy distribution gives “cat” 0.6, “dog” 0.3 and an ending marker 0.1, those are alternative next choices.
-    They describe continuation under this model, not the truth of an entire sentence.'
-  simulation: tokens
-- id: next-token.s3
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.next-token
-  text_mode: 'The system selects a token, appends it to the context, and computes the next distribution. Sampling
-    can choose different continuations; choosing the largest probability each time is called greedy decoding.
+      Two filters then remove unlikely tokens and renormalize the rest:
 
+      - **Top-k** keeps the $k$ most likely tokens (Fan et al., 2018). With $k = 2$: quiet $0.449 / 0.750 \approx 0.60$, green $\approx 0.40$.
+      - **Top-p**, or nucleus sampling (Holtzman et al., 2019), keeps the smallest set of top tokens whose probabilities add up to at least $p$. With $p = 0.8$: 0.449, then 0.750 (short), then 0.900, so three tokens stay, at about 0.50, 0.33, and 0.17.
 
-    Generation stops under a stated rule, such as selecting an end token, reaching a length limit, or receiving
-    a stop request. The current model weights can remain fixed throughout. This repeated use of the model is
-    inference, not another training update.'
-  title: Append, then repeat
-  markdown: 'The system selects a token, appends it to the context, and computes the next distribution. Sampling
-    can choose different continuations; choosing the largest probability each time is called greedy decoding.
+      :::predict The model becomes very sure: "quiet" 0.95, the rest tiny. Which filter adapts, top-k with k = 2 or top-p with p = 0.8?
+      Top-p keeps only "quiet," since 0.95 already passes 0.8. Top-k still keeps two tokens, whatever their chances. Holtzman and colleagues proposed top-p for exactly this: the set of reasonable next words grows and shrinks, and a fixed k can't follow it.
+      :::
 
+      ```python run
+      import numpy as np
 
-    Generation stops under a stated rule, such as selecting an end token, reaching a length limit, or receiving
-    a stop request. The current model weights can remain fixed throughout. This repeated use of the model is
-    inference, not another training update.'
-- id: next-token.s4
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.next-token
-  text_mode: 'For a next-token training example, earlier tokens are the input and a following token from the
-    data is the target. A loss penalizes inadequate probability on the target, and training updates parameters.
+      words = ["quiet", "green", "beautiful", "other"]  # "other" = all remaining words
+      logits = np.array([1.5, 1.1, 0.4, 0.0])          # the model's raw scores
 
+      def next_token_probs(logits, temperature=1.0, top_k=None, top_p=None):
+          z = logits / temperature
+          p = np.exp(z - z.max())
+          p = p / p.sum()                               # softmax
+          order = np.argsort(-p)                        # most likely first
+          keep = np.zeros_like(p, dtype=bool)
+          n = len(p) if top_k is None else top_k
+          if top_p is not None:                         # smallest set reaching top_p
+              n = min(n, int(np.searchsorted(np.cumsum(p[order]), top_p) + 1))
+          keep[order[:n]] = True
+          p = np.where(keep, p, 0.0)
+          return p / p.sum()                            # renormalize what's left
 
-    Later adaptation can change behavior using demonstrations or other signals. The core distinction remains:
-    inference uses the stored parameters, while training adjusts them.'
-  title: Training gives the task an answer
-  markdown: 'For a next-token training example, earlier tokens are the input and a following token from the
-    data is the target. A loss penalizes inadequate probability on the target, and training updates parameters.
+      rng = np.random.default_rng(0)
+      for settings in [dict(), dict(temperature=0.5), dict(temperature=2.0),
+                       dict(top_k=2), dict(top_p=0.8)]:
+          p = next_token_probs(logits, **settings)
+          draws = rng.choice(words, size=1000, p=p)
+          counts = {w: int((draws == w).sum()) for w in words}
+          print(f"{str(settings):22}", np.round(p, 3), counts)
+      ```
 
+      Each line shows the probabilities and how often 1,000 draws picked each word. Try `temperature=0.1`, then change the logit for "other" to 1.4.
+  - id: next-token.s4
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.next-token
+    title: Append, repeat, and know when to stop
+    markdown: |-
+      Say the sampler picks "quiet." It's appended, the context becomes "The garden is quiet," and the model scores every token again, now given the longer context. Generation ends when the model picks a special end-of-text token, when a length limit is reached, or when the text hits a stop sequence you set.
 
-    Later adaptation can change behavior using demonstrations or other signals. The core distinction remains:
-    inference uses the stored parameters, while training adjusts them.'
-- id: next-token.s5
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.next-token
-  text_mode: 'Trace **text → tokens → representations → scores → probabilities → selected token → longer context**.
-    Then distinguish this request from training, which changes model settings using examples and a loss.
+      Always taking the top token is **greedy decoding**. It's predictable, which suits tasks with one right answer, like writing code. For long, open-ended text, Holtzman and colleagues found that always choosing the likeliest words tends to produce bland, repetitive text, which is why chat systems usually sample.
 
+      None of this changes the model. The weights stay fixed through every step; using a trained model this way is **inference**.
+  - id: next-token.s5
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.next-token
+    title: Where the probabilities came from
+    markdown: |-
+      Training gives the model its logits. Take a sentence from the training text, "The garden is quiet." At the position after "The garden is," the right answer is "quiet," and the model is scored on the probability it gave it. The loss is the negative log of that probability: $-\ln 0.449 \approx 0.80$. Had it given "quiet" 0.9, the loss would be only 0.11. Training nudges the weights to lower this loss at every position, across billions of sentences.
 
-    A fluent continuation can contain an unsupported claim because predicting text and checking evidence are
-    different jobs. The later transformer, pretraining, post-training, retrieval and serving lessons open each
-    part of this sequence in more detail.'
-  title: What you can now explain
-  markdown: 'Trace **text → tokens → representations → scores → probabilities → selected token → longer context**.
-    Then distinguish this request from training, which changes model settings using examples and a loss.
+      That's the whole goal: predict the next token of real text. It makes a model fluent, but fluency and truth are different things. A model can give high probability to a common mistake because the mistake is common in text. When accuracy matters, check the claims against a source. Later lessons show how retrieval, post-training, and decoding choices build on this loop.
+  - id: next-token.extension-perplexity
+    title: Summarize prediction with perplexity
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.next-token
+    markdown: |-
+      As in the counting lesson, **perplexity** turns the average loss over a test text into one number. If a model gives the actual next tokens probabilities 0.5, 0.25, and 0.125, the losses are 0.693, 1.386, and 2.079, which average to 1.386, and
 
+      $$\text{PP} = e^{\text{average loss}} = e^{1.386} = 4.$$
 
-    A fluent continuation can contain an unsupported claim because predicting text and checking evidence are
-    different jobs. The later transformer, pretraining, post-training, retrieval and serving lessons open each
-    part of this sequence in more detail.'
-- id: next-token.extension-perplexity
-  title: Summarize prediction with perplexity
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.next-token
-  markdown: 'For each observed target token, negative log probability measures how surprised the model was.
-    Average this over the evaluated tokens. With base-two logarithms, perplexity is 2 raised to that average
-    loss: an average of 2 bits gives perplexity 4. With natural logarithms, use the exponential of the average
-    instead.
-
-
-    Perplexity summarizes predictive uncertainty under the specified dataset and context. It is not the number
-    of words the model understands or a factuality score. Compare it only with compatible tokenization, preprocessing,
-    masking, and averaging conventions. A model can improve next-token prediction while still failing a particular
-    reasoning or safety task.'
-  text_mode: 'For each observed target token, negative log probability measures how surprised the model was.
-    Average this over the evaluated tokens. With base-two logarithms, perplexity is 2 raised to that average
-    loss: an average of 2 bits gives perplexity 4. With natural logarithms, use the exponential of the average
-    instead.
-
-
-    Perplexity summarizes predictive uncertainty under the specified dataset and context. It is not the number
-    of words the model understands or a factuality score. Compare it only with compatible tokenization, preprocessing,
-    masking, and averaging conventions. A model can improve next-token prediction while still failing a particular
-    reasoning or safety task.'
-  bridges:
-  - information-theory
-- id: next-token.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.next-token
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Predict the next-token probabilities, select a token, append it, and repeat. This generation loop
-    can use fixed weights; training is the separate process that adjusts those weights.
-- id: next-token.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.next-token
-  markdown: Predict the next-token probabilities, select a token, append it, and repeat. This generation loop
-    can use fixed weights; training is the separate process that adjusts those weights.
-  text_mode: Predict the next-token probabilities, select a token, append it, and repeat. This generation loop
-    can use fixed weights; training is the separate process that adjusts those weights.
+      The model was as unsure as if it chose among 4 equally likely tokens each time. Lower is better, and, as the tradeoffs lesson showed, compare perplexities only between models that use the same tokenizer.
+    bridges:
+      - information-theory
+  - id: next-token.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.next-token
+    markdown: Compute some softmax probabilities at different temperatures, then choose settings for a SQL helper and a story writer, and explain a bot that never answers the same way twice.
+    takeaway: |-
+      At each step the model scores every token, softmax turns the scores into probabilities, and a choice rule shaped by temperature, top-k, or top-p picks one to append. The weights stay fixed; training is what set them.
+  - id: next-token.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.next-token
+    markdown: |-
+      Predict the next-token probabilities, select a token, append it, and repeat. This generation loop can use fixed weights; training is the separate process that adjusts those weights.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - next-token.s1
-    - next-token.s2
-    - next-token.s3
-    - next-token.s4
-    - next-token.s5
-    - next-token.extension-perplexity
-    - next-token.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - next-token.s1
+        - next-token.s2
+        - next-token.s3
+        - next-token.s4
+        - next-token.s5
+        - next-token.extension-perplexity
+        - next-token.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     next-token.recap: next-token.check
 assessment_families:
-- id: next-token.base
-  objective_ref: objective.next-token
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: An autoregressive language model predicts a distribution over the next token from context and generates
-    by repeatedly selecting and appending tokens.
-  variants:
-  - id: next-token.base.1
-    prompt: What does an autoregressive language model predict at one generation step?
-    options:
-    - id: a
-      text: One guaranteed true sentence.
-    - id: b
-      text: A newly trained set of weights for every word.
-    - id: correct
-      text: A distribution over possible next tokens given context.
-    answer: correct
-    feedback: A distribution over possible next tokens given context.
-  - id: next-token.base.2
-    prompt: What is a token?
-    options:
-    - id: b
-      text: Always a complete factual statement.
-    - id: correct
-      text: A unit in a particular text representation, which may be part of a word.
-    - id: a
-      text: Always exactly one English word.
-    answer: correct
-    feedback: A unit in a particular text representation, which may be part of a word.
-- id: next-token.transfer
-  objective_ref: objective.next-token
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: An autoregressive language model predicts a distribution over the next token from context and generates
-    by repeatedly selecting and appending tokens.
-  variants:
-  - id: next-token.transfer.1
-    prompt: The system selects a token and appends it. What happens next in ordinary autoregressive generation?
-    options:
-    - id: b
-      text: It must end the response immediately.
-    - id: correct
-      text: It computes another next-token distribution from the extended context.
-    - id: a
-      text: It necessarily retrains on the user’s message.
-    answer: correct
-    feedback: It computes another next-token distribution from the extended context.
-  - id: next-token.transfer.2
-    prompt: A token has high model probability. Does that certify a factual statement?
-    options:
-    - id: correct
-      text: No. Continuation probability is not factual verification.
-    - id: a
-      text: Yes. Softmax is a fact-checking algorithm.
-    - id: b
-      text: Yes. Sampling eliminates unsupported claims.
-    answer: correct
-    feedback: No. Continuation probability is not factual verification.
+  - id: next-token.base
+    objective_ref: objective.next-token
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: An autoregressive language model predicts a distribution over the next token from context and generates by repeatedly selecting and appending tokens.
+    variants:
+      - id: next-token.base.1
+        retired: true
+        prompt: What does an autoregressive language model predict at one generation step?
+        options:
+          - id: a
+            text: One guaranteed true sentence.
+          - id: b
+            text: A newly trained set of weights for every word.
+          - id: correct
+            text: A distribution over possible next tokens given context.
+        answer: correct
+        feedback: A distribution over possible next tokens given context.
+      - id: next-token.base.2
+        retired: true
+        prompt: What is a token?
+        options:
+          - id: b
+            text: Always a complete factual statement.
+          - id: correct
+            text: A unit in a particular text representation, which may be part of a word.
+          - id: a
+            text: Always exactly one English word.
+        answer: correct
+        feedback: A unit in a particular text representation, which may be part of a word.
+  - id: next-token.transfer
+    objective_ref: objective.next-token
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: An autoregressive language model predicts a distribution over the next token from context and generates by repeatedly selecting and appending tokens.
+    variants:
+      - id: next-token.transfer.1
+        retired: true
+        prompt: The system selects a token and appends it. What happens next in ordinary autoregressive generation?
+        options:
+          - id: b
+            text: It must end the response immediately.
+          - id: correct
+            text: It computes another next-token distribution from the extended context.
+          - id: a
+            text: It necessarily retrains on the user’s message.
+        answer: correct
+        feedback: It computes another next-token distribution from the extended context.
+      - id: next-token.transfer.2
+        retired: true
+        prompt: A token has high model probability. Does that certify a factual statement?
+        options:
+          - id: correct
+            text: No. Continuation probability is not factual verification.
+          - id: a
+            text: Yes. Softmax is a fact-checking algorithm.
+          - id: b
+            text: Yes. Sampling eliminates unsupported claims.
+        answer: correct
+        feedback: No. Continuation probability is not factual verification.
+  - id: next-token.base.v2
+    objective_ref: objective.next-token
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Softmax exponentiates and normalizes, so it keeps the ranking but not the ratios. Temperature below 1 sharpens and above 1 flattens; top-k keeps a fixed count, top-p a probability total.
+    remediation_scene: next-token.s3
+    variants:
+      - id: next-token.base.v2.1
+        prompt: A model's logits for three tokens are 3.0, 1.0, and 1.0. What does softmax give?
+        options:
+          - id: b
+            text: 0.6, 0.2, and 0.2, in proportion to the scores
+          - id: a
+            text: About 0.79 for the first and 0.11 for each other
+          - id: c
+            text: 1.0 for the first and 0 for the others
+        answer: a
+        feedback: e³ ≈ 20.09 and e¹ ≈ 2.72, so the first gets 20.09 / 25.52 ≈ 0.79 and the others ≈ 0.11 each. Softmax exponentiates, so it isn't proportional to the raw scores, and it never gives exactly 0.
+      - id: next-token.base.v2.2
+        prompt: You lower the sampling temperature from 1.0 to 0.5. What happens to the next-token distribution?
+        options:
+          - id: c
+            text: It flattens, with every token moving toward equal chances
+          - id: b
+            text: It reorders, so less likely tokens move up the ranking
+          - id: a
+            text: It sharpens, with the top token gaining from the rest
+        answer: a
+        feedback: Dividing logits by 0.5 doubles the gaps between them, so after softmax the leader takes more of the probability. The ranking never changes for a positive temperature; raising T is what flattens.
+      - id: next-token.base.v2.3
+        prompt: Sorted next-token probabilities are 0.5, 0.3, 0.15, and 0.05. With top-p = 0.9, which tokens stay eligible?
+        options:
+          - id: a
+            text: The first three, whose running total 0.95 first reaches 0.9
+          - id: b
+            text: The first two, since their total of 0.8 is closest to 0.9
+          - id: c
+            text: All four, since top-p rescales the chances without removing any
+        answer: a
+        feedback: The running totals are 0.5, 0.8, 0.95; top-p stops at the first total that reaches p, so three tokens stay and are renormalized. Stopping at 0.8 would fall short of 0.9.
+      - id: next-token.base.v2.4
+        prompt: During ordinary generation, a token has just been sampled. What happens next?
+        options:
+          - id: b
+            text: The model updates its weights to learn the chosen token
+          - id: a
+            text: It's appended, and the model scores the longer context
+          - id: c
+            text: The model predicts all the remaining tokens in one pass
+        answer: a
+        feedback: Autoregressive generation is a loop of score, choose, append. Weights change only in training, and each new token depends on the ones chosen before it, so they can't all be predicted at once.
+      - id: next-token.base.v2.5
+        prompt: At the position after "The garden is," the training text says "quiet" and the model gave "quiet" probability 0.25. What is the loss at this position?
+        options:
+          - id: a
+            text: −ln 0.25 ≈ 1.39, the negative log of the right token's chance
+          - id: b
+            text: 1 − 0.25 = 0.75, the chance given to all the wrong tokens
+          - id: c
+            text: 0.25, since the loss equals the right token's probability
+        answer: a
+        feedback: Next-token training uses the negative log probability of the actual next token, −ln 0.25 ≈ 1.39. It grows sharply as that probability approaches 0. A loss equal to the probability would reward being wrong.
+  - id: next-token.transfer.v2
+    objective_ref: objective.next-token
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Separate the model's probabilities from the rule that picks a token. Ask what the task needs, one reliable answer or variety, and whether the settings adapt to how sure the model is.
+    remediation_scene: next-token.s4
+    variants:
+      - id: next-token.transfer.v2.1
+        prompt: A support bot gives slightly different answers each time it's asked the same question, and its weights haven't changed. What explains this?
+        options:
+          - id: a
+            text: It samples from the probabilities, so the draws differ
+          - id: b
+            text: It retrains on each new question before it answers
+          - id: c
+            text: Its tokenizer splits the question differently each time
+        answer: a
+        feedback: With sampling, the same distribution can yield different tokens, and one different token changes everything after it. Weights don't change during use, and a tokenizer splits the same text the same way every time.
+      - id: next-token.transfer.v2.2
+        prompt: A SQL-writing assistant must produce queries where one wrong token breaks the result. Which decoding setting fits best?
+        options:
+          - id: b
+            text: A high temperature, to explore more creative queries
+          - id: a
+            text: A low temperature or greedy, to keep the likeliest tokens
+          - id: c
+            text: Top-k with a very large k, to keep more options open
+        answer: a
+        feedback: When there's one right answer, you want the model's best guess at each step, so sharpen or go greedy. High temperature and large k let unlikely, often wrong, tokens through.
+      - id: next-token.transfer.v2.3
+        prompt: A story app samples with top-k = 5. When the model is confident, odd words sometimes slip in; when it's unsure, the stories feel narrow. What would switching to top-p change?
+        options:
+          - id: c
+            text: It would raise the temperature each time the model is unsure
+          - id: b
+            text: It would keep exactly the five most likely tokens at each step
+          - id: a
+            text: It would keep fewer tokens when confident and more when unsure
+        answer: a
+        feedback: Top-p keeps however many tokens it takes to reach the probability total, so the set shrinks when one token dominates and grows when many are plausible. A fixed k can't adapt, and top-p doesn't touch the temperature.
+      - id: next-token.transfer.v2.4
+        prompt: A model gives the next token "1912" probability 0.92 after "The Titanic sank in". What does the 0.92 measure?
+        options:
+          - id: b
+            text: A 92% chance that the date is historically correct
+          - id: c
+            text: The share of training documents that contain this sentence
+          - id: a
+            text: How likely that continuation is under the model
+        answer: a
+        feedback: The probability describes the model's prediction of text. Here the continuation happens to be true, but a common misconception can score just as high, and the number isn't a count of documents.
+  - id: next-token.temperature
+    objective_ref: objective.next-token
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Divide every logit by T, raise e to each result, then divide the first token's value by the total.
+    remediation_scene: next-token.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: next-token.temperature.1
+        prompt: Two tokens have logits 2 and 0. At temperature T = 2, what probability does softmax give the first token?
+        answer: 0.731
+        feedback: The logits become 1 and 0. e¹ ≈ 2.718 and e⁰ = 1, so the first token gets 2.718 / 3.718 ≈ 0.731, down from 0.881 at T = 1.
+      - id: next-token.temperature.2
+        prompt: Two tokens have logits 1 and 0. At temperature T = 0.5, what probability does softmax give the first token?
+        answer: 0.881
+        feedback: The logits become 2 and 0. e² ≈ 7.389, so the first token gets 7.389 / 8.389 ≈ 0.881, up from 0.731 at T = 1.
+      - id: next-token.temperature.3
+        prompt: Three tokens have logits 2, 1, and 0. At temperature T = 1, what probability does softmax give the first token?
+        answer: 0.665
+        feedback: e² ≈ 7.389, e¹ ≈ 2.718, e⁰ = 1, total 11.107, so the first token gets 7.389 / 11.107 ≈ 0.665.
+      - id: next-token.temperature.4
+        prompt: Three tokens have logits 2, 1, and 0. At temperature T = 0.5, what probability does softmax give the first token?
+        answer: 0.867
+        feedback: The logits become 4, 2, and 0. e⁴ ≈ 54.60, e² ≈ 7.39, e⁰ = 1, total 62.99, so the first token gets ≈ 0.867, up from 0.665 at T = 1.
+      - id: next-token.temperature.5
+        prompt: Three tokens have logits 1, 0, and 0. At temperature T = 1, what probability does softmax give the first token?
+        answer: 0.576
+        feedback: e¹ ≈ 2.718 and each e⁰ = 1, so the first token gets 2.718 / 4.718 ≈ 0.576.

@@ -1,214 +1,433 @@
 schema_version: 0.2-draft
 lesson:
   id: sparse-coding-and-self-organizing-maps
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn a dictionary or a neighborhood-organized representation
   state: draft
-  summary: Represent an input with a few building blocks or organize similar inputs on a map.
+  summary: Ask a model to describe photos using as few building blocks as possible, and edge detectors like those in your visual cortex appear on their own. Then make a map that sorts itself.
   slot: M37.3
   category: learning
   sources:
-  - title: Sparse Coding with an Overcomplete Basis Set
-    url: https://doi.org/10.1016/S0042-6989(97)00169-7
-  - title: Self-Organized Formation of Topologically Correct Feature Maps
-    url: https://doi.org/10.1007/BF00337288
+    - title: "Emergence of simple-cell receptive field properties by learning a sparse code for natural images (Olshausen & Field, 1996)"
+      url: https://doi.org/10.1038/381607a0
+    - title: "Sparse Coding with an Overcomplete Basis Set: A Strategy Employed by V1? (Olshausen & Field, 1997)"
+      url: https://doi.org/10.1016/S0042-6989(97)00169-7
+    - title: "Self-Organized Formation of Topologically Correct Feature Maps (Kohonen, 1982)"
+      url: https://doi.org/10.1007/BF00337288
+    - title: "Towards Monosemanticity: Decomposing Language Models With Dictionary Learning (Bricken et al., 2023)"
+      url: https://transformer-circuits.pub/2023/monosemantic-features
 objectives:
-- id: objective.sparse-coding-and-self-organizing-maps
-  version: 1-draft
-  statement: Sparse coding reconstructs inputs with few active dictionary coefficients, while self-organizing
-    maps update a winning prototype and its neighbors; their objectives and representation meanings differ.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - sparse-coding-and-self-organizing-maps.base
-  - sparse-coding-and-self-organizing-maps.transfer
-  prerequisites:
-  - anyOf:
-    - objective.pca-and-factorization
-  - anyOf:
-    - objective.hebbian-and-local-learning
+  - id: objective.sparse-coding-and-self-organizing-maps
+    version: 2-draft
+    statement: Sparse coding reconstructs inputs with few active dictionary coefficients, while self-organizing maps update a winning prototype and its neighbors; their objectives and representation meanings differ.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - sparse-coding-and-self-organizing-maps.base.v2
+      - sparse-coding-and-self-organizing-maps.transfer.v2
+      - sparse-coding-and-self-organizing-maps.calculate
+    prerequisites:
+      - anyOf:
+          - objective.pca-and-factorization
+      - anyOf:
+          - objective.hebbian-and-local-learning
 scenes:
-- id: sparse-coding-and-self-organizing-maps.s1
-  title: Reconstruct with a sparse dictionary
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.sparse-coding-and-self-organizing-maps
-  markdown: '**Sparse coding** represents an input as a weighted combination of building blocks called **dictionary
-    elements**. Training balances reconstruction with a penalty that favors relatively few active coefficients.
+  - id: sparse-coding-and-self-organizing-maps.s1
+    title: What is a visual-cortex cell looking for?
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.sparse-coding-and-self-organizing-maps
+    markdown: |-
+      In 1959 David Hubel and Torsten Wiesel found that many cells in the cat's primary visual cortex (V1) fire for a short edge at one particular angle, in one small patch of the visual field, and barely otherwise. The work shared a 1981 Nobel Prize. But *why* edges?
 
+      In 1996 Bruno Olshausen and David Field proposed an answer. Cut thousands of small patches from photos of natural scenes. Ask a model to rebuild each patch as a weighted sum of building blocks, using as **few** blocks as possible per patch. After training, the blocks looked like what V1 cells respond to: small, oriented edges and bars.
 
-    A dictionary can be **overcomplete**, meaning it has more elements than the input has dimensions. This
-    offers alternative descriptions of the same input, unlike ordinary PCA''s orthogonal low-dimensional basis.
-    Finding coefficients for one input and learning the dictionary from many inputs are separate optimization
-    problems.'
-  text_mode: '**Sparse coding** represents an input as a weighted combination of building blocks called **dictionary
-    elements**. Training balances reconstruction with a penalty that favors relatively few active coefficients.
+      That method is **sparse coding**. The building blocks are **atoms** (columns $d_i$ of a **dictionary** $D$), and the weights for one patch form its **code** $a$. "Sparse" means most entries of $a$ are exactly zero. The dictionary may be **overcomplete**, with more atoms than the patch has pixels. That's unlike PCA from module 8, which keeps *fewer* directions than pixels and uses all of them for every input.
 
+      :::mixup "A sparse code compresses the input into fewer numbers."
+      An overcomplete code has *more* numbers than the input, not fewer. What's small is how many of them are active. Think of a large vocabulary: a rich dictionary lets you describe each scene in a few precise words.
+      :::
+    bridges: []
+  - id: sparse-coding-and-self-organizing-maps.s2
+    title: Many perfect codes, one sparse one
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sparse-coding-and-self-organizing-maps
+    markdown: |-
+      Shrink the photo patches to 2 × 2 pixels, listed as (top-left, top-right, bottom-left, bottom-right). Give the dictionary six atoms, all the same length: top bar $(1,1,0,0)$, bottom bar $(0,0,1,1)$, left bar $(1,0,1,0)$, right bar $(0,1,0,1)$, and two diagonals $(1,0,0,1)$ and $(0,1,1,0)$. Six atoms for four pixels: overcomplete.
 
-    A dictionary can be **overcomplete**, meaning it has more elements than the input has dimensions. This
-    offers alternative descriptions of the same input, unlike ordinary PCA''s orthogonal low-dimensional basis.
-    Finding coefficients for one input and learning the dictionary from many inputs are separate optimization
-    problems.'
-  bridges: []
-- id: sparse-coding-and-self-organizing-maps.s2
-  title: Trace a small representation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sparse-coding-and-self-organizing-maps
-  markdown: 'Imagine dictionary elements representing horizontal and vertical strokes. A corner can use both,
-    while a horizontal line mainly uses one. Actual learned elements need not correspond to named concepts
-    like these.
+      The patch is a bright top edge, $x = (1, 1, 0, 0)$. Three codes rebuild it perfectly:
 
+      | Code | Atoms used | Sum of absolute coefficients |
+      | --- | --- | ---: |
+      | A: 1 × top | 1 | 1 |
+      | B: least squares, no penalty: 0.67 top, −0.33 bottom, 0.17 each for the rest | 6 | 1.67 |
+      | C: 1 × left + 1 × right − 1 × bottom | 3 | 3 |
 
-    For a numerical example, use dictionary vectors [1, 0] and [0, 1]. Input [2, 0] can be reconstructed with
-    coefficients [2, 0], so only the first element is active. Input [2, 3] uses both. Reconstruction and sparsity
-    penalties determine which description the model prefers.'
-  text_mode: 'Imagine dictionary elements representing horizontal and vertical strokes. A corner can use both,
-    while a horizontal line mainly uses one. Actual learned elements need not correspond to named concepts
-    like these.
+      Sparse coding chooses among them with a cost that adds a penalty on the code's size:
 
+      $$E(a) = \tfrac{1}{2}\,\lVert x - D a \rVert^2 + \lambda \sum_i |a_i|$$
 
-    For a numerical example, use dictionary vectors [1, 0] and [0, 1]. Input [2, 0] can be reconstructed with
-    coefficients [2, 0], so only the first element is active. Input [2, 3] uses both. Reconstruction and sparsity
-    penalties determine which description the model prefers.'
-  bridges: []
-- id: sparse-coding-and-self-organizing-maps.s3
-  title: Organize prototypes on a map
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sparse-coding-and-self-organizing-maps
-  markdown: 'A **self-organizing map** arranges representative vectors, or **prototypes**, on a grid. For each
-    input, it finds the closest prototype and moves both that winner and nearby map units toward the input.
+      With $\lambda = 0.1$, all three rebuild perfectly, so only the penalty differs: A costs 0.1, B costs 0.167, and C costs 0.3. Code A wins. The exact minimum actually shrinks A's coefficient a little, to 0.95, because a tiny reconstruction error ($\tfrac12 \times 2 \times 0.05^2 = 0.0025$) buys a larger drop in penalty ($0.1 \times 0.05 = 0.005$).
 
+      :::predict The patch is now a bright corner, (1, 1, 1, 0). Which atoms turn on?
+      No single atom fits, so the code needs several. Three work: top + left + the "/" diagonal gives $(2, 2, 2, 0)$, so half of each rebuilds the corner. The program in the next scene finds exactly those three, each shrunk from 0.5 to 0.475.
+      :::
+  - id: sparse-coding-and-self-organizing-maps.ista
+    title: Find the code, then learn the atoms
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sparse-coding-and-self-organizing-maps
+    markdown: |-
+      Finding one patch's code is a small optimization. A standard solver, **ISTA** (iterative shrinkage-thresholding), repeats two moves: take a gradient step that improves the fit, then pull every coefficient toward zero by a fixed amount, setting any that cross zero to exactly zero.
 
-    If a winning prototype is at 2 and the input is 6, a learning rate of 0.25 moves it to 2 + 0.25 × (6 −
-    2) = 3. Neighboring prototypes move according to their neighborhood weights.
+      ```python run
+      import numpy as np
 
+      # 2 x 2 patches, pixels in order (top-left, top-right, bottom-left, bottom-right)
+      atoms = {"top": [1, 1, 0, 0], "bottom": [0, 0, 1, 1], "left": [1, 0, 1, 0],
+               "right": [0, 1, 0, 1], "diag \\": [1, 0, 0, 1], "diag /": [0, 1, 1, 0]}
+      D = np.array(list(atoms.values()), dtype=float).T     # one atom per column
+      lam = 0.1                                             # sparsity penalty
+      step = 1 / np.linalg.eigvalsh(D.T @ D).max()          # a safe step size
 
-    The learning rate and neighborhood radius typically change during training. The map tries to preserve useful
-    neighborhood relationships, but its layout can distort the original data.'
-  text_mode: 'A **self-organizing map** arranges representative vectors, or **prototypes**, on a grid. For
-    each input, it finds the closest prototype and moves both that winner and nearby map units toward the input.
+      def sparse_code(x, iters=500):                        # ISTA
+          a = np.zeros(D.shape[1])
+          for _ in range(iters):
+              a = a + step * D.T @ (x - D @ a)              # move toward a better fit
+              a = np.sign(a) * np.maximum(np.abs(a) - step * lam, 0)   # shrink; small ones hit 0
+          return a
 
+      for name, x in [("top edge", [1, 1, 0, 0]), ("corner", [1, 1, 1, 0])]:
+          x = np.array(x, dtype=float)
+          a = sparse_code(x)
+          dense = np.linalg.pinv(D) @ x                     # least squares, no penalty
+          active = {k: round(float(v), 3) for k, v in zip(atoms, a) if abs(v) > 1e-6}
+          print(f"{name}: sparse code {active}, rebuilt {np.round(D @ a, 3)}")
+          print(f"   atoms used: sparse {len(active)}, least squares {int((np.abs(dense) > 1e-6).sum())}")
+      ```
 
-    If a winning prototype is at 2 and the input is 6, a learning rate of 0.25 moves it to 2 + 0.25 × (6 −
-    2) = 3. Neighboring prototypes move according to their neighborhood weights.
+      The edge uses one atom where least squares used all six. Set `lam = 0.5` and the edge's coefficient drops to 0.75: stronger sparsity costs accuracy.
 
+      Learning the dictionary alternates with this. Code a batch of patches, then nudge each atom to shrink what's left over: $\Delta D = \eta\,(x - D a)\,a^\top$. That's a Hebbian-style product, as in this module's first lesson: the leftover error at each pixel times the atom's activity. Olshausen and Field used this loop on natural images; the edges emerged.
 
-    The learning rate and neighborhood radius typically change during training. The map tries to preserve useful
-    neighborhood relationships, but its layout can distort the original data.'
-  bridges: []
-- id: sparse-coding-and-self-organizing-maps.s4
-  title: Compare what the visualization means
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sparse-coding-and-self-organizing-maps
-  markdown: Sparse codes support reconstruction or downstream tasks; a self-organizing map provides an organized
-    prototype layout. Neither automatically discovers the true causal categories of the world. Evaluate reconstruction,
-    neighborhood preservation, stability, and task usefulness rather than interpreting a visually neat map
-    as proof of structure.
-  text_mode: Sparse codes support reconstruction or downstream tasks; a self-organizing map provides an organized
-    prototype layout. Neither automatically discovers the true causal categories of the world. Evaluate reconstruction,
-    neighborhood preservation, stability, and task usefulness rather than interpreting a visually neat map
-    as proof of structure.
-  bridges: []
-- id: sparse-coding-and-self-organizing-maps.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.sparse-coding-and-self-organizing-maps
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Sparse coding reconstructs an input from selected dictionary elements. A self-organizing map moves
-    prototypes and their neighbors to organize similar inputs.
-- id: sparse-coding-and-self-organizing-maps.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.sparse-coding-and-self-organizing-maps
-  markdown: Sparse coding reconstructs an input from selected dictionary elements. A self-organizing map moves
-    prototypes and their neighbors to organize similar inputs.
-  text_mode: Sparse coding reconstructs an input from selected dictionary elements. A self-organizing map moves
-    prototypes and their neighbors to organize similar inputs.
+      :::papers Olshausen & Field (1996)
+      They minimized, over codes $a$ for each image patch $x$ and over the dictionary $D$,
+
+      $$E = \big\lVert x - D a\big\rVert^2 + \lambda \sum_i S(a_i)$$
+
+      where $S$ is a penalty that grows with each coefficient's size. The absolute value, $S(a) = |a|$, is the version most used today. In our example $x$ is the 2 × 2 patch, $D$ has six columns, and $\lambda = 0.1$.
+      :::
+  - id: sparse-coding-and-self-organizing-maps.s3
+    title: A map that shrinks its neighborhoods
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sparse-coding-and-self-organizing-maps
+    markdown: |-
+      Hubel and Wiesel also found that neighboring V1 cells tend to prefer similar angles. Christoph von der Malsburg (1973) and Teuvo Kohonen (1982) showed that simple competitive rules can produce such orderly maps. Kohonen's **self-organizing map (SOM)**, from module 8's lesson on reading data maps, moves the best-matching prototype and its grid neighbors toward each input.
+
+      That lesson used a fixed neighbor rate. In practice, a unit $d$ grid steps from the winner moves by $\alpha\, h(d)\,(x - w)$, where $h$ is a Gaussian:
+
+      $$h(d) = e^{-d^2 / (2\sigma^2)}$$
+
+      Here $\sigma$ is the neighborhood radius, and it **shrinks** during training. Take module 8's neighbor at 5, input 6, and $\alpha = 0.25$, one step from the winner:
+
+      | Radius $\sigma$ | $h(1)$ | $h(2)$ | Neighbor moves to |
+      | ---: | ---: | ---: | ---: |
+      | 2 (early) | 0.882 | 0.607 | $5 + 0.25 \times 0.882 \times 1 = 5.22$ |
+      | 0.5 (late) | 0.135 | 0.0003 | $5 + 0.25 \times 0.135 \times 1 = 5.03$ |
+
+      Early on, big neighborhoods drag whole stretches of the map together, sorting it globally. Later, small neighborhoods let each unit fine-tune. The program trains a 10-unit, one-dimensional map on numbers between 0 and 1, from 20 random starts, with and without shrinking:
+
+      ```python run
+      import numpy as np
+
+      def train_som(shrink, seed=0, steps=2000, units=10):
+          rng = np.random.default_rng(seed)
+          w = rng.random(units)                      # random starting prototypes in [0, 1]
+          grid = np.arange(units)                    # each unit's position on the map
+          for t in range(steps):
+              frac = t / steps
+              sigma = 3 * (0.1 / 3) ** frac if shrink else 0.3   # radius 3 -> 0.1, or fixed 0.3
+              rate = 0.5 * (0.02 / 0.5) ** frac      # learning rate 0.5 -> 0.02
+              x = rng.random()                       # one input between 0 and 1
+              win = np.argmin(np.abs(w - x))         # best-matching unit
+              h = np.exp(-(grid - win) ** 2 / (2 * sigma ** 2))  # neighborhood weights
+              w += rate * h * (x - w)
+          return w
+
+      def kinks(w):                                  # places where the map reverses direction
+          d = np.sign(np.diff(w))
+          return int((d[1:] != d[:-1]).sum())
+
+      for shrink in (True, False):
+          label = "shrinking radius" if shrink else "fixed radius 0.3"
+          print(f"{label}: {np.round(train_som(shrink), 2)}")
+          print(f"   maps with kinks, out of 20 seeds: {sum(kinks(train_som(shrink, s)) > 0 for s in range(20))}")
+      ```
+
+      With shrinking, every run ends sorted, from 0.05 to 0.95. With a small fixed radius, all 20 runs end with kinks: stretches that run backward, locked in because no big neighborhood ever pulled them straight. Now change the fixed radius from 0.3 to 3: the map sorts, but the prototypes stay bunched between 0.21 and 0.73, because every update drags all the units together.
+  - id: sparse-coding-and-self-organizing-maps.s4
+    title: Where these ideas work today
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sparse-coding-and-self-organizing-maps
+    markdown: |-
+      The two methods answer different questions:
+
+      | | Sparse coding | Self-organizing map |
+      | --- | --- | --- |
+      | Each input becomes | A few active atoms out of many | One winning unit on a grid |
+      | Trained to | Rebuild inputs cheaply | Keep similar inputs on nearby units |
+      | Read the result as | Which parts make up this input? | Which region of the map is it in? |
+
+      Sparse coding has had a striking second life. Language models appear to pack more concepts than they have neurons into each layer's activations. In 2023 researchers at Anthropic trained **sparse autoencoders**, a form of dictionary learning, on a one-layer transformer's activations. Many of the thousands of learned atoms each tracked one recognizable concept, such as Arabic script or DNA sequences. Module 28's lesson on mechanistic interpretability shows how scaled-up versions are used on large models.
+
+      Self-organizing maps are now mostly an exploration tool, handy when you want a fixed grid of prototypes; for plain visualization, most people use t-SNE or UMAP. So to find the few concepts active inside a model's layer, use a sparse dictionary. To lay out a thousand weather stations on a grid where similar climates sit together, use a SOM.
+  - id: sparse-coding-and-self-organizing-maps.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.sparse-coding-and-self-organizing-maps
+    markdown: Sparsity costs, shrinkage steps, and neighborhood weights to compute, plus an audio dictionary, a language-model probe, and a map with a twist, test whether you can predict what each method learns.
+    takeaway: |-
+      Sparse coding rebuilds each input from a few atoms of a large dictionary, and on natural images the atoms become edge detectors. A self-organizing map pulls a winner and its neighbors toward each input, shrinking the neighborhood so the map sorts first and fine-tunes later.
+  - id: sparse-coding-and-self-organizing-maps.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.sparse-coding-and-self-organizing-maps
+    markdown: |-
+      Sparse coding reconstructs an input from selected dictionary elements. A self-organizing map moves prototypes and their neighbors to organize similar inputs.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - sparse-coding-and-self-organizing-maps.s1
-    - sparse-coding-and-self-organizing-maps.s2
-    - sparse-coding-and-self-organizing-maps.s3
-    - sparse-coding-and-self-organizing-maps.s4
-    - sparse-coding-and-self-organizing-maps.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - sparse-coding-and-self-organizing-maps.s1
+        - sparse-coding-and-self-organizing-maps.s2
+        - sparse-coding-and-self-organizing-maps.ista
+        - sparse-coding-and-self-organizing-maps.s3
+        - sparse-coding-and-self-organizing-maps.s4
+        - sparse-coding-and-self-organizing-maps.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     sparse-coding-and-self-organizing-maps.recap: sparse-coding-and-self-organizing-maps.check
 assessment_families:
-- id: sparse-coding-and-self-organizing-maps.base
-  objective_ref: objective.sparse-coding-and-self-organizing-maps
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a small representation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: sparse-coding-and-self-organizing-maps.s2
-  variants:
-  - id: sparse-coding-and-self-organizing-maps.base.1
-    prompt: What does sparse coding encourage?
-    options:
-    - id: b
-      text: Every coefficient equally active
-    - id: c
-      text: Only orthogonal bases by definition
-    - id: a
-      text: Few active coefficients in a dictionary reconstruction
-    answer: a
-    feedback: Sparsity constrains representation use.
-  - id: sparse-coding-and-self-organizing-maps.base.2
-    prompt: Are coefficient inference and dictionary learning the same operation?
-    options:
-    - id: c
-      text: Only if inputs are images
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: One fits a representation for an input; the other changes the basis.
-- id: sparse-coding-and-self-organizing-maps.transfer
-  objective_ref: objective.sparse-coding-and-self-organizing-maps
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compare what the visualization means: trace the inputs, operation, and result before choosing.'
-  remediation_scene: sparse-coding-and-self-organizing-maps.s4
-  variants:
-  - id: sparse-coding-and-self-organizing-maps.transfer.1
-    prompt: Which SOM units move toward an input?
-    options:
-    - id: c
-      text: Only a random output label
-    - id: a
-      text: The winner and selected map neighbors
-    - id: b
-      text: Every unit identically under all rules
-    answer: a
-    feedback: Neighborhood updates organize prototypes.
-  - id: sparse-coding-and-self-organizing-maps.transfer.2
-    prompt: Does a neat two-dimensional map prove true causal categories?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if colors form clusters
-    answer: a
-    feedback: Visualization can distort or reflect chosen representation assumptions.
+  - id: sparse-coding-and-self-organizing-maps.base
+    objective_ref: objective.sparse-coding-and-self-organizing-maps
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a small representation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: sparse-coding-and-self-organizing-maps.s2
+    variants:
+      - id: sparse-coding-and-self-organizing-maps.base.1
+        prompt: What does sparse coding encourage?
+        options:
+          - id: b
+            text: Every coefficient equally active
+          - id: c
+            text: Only orthogonal bases by definition
+          - id: a
+            text: Few active coefficients in a dictionary reconstruction
+        answer: a
+        feedback: Sparsity constrains representation use.
+        retired: true
+      - id: sparse-coding-and-self-organizing-maps.base.2
+        prompt: Are coefficient inference and dictionary learning the same operation?
+        options:
+          - id: c
+            text: Only if inputs are images
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: One fits a representation for an input; the other changes the basis.
+        retired: true
+  - id: sparse-coding-and-self-organizing-maps.transfer
+    objective_ref: objective.sparse-coding-and-self-organizing-maps
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compare what the visualization means: trace the inputs, operation, and result before choosing.'
+    remediation_scene: sparse-coding-and-self-organizing-maps.s4
+    variants:
+      - id: sparse-coding-and-self-organizing-maps.transfer.1
+        prompt: Which SOM units move toward an input?
+        options:
+          - id: c
+            text: Only a random output label
+          - id: a
+            text: The winner and selected map neighbors
+          - id: b
+            text: Every unit identically under all rules
+        answer: a
+        feedback: Neighborhood updates organize prototypes.
+        retired: true
+      - id: sparse-coding-and-self-organizing-maps.transfer.2
+        prompt: Does a neat two-dimensional map prove true causal categories?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if colors form clusters
+        answer: a
+        feedback: Visualization can distort or reflect chosen representation assumptions.
+        retired: true
+  - id: sparse-coding-and-self-organizing-maps.base.v2
+    objective_ref: objective.sparse-coding-and-self-organizing-maps
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "For sparse coding, compare codes by reconstruction error plus λ times the sum of absolute coefficients. For a SOM, remember that the neighborhood radius starts large and shrinks."
+    remediation_scene: sparse-coding-and-self-organizing-maps.s2
+    variants:
+      - id: sparse-coding-and-self-organizing-maps.base.v2.1
+        prompt: Two codes rebuild a patch perfectly. Code P uses one atom with coefficient 1; code Q uses four atoms with coefficients 0.5 each. With λ = 0.1, which does sparse coding prefer?
+        options:
+          - id: b
+            text: Q, since each of its coefficients is smaller than P's
+          - id: a
+            text: P, since its penalty is 0.1 while Q's is 0.2
+          - id: c
+            text: Either one, since both rebuild the patch perfectly
+        answer: a
+        feedback: The penalty adds up absolute coefficients, so P costs 0.1 × 1 = 0.1 and Q costs 0.1 × 2 = 0.2. Small individual coefficients don't help if there are many of them, and with equal reconstruction the penalty decides.
+      - id: sparse-coding-and-self-organizing-maps.base.v2.2
+        prompt: A sparse-coding dictionary for 8 × 8 image patches (64 pixels) has 256 atoms. What does sparsity limit?
+        options:
+          - id: a
+            text: How many of the 256 coefficients are nonzero for each patch
+          - id: c
+            text: How many atoms the dictionary holds, keeping it under 64
+          - id: b
+            text: How many pixels of each patch the atoms are allowed to use
+        answer: a
+        feedback: The dictionary is deliberately overcomplete (256 > 64); sparsity means each patch uses only a few of those atoms. Atoms can cover any pixels, and on natural images they learn to be small, localized edges.
+      - id: sparse-coding-and-self-organizing-maps.base.v2.3
+        prompt: During ISTA, a coefficient is 0.03 after the gradient step, and the shrink amount is 0.05. What happens to it?
+        options:
+          - id: c
+            text: It becomes −0.02, since 0.05 is subtracted from it
+          - id: b
+            text: It stays 0.03, since shrinking only affects large values
+          - id: a
+            text: It becomes exactly 0, since it would cross zero
+        answer: a
+        feedback: Soft thresholding pulls every coefficient toward zero by the shrink amount and stops at zero, so values smaller than 0.05 in size become exactly 0. That's how ISTA produces true zeros rather than small values.
+      - id: sparse-coding-and-self-organizing-maps.base.v2.4
+        prompt: A SOM is trained with a large neighborhood radius early and a small one late. What does the early phase mainly do?
+        options:
+          - id: a
+            text: It sorts the map globally, dragging whole stretches of units together
+          - id: b
+            text: It fine-tunes each prototype to sit on its own cluster of inputs
+          - id: c
+            text: It picks the best-matching unit more accurately for each input
+        answer: a
+        feedback: Large neighborhoods move many units together, which puts the map in order. Fine-tuning happens later, when the radius is small. The best-matching unit is found the same way in both phases.
+  - id: sparse-coding-and-self-organizing-maps.transfer.v2
+    objective_ref: objective.sparse-coding-and-self-organizing-maps
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Ask what each output means: a sparse code says which few parts make up this input; a SOM says which region of an ordered grid it falls in."
+    remediation_scene: sparse-coding-and-self-organizing-maps.s4
+    variants:
+      - id: sparse-coding-and-self-organizing-maps.transfer.v2.1
+        prompt: An audio researcher runs sparse coding on thousands of short snippets of natural sounds. What would you expect the learned atoms to resemble?
+        options:
+          - id: b
+            text: Whole recordings, since each snippet should use exactly one atom
+          - id: a
+            text: Brief, localized wiggles at one pitch, the sound version of edges
+          - id: c
+            text: The average snippet, since atoms are the principal components
+        answer: a
+        feedback: Sparse coding finds small building blocks that combine into many inputs, so sound atoms become brief, pitch-tuned pieces, much as image atoms became short edges. Whole recordings are too specific to recur, and atoms aren't PCA directions.
+      - id: sparse-coding-and-self-organizing-maps.transfer.v2.2
+        prompt: A researcher wants to find which few concepts are active in a language model's layer when it reads a sentence. Which approach fits?
+        options:
+          - id: c
+            text: A self-organizing map of the layer's activations
+          - id: b
+            text: PCA on the activations, keeping the top ten directions
+          - id: a
+            text: A sparse autoencoder trained on the activations
+        answer: a
+        feedback: A sparse autoencoder learns a large dictionary where each input activates a few atoms, which can be read as concepts. A SOM gives one grid location per input, and PCA gives a few dense directions that mix many concepts.
+      - id: sparse-coding-and-self-organizing-maps.transfer.v2.3
+        prompt: A SOM of customer habits, trained with a small fixed radius, shows two separate patches of "weekend shoppers" at opposite corners. What most likely happened?
+        options:
+          - id: a
+            text: The map locked in a twist because no large neighborhood sorted it first
+          - id: b
+            text: The data contain two unrelated kinds of weekend shopper
+          - id: c
+            text: The best-matching unit was chosen incorrectly for those inputs
+        answer: a
+        feedback: Without an early large-radius phase, maps often keep kinks where one region of input space is split across the grid. Retrain with a shrinking radius before concluding that there are two groups.
+      - id: sparse-coding-and-self-organizing-maps.transfer.v2.4
+        prompt: A camera team learns an overcomplete dictionary on clean photos, then codes noisy photos sparsely and rebuilds them. Why does this reduce noise?
+        options:
+          - id: b
+            text: The dictionary has more atoms than pixels, so it copies noise exactly
+          - id: a
+            text: Noise isn't built from a few atoms, so a sparse rebuild leaves it out
+          - id: c
+            text: The penalty adds random noise that cancels the camera's own noise
+        answer: a
+        feedback: Clean image structure is well described by a few learned atoms; random noise needs many, and the sparsity penalty makes that too expensive. Overcompleteness alone would let the code fit noise, which the penalty prevents.
+      - id: sparse-coding-and-self-organizing-maps.transfer.v2.5
+        prompt: A geologist wants to lay out 1,000 rock samples on a 20 × 20 grid so similar compositions sit side by side. Which method fits?
+        options:
+          - id: a
+            text: A self-organizing map, whose units form an ordered grid
+          - id: c
+            text: Sparse coding, since each sample then uses few atoms
+          - id: b
+            text: Least squares on a dictionary with 400 atoms
+        answer: a
+        feedback: A SOM gives each sample a place on a fixed grid where neighbors resemble each other. Sparse codes describe what each sample is made of, but they don't arrange samples on a grid.
+  - id: sparse-coding-and-self-organizing-maps.calculate
+    objective_ref: objective.sparse-coding-and-self-organizing-maps
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Sparse cost: ½ × squared error + λ × sum of |coefficients|. Shrinking: move toward 0 by the shrink amount, stopping at 0. Neighborhood: h(d) = e^(−d²/(2σ²))."
+    remediation_scene: sparse-coding-and-self-organizing-maps.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: sparse-coding-and-self-organizing-maps.calculate.1
+        prompt: A code with coefficients (1, −1, 1) rebuilds a patch perfectly. With λ = 0.1, what is its sparse-coding cost?
+        answer: 0.3
+        feedback: The reconstruction term is 0, and the penalty is 0.1 × (1 + 1 + 1) = 0.3.
+      - id: sparse-coding-and-self-organizing-maps.calculate.2
+        prompt: A code with a single coefficient 0.9 leaves a squared reconstruction error of 0.02. With λ = 0.1, what is the cost ½ × error + λ × Σ|a|?
+        answer: 0.1
+        feedback: ½ × 0.02 = 0.01, plus 0.1 × 0.9 = 0.09, gives 0.1.
+      - id: sparse-coding-and-self-organizing-maps.calculate.3
+        prompt: In ISTA, a coefficient is 0.7 after the gradient step and the shrink amount is 0.2. What is it after shrinking?
+        answer: 0.5
+        feedback: Pull it 0.2 toward zero, so 0.7 − 0.2 = 0.5. It doesn't cross zero, so it stays positive.
+      - id: sparse-coding-and-self-organizing-maps.calculate.4
+        prompt: A SOM uses h(d) = e^(−d²/(2σ²)) with radius σ = 2. What is the neighborhood weight for a unit d = 2 grid steps from the winner?
+        answer: 0.607
+        feedback: d²/(2σ²) = 4/8 = 0.5, and e^(−0.5) ≈ 0.607.
+      - id: sparse-coding-and-self-organizing-maps.calculate.5
+        prompt: A SOM unit one grid step from the winner has prototype 5 and neighborhood weight h = 0.882. The input is 6 and α = 0.25. Where does the prototype move?
+        answer: 5.22
+        feedback: 5 + 0.25 × 0.882 × (6 − 5) = 5 + 0.22 = 5.22.

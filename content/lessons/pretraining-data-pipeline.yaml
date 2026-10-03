@@ -1,374 +1,629 @@
 schema_version: 0.2-draft
 lesson:
   id: pretraining-data-pipeline
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Build a traceable corpus before spending training compute
   state: draft
-  summary: Follow a story from its source to the actual token sequence a training loop sees.
+  summary: A crawled web page is mostly menus, cookie banners, and copies of other pages. Follow a snapshot of the web through the filters that turn it into training text.
   slot: M16.2
   category: learning
   sources:
-  - title: Groeneveld et al. — OLMo, an open language-model framework
-    url: https://arxiv.org/abs/2402.00838
-  - title: Biderman et al. — Pythia, a suite for analyzing language-model training
-    url: https://arxiv.org/abs/2304.01373
+    - title: 'Raffel et al. — Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer (T5 and C4, 2019)'
+      url: https://arxiv.org/abs/1910.10683
+    - title: 'Penedo et al. — The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale (2024)'
+      url: https://arxiv.org/abs/2406.17557
+    - title: Lee et al. — Deduplicating Training Data Makes Language Models Better (2021)
+      url: https://arxiv.org/abs/2107.06499
+    - title: 'Dodge et al. — Documenting Large Webtext Corpora: A Case Study on the Colossal Clean Crawled Corpus (2021)'
+      url: https://arxiv.org/abs/2104.08758
+    - title: Brown et al. — Language Models are Few-Shot Learners (GPT-3, 2020)
+      url: https://arxiv.org/abs/2005.14165
+    - title: 'Gao et al. — The Pile: An 800GB Dataset of Diverse Text for Language Modeling (2020)'
+      url: https://arxiv.org/abs/2101.00027
+    - title: 'Soldaini et al. — Dolma: an Open Corpus of Three Trillion Tokens for Language Model Pretraining Research (2024)'
+      url: https://arxiv.org/abs/2402.00159
   archetype: mechanism
 objectives:
-- id: objective.pretraining-data-pipeline
-  version: 2-draft
-  statement: Trace source selection, filtering, deduplication, tokenization, and versioned packing while identifying
-    where evaluation leakage can enter.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - pretraining-data-pipeline.base.v2
-  - pretraining-data-pipeline.transfer.v2
-  prerequisites:
-  - anyOf:
-    - objective.data-provenance
-  - anyOf:
-    - objective.data-cleaning
-  - anyOf:
-    - objective.splits-and-leakage
+  - id: objective.pretraining-data-pipeline
+    version: 3-draft
+    statement: Trace source selection, filtering, deduplication, tokenization, and versioned packing while identifying where evaluation leakage can enter.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - pretraining-data-pipeline.base.v3
+      - pretraining-data-pipeline.transfer.v3
+      - pretraining-data-pipeline.calculate
+    prerequisites:
+      - anyOf:
+          - objective.data-provenance
+      - anyOf:
+          - objective.data-cleaning
+      - anyOf:
+          - objective.splits-and-leakage
 scenes:
-- id: pretraining-data-pipeline.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.pretraining-data-pipeline
-  title: A model does not train on a website name
-  markdown: '**Pretraining** is a broad learning phase that builds useful model patterns before later adaptation.
-    A data **pipeline** is the sequence of operations that turns source material into training inputs. Imagine
-    collecting short stories from several approved collections. A list of source names is only the beginning.
-    The training loop eventually sees numerical token sequences produced after selection, cleanup, filtering,
-    and formatting. Changes anywhere along that route can change what the model learns.'
-  text_mode: '**Pretraining** is a broad learning phase that builds useful model patterns before later adaptation.
-    A data **pipeline** is the sequence of operations that turns source material into training inputs. Imagine
-    collecting short stories from several approved collections. A list of source names is only the beginning.
-    The training loop eventually sees numerical token sequences produced after selection, cleanup, filtering,
-    and formatting. Changes anywhere along that route can change what the model learns.'
-  bridges: []
-- id: pretraining-data-pipeline.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.pretraining-data-pipeline
-  title: Track the collection before cleaning it
-  markdown: Give every source and collected record a traceable identifier. Record provenance, collection rules,
-    and relevant use restrictions. Then identify the evaluation material that must stay outside training. A
-    copied test question can hide inside a larger document; a different filename does not make it independent.
-    **Contamination** means that evaluation information has entered training or development in a way that undermines
-    the intended claim. Check exact copies and appropriate near-copy patterns before celebrating a high score.
-  text_mode: Give every source and collected record a traceable identifier. Record provenance, collection rules,
-    and relevant use restrictions. Then identify the evaluation material that must stay outside training. A
-    copied test question can hide inside a larger document; a different filename does not make it independent.
-    **Contamination** means that evaluation information has entered training or development in a way that undermines
-    the intended claim. Check exact copies and appropriate near-copy patterns before celebrating a high score.
-  bridges: []
-- id: pretraining-data-pipeline.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.pretraining-data-pipeline
-  title: Watch a miniature filter ledger
-  markdown: 'Start with 100 candidate documents. Remove 10 broken or empty records, leaving 90. A duplicate
-    check removes 20 repeated copies, leaving 70. A documented task filter removes 5 more, leaving 65. These
-    numbers are invented, but the ledger illustrates a useful habit: each count refers to what remains after
-    the preceding stage. Filters may overlap, so adding independently measured rejection percentages can misstate
-    the final total. Inspect examples near each filter’s boundary.'
-  text_mode: 'Start with 100 candidate documents. Remove 10 broken or empty records, leaving 90. A duplicate
-    check removes 20 repeated copies, leaving 70. A documented task filter removes 5 more, leaving 65. These
-    numbers are invented, but the ledger illustrates a useful habit: each count refers to what remains after
-    the preceding stage. Filters may overlap, so adding independently measured rejection percentages can misstate
-    the final total. Inspect examples near each filter’s boundary.'
-  bridges: []
-- id: pretraining-data-pipeline.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.pretraining-data-pipeline
-  title: Quality scores are judgments with blind spots
-  markdown: A filter may use length, language, repeated characters, a classifier, or a model-produced score.
-    Define what the score is intended to detect and sample both accepted and rejected records. A rule tuned
-    on polished prose may reject valid informal or minority-language writing. More filtering is not automatically
-    better data. Record changes in source coverage and check downstream tasks. The filtering choices should
-    serve a stated task and be checked against the data they remove.
-  text_mode: A filter may use length, language, repeated characters, a classifier, or a model-produced score.
-    Define what the score is intended to detect and sample both accepted and rejected records. A rule tuned
-    on polished prose may reject valid informal or minority-language writing. More filtering is not automatically
-    better data. Record changes in source coverage and check downstream tasks. The filtering choices should
-    serve a stated task and be checked against the data they remove.
-  bridges: []
-- id: pretraining-data-pipeline.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.pretraining-data-pipeline
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Source, check, deduplicate, tokenize, pack, record. The model learns from the final stream, so
-    inspect what each stage kept and removed.
-- id: pretraining-data-pipeline.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.pretraining-data-pipeline
-  markdown: A pretraining corpus requires source records, quality filters, deduplication, contamination checks,
-    and documented transformations; a large token count alone does not establish useful or appropriate data.
-  text_mode: A pretraining corpus requires source records, quality filters, deduplication, contamination checks,
-    and documented transformations; a large token count alone does not establish useful or appropriate data.
-- id: pretraining-data-pipeline.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.pretraining-data-pipeline
-  title: Turn approved text into training units
-  markdown: A frozen tokenizer maps each kept document to token IDs. Packing then arranges sequences into the
-    lengths processed by the model. Boundary markers, attention rules, and target masks determine whether one
-    document can provide context for another and which positions contribute to loss. Keep the tokenizer version
-    and these rules with the data release. Counting raw documents alone does not reveal how many token positions
-    or training targets the model will actually consume.
-  text_mode: A frozen tokenizer maps each kept document to token IDs. Packing then arranges sequences into
-    the lengths processed by the model. Boundary markers, attention rules, and target masks determine whether
-    one document can provide context for another and which positions contribute to loss. Keep the tokenizer
-    version and these rules with the data release. Counting raw documents alone does not reveal how many token
-    positions or training targets the model will actually consume.
-  bridges: []
-- id: pretraining-data-pipeline.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.pretraining-data-pipeline
-  title: Make the stream reproducible enough to inspect
-  markdown: Store a versioned manifest describing the sources, transformations, tokenizer, mixture, and sequence
-    rules. A **manifest** is an inventory linking the chosen artifacts and their versions. Save sampled examples
-    before and after each transformation to help diagnose mistakes. Published systems differ in how much of
-    this process they release; do not fill missing details with guesses. Follow one story through its source,
-    checks, duplicate handling, tokenization, packing, and recorded version.
-  text_mode: Store a versioned manifest describing the sources, transformations, tokenizer, mixture, and sequence
-    rules. A **manifest** is an inventory linking the chosen artifacts and their versions. Save sampled examples
-    before and after each transformation to help diagnose mistakes. Published systems differ in how much of
-    this process they release; do not fill missing details with guesses. Follow one story through its source,
-    checks, duplicate handling, tokenization, packing, and recorded version.
-  bridges: []
-  figure:
-    kind: lifecycle
-    caption: Trace the artifacts leaving data preparation and identify which later stages actually update weights.
-    description: A representative lifecycle connects prepared examples to pretraining, optional adaptation,
-      evaluation and release, inference, and monitoring. Training changes weights; using or evaluating a fixed
-      checkpoint does not by itself train it.
-- id: pretraining-data-pipeline.s7
-  type: question
-  depth: mechanics
-  objective_refs:
-  - objective.pretraining-data-pipeline
-  title: Follow the ledger
-  markdown: A pipeline starts with 80 records, removes 8 broken records, then removes 12 duplicates from the
-    remainder. How many remain?
-  text_mode: A pipeline starts with 80 records, removes 8 broken records, then removes 12 duplicates from the
-    remainder. How many remain?
-  bridges: []
-  question:
-    response_type: single_choice
-    options:
-    - id: a
-      text: '60'
-    - id: b
-      text: '68'
-    - id: c
-      text: '64'
-    answer: a
-    reveal_markdown: 'Apply the stated sequential removals: 80−8−12=60. The second removal is already an absolute
-      count from the remaining records.'
-    hint: Trace the example using the rule from the preceding pages.
-    id: pretraining-data-pipeline.practice.v2.7
+  - id: pretraining-data-pipeline.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.pretraining-data-pipeline
+    title: A crawled page is mostly not prose
+    markdown: |-
+      The Kestrel team downloads one monthly snapshot of Common Crawl, a free public archive of billions of web pages. They open a page at random: a recipe for lemon cake. The file is 90,000 characters of HTML. The recipe itself is about 2,000 characters. The rest is menus, cookie banners, ads, a comment form, and links to forty other recipes.
+
+      A model learns whatever text it's fed, so the team builds a **data pipeline**: a fixed sequence of steps that turns raw pages into training text. The first two steps are simple:
+
+      1. **Text extraction** pulls the main text out of the HTML. FineWeb (2024), a 15-trillion-token English web corpus, used the open-source tool trafilatura, because models trained on its output beat models trained on the plain-text files Common Crawl ships.
+      2. **Language identification** runs a small classifier that guesses each page's language with a confidence score. FineWeb kept pages that a fastText classifier scored as English with at least 0.65.
+
+      The later steps, shown below, are where the judgment calls live.
+    bridges: []
+    diagram:
+      caption: Kestrel's data pipeline. Each stage removes or edits pages before any token reaches training.
+      description: Crawled HTML goes to text extraction, then language identification, then quality filters. Filtered pages go to near-duplicate removal, then PII scrubbing, then decontamination against evaluation sets, and finally tokenization into training text.
+      nodes:
+        - id: crawl
+          label: Crawled HTML
+          note: one Common Crawl snapshot
+          col: 0
+          row: 0
+          tone: data
+        - id: extract
+          label: Extract text
+          note: drop menus and markup
+          col: 1
+          row: 0
+        - id: lang
+          label: Language ID
+          note: keep English ≥ 0.65
+          col: 2
+          row: 0
+        - id: quality
+          label: Quality filters
+          note: rules and classifiers
+          col: 3
+          row: 0
+          tone: accent
+        - id: dedup
+          label: Remove near-duplicates
+          note: MinHash on shingles
+          col: 3
+          row: 1
+          tone: accent
+        - id: pii
+          label: Scrub personal data
+          note: emails, IP addresses
+          col: 2
+          row: 1
+          tone: warn
+        - id: decon
+          label: Decontaminate
+          note: drop 13-gram overlaps with tests
+          col: 1
+          row: 1
+          tone: warn
+        - id: tokens
+          label: Tokenize
+          note: ready for the mixture
+          col: 0
+          row: 1
+          tone: data
+      edges:
+        - from: crawl
+          to: extract
+        - from: extract
+          to: lang
+        - from: lang
+          to: quality
+        - from: quality
+          to: dedup
+        - from: dedup
+          to: pii
+        - from: pii
+          to: decon
+        - from: decon
+          to: tokens
+  - id: pretraining-data-pipeline.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-data-pipeline
+    title: Filters are opinions, so read what they throw away
+    markdown: |-
+      **Quality filters** decide which pages are worth learning from. **Heuristic filters** are hand-written rules. The C4 corpus, built for Google's T5 model (2019), used rules like these:
+
+      - keep only lines that end in a period, exclamation mark, question mark, or end quotation mark
+      - keep only lines with at least 5 words, and drop pages with fewer than 3 sentences
+      - drop any page containing `lorem ipsum`, or a curly bracket (a sign of code)
+      - drop any page containing a word from a public list of "bad words"
+
+      :::predict Which of these three lines would C4's first two rules keep? "Home | Recipes | Contact", "Preheat the oven to 180°C.", "Bake until golden!"
+      Only "Preheat the oven to 180°C." It ends in a period and has 5 words. The menu has no end punctuation, and "Bake until golden!" has only 3 words, so a useful instruction is lost too.
+      :::
+
+      **Classifier filters** score each page with a model. For FineWeb-Edu, Llama-3-70B-Instruct rated 460,000 pages from 0 to 5 for educational value. A small classifier trained on those ratings then scored every page, and pages scoring 3 or more were kept. That cut 15 trillion tokens to 1.3 trillion, and models trained on the result did much better on knowledge and reasoning benchmarks.
+
+      :::mixup "Stricter filtering always gives better data."
+      Every filter encodes someone's idea of "good". Dodge et al. (2021) found that C4's bad-words blocklist disproportionately removed text from and about minority groups. Filtering toxic text is worth doing, but a crude rule can erase whole communities from what the model learns.
+      :::
+
+      So the Kestrel team's rule is simple: before trusting any filter, read twenty of the pages it threw away.
+    bridges: []
+  - id: pretraining-data-pipeline.s2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-data-pipeline
+    title: Catch copies that differ by one word
+    markdown: |-
+      The web repeats itself. Lee et al. (2021) found a single 61-word English sentence repeated more than 60,000 times in C4. Models trained on their deduplicated data copied training text word for word about ten times less often.
+
+      **Exact deduplication** hashes each document and drops repeated hashes. But a page reposted with a new date line gets a completely different hash. To catch those, the team compares documents by their **shingles**, the overlapping runs of $n$ consecutive words. "the kestrel hovers over" has two 3-word shingles: "the kestrel hovers" and "kestrel hovers over". Two documents' similarity is their **Jaccard similarity**: shared shingles divided by all distinct shingles.
+
+      ```python run
+      import hashlib
+
+      def shingles(text, n=3):
+          words = text.lower().split()
+          return {" ".join(words[i:i + n]) for i in range(len(words) - n + 1)}
+
+      def jaccard(a, b):
+          return len(a & b) / len(a | b)
+
+      def minhash(sh, k=128):
+          # k different hash functions: salt each shingle with the function number
+          h = lambda s: int(hashlib.md5(s.encode()).hexdigest()[:8], 16)
+          return [min(h(f"{i}:{s}") for s in sh) for i in range(k)]
+
+      docs = {
+          "A": "the kestrel hovers over the field and then drops onto a vole in the grass",
+          "B": "the kestrel hovers over the meadow and then drops onto a vole in the grass",
+          "C": "a falcon stoops from a great height and strikes its prey in the air",
+      }
+      sh = {k: shingles(v) for k, v in docs.items()}
+      sig = {k: minhash(v) for k, v in sh.items()}
+      for x, y in [("A", "B"), ("A", "C")]:
+          shared, union = len(sh[x] & sh[y]), len(sh[x] | sh[y])
+          est = sum(p == q for p, q in zip(sig[x], sig[y])) / len(sig[x])
+          print(f"{x} vs {y}: {shared} shared / {union} total shingles = "
+                f"Jaccard {jaccard(sh[x], sh[y]):.3f}; MinHash estimate {est:.3f}")
+      ```
+
+      Swapping "field" for "meadow" breaks the 3 shingles containing it on each side: 10 shared out of 16, a Jaccard of 0.625. Try `n=5` and watch the score fall, or give sentence C a phrase from A.
+
+      :::predict In a 1,000-word article, one word in the middle is changed. What is the 3-shingle Jaccard between the two versions?
+      Each version has 998 shingles, and 3 on each side contain the changed word. So 995 are shared out of $995 + 3 + 3 = 1{,}001$ distinct shingles: $995/1{,}001 \approx 0.994$. Near-duplicates of long documents score close to 1.
+      :::
+
+      :::papers MinHash: estimating Jaccard without comparing every pair
+      For a random hash function $h$, the shingle with the smallest hash is equally likely to be any shingle in $A \cup B$, so
+
+      $$\Pr\big[\min h(A) = \min h(B)\big] = J(A,B) = \frac{|A \cap B|}{|A \cup B|}$$
+
+      Keep the minimum under each of $k$ hash functions as a signature; the fraction of matching positions estimates $J$ (0.633 against the true 0.625 above). Broder introduced MinHash in 1997 to find near-duplicate web pages. FineWeb used 112 hashes on 5-word shingles in 14 bands of 8. A pair becomes a candidate if any band matches entirely, with probability $1-(1-J^8)^{14}$: about 0.77 at $J = 0.75$ but 0.05 at $J = 0.5$. Only candidates are compared, never all pairs.
+      :::
+    bridges: []
+  - id: pretraining-data-pipeline.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-data-pipeline
+    title: Scrub personal data, then guard the test set
+    markdown: |-
+      **PII removal** strips personally identifiable information, such as email addresses, phone numbers, and IP addresses, usually with pattern-matching rules that swap each match for a placeholder. FineWeb's public release anonymized email and public IP addresses this way. A model can't repeat an address it never saw.
+
+      **Decontamination** removes test questions from the training data. If a benchmark's questions sit in the corpus, a high score may only measure memory. The usual check looks for long runs of identical words: GPT-3's team flagged any test example sharing a 13-word sequence (a 13-gram) with the training set.
+
+      :::predict A benchmark question is 20 words long. How many 13-word windows must be looked up in the training index?
+      $20 - 13 + 1 = 8$. If any of those 8 windows appears in a training document, the question is flagged. A shorter question (under 13 words) is flagged only if it appears whole.
+      :::
+
+      :::story GPT-3's contamination bug
+      OpenAI tried to remove benchmark overlaps from GPT-3's training data in 2020, but a bug left some in, and the model was too expensive to retrain. Instead, the paper built "clean" versions of each benchmark without the flagged questions and reported scores on those.
+      :::
+    bridges: []
+  - id: pretraining-data-pipeline.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-data-pipeline
+    title: Keep a ledger at every stage
+    markdown: |-
+      Here is the Kestrel team's ledger for a million crawled pages. (The counts are invented; the shape is typical.)
+
+      | Stage | Pages left | Removed here |
+      | --- | ---: | ---: |
+      | Crawled HTML | 1,000,000 | |
+      | Text extracted | 920,000 | 80,000 (8%) |
+      | English, score ≥ 0.65 | 460,000 | 460,000 (50%) |
+      | Heuristic filters | 276,000 | 184,000 (40%) |
+      | Near-duplicate removal | 193,200 | 82,800 (30%) |
+      | PII scrub | 193,200 | 0 (edits, doesn't remove) |
+      | Decontamination | 193,150 | 50 |
+
+      About 19% of the crawl survives. Each percentage is a share of what *reached* that stage, not of the original million.
+
+      :::mixup "The filters removed 40% and dedup removed 30%, so we lost 70% of the English pages."
+      Stages apply in sequence. Filters keep 60%, then dedup keeps 70% of *those*: $0.6 \times 0.7 = 0.42$, so 42% of English pages survive (193,200 of 460,000) and 58% are gone, not 70%.
+      :::
+
+      The ledger also tells you where to look when something goes wrong. If next month's snapshot keeps 35% instead of 19%, the stage whose share jumped is the one to inspect first.
+    bridges: []
+  - id: pretraining-data-pipeline.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-data-pipeline
+    title: Version the corpus like code
+    markdown: |-
+      Months later, someone asks why Kestrel is weak at informal writing. Answering needs a record of exactly what went in, so the team saves a **manifest**, a file listing every input and setting: the crawl snapshot IDs, the extraction tool's version, each filter's threshold, the dedup settings, the benchmarks used for decontamination, and the tokenizer's hash. They also save 100 sample pages kept and 100 removed at each stage.
+
+      Open corpora show how. The Pile (2020) combined 22 named sources in 825 GiB and trained EleutherAI's Pythia models. Dolma (2024), 3 trillion tokens from the Allen Institute, released its processing tools too, so anyone can rerun each filter. The figure shows where the corpus goes next: pretraining, which changes the weights.
+    bridges: []
+    figure:
+      kind: lifecycle
+      caption: Trace the artifacts leaving data preparation and identify which later stages actually update weights.
+      description: A representative lifecycle connects prepared examples to pretraining, optional adaptation, evaluation and release, inference, and monitoring. Training changes weights; using or evaluating a fixed checkpoint does not by itself train it.
+  - id: pretraining-data-pipeline.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-data-pipeline
+    markdown: Jaccard scores to compute, a filter ledger, a blocklist gone wrong, a suspicious benchmark score, and a support-chat corpus test whether you can run each stage and spot its failure.
+    takeaway: |-
+      Raw web text becomes training data through extraction, language ID, quality filters, near-duplicate removal, PII scrubbing, and decontamination. Keep a ledger and a manifest, and read what each filter throws away.
+  - id: pretraining-data-pipeline.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.pretraining-data-pipeline
+    markdown: |-
+      A pretraining corpus requires source records, quality filters, deduplication, contamination checks, and documented transformations; a large token count alone does not establish useful or appropriate data.
+  - id: pretraining-data-pipeline.s7
+    type: question
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-data-pipeline
+    title: Follow the ledger
+    markdown: |-
+      Try a ledger of your own. A pipeline starts with 80 records, removes 8 broken records, then removes 12 duplicates from the remainder. How many remain?
+    bridges: []
+    question:
+      response_type: single_choice
+      options:
+        - id: a
+          text: '60'
+        - id: b
+          text: '68'
+        - id: c
+          text: '64'
+      answer: a
+      reveal_markdown: |-
+        Subtract in order: 80 − 8 = 72 after the broken records, then 72 − 12 = 60 after the duplicates. Both removals are counts, so they come straight off what's left.
+      hint: Each stage removes records from whatever the previous stage left. Subtract the two removals one after the other.
+      id: pretraining-data-pipeline.practice.v2.7
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - pretraining-data-pipeline.s1
-    - pretraining-data-pipeline.s2
-    - pretraining-data-pipeline.s3
-    - pretraining-data-pipeline.s4
-    - pretraining-data-pipeline.s5
-    - pretraining-data-pipeline.s6
-    - pretraining-data-pipeline.s7
-    - pretraining-data-pipeline.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - pretraining-data-pipeline.s1
+        - pretraining-data-pipeline.s4
+        - pretraining-data-pipeline.s2
+        - pretraining-data-pipeline.s5
+        - pretraining-data-pipeline.s3
+        - pretraining-data-pipeline.s7
+        - pretraining-data-pipeline.s6
+        - pretraining-data-pipeline.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     pretraining-data-pipeline.recap: pretraining-data-pipeline.check
 assessment_families:
-- id: pretraining-data-pipeline.base
-  objective_ref: objective.pretraining-data-pipeline
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Filter with an explicit objective: trace the inputs, operation, and result before choosing.'
-  remediation_scene: pretraining-data-pipeline.s2
-  variants:
-  - id: pretraining-data-pipeline.base.1
-    prompt: What does a token total alone fail to establish?
-    options:
-    - id: b
-      text: That any data were counted
-    - id: c
-      text: That a tokenizer was used
-    - id: a
-      text: Quality, diversity, provenance, and evaluation independence
-    answer: a
-    feedback: Scale is only one property of a corpus.
-    retired: true
-  - id: pretraining-data-pipeline.base.2
-    prompt: Why inspect samples rejected by a quality filter?
-    options:
-    - id: c
-      text: Only to count file names
-    - id: a
-      text: To detect unintended removal of useful populations or formats
-    - id: b
-      text: To guarantee every rejected item should return
-    answer: a
-    feedback: Filtering can change coverage as well as remove corruption.
-    retired: true
-- id: pretraining-data-pipeline.transfer
-  objective_ref: objective.pretraining-data-pipeline
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Check contamination before interpreting results: trace the inputs, operation, and result before choosing.'
-  remediation_scene: pretraining-data-pipeline.s4
-  variants:
-  - id: pretraining-data-pipeline.transfer.1
-    prompt: Exact hashes miss lightly edited copies. What additional approach may help?
-    options:
-    - id: c
-      text: Ignoring all duplicates
-    - id: a
-      text: Normalized or approximate deduplication
-    - id: b
-      text: Only increasing model depth
-    answer: a
-    feedback: Near-duplicate methods compare beyond exact byte equality.
-    retired: true
-  - id: pretraining-data-pipeline.transfer.2
-    prompt: No benchmark overlap was found by one detector. What is a sound report?
-    options:
-    - id: a
-      text: The method found none, with its detection limits stated
-    - id: b
-      text: Contamination is mathematically impossible
-    - id: c
-      text: Every evaluation claim is now proven
-    answer: a
-    feedback: A negative search result depends on the detector’s coverage and sensitivity.
-    retired: true
-- id: pretraining-data-pipeline.base.v2
-  objective_ref: objective.pretraining-data-pipeline
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: pretraining-data-pipeline.s3
-  variants:
-  - prompt: Which artifact most directly describes what the training loop consumes?
-    answer: a
-    options:
-    - id: a
-      text: The final token stream and its sequence/target rules
-    - id: c
-      text: Only the number of raw downloaded files
-    - id: b
-      text: Only the original list of website domains
-    feedback: Source labels do not fully specify filtering, tokenization, packing, or targets.
-    id: pretraining-data-pipeline.base.v2.1
-  - prompt: A filter rejects many valid informal messages. What should be investigated?
-    answer: a
-    options:
-    - id: b
-      text: Whether all informal language should be deleted
-    - id: c
-      text: Whether a larger model removes the need to inspect data
-    - id: a
-      text: Its criterion and effect on the intended data coverage
-    feedback: A quality score can encode selection assumptions that exclude useful examples.
-    id: pretraining-data-pipeline.base.v2.2
-  - prompt: Why record intermediate pipeline counts?
-    answer: a
-    options:
-    - id: b
-      text: To prove every remaining record is correct
-    - id: c
-      text: To make independent rejection percentages automatically additive
-    - id: a
-      text: To trace which stage changed the dataset and by how much
-    feedback: A staged ledger exposes transformations without turning counts into quality guarantees.
-    id: pretraining-data-pipeline.base.v2.3
-  - prompt: Which link belongs in a reproducible data manifest?
-    answer: a
-    options:
-    - id: b
-      text: A final row count without versions of the transformations
-    - id: a
-      text: The tokenizer version and packing conventions
-    - id: c
-      text: A list of source domains without the tokenization configuration
-    feedback: These choices determine the numerical training inputs.
-    id: pretraining-data-pipeline.base.v2.4
-- id: pretraining-data-pipeline.transfer.v2
-  objective_ref: objective.pretraining-data-pipeline
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: pretraining-data-pipeline.s3
-  variants:
-  - prompt: A held-out question appears verbatim inside a training document with a new filename. What is the
-      issue?
-    answer: a
-    options:
-    - id: a
-      text: Evaluation contamination despite the different filename
-    - id: c
-      text: An optimizer problem unrelated to data
-    - id: b
-      text: A harmless rename that preserves full test independence
-    feedback: Information content, not filenames, determines whether the test has leaked.
-    id: pretraining-data-pipeline.transfer.v2.1
-  - prompt: A pipeline removes 10 records from 100, then 20 from the remaining 90. How many remain?
-    answer: a
-    options:
-    - id: b
-      text: '72'
-    - id: a
-      text: '70'
-    - id: c
-      text: '80'
-    feedback: 'The removals are absolute sequential counts: 100−10−20=70.'
-    id: pretraining-data-pipeline.transfer.v2.2
-  - prompt: Two teams use the same documents but different tokenizers and target masks. What can differ?
-    answer: a
-    options:
-    - id: c
-      text: Nothing once the source documents match
-    - id: b
-      text: Only input lengths; the prediction targets must remain identical
-    - id: a
-      text: The examples and losses seen by the training loop
-    feedback: Tokenization and mask rules change the training representation and objective contributions.
-    id: pretraining-data-pipeline.transfer.v2.3
-  - prompt: A report does not disclose its exact filtering thresholds. What is the defensible comparison?
-    answer: a
-    options:
-    - id: b
-      text: Assume the thresholds from another model family
-    - id: a
-      text: State the available evidence and mark the thresholds unknown
-    - id: c
-      text: Infer exact thresholds from the final benchmark score
-    feedback: Missing lifecycle details remain unknown rather than becoming guessed facts.
-    id: pretraining-data-pipeline.transfer.v2.4
+  - id: pretraining-data-pipeline.base
+    objective_ref: objective.pretraining-data-pipeline
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Filter with an explicit objective: trace the inputs, operation, and result before choosing.'
+    remediation_scene: pretraining-data-pipeline.s2
+    variants:
+      - id: pretraining-data-pipeline.base.1
+        prompt: What does a token total alone fail to establish?
+        options:
+          - id: b
+            text: That any data were counted
+          - id: c
+            text: That a tokenizer was used
+          - id: a
+            text: Quality, diversity, provenance, and evaluation independence
+        answer: a
+        feedback: Scale is only one property of a corpus.
+        retired: true
+      - id: pretraining-data-pipeline.base.2
+        prompt: Why inspect samples rejected by a quality filter?
+        options:
+          - id: c
+            text: Only to count file names
+          - id: a
+            text: To detect unintended removal of useful populations or formats
+          - id: b
+            text: To guarantee every rejected item should return
+        answer: a
+        feedback: Filtering can change coverage as well as remove corruption.
+        retired: true
+  - id: pretraining-data-pipeline.transfer
+    objective_ref: objective.pretraining-data-pipeline
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Check contamination before interpreting results: trace the inputs, operation, and result before choosing.'
+    remediation_scene: pretraining-data-pipeline.s4
+    variants:
+      - id: pretraining-data-pipeline.transfer.1
+        prompt: Exact hashes miss lightly edited copies. What additional approach may help?
+        options:
+          - id: c
+            text: Ignoring all duplicates
+          - id: a
+            text: Normalized or approximate deduplication
+          - id: b
+            text: Only increasing model depth
+        answer: a
+        feedback: Near-duplicate methods compare beyond exact byte equality.
+        retired: true
+      - id: pretraining-data-pipeline.transfer.2
+        prompt: No benchmark overlap was found by one detector. What is a sound report?
+        options:
+          - id: a
+            text: The method found none, with its detection limits stated
+          - id: b
+            text: Contamination is mathematically impossible
+          - id: c
+            text: Every evaluation claim is now proven
+        answer: a
+        feedback: A negative search result depends on the detector’s coverage and sensitivity.
+        retired: true
+  - id: pretraining-data-pipeline.base.v2
+    objective_ref: objective.pretraining-data-pipeline
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: pretraining-data-pipeline.s3
+    variants:
+      - prompt: Which artifact most directly describes what the training loop consumes?
+        answer: a
+        options:
+          - id: a
+            text: The final token stream and its sequence/target rules
+          - id: c
+            text: Only the number of raw downloaded files
+          - id: b
+            text: Only the original list of website domains
+        feedback: Source labels do not fully specify filtering, tokenization, packing, or targets.
+        id: pretraining-data-pipeline.base.v2.1
+        retired: true
+      - prompt: A filter rejects many valid informal messages. What should be investigated?
+        answer: a
+        options:
+          - id: b
+            text: Whether all informal language should be deleted
+          - id: c
+            text: Whether a larger model removes the need to inspect data
+          - id: a
+            text: Its criterion and effect on the intended data coverage
+        feedback: A quality score can encode selection assumptions that exclude useful examples.
+        id: pretraining-data-pipeline.base.v2.2
+        retired: true
+      - prompt: Why record intermediate pipeline counts?
+        answer: a
+        options:
+          - id: b
+            text: To prove every remaining record is correct
+          - id: c
+            text: To make independent rejection percentages automatically additive
+          - id: a
+            text: To trace which stage changed the dataset and by how much
+        feedback: A staged ledger exposes transformations without turning counts into quality guarantees.
+        id: pretraining-data-pipeline.base.v2.3
+        retired: true
+      - prompt: Which link belongs in a reproducible data manifest?
+        answer: a
+        options:
+          - id: b
+            text: A final row count without versions of the transformations
+          - id: a
+            text: The tokenizer version and packing conventions
+          - id: c
+            text: A list of source domains without the tokenization configuration
+        feedback: These choices determine the numerical training inputs.
+        id: pretraining-data-pipeline.base.v2.4
+        retired: true
+  - id: pretraining-data-pipeline.transfer.v2
+    objective_ref: objective.pretraining-data-pipeline
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: pretraining-data-pipeline.s3
+    variants:
+      - prompt: A held-out question appears verbatim inside a training document with a new filename. What is the issue?
+        answer: a
+        options:
+          - id: a
+            text: Evaluation contamination despite the different filename
+          - id: c
+            text: An optimizer problem unrelated to data
+          - id: b
+            text: A harmless rename that preserves full test independence
+        feedback: Information content, not filenames, determines whether the test has leaked.
+        id: pretraining-data-pipeline.transfer.v2.1
+        retired: true
+      - prompt: A pipeline removes 10 records from 100, then 20 from the remaining 90. How many remain?
+        answer: a
+        options:
+          - id: b
+            text: '72'
+          - id: a
+            text: '70'
+          - id: c
+            text: '80'
+        feedback: 'The removals are absolute sequential counts: 100−10−20=70.'
+        id: pretraining-data-pipeline.transfer.v2.2
+        retired: true
+      - prompt: Two teams use the same documents but different tokenizers and target masks. What can differ?
+        answer: a
+        options:
+          - id: c
+            text: Nothing once the source documents match
+          - id: b
+            text: Only input lengths; the prediction targets must remain identical
+          - id: a
+            text: The examples and losses seen by the training loop
+        feedback: Tokenization and mask rules change the training representation and objective contributions.
+        id: pretraining-data-pipeline.transfer.v2.3
+        retired: true
+      - prompt: A report does not disclose its exact filtering thresholds. What is the defensible comparison?
+        answer: a
+        options:
+          - id: b
+            text: Assume the thresholds from another model family
+          - id: a
+            text: State the available evidence and mark the thresholds unknown
+          - id: c
+            text: Infer exact thresholds from the final benchmark score
+        feedback: Missing lifecycle details remain unknown rather than becoming guessed facts.
+        id: pretraining-data-pipeline.transfer.v2.4
+        retired: true
+  - id: pretraining-data-pipeline.base.v3
+    objective_ref: objective.pretraining-data-pipeline
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Name the stage first (extraction, language ID, quality filter, dedup, PII, decontamination), then ask what that stage compares and what it keeps.
+    remediation_scene: pretraining-data-pipeline.s2
+    variants:
+      - id: pretraining-data-pipeline.base.v3.1
+        prompt: A news article was reposted on 400 sites, each copy with a different date line and sidebar. Which check will catch the copies?
+        options:
+          - id: b
+            text: Hashing each full page and dropping pages whose hashes repeat
+          - id: a
+            text: Comparing shingle sets and removing pages with high Jaccard similarity
+          - id: c
+            text: Running a language classifier and keeping pages scored as English
+        answer: a
+        feedback: One changed line gives a completely different hash, so exact dedup misses every copy. Shingle overlap stays high when most of the text matches. Language ID would keep all 400 copies, since they're all English.
+      - id: pretraining-data-pipeline.base.v3.2
+        prompt: Why do large pipelines compute MinHash signatures instead of the exact Jaccard similarity of every pair of documents?
+        options:
+          - id: c
+            text: MinHash measures meaning, so it also catches paraphrased documents
+          - id: b
+            text: MinHash gives a more accurate score than counting shared shingles
+          - id: a
+            text: Short signatures and banding pick out candidate pairs to compare
+        answer: a
+        feedback: With billions of pages, comparing every pair is impossible. Signatures estimate Jaccard, and banding flags only likely pairs. MinHash still works on word shingles, so it doesn't catch paraphrases, and it approximates Jaccard rather than beating it.
+      - id: pretraining-data-pipeline.base.v3.3
+        prompt: What does a 13-gram decontamination check look for?
+        options:
+          - id: a
+            text: Any 13-word run from a test item that also appears in training text
+          - id: b
+            text: Training pages whose topic is similar to the benchmark's topic
+          - id: c
+            text: Test files whose names or web addresses match a training source
+        answer: a
+        feedback: The check slides a 13-word window along each test item and looks for exact matches in the training corpus. Topic similarity would flag almost every page, and a copied question can sit on any page under any name.
+      - id: pretraining-data-pipeline.base.v3.4
+        prompt: A quality filter removes 40% of the pages it sees, and near-duplicate removal then removes 30% of the pages it sees. What share of the pages entering the filter survives both?
+        options:
+          - id: b
+            text: 30%, since 40% plus 30% of the pages were removed
+          - id: c
+            text: 58%, since each stage keeps part of the original total
+          - id: a
+            text: 42%, since 60% survive the filter and 70% of those survive dedup
+        answer: a
+        feedback: Stages apply in sequence, so multiply what each keeps, 0.6 × 0.7 = 0.42. Adding the percentages treats both as shares of the original pages. 58% is the share removed, not kept.
+  - id: pretraining-data-pipeline.transfer.v3
+    objective_ref: objective.pretraining-data-pipeline
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what could go wrong at this stage in this setting (lost good data, leaked personal data, or leaked test data) and pick the step that checks for it.
+    remediation_scene: pretraining-data-pipeline.s4
+    variants:
+      - id: pretraining-data-pipeline.transfer.v3.1
+        prompt: A health-forum corpus is filtered with a bad-words blocklist. Reviewers find it removed many ordinary posts about sexual health and LGBTQ+ patients. What should the team do?
+        options:
+          - id: b
+            text: Keep the blocklist, because removing any risky page is the safer choice
+          - id: a
+            text: Review a sample of rejects and replace the list with a better-tested filter
+          - id: c
+            text: Tighten the language-ID threshold so fewer informal posts reach the list
+        answer: a
+        feedback: This is the pattern Dodge et al. found in C4. A crude list erases useful text about whole communities, so read what it rejects and use a filter tested on this domain. Tightening language ID doesn't fix the blocklist's judgments.
+      - id: pretraining-data-pipeline.transfer.v3.2
+        prompt: A new model scores far higher on one reading-comprehension benchmark than on similar tests. What should the team check first?
+        options:
+          - id: c
+            text: Whether a longer context window would lift the other tests too
+          - id: b
+            text: Whether more training data from the same crawl raises all scores
+          - id: a
+            text: Whether the benchmark's passages or questions overlap the training corpus
+        answer: a
+        feedback: A standout score on one test is a classic sign of contamination. Check n-gram overlap, then compare scores on flagged and clean questions, as GPT-3's authors did. More data or a longer context doesn't explain a gap on one benchmark.
+      - id: pretraining-data-pipeline.transfer.v3.3
+        prompt: A bank wants to pretrain a small model on five years of its own customer-support chats. Which stage matters most before any training starts?
+        options:
+          - id: a
+            text: Scrubbing names, emails, phone numbers, and account numbers
+          - id: b
+            text: Removing near-duplicate chats that use the same greeting
+          - id: c
+            text: Dropping chats whose lines don't end in end punctuation
+        answer: a
+        feedback: Support chats are full of personal data, and a model can repeat what it saw. Near-duplicate removal is useful but secondary, and C4's punctuation rule would throw away most chat messages.
+      - id: pretraining-data-pipeline.transfer.v3.4
+        prompt: A team's quality classifier was trained to prefer encyclopedia-style writing. It rejects most recipe blogs and hobby forums. What is the likely effect on the model?
+        options:
+          - id: c
+            text: It will be stronger on informal text, since it learns from cleaner examples
+          - id: a
+            text: It will be weaker on informal and everyday writing the filter removed
+          - id: b
+            text: It will be unaffected, since the rejected pages were duplicates anyway
+        answer: a
+        feedback: A model learns the styles it sees. A filter that removes everyday writing makes the model worse at it. Nothing says the rejects were duplicates, so read a sample of what was removed before deciding.
+  - id: pretraining-data-pipeline.calculate
+    objective_ref: objective.pretraining-data-pipeline
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Jaccard similarity is shared shingles ÷ distinct shingles in either document. The union is size A + size B − shared.
+    remediation_scene: pretraining-data-pipeline.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: pretraining-data-pipeline.calculate.1
+        prompt: Document A has 20 distinct shingles and document B has 20. They share 15. What is their Jaccard similarity?
+        answer: 0.6
+        feedback: The union is 20 + 20 − 15 = 25 distinct shingles, so J = 15 ÷ 25 = 0.6.
+      - id: pretraining-data-pipeline.calculate.2
+        prompt: Document A has 40 distinct shingles and document B has 36. They share 30. What is their Jaccard similarity? Give two decimal places.
+        answer: 0.652
+        feedback: The union is 40 + 36 − 30 = 46, so J = 30 ÷ 46 ≈ 0.65.
+      - id: pretraining-data-pipeline.calculate.3
+        prompt: A 12-word sentence and a copy with its 6th word changed are compared using 3-word shingles. What is their Jaccard similarity? Give two decimal places.
+        answer: 0.538
+        feedback: Each version has 12 − 3 + 1 = 10 shingles. The 3 shingles containing the 6th word differ, so 7 are shared and the union is 7 + 3 + 3 = 13. J = 7 ÷ 13 ≈ 0.54.
+      - id: pretraining-data-pipeline.calculate.4
+        prompt: Two documents each have 50 distinct shingles and share 45 of them. What is their Jaccard similarity? Give two decimal places.
+        answer: 0.818
+        feedback: The union is 50 + 50 − 45 = 55, so J = 45 ÷ 55 ≈ 0.82.

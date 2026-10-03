@@ -1,205 +1,371 @@
 schema_version: 0.2-draft
 lesson:
   id: anomaly-detection
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Find unusual cases worth investigating
   state: draft
-  summary: Find unusual sensor readings and decide which ones deserve investigation rather than assuming every
-    surprise is a fault.
+  summary: At 3 a.m. a vaccine freezer reads −12 °C. Is it failing, defrosting, or lying? Learn to score how unusual a reading is, and to decide what an alert should trigger.
   slot: M08.5
   category: learning
   sources:
-  - title: An Introduction to Statistical Learning — authors’ materials
-    url: https://www.statlearning.com/
+    - title: An Introduction to Statistical Learning — authors’ materials
+      url: https://www.statlearning.com/
+    - title: "Isolation Forest (Liu, Ting & Zhou, 2008)"
+      url: https://doi.org/10.1109/ICDM.2008.17
+    - title: scikit-learn — novelty and outlier detection
+      url: https://scikit-learn.org/stable/modules/outlier_detection.html
 objectives:
-- id: objective.anomaly-detection
-  version: 1-draft
-  statement: Anomaly detection ranks departures from a reference pattern; density, distance, reconstruction,
-    and isolation methods encode different notions of unusualness.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - anomaly-detection.base
-  - anomaly-detection.transfer
-  prerequisites:
-  - anyOf:
-    - objective.clustering
-  - anyOf:
-    - objective.uncertainty-models
+  - id: objective.anomaly-detection
+    version: 2-draft
+    statement: Anomaly detection ranks departures from a reference pattern; density, distance, reconstruction, and isolation methods encode different notions of unusualness.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - anomaly-detection.base.v2
+      - anomaly-detection.transfer.v2
+      - anomaly-detection.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.clustering
+      - anyOf:
+          - objective.uncertainty-models
 scenes:
-- id: anomaly-detection.s1
-  title: Define the reference behavior
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.anomaly-detection
-  markdown: 'An anomaly is unusual relative to a reference population and representation. A sudden machine
-    vibration may indicate failure, a new operating mode, or a sensor problem. Choose what the detector should
-    support: inspection, warning, or automatic action. The meaning of an alert is not supplied by unusualness
-    alone.'
-  text_mode: 'An anomaly is unusual relative to a reference population and representation. A sudden machine
-    vibration may indicate failure, a new operating mode, or a sensor problem. Choose what the detector should
-    support: inspection, warning, or automatic action. The meaning of an alert is not supplied by unusualness
-    alone.'
-  bridges: []
-- id: anomaly-detection.s2
-  title: Compare detection mechanisms
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.anomaly-detection
-  markdown: 'Distance methods look for examples far from neighbors. Density methods look for poorly supported
-    regions. Reconstruction methods flag inputs a model reconstructs badly. Isolation methods measure how easily
-    random partitions separate a point. These scores can disagree because they define normality differently.
+  - id: anomaly-detection.s1
+    title: The freezer that read −12 °C
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.anomaly-detection
+    markdown: |-
+      A clinic's vaccine freezer logs its temperature every hour. All week it has hovered around −20 °C. At 3 a.m. it reports −12 °C. What happened?
 
+      - The compressor is failing, and the vaccines are warming. (Act now.)
+      - The freezer is running a defrost cycle, as it does twice a day. (Normal.)
+      - The sensor glitched, and the freezer is fine. (Fix the sensor.)
 
-    For a temperature sensor normally near 20, a new value 80 is far from its usual neighbors. A **reconstruction**
-    model tries to reproduce its input after passing it through a learned representation; reproducing 80 as
-    22 gives a large error. An **isolation** method asks how many random cuts are needed to separate it from
-    the other examples. Different mechanisms can disagree about a rare but well-reconstructed input.'
-  text_mode: 'Distance methods look for examples far from neighbors. Density methods look for poorly supported
-    regions. Reconstruction methods flag inputs a model reconstructs badly. Isolation methods measure how easily
-    random partitions separate a point. These scores can disagree because they define normality differently.
+      The reading is clearly unusual, but "unusual" doesn't tell you which story is true. An **anomaly** is an example that departs from a **reference**, the data you've chosen to define "normal." Change the reference and the same reading can stop being an anomaly: against readings that include defrost cycles, −12 °C at 3 a.m. may be routine.
 
+      So decide two things before you build a detector. What counts as normal? And what should an alert do: add a line to a log for review, text a technician, or switch the vaccines to a backup freezer automatically? The more drastic the action, the more sure you need to be.
+    bridges: []
+  - id: anomaly-detection.s2
+    title: How many spreads from normal?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.anomaly-detection
+    markdown: |-
+      The simplest detector asks how far a reading sits from the reference mean, measured in standard deviations. That count is the **z-score**:
 
-    For a temperature sensor normally near 20, a new value 80 is far from its usual neighbors. A **reconstruction**
-    model tries to reproduce its input after passing it through a learned representation; reproducing 80 as
-    22 gives a large error. An **isolation** method asks how many random cuts are needed to separate it from
-    the other examples. Different mechanisms can disagree about a rare but well-reconstructed input.'
-  bridges: []
-- id: anomaly-detection.s3
-  title: Set an operational threshold
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.anomaly-detection
-  markdown: Suppose 1000 daily events are scored and only 20 can be reviewed. A top-20 policy respects capacity
-    but can still miss serious events or include harmless ones. A fixed threshold may produce more alerts when
-    the environment shifts. Evaluate detection, false alarms, and review workload together.
-  text_mode: Suppose 1000 daily events are scored and only 20 can be reviewed. A top-20 policy respects capacity
-    but can still miss serious events or include harmless ones. A fixed threshold may produce more alerts when
-    the environment shifts. Evaluate detection, false alarms, and review workload together.
-  bridges: []
-- id: anomaly-detection.s4
-  title: Use labels and context when available
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.anomaly-detection
-  markdown: 'Rare labeled failures can help evaluate whether anomaly scores identify useful targets. Low density
-    is not always the right criterion, especially in high-dimensional spaces where typical regions and highest-density
-    points differ. Monitor reference drift, inspect alert explanations, and avoid treating every unusual individual
-    as suspicious.
+      $$z = \frac{x - \mu}{\sigma}$$
 
+      Last night's nine readings have mean $\mu = -20$ °C and standard deviation $\sigma = 0.5$. For the 3 a.m. reading, $z = (-12 - (-20)) / 0.5 = 16$: sixteen spreads above normal. A common rule flags $|z| > 3$.
 
-    A **reference drift** is a change in the behavior used as the normal baseline. Suppose the machine switches
-    into a legitimate hotter mode. Repeated alerts may now reflect an outdated baseline, not repeated faults.
-    Verify the mode change before updating that baseline, because automatically accepting every new pattern
-    could also normalize an actual failure.'
-  text_mode: 'Rare labeled failures can help evaluate whether anomaly scores identify useful targets. Low density
-    is not always the right criterion, especially in high-dimensional spaces where typical regions and highest-density
-    points differ. Monitor reference drift, inspect alert explanations, and avoid treating every unusual individual
-    as suspicious.
+      ```python run
+      import numpy as np
 
+      # Last night's hourly freezer readings (°C): the reference for "normal"
+      reference = np.array([-20.5, -19.5, -20.0, -19.5, -20.5, -19.5, -20.5, -20.5, -19.5])
+      mu, sd = reference.mean(), reference.std(ddof=1)
+      print(f"reference mean {mu:.2f} °C, standard deviation {sd:.2f}")
 
-    A **reference drift** is a change in the behavior used as the normal baseline. Suppose the machine switches
-    into a legitimate hotter mode. Repeated alerts may now reflect an outdated baseline, not repeated faults.
-    Verify the mode change before updating that baseline, because automatically accepting every new pattern
-    could also normalize an actual failure.'
-  bridges: []
-- id: anomaly-detection.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.anomaly-detection
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: An anomaly is unusual relative to a chosen baseline. An alert is a reason to investigate; the unusual
-    case may be a fault, a sensor error, or a legitimate change.
-- id: anomaly-detection.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.anomaly-detection
-  markdown: An anomaly is unusual relative to a chosen baseline. An alert is a reason to investigate; the unusual
-    case may be a fault, a sensor error, or a legitimate change.
-  text_mode: An anomaly is unusual relative to a chosen baseline. An alert is a reason to investigate; the
-    unusual case may be a fault, a sensor error, or a legitimate change.
+      today = np.array([-20.0, -19.4, -20.8, -12.0, -19.9, -18.4])
+      for reading in today:
+          z = (reading - mu) / sd
+          flag = "ALERT" if abs(z) > 3 else ""
+          print(f"{reading:6.1f} °C   z = {z:5.1f}  {flag}")
+
+      # The trap: judge today's readings against today's own mean and spread
+      z_self = (today - today.mean()) / today.std(ddof=1)
+      print("z of -12.0 against today's own stats:", round(z_self[3], 2))
+      ```
+
+      Two alerts: −12.0 (z = 16.0) and −18.4 (z = 3.2), which may just be a door opened for a delivery. Try a threshold of 4 and watch the borderline alert disappear.
+
+      :::predict The last line scores −12.0 against today's six readings, spike included. Is it still flagged?
+      No: its z-score drops to 1.98. The spike drags today's mean up and inflates today's standard deviation, hiding itself. With six readings, no single one can ever score above about 2.04, however extreme. That's why the reference should come from data you trust to be normal, not from the batch you're checking.
+      :::
+    bridges: []
+  - id: anomaly-detection.s3
+    title: Four ways to say "unusual"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.anomaly-detection
+    markdown: |-
+      A z-score checks one number at a time. Real detectors work with many features at once, and each family defines "unusual" differently:
+
+      | Family | A point is unusual if… | Example |
+      | --- | --- | --- |
+      | Distance | Its nearest neighbors are far away | Distance to the 5th-nearest reading |
+      | Density | Few points lie in its region | Low value under a fitted Gaussian mixture |
+      | Reconstruction | A model trained on normal data rebuilds it badly | Large PCA rebuild error |
+      | Isolation | Random cuts separate it quickly | Average number of cuts to isolate it |
+
+      Reconstruction reuses the PCA lesson. Fit PCA to normal readings of temperature and compressor power, which rise and fall together. A reading with high power but no cooling breaks that pattern, so its rebuild error is large, even though each value alone looks ordinary. A per-feature z-score would miss it. An **autoencoder**, a neural network trained to squeeze its input down and rebuild it, does the same job for patterns too curved for PCA.
+
+      **Isolation forest** (Liu, Ting, and Zhou, 2008) turns rarity into a count. Pick a random feature and a random cut point between its minimum and maximum, and split the data; repeat on each side until every point stands alone. Take today's six readings, which run from −20.8 to −12.0. Any cut above −18.4 isolates −12.0 immediately, and 6.4 of the 8.8 degrees lie there, so 73% of first cuts do it. The five normal readings sit within 2.4 degrees of each other, so isolating one of them takes several cuts. Average the cut count over many random trees, and few cuts means anomalous.
+
+      :::papers Two anomaly scores
+      The z-score is $z = (x-\mu)/\sigma$ with $\mu$ and $\sigma$ from the reference: $(-12+20)/0.5 = 16$. An isolation forest scores a point by its average path length $E[h(x)]$, the number of cuts needed to isolate it, averaged over trees:
+
+      $$s(x) = 2^{-E[h(x)]/c(n)}$$
+
+      Here $c(n)$ is the typical path length for $n$ points, used to normalize. Short paths push $s$ toward 1 (anomalous); paths of typical length give about 0.5.
+      :::
+    bridges: []
+  - id: anomaly-detection.s4
+    title: Set the threshold by who reads the alerts
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.anomaly-detection
+    markdown: |-
+      A detector produces a score; people have to choose the threshold. Suppose a vaccine distributor's detector scores 1,000 freezer readings a day across its sites, and one technician can check 20. Ranking by score and reviewing the top 20 matches the workload. If 14 of those 20 turn out to be real problems, the review list's **precision** (the fraction of flagged cases that are real) is 14 / 20 = 0.7. Tracking that number week by week tells you whether the detector is earning the technician's time.
+
+      :::mixup "The detector flagged it, so something is broken."
+      A score only says "this doesn't look like the reference." The unusual reading may be a fault, a sensor glitch, or a new normal. That's why the first response to most alerts is a look, not an automatic shutdown.
+      :::
+
+      The reference itself can go stale. That's **reference drift**: normal behavior changes, and the old baseline no longer fits. Here's how Omar handles it. In June the clinic replaces its freezers with a model that defrosts every six hours, and alerts jump tenfold. He doesn't raise the threshold until the noise goes away, because that would also hide real failures. He checks a dozen alerts by hand, confirms they line up with the new defrost times, and builds a separate reference for defrost periods. Alerts fall back to a few a week, and each one is worth reading.
+    bridges: []
+  - id: anomaly-detection.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.anomaly-detection
+    markdown: Card fraud, hospital vital signs, network traffic, and several z-scores and review-list calculations test whether you can score unusual cases and decide what an alert should mean.
+    takeaway: |-
+      An anomaly is unusual compared with a reference you chose, whether you measure it by z-score, distance, density, rebuild error, or isolation. Keep the reference clean and current, and treat an alert as a reason to look.
+  - id: anomaly-detection.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.anomaly-detection
+    markdown: |-
+      An anomaly is unusual relative to a chosen baseline. An alert is a reason to investigate; the unusual case may be a fault, a sensor error, or a legitimate change.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - anomaly-detection.s1
-    - anomaly-detection.s2
-    - anomaly-detection.s3
-    - anomaly-detection.s4
-    - anomaly-detection.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - anomaly-detection.s1
+        - anomaly-detection.s2
+        - anomaly-detection.s3
+        - anomaly-detection.s4
+        - anomaly-detection.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     anomaly-detection.recap: anomaly-detection.check
 assessment_families:
-- id: anomaly-detection.base
-  objective_ref: objective.anomaly-detection
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Compare detection mechanisms: trace the inputs, operation, and result before choosing.'
-  remediation_scene: anomaly-detection.s2
-  variants:
-  - id: anomaly-detection.base.1
-    prompt: Does an anomaly score by itself establish a fault?
-    options:
-    - id: a
-      text: No; unusualness requires contextual interpretation
-    - id: b
-      text: Yes; every rare case is broken
-    - id: c
-      text: Only if the score is positive
-    answer: a
-    feedback: Reference rarity and task harm are different properties.
-  - id: anomaly-detection.base.2
-    prompt: What does a reconstruction detector inspect?
-    options:
-    - id: b
-      text: Only the order of arrival
-    - id: c
-      text: Whether a class label has a long name
-    - id: a
-      text: How well its model reproduces the input
-    answer: a
-    feedback: Its anomaly criterion depends on reconstruction behavior.
-- id: anomaly-detection.transfer
-  objective_ref: objective.anomaly-detection
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Use labels and context when available: trace the inputs, operation, and result before choosing.'
-  remediation_scene: anomaly-detection.s4
-  variants:
-  - id: anomaly-detection.transfer.1
-    prompt: A fixed alert threshold suddenly produces ten times more alerts. What should be investigated?
-    options:
-    - id: b
-      text: Only whether the threshold is an integer
-    - id: c
-      text: A guarantee that every new alert is a fault
-    - id: a
-      text: Distribution change, sensor issues, and workload effects
-    answer: a
-    feedback: Alert volume can change because the reference assumptions no longer fit.
-  - id: anomaly-detection.transfer.2
-    prompt: A rare case is important but reconstructs well. Can a reconstruction detector miss it?
-    options:
-    - id: c
-      text: Only when labels are absent
-    - id: a
-      text: Yes; reconstruction error is only one criterion
-    - id: b
-      text: No; every anomaly has high reconstruction error
-    answer: a
-    feedback: A method detects deviations according to its particular learned representation.
+  - id: anomaly-detection.base
+    objective_ref: objective.anomaly-detection
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Compare detection mechanisms: trace the inputs, operation, and result before choosing.'
+    remediation_scene: anomaly-detection.s2
+    variants:
+      - id: anomaly-detection.base.1
+        prompt: Does an anomaly score by itself establish a fault?
+        options:
+          - id: a
+            text: No; unusualness requires contextual interpretation
+          - id: b
+            text: Yes; every rare case is broken
+          - id: c
+            text: Only if the score is positive
+        answer: a
+        feedback: Reference rarity and task harm are different properties.
+        retired: true
+      - id: anomaly-detection.base.2
+        prompt: What does a reconstruction detector inspect?
+        options:
+          - id: b
+            text: Only the order of arrival
+          - id: c
+            text: Whether a class label has a long name
+          - id: a
+            text: How well its model reproduces the input
+        answer: a
+        feedback: Its anomaly criterion depends on reconstruction behavior.
+        retired: true
+  - id: anomaly-detection.transfer
+    objective_ref: objective.anomaly-detection
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Use labels and context when available: trace the inputs, operation, and result before choosing.'
+    remediation_scene: anomaly-detection.s4
+    variants:
+      - id: anomaly-detection.transfer.1
+        prompt: A fixed alert threshold suddenly produces ten times more alerts. What should be investigated?
+        options:
+          - id: b
+            text: Only whether the threshold is an integer
+          - id: c
+            text: A guarantee that every new alert is a fault
+          - id: a
+            text: Distribution change, sensor issues, and workload effects
+        answer: a
+        feedback: Alert volume can change because the reference assumptions no longer fit.
+        retired: true
+      - id: anomaly-detection.transfer.2
+        prompt: A rare case is important but reconstructs well. Can a reconstruction detector miss it?
+        options:
+          - id: c
+            text: Only when labels are absent
+          - id: a
+            text: Yes; reconstruction error is only one criterion
+          - id: b
+            text: No; every anomaly has high reconstruction error
+        answer: a
+        feedback: A method detects deviations according to its particular learned representation.
+        retired: true
+  - id: anomaly-detection.base.v2
+    objective_ref: objective.anomaly-detection
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Each detector compares a point with a reference of normal data in its own way. Ask what that detector counts as unusual, and what reference it is comparing against.
+    remediation_scene: anomaly-detection.s3
+    variants:
+      - id: anomaly-detection.base.v2.1
+        prompt: An engineer computes z-scores for today's ten readings using today's own mean and standard deviation. A huge spike scores only z = 2.4 and isn't flagged. Why?
+        options:
+          - id: a
+            text: The rule of |z| > 3 is too strict for sensor data
+          - id: b
+            text: The spike inflated today's mean and spread, hiding itself
+          - id: c
+            text: Z-scores can only flag readings that fall below the mean
+        answer: b
+        feedback: Including the spike in its own reference drags the mean toward it and inflates the standard deviation, so its z-score shrinks. With ten readings, no single one can exceed z = 2.85. The fix is a trusted reference, not a looser rule.
+      - id: anomaly-detection.base.v2.2
+        prompt: In an isolation forest, reading A takes 2.1 random cuts on average to isolate, and reading B takes 7.8. Which reading looks more anomalous?
+        options:
+          - id: b
+            text: B, because needing more cuts means it is harder to explain
+          - id: c
+            text: A, because points that stand apart are isolated in few cuts
+          - id: a
+            text: Neither, because the cuts are random and so tell you nothing
+        answer: c
+        feedback: A point far from the others gets cut off quickly, so short average paths mean anomalous. Individual cuts are random, but averaging over many trees gives a stable score.
+      - id: anomaly-detection.base.v2.3
+        prompt: A reconstruction detector was fitted to normal engine readings. What makes a new reading score high?
+        options:
+          - id: c
+            text: Its value lies closest to the average of the training data
+          - id: a
+            text: The model rebuilds it badly because it breaks normal patterns
+          - id: b
+            text: It arrived later in the day than most training readings did
+        answer: a
+        feedback: The model learned how normal readings fit together, so a reading that breaks those patterns comes back with a large rebuild error. A reading near the average is rebuilt well, and time of arrival isn't part of the score unless it's a feature.
+      - id: anomaly-detection.base.v2.4
+        prompt: A freezer shows normal temperature but very high compressor power, a combination never seen before. Neither value is unusual alone. Which detector is most likely to flag it?
+        options:
+          - id: c
+            text: A separate z-score on each feature, with the usual rule of |z| > 3
+          - id: a
+            text: Neither kind, since each value on its own looks ordinary
+          - id: b
+            text: A PCA reconstruction detector fitted to normal readings
+        answer: b
+        feedback: PCA learned that temperature and power move together, so a reading that breaks the link rebuilds badly. Per-feature z-scores look at one value at a time, and each value here is ordinary.
+      - id: anomaly-detection.base.v2.5
+        prompt: Which reference should you use to compute z-scores for tonight's freezer readings?
+        options:
+          - id: a
+            text: Tonight's readings, since they are the most recent data
+          - id: c
+            text: Recent readings checked to be normal, like last night's
+          - id: b
+            text: Every reading ever logged, failures and repairs included
+        answer: c
+        feedback: A clean, recent reference defines normal without the readings you're testing. Tonight's own data can hide its own spikes, and a history that includes failures stretches the spread so real problems score lower.
+  - id: anomaly-detection.transfer.v2
+    objective_ref: objective.anomaly-detection
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: An alert means "unlike the reference." Before acting, ask whether the reference still describes normal, and whether context explains the case.
+    remediation_scene: anomaly-detection.s4
+    variants:
+      - id: anomaly-detection.transfer.v2.1
+        prompt: A warehouse replaces its freezers with a model that runs at −18 °C instead of −20 °C. Alerts from the fixed threshold jump tenfold. What is the best response?
+        options:
+          - id: a
+            text: Raise the threshold until alerts return to the old level
+          - id: c
+            text: Verify the new normal, then refit the reference to it
+          - id: b
+            text: Treat the new freezers as faulty, since they keep alerting
+        answer: c
+        feedback: This is reference drift. Checking a sample of alerts confirms the new behavior is normal, and refitting the reference restores meaningful alerts. Raising the threshold would also hide real failures.
+      - id: anomaly-detection.transfer.v2.2
+        prompt: A fraud team scores 20,000 card transactions a day and can review 50. How should it use the scores?
+        options:
+          - id: a
+            text: Review the 50 top scores and track how many prove to be fraud
+          - id: c
+            text: Review every transaction with z > 3, however many there are
+          - id: b
+            text: Review a random 50, since scores can be wrong anyway
+        answer: a
+        feedback: Ranking and reviewing the top 50 matches the team's capacity, and tracking precision shows whether the scores are useful. A fixed rule can swamp the team, and random picks throw the scores away.
+      - id: anomaly-detection.transfer.v2.3
+        prompt: A hospital monitor flags a patient's resting heart rate of 42 beats per minute. The patient is a marathon runner whose rate is always about that low. What does this show?
+        options:
+          - id: a
+            text: The monitor is broken and should be replaced
+          - id: c
+            text: The patient must be at risk, since the reading is rare
+          - id: b
+            text: The reading is unusual for the reference, not for this person
+        answer: b
+        feedback: Unusual depends on the reference; against this runner's own history, 42 is normal. A personal baseline would fit better. The monitor measured correctly, and rarity alone doesn't mean risk.
+      - id: anomaly-detection.transfer.v2.4
+        prompt: A new network attack mimics normal traffic closely, so an autoencoder-based detector rebuilds it well and misses it. What would help most?
+        options:
+          - id: a
+            text: Lower the threshold until the detector flags most of the traffic
+          - id: b
+            text: Retrain the detector with the attack traffic counted as normal
+          - id: c
+            text: Add a detector with a different notion of unusual, tested on past attacks
+        answer: c
+        feedback: Each family has blind spots, so a second detector (say, one based on connection counts or timing) can catch what reconstruction misses, and labeled past attacks show whether it does. Flagging most traffic buries analysts, and training on the attack teaches the detector to ignore it.
+  - id: anomaly-detection.calc.v2
+    objective_ref: objective.anomaly-detection
+    task: base
+    response_type: numeric
+    points: 1
+    hint: A z-score is (reading − reference mean) / reference standard deviation. Precision is real problems found divided by cases reviewed.
+    remediation_scene: anomaly-detection.s2
+    variants:
+      - id: anomaly-detection.calc.v2.1
+        prompt: A freezer's reference readings have mean −20 °C and standard deviation 0.5. What is the z-score of a reading of −18.6 °C? Give one decimal place.
+        answer: 2.8
+        feedback: (−18.6 − (−20)) / 0.5 = 1.4 / 0.5 = 2.8, just under the usual cutoff of 3.
+      - id: anomaly-detection.calc.v2.2
+        prompt: A machine's reference vibration has mean 50 and standard deviation 4. What is the z-score of a reading of 38?
+        answer: -3
+        feedback: (38 − 50) / 4 = −12 / 4 = −3. Negative means below the mean.
+      - id: anomaly-detection.calc.v2.3
+        prompt: A reference has mean 100 and standard deviation 15, and the rule flags |z| > 3. What is the highest reading that is not flagged?
+        answer: 145
+        feedback: z = 3 at 100 + 3 × 15 = 145. Anything higher is flagged.
+      - id: anomaly-detection.calc.v2.4
+        prompt: A technician reviews the 20 highest-scoring readings, and 14 turn out to be real problems. What is the precision of the review list? Give two decimal places.
+        answer: 0.7
+        feedback: Precision is real problems over reviewed cases, 14 / 20 = 0.70.
+      - id: anomaly-detection.calc.v2.5
+        prompt: Readings run from 0 to 10. One reading is 10, and the next highest is 6. A random cut is placed uniformly between 0 and 10. What is the probability it isolates the reading at 10? Give one decimal place.
+        answer: 0.4
+        feedback: Any cut between 6 and 10 separates the 10 from everything else. That's 4 of the 10 units, so the probability is 0.4.
+    absolute_tolerance: 0.01

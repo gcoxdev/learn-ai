@@ -1,448 +1,757 @@
 schema_version: 0.2-draft
 lesson:
   id: tiny-language-model-project
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: 'Project: build a tiny next-token model and checkpoint ledger'
   state: draft
-  summary: Make two paper language models, compare their predictions, and defend which evidence supports a
-    checkpoint choice.
+  summary: Teach a model 98 bird names and it will invent new ones, like "startbird" and "bullover". Build it twice, from tally marks and then from learned vectors, and measure which one is less surprised.
   slot: M36.4
   category: learning
-  minutes: 45
+  minutes: 90
   sources:
-  - title: Dive into Deep Learning — Language Models
-    url: https://d2l.ai/chapter_recurrent-neural-networks/language-model.html
+    - title: Dive into Deep Learning — Language Models
+      url: https://d2l.ai/chapter_recurrent-neural-networks/language-model.html
+    - title: A Neural Probabilistic Language Model (Bengio et al., 2003)
+      url: https://www.jmlr.org/papers/v3/bengio03a.html
   archetype: project
 objectives:
-- id: objective.tiny-language-model-project
-  version: 2-draft
-  statement: Build and compare two frozen count-model checkpoints using a supplied corpus, probability tables,
-    and a fixed held-out evaluation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - tiny-language-model-project.base.v2
-  - tiny-language-model-project.transfer.v2
-  prerequisites:
-  - anyOf:
-    - objective.count-based-language
-  - anyOf:
-    - objective.next-token
-  - anyOf:
-    - objective.pretraining-budget-and-checkpoints
+  - id: objective.tiny-language-model-project
+    version: 3-draft
+    statement: Build a count-based bigram model and a small neural next-token model, compare them by held-out perplexity across saved checkpoints, and sample from them with temperature.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - tiny-language-model-project.base.v3
+      - tiny-language-model-project.transfer.v3
+      - tiny-language-model-project.calculate
+    prerequisites:
+      - anyOf:
+          - objective.count-based-language
+      - anyOf:
+          - objective.next-token
+      - anyOf:
+          - objective.pretraining-budget-and-checkpoints
 scenes:
-- id: tiny-language-model-project.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.tiny-language-model-project
-  title: Build a model you can fit on paper
-  markdown: 'Your training sentences are “red cat END”, “red dog END”, and “blue cat END”. **END** is an explicit
-    end-of-sentence token. Use the vocabulary [red, blue, cat, dog, END] in that order.
+  - id: tiny-language-model-project.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.tiny-language-model-project
+    title: 'Your brief: a language model you can read end to end'
+    markdown: |-
+      Every chatbot reply comes from the same loop: score every possible next token, pick one, append it, repeat. In this project you build that loop twice, small enough to read every number: first from counts, the way Shannon did in 1948, then as a tiny neural network in the style of Bengio and colleagues' 2003 model, a landmark neural language model that learned a vector for each word.
 
+      | Brief | |
+      | --- | --- |
+      | Goal | Build two next-token models, compare them fairly, and generate text with temperature |
+      | Reader | A study partner who will rerun your work from your notes |
+      | Data | A three-sentence paper corpus, then 110 bird names |
+      | Time | About 90 minutes; the paper-only version takes about 45 |
 
-    Count adjacent pairs within each sentence, without crossing sentence boundaries. Then apply **add-one smoothing**:
-    add one to every possible next-token count and divide by the new row total.
+      **Done looks like:**
 
+      - two hand-built count tables saved as checkpoints C1 and C2, compared on held-out pairs;
+      - a character-level bigram model of bird names, with training and held-out perplexity;
+      - a tiny neural model with a checkpoint ledger, and the checkpoint you kept, with the reason;
+      - samples at three temperatures, and one sentence on what temperature changed;
+      - a short note saying which model won on held-out perplexity, by how much, and why.
+    bridges: []
+  - id: tiny-language-model-project.s2
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.tiny-language-model-project
+    title: 'Milestone 1: count pairs on paper (checkpoint C1)'
+    markdown: |-
+      Start with a corpus of three sentences: "red cat END", "red dog END", and "blue cat END". The token END marks the end of a sentence, so the model can learn when to stop. Use the vocabulary [red, blue, cat, dog, END], in that order.
 
-    Keep a count table, two checkpoint records, probability calculations, and a short evaluation note. Paper
-    or a spreadsheet is enough; optional code should produce the same numbers.'
-  text_mode: 'Your training sentences are “red cat END”, “red dog END”, and “blue cat END”. **END** is an explicit
-    end-of-sentence token. Use the vocabulary [red, blue, cat, dog, END] in that order.
+      Count each pair of neighboring tokens inside a sentence, as in "Represent text with counts and short contexts." The six pairs are red→cat, cat→END, red→dog, dog→END, blue→cat, and cat→END.
 
+      | After… | red | blue | cat | dog | END | Total |
+      | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+      | red | 0 | 0 | 1 | 1 | 0 | 2 |
+      | blue | 0 | 0 | 1 | 0 | 0 | 1 |
+      | cat | 0 | 0 | 0 | 0 | 2 | 2 |
+      | dog | 0 | 0 | 0 | 0 | 1 | 1 |
 
-    Count adjacent pairs within each sentence, without crossing sentence boundaries. Then apply **add-one smoothing**:
-    add one to every possible next-token count and divide by the new row total.
+      Apply **add-one smoothing**: add 1 to every count in a row, then divide by the new row total. The red row [0, 0, 1, 1, 0] becomes [1, 1, 2, 2, 1] out of 7, so $P(\text{cat} \mid \text{red}) = 2/7 \approx 0.286$.
 
+      Save this table as checkpoint **C1**, a snapshot you won't change, together with the corpus, the vocabulary order, and the smoothing rule. Without the vocabulary order, nobody can tell which column is which.
+    bridges: []
+  - id: tiny-language-model-project.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tiny-language-model-project
+    title: 'Milestone 2: a second checkpoint, without overwriting the first'
+    markdown: |-
+      Add one more training sentence, "red cat END", and save the new table as **C2**. The red row becomes [0, 0, 2, 1, 0], and its smoothed probabilities are [1/8, 1/8, 3/8, 2/8, 1/8]. The cat→END count rises to three; every other count stays the same.
 
-    Keep a count table, two checkpoint records, probability calculations, and a short evaluation note. Paper
-    or a spreadsheet is enough; optional code should produce the same numbers.'
-  bridges: []
-- id: tiny-language-model-project.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.tiny-language-model-project
-  title: 'Reference trace: checkpoint C1'
-  markdown: 'Pause and make your pair table before comparing. The six pairs are red→cat, cat→END, red→dog,
-    dog→END, blue→cat, and cat→END. Thus red has two outgoing observations, blue one, cat two, and dog one.
-    Save these counts as C1 with the corpus, vocabulary order, and smoothing rule. After red, the count row
-    is [0, 0, 1, 1, 0]. Add one to each entry: [1, 1, 2, 2, 1]. Divide by the total 7 to obtain probabilities.
-    The five probabilities sum to one.'
-  text_mode: 'Pause and make your pair table before comparing. The six pairs are red→cat, cat→END, red→dog,
-    dog→END, blue→cat, and cat→END. Thus red has two outgoing observations, blue one, cat two, and dog one.
-    Save these counts as C1 with the corpus, vocabulary order, and smoothing rule. After red, the count row
-    is [0, 0, 1, 1, 0]. Add one to each entry: [1, 1, 2, 2, 1]. Divide by the total 7 to obtain probabilities.
-    The five probabilities sum to one.'
-  bridges: []
-- id: tiny-language-model-project.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tiny-language-model-project
-  title: Make a second checkpoint without overwriting the first
-  markdown: Add one training sentence, “red cat END”, and save the resulting table as C2. The red row becomes
-    [0, 0, 2, 1, 0]. Its smoothed probabilities are [1/8, 1/8, 3/8, 2/8, 1/8]. Cat→END now has count three;
-    the other previously observed pairs retain their counts. Keep C1 intact so the comparison is reproducible.
-    These are training changes. Looking up a probability from a fixed table is inference and does not itself
-    change the table.
-  text_mode: Add one training sentence, “red cat END”, and save the resulting table as C2. The red row becomes
-    [0, 0, 2, 1, 0]. Its smoothed probabilities are [1/8, 1/8, 3/8, 2/8, 1/8]. Cat→END now has count three;
-    the other previously observed pairs retain their counts. Keep C1 intact so the comparison is reproducible.
-    These are training changes. Looking up a probability from a fixed table is inference and does not itself
-    change the table.
-  bridges: []
-- id: tiny-language-model-project.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tiny-language-model-project
-  title: Fix a validation comparison before choosing
-  markdown: 'Reserve two transition observations, red→cat and red→dog, and give them equal weight in the comparison.
-    They do not add to the training counts. They repeat patterns seen in training, which can occur for distinct
-    observations; this tiny, selected example does not establish real-world generalization.
+      Keep C1 exactly as it was. The whole point of the next milestone is to compare the two, and you can't compare against a table you've overwritten. The lesson "Allocate compute and preserve useful checkpoints" makes the same case for real training runs.
 
+      Two words to keep apart: changing the counts is *training*. Looking up a probability in a saved table is *inference*, and it never changes the table.
+    bridges: []
+  - id: tiny-language-model-project.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tiny-language-model-project
+    title: 'Milestone 3: score both checkpoints on held-out pairs'
+    markdown: |-
+      Reserve two extra observations, red→cat and red→dog, and keep them out of the training counts. Decide the rule *before* scoring: each pair's loss is the negative natural log of the probability the checkpoint gives it, $-\ln p$, and the two losses count equally. Lower is better.
 
-    Score each target using **negative natural-log probability**, −ln(p), where lower is better. A calculator
-    or these supplied values will do:
+      | Checkpoint | $-\ln P(\text{cat} \mid \text{red})$ | $-\ln P(\text{dog} \mid \text{red})$ | Average loss | Perplexity |
+      | --- | ---: | ---: | ---: | ---: |
+      | C1 | $-\ln(2/7) = 1.253$ | $-\ln(2/7) = 1.253$ | 1.253 | 3.50 |
+      | C2 | $-\ln(3/8) = 0.981$ | $-\ln(2/8) = 1.386$ | 1.184 | 3.27 |
 
+      *Perplexity* is $e^{\text{average loss}}$, as in "How a language model takes its next step": C1 is as unsure as a choice among 3.5 equally likely tokens, C2 among 3.27. C2 wins on the fixed rule, even though it got *worse* at red→dog.
 
-    - C1: 1.253 for cat and 1.253 for dog; average 1.253.
+      :::predict Which checkpoint would win if the held-out pairs were red→dog three times and red→cat once?
+      C1. Its average stays 1.253, while C2's becomes (3 × 1.386 + 0.981) / 4 = 1.285. Even with red→dog twice, C2 would win by only 0.002 (1.251 against 1.253). The winner depends on the mix of held-out pairs, which is why you fix them before looking.
+      :::
 
-    - C2: 0.981 for cat and 1.386 for dog; average about 1.184.
+      Because these pairs help you *choose* a checkpoint, they're validation data. If you wanted an unbiased final score for C2, you'd need a further set of pairs that played no part in the choice.
+    bridges: []
+  - id: tiny-language-model-project.s7
+    type: question
+    depth: mechanics
+    objective_refs:
+      - objective.tiny-language-model-project
+    title: Don't cherry-pick the good news
+    markdown: C2 improves red→cat but worsens red→dog. Which comparison matches the fixed project rule?
+    bridges: []
+    question:
+      response_type: single_choice
+      options:
+        - id: a
+          text: Average both reserved target losses with equal weight.
+        - id: b
+          text: Report only the improved cat loss.
+        - id: c
+          text: Use C2’s added training sentence as the whole test.
+      answer: a
+      reveal_markdown: |-
+        The rule was written down before scoring: both held-out pairs, equal weight. That gives C1 1.253 and C2 1.184, so C2 wins, and the report says it got worse on red→dog. Scoring only the pair that improved would make C2 look better than the rule allows, and testing on a sentence it trained on measures memory, not prediction.
+      hint: Look back at the rule fixed in milestone 3, before any scores were computed. How many pairs, and with what weights?
+      id: tiny-language-model-project.practice.v2.7
+  - id: tiny-language-model-project.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tiny-language-model-project
+    title: 'Milestone 4: a character bigram model of 110 bird names'
+    markdown: |-
+      Now scale up. The corpus is 110 real bird names, from "robin" to "oystercatcher". The tokens are single characters, plus "." to mark both the start and the end of a name. Hold out the last 12 names (redwing, kestrel, nuthatch, goldfinch, jay, ibis, dunnock, petrel, emu, kiwi, puffbird, crossbill) as validation data, and fit on the other 98.
 
+      The program builds the same smoothed count table as milestone 1, now 27 × 27, measures perplexity per character (including each name's end marker), and samples new names at three **temperatures**. Temperature $T$ divides every logit before the softmax, which is the same as raising each probability to the power $1/T$ and renormalizing: $T < 1$ sharpens the distribution, $T > 1$ flattens it.
 
-    Use both cases, rather than selecting only the improved cat result. Because these reserved observations
-    help choose a checkpoint, they are **validation data**, not an untouched final test. An independent estimate
-    after selection would need additional reserved data.'
-  text_mode: 'Reserve two transition observations, red→cat and red→dog, and give them equal weight in the comparison.
-    They do not add to the training counts. They repeat patterns seen in training, which can occur for distinct
-    observations; this tiny, selected example does not establish real-world generalization.
+      ```python run
+      import numpy as np
 
+      words = """robin wren finch crow raven swan owl heron eagle hawk lark dove gull kite stork crane egret
+      magpie rook swift martin plover puffin osprey falcon parrot pigeon thrush starling sparrow linnet
+      bunting tern grebe curlew dunlin avocet godwit bittern siskin blackbird greenfinch bullfinch
+      chiffchaff warbler wagtail pipit skylark swallow cuckoo woodpecker kingfisher dipper treecreeper
+      waxwing redstart wheatear stonechat whinchat nightingale merlin harrier buzzard goshawk hobby shrike
+      jackdaw chough nightjar quail partridge pheasant grouse ptarmigan lapwing snipe woodcock sandpiper
+      turnstone sanderling oystercatcher gannet cormorant shag fulmar shearwater kittiwake razorbill
+      guillemot albatross pelican flamingo penguin toucan hummingbird condor vulture ostrich
+      redwing kestrel nuthatch goldfinch jay ibis dunnock petrel emu kiwi puffbird crossbill""".split()
+      train, valid = words[:98], words[98:]            # the last 12 names are held out
+      chars = ["."] + sorted(set("".join(words)))       # "." marks start and end
+      ix = {c: i for i, c in enumerate(chars)}
+      V = len(chars)
 
-    Score each target using **negative natural-log probability**, −ln(p), where lower is better. A calculator
-    or these supplied values will do:
+      def pairs(ws):                                    # (previous char, next char) ids
+          return [(ix[a], ix[b]) for w in ws for a, b in zip("." + w, w + ".")]
 
+      counts = np.ones((V, V))                          # add-one smoothing
+      for a, b in pairs(train):
+          counts[a, b] += 1
+      P = counts / counts.sum(1, keepdims=True)         # each row sums to 1
 
-    - C1: 1.253 for cat and 1.253 for dog; average 1.253.
+      def perplexity(ws):
+          return np.exp(np.mean([-np.log(P[a, b]) for a, b in pairs(ws)]))
 
-    - C2: 0.981 for cat and 1.386 for dog; average about 1.184.
+      print(f"vocabulary {V}: train ppl {perplexity(train):.2f}, held-out ppl {perplexity(valid):.2f}")
+      top = np.argsort(-P[0])[:3]
+      print("likeliest first letters:", [(chars[i], round(float(P[0, i]), 3)) for i in top])
 
+      rng = np.random.default_rng(0)
+      def sample(T):
+          out, c = "", 0
+          while len(out) < 12:
+              p = P[c] ** (1 / T)                       # temperature on probabilities
+              c = rng.choice(V, p=p / p.sum())
+              if c == 0:
+                  break
+              out += chars[c]
+          return out
+      for T in (0.5, 1.0, 1.5):
+          print(f"T = {T}:", " ".join(sample(T) for _ in range(6)))
+      ```
 
-    Use both cases, rather than selecting only the improved cat result. Because these reserved observations
-    help choose a checkpoint, they are **validation data**, not an untouched final test. An independent estimate
-    after selection would need additional reserved data.'
-  bridges: []
-- id: tiny-language-model-project.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.tiny-language-model-project
-  markdown: Try these questions to check the ideas behind your project. Use the lesson’s rubric for self or
-    peer review of your work; the app does not grade the project artifact.
-  text_mode: Try these questions to check the ideas behind your project. Use the lesson’s rubric for self or
-    peer review of your work; the app does not grade the project artifact.
-  takeaway: 'Your model is small enough to inspect completely. Carry that habit into larger systems: preserve
-    the recipe, freeze comparisons, and explain limits.'
-- id: tiny-language-model-project.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.tiny-language-model-project
-  markdown: Build a transparent count-based language model, compare held-out likelihoods across frozen checkpoints,
-    and connect the exercise to the much larger neural training lifecycle.
-  text_mode: Build a transparent count-based language model, compare held-out likelihoods across frozen checkpoints,
-    and connect the exercise to the much larger neural training lifecycle.
-- id: tiny-language-model-project.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tiny-language-model-project
-  title: Explain what the score does and does not say
-  markdown: 'C2 has the lower loss on this specified average, but it assigns less probability to dog. A different
-    mix of targets could change which checkpoint wins.
+      **What you should see:**
 
+      ```text
+      vocabulary 27: train ppl 12.16, held-out ppl 18.28
+      likeliest first letters: [('s', 0.128), ('p', 0.088), ('c', 0.072)]
+      T = 0.5: sh butckero sar spee ckgonyzrin cke
+      T = 1.0: mvxjncmhetar cstavambjufa kaeokn wfbowhxminzz mrinnerow swy
+      T = 1.5: uzzcywtigtwd ngxaspas smxavaliynde veajoptleito xjnkvdiw tht
+      ```
 
-    Add-one smoothing also gives positive probability to transitions such as red→END. That avoids zero probabilities,
-    but does not make every allowed transition sensible.
+      At $T = 1$ the names are mostly letter soup. Add-one smoothing gave every one of the 27 × 27 pairs at least one pretend count, while the whole corpus supplies only 762 real ones, so in the median row about a third of the probability, and in the rows for rare letters most of it, sits on pairs that never occurred. At $T = 0.5$, squaring the probabilities strips most of that away, and you get fragments like "butckero."
 
+      :::try Change one thing
+      Replace `np.ones((V, V))` with `np.full((V, V), 0.1)`, a gentler **add-k smoothing** with $k = 0.1$. Training perplexity falls to 9.39, but held-out perplexity *rises* to 20.02: the model is now more confident about the pairs it saw and more surprised by the ones it didn't.
+      :::
+    bridges: []
+  - id: tiny-language-model-project.neural
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tiny-language-model-project
+    title: 'Milestone 5: a tiny neural next-token model with a checkpoint ledger'
+    markdown: |-
+      A bigram model sees one character of context and treats every character as unrelated to every other. The neural model fixes both: it looks at the previous **two** characters, and it gives each character a learned vector (an embedding, as in "From token IDs to learned vectors"), so that similar characters can share what they learn.
 
-    This model uses only the preceding token. Fitting means counting pairs; inference means reading probabilities
-    from the fixed table. It has no neural layers, learned embeddings, gradient optimizer, or instruction and
-    preference training. Use it to inspect the checkpoint and evaluation process, then identify the additional
-    mechanisms a neural model would need.'
-  text_mode: 'C2 has the lower loss on this specified average, but it assigns less probability to dog. A different
-    mix of targets could change which checkpoint wins.
+      :::papers A character-level Bengio-style model
+      $$e = [E_{c_{t-2}};\, E_{c_{t-1}}], \qquad h = \tanh(eW_1 + b_1), \qquad P(c_t \mid c_{t-2}, c_{t-1}) = \operatorname{softmax}(hW_2 + b_2)$$
 
+      $E$ is a 27 × 4 table with one vector per character; $e$ joins the two context vectors into 8 numbers; $h$ has 32 hidden units; the softmax turns 27 logits into probabilities. Training minimizes the average $-\ln P$ of the true next character, the same loss you computed by hand in milestone 3, by gradient descent. Bengio and colleagues' 2003 model had this shape, with words instead of characters.
+      :::
 
-    Add-one smoothing also gives positive probability to transitions such as red→END. That avoids zero probabilities,
-    but does not make every allowed transition sensible.
+      Every 50 steps the program writes a row in a **checkpoint ledger**, training and held-out perplexity, and saves a copy of the weights whenever held-out perplexity is the best so far. At the end it restores that best checkpoint and samples from it.
 
+      ```python run
+      import numpy as np
 
-    This model uses only the preceding token. Fitting means counting pairs; inference means reading probabilities
-    from the fixed table. It has no neural layers, learned embeddings, gradient optimizer, or instruction and
-    preference training. Use it to inspect the checkpoint and evaluation process, then identify the additional
-    mechanisms a neural model would need.'
-  bridges: []
-- id: tiny-language-model-project.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tiny-language-model-project
-  title: Present the artifact and review it
-  markdown: 'Keep four items for self or peer review: both count tables, both checkpoint manifests, the two
-    target probabilities and losses for each checkpoint, and a paragraph explaining the decision and its limits.
-    Self-review or ask a peer to score four criteria from 0–2: counts and arithmetic; preserved versions; fixed
-    and fair comparison; honest scope. Zero means missing or incorrect, one means partly correct, and two means
-    correct with an inspectable explanation. Eight points means the supplied exercise is explained, not that
-    you have built a transformer. The in-app quiz checks related reasoning; it cannot inspect or certify your
-    external artifact.'
-  text_mode: 'Keep four items for self or peer review: both count tables, both checkpoint manifests, the two
-    target probabilities and losses for each checkpoint, and a paragraph explaining the decision and its limits.
-    Self-review or ask a peer to score four criteria from 0–2: counts and arithmetic; preserved versions; fixed
-    and fair comparison; honest scope. Zero means missing or incorrect, one means partly correct, and two means
-    correct with an inspectable explanation. Eight points means the supplied exercise is explained, not that
-    you have built a transformer. The in-app quiz checks related reasoning; it cannot inspect or certify your
-    external artifact.'
-  bridges: []
-- id: tiny-language-model-project.s7
-  type: question
-  depth: mechanics
-  objective_refs:
-  - objective.tiny-language-model-project
-  title: Do not cherry-pick the good news
-  markdown: C2 improves red→cat but worsens red→dog. Which comparison matches the fixed project rule?
-  text_mode: C2 improves red→cat but worsens red→dog. Which comparison matches the fixed project rule?
-  bridges: []
-  question:
-    response_type: single_choice
-    options:
-    - id: a
-      text: Average both reserved target losses with equal weight.
-    - id: b
-      text: Report only the improved cat loss.
-    - id: c
-      text: Use C2’s added training sentence as the whole test.
-    answer: a
-    reveal_markdown: The selection rule was fixed before comparison. Include both held-out observations; report
-      the tiny fixture’s limits alongside the result.
-    hint: Trace the example using the rule from the preceding pages.
-    id: tiny-language-model-project.practice.v2.7
+      words = """robin wren finch crow raven swan owl heron eagle hawk lark dove gull kite stork crane egret
+      magpie rook swift martin plover puffin osprey falcon parrot pigeon thrush starling sparrow linnet
+      bunting tern grebe curlew dunlin avocet godwit bittern siskin blackbird greenfinch bullfinch
+      chiffchaff warbler wagtail pipit skylark swallow cuckoo woodpecker kingfisher dipper treecreeper
+      waxwing redstart wheatear stonechat whinchat nightingale merlin harrier buzzard goshawk hobby shrike
+      jackdaw chough nightjar quail partridge pheasant grouse ptarmigan lapwing snipe woodcock sandpiper
+      turnstone sanderling oystercatcher gannet cormorant shag fulmar shearwater kittiwake razorbill
+      guillemot albatross pelican flamingo penguin toucan hummingbird condor vulture ostrich
+      redwing kestrel nuthatch goldfinch jay ibis dunnock petrel emu kiwi puffbird crossbill""".split()
+      train, valid = words[:98], words[98:]            # the last 12 names are held out
+      chars = ["."] + sorted(set("".join(words)))       # "." marks start and end
+      ix = {c: i for i, c in enumerate(chars)}
+      V, d, H = len(chars), 4, 32                       # vocab, embedding size, hidden units
+
+      def examples(ws):                                 # context = previous 2 characters
+          X, Y = [], []
+          for w in ws:
+              s = ".." + w + "."
+              X += [[ix[s[i - 2]], ix[s[i - 1]]] for i in range(2, len(s))]
+              Y += [ix[c] for c in s[2:]]
+          return np.array(X), np.array(Y)
+      Xtr, Ytr = examples(train); Xva, Yva = examples(valid)
+
+      rng = np.random.default_rng(0)
+      E = rng.normal(0, 1, (V, d))                      # one learned vector per character
+      W1, b1 = rng.normal(0, 0.35, (2 * d, H)), np.zeros(H)
+      W2, b2 = rng.normal(0, 0.02, (H, V)), np.zeros(V)
+
+      def forward(X):
+          e = E[X].reshape(len(X), 2 * d)               # look up and join the 2 vectors
+          h = np.tanh(e @ W1 + b1)
+          z = h @ W2 + b2                               # logits: one score per character
+          p = np.exp(z - z.max(1, keepdims=True))
+          return e, h, p / p.sum(1, keepdims=True)      # softmax
+
+      def perplexity(X, Y):
+          return np.exp(-np.mean(np.log(forward(X)[2][np.arange(len(Y)), Y])))
+
+      onehot = [np.eye(V)[Xtr[:, j]] for j in (0, 1)]
+      ledger, best = [], None                           # checkpoint ledger
+      for step in range(401):
+          if step % 50 == 0:
+              ledger.append((step, perplexity(Xtr, Ytr), perplexity(Xva, Yva)))
+              if best is None or ledger[-1][2] < best[0]:   # save the best checkpoint
+                  best = (ledger[-1][2], step, [P.copy() for P in (E, W1, b1, W2, b2)])
+          e, h, p = forward(Xtr)
+          dz = p.copy(); dz[np.arange(len(Ytr)), Ytr] -= 1; dz /= len(Ytr)
+          dh = dz @ W2.T * (1 - h ** 2)                 # back through tanh
+          de = (dh @ W1.T).reshape(-1, 2, d)
+          dE = onehot[0].T @ de[:, 0] + onehot[1].T @ de[:, 1]
+          for P, g in ((W2, h.T @ dz), (b2, dz.sum(0)), (W1, e.T @ dh), (b1, dh.sum(0)), (E, dE)):
+              P -= 1.0 * g
+      for row in ledger:
+          print("step %3d   train ppl %5.2f   held-out ppl %5.2f" % row)
+      E, W1, b1, W2, b2 = best[2]                        # restore the best checkpoint
+      print(f"kept step {best[1]} (held-out ppl {best[0]:.2f})")
+
+      def sample(T):
+          out, c = "", [0, 0]
+          while len(out) < 12:
+              p = forward(np.array([c]))[2][0] ** (1 / T)   # temperature on probabilities
+              nxt = rng.choice(V, p=p / p.sum())
+              if nxt == 0:
+                  break
+              out += chars[nxt]; c = [c[1], nxt]
+          return out
+      for T in (0.5, 1.0, 1.5):
+          print(f"T = {T}:", " ".join(sample(T) for _ in range(6)))
+      ```
+
+      **What you should see:**
+
+      ```text
+      step   0   train ppl 27.24   held-out ppl 27.28
+      step  50   train ppl 12.74   held-out ppl 18.24
+      step 100   train ppl 10.41   held-out ppl 16.83
+      step 150   train ppl  9.04   held-out ppl 16.09
+      step 200   train ppl  8.01   held-out ppl 15.32
+      step 250   train ppl  7.16   held-out ppl 14.76
+      step 300   train ppl  6.51   held-out ppl 14.64
+      step 350   train ppl  6.01   held-out ppl 14.89
+      step 400   train ppl  5.63   held-out ppl 15.36
+      kept step 300 (held-out ppl 14.64)
+      T = 0.5: bullover stin gras startbird oshrow but
+      T = 1.0: dotknleml cod per ronagdae ch ke
+      T = 1.5: byabkinkshem famk dull obaneanorbit gaxtoo stu
+      ```
+
+      Step 0 is about 27, the vocabulary size: an untrained model is as unsure as a uniform guess. Training perplexity keeps falling all the way to step 400, but held-out perplexity bottoms out at step 300 and then climbs, because the model has started memorizing its 98 names. The ledger lets you keep step 300, as in "Connect data, gradients, and saved model state." On held-out names the kept checkpoint scores 14.64 against the bigram model's 18.28. The low-temperature samples now look like birds.
+
+      :::mixup "The last checkpoint is the best one, since it trained the longest."
+      By training perplexity it is, but that measures how well the model recalls its own 98 names. Held-out perplexity measures prediction, and here the last checkpoint is worse than step 300. Save checkpoints under separate names so the best one still exists when you find it.
+      :::
+
+      **Where transformers come in.** This model's context is a fixed window of two characters. A transformer replaces the window with causal attention, so every position can look back at *every* earlier token, as "From attention scores to a causal mask" and "Follow one token through a transformer" show. The embedding table, the logits, the softmax, the $-\ln p$ loss, temperature sampling, and the checkpoint ledger all stay exactly as you built them here.
+    bridges: []
+  - id: tiny-language-model-project.mistakes
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tiny-language-model-project
+    title: Five mistakes that fake a better model
+    markdown: |-
+      | Mistake | How to spot it | Fix |
+      | --- | --- | --- |
+      | Reporting training perplexity as the score | The number keeps falling however long you train | Report held-out perplexity from names the model never trained on |
+      | Keeping only the last checkpoint | The ledger shows a lower held-out perplexity earlier, and those weights are gone | Save the best checkpoint separately, as the code does |
+      | Comparing perplexities across tokenizers | A word-level model's 150 is "worse" than a character model's 12 | Compare only models that split text the same way; "One vocabulary does not divide every language equally" explains why |
+      | Choosing the held-out set after scoring | The held-out names changed between runs | Fix them before training, as in milestone 3 |
+      | Temperature applied the wrong way round | Samples at $T = 0.5$ look *more* random than at $T = 1$ | Divide logits by $T$ (or raise probabilities to $1/T$); don't multiply |
+    bridges: []
+  - id: tiny-language-model-project.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tiny-language-model-project
+    title: The no-code path and the rubric
+    markdown: |-
+      **No code?** Milestones 1 to 3 are complete on paper. Add temperature by hand: to sample C1's red row at $T = 0.5$, square its probabilities [1, 1, 2, 2, 1]/7 to get [1, 1, 4, 4, 1] and renormalize by 11. Cat goes from 2/7 ≈ 0.29 to 4/11 ≈ 0.36, and blue from 0.14 to 0.09. Then draw a few samples from each version with any random-number generator, and describe what changed. Read through the code's expected outputs and explain, in your own words, why the neural model wins on held-out names.
+
+      **Rubric.** Score each row 0, 1, or 2:
+
+      | Criterion | 0: missing or wrong | 1: partly there | 2: solid |
+      | --- | --- | --- | --- |
+      | Counts and smoothing | Table or arithmetic wrong | Right table, a smoothing slip | C1 and C2 both right, rows sum to 1 |
+      | Checkpoints | C1 overwritten, or no ledger | Checkpoints saved, choice unexplained | Every checkpoint kept, best one chosen by held-out score |
+      | Fair comparison | Held-out set chosen after scoring | Fixed set, but only one model scored | Fixed set, both models scored, gap stated |
+      | Perplexity | Not computed | Computed on training data only | Training and held-out, and read in plain words |
+      | Temperature | No samples | Samples at one temperature | Three temperatures, effect explained |
+      | Explanation | Claims beyond the evidence | Accurate but vague | Says which model won, by how much, and why |
+
+      The quiz below checks the ideas; this rubric, used by you or a study partner, judges your tables, ledger, and notes.
+    bridges: []
+  - id: tiny-language-model-project.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.tiny-language-model-project
+    markdown: |-
+      Smoothed probabilities, perplexities, and temperatures to compute, then a name generator, an overwritten checkpoint, and two tokenizers test the habits from your tiny models.
+    takeaway: |-
+      A language model scores every next token and samples one, with temperature setting how adventurous it is. Judge models by held-out perplexity, and keep the checkpoint where that number was lowest, not the last one.
+  - id: tiny-language-model-project.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.tiny-language-model-project
+    markdown: |-
+      Build a transparent count-based language model, compare held-out likelihoods across frozen checkpoints, and connect the exercise to the much larger neural training lifecycle.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - tiny-language-model-project.s1
-    - tiny-language-model-project.s2
-    - tiny-language-model-project.s3
-    - tiny-language-model-project.s4
-    - tiny-language-model-project.s5
-    - tiny-language-model-project.s6
-    - tiny-language-model-project.s7
-    - tiny-language-model-project.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - tiny-language-model-project.s1
+        - tiny-language-model-project.s2
+        - tiny-language-model-project.s3
+        - tiny-language-model-project.s4
+        - tiny-language-model-project.s7
+        - tiny-language-model-project.s5
+        - tiny-language-model-project.neural
+        - tiny-language-model-project.mistakes
+        - tiny-language-model-project.s6
+        - tiny-language-model-project.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     tiny-language-model-project.recap: tiny-language-model-project.check
 assessment_families:
-- id: tiny-language-model-project.base
-  objective_ref: objective.tiny-language-model-project
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Compute the conditional distribution: trace the inputs, operation, and result before choosing.'
-  remediation_scene: tiny-language-model-project.s2
-  variants:
-  - id: tiny-language-model-project.base.1
-    prompt: What is C1’s smoothed probability of cat after red?
-    options:
-    - id: a
-      text: 2/7
-    - id: b
-      text: 1/2
-    - id: c
-      text: 1/5
-    answer: a
-    feedback: Add one to its count and five to the total.
-    retired: true
-  - id: tiny-language-model-project.base.2
-    prompt: What is C2’s probability of cat after red?
-    options:
-    - id: b
-      text: 2/7
-    - id: c
-      text: '1'
-    - id: a
-      text: 3/8
-    answer: a
-    feedback: The count becomes two, then add-one smoothing gives 3/8.
-    retired: true
-- id: tiny-language-model-project.transfer
-  objective_ref: objective.tiny-language-model-project
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Deliver the lifecycle trace: trace the inputs, operation, and result before choosing.'
-  remediation_scene: tiny-language-model-project.s4
-  variants:
-  - id: tiny-language-model-project.transfer.1
-    prompt: Does the added sentence improve the probability of every held-out transition?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only with smoothing
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Probability mass shifts; red→dog receives less.
-    retired: true
-  - id: tiny-language-model-project.transfer.2
-    prompt: Does this count model implement transformer backpropagation?
-    options:
-    - id: c
-      text: Only if saved as a checkpoint
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: The lifecycle analogy does not make the mechanisms identical.
-    retired: true
-- id: tiny-language-model-project.base.v2
-  objective_ref: objective.tiny-language-model-project
-  task: base
-  response_type: numeric_fields_with_reason
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: tiny-language-model-project.s3
-  variants:
-  - prompt: A fresh count model has vocabulary size 5. After a context, cat has count 3 and dog count 1; all
-      other counts are zero. With add-one smoothing, enter the denominator and the two target probabilities.
-    answers:
-      denominator: 9
-      cat: 0.4444444444444444
-      dog: 0.2222222222222222
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Add one to each of five counts before normalizing
-    - id: b
-      text: Add one only to the observed target being queried
-    - id: c
-      text: Use the raw context count as the smoothed denominator
-    feedback: Smoothing increases the total by the vocabulary size, not by one.
-    id: tiny-language-model-project.base.v2.1
-  - prompt: A fresh count model has vocabulary size 5. After a context, cat has count 1 and dog count 2; all
-      other counts are zero. With add-one smoothing, enter the denominator and the two target probabilities.
-    answers:
-      denominator: 8
-      cat: 0.25
-      dog: 0.375
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Add one to each of five counts before normalizing
-    - id: b
-      text: Add one only to the observed target being queried
-    - id: c
-      text: Use the raw context count as the smoothed denominator
-    feedback: Smoothing increases the total by the vocabulary size, not by one.
-    id: tiny-language-model-project.base.v2.2
-  - prompt: A fresh count model has vocabulary size 5. After a context, cat has count 2 and dog count 2; all
-      other counts are zero. With add-one smoothing, enter the denominator and the two target probabilities.
-    answers:
-      denominator: 9
-      cat: 0.3333333333333333
-      dog: 0.3333333333333333
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: Use the raw context count as the smoothed denominator
-    - id: a
-      text: Add one to each of five counts before normalizing
-    - id: b
-      text: Add one only to the observed target being queried
-    feedback: Smoothing increases the total by the vocabulary size, not by one.
-    id: tiny-language-model-project.base.v2.3
-  - prompt: A fresh count model has vocabulary size 5. After a context, cat has count 4 and dog count 1; all
-      other counts are zero. With add-one smoothing, enter the denominator and the two target probabilities.
-    answers:
-      denominator: 10
-      cat: 0.5
-      dog: 0.2
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Add one only to the observed target being queried
-    - id: c
-      text: Use the raw context count as the smoothed denominator
-    - id: a
-      text: Add one to each of five counts before normalizing
-    feedback: Smoothing increases the total by the vocabulary size, not by one.
-    id: tiny-language-model-project.base.v2.4
-  numeric_fields:
-  - id: denominator
-    label: Smoothed denominator
-  - id: cat
-    label: Probability of cat
-  - id: dog
-    label: Probability of dog
-  absolute_tolerance: 1.0e-06
-- id: tiny-language-model-project.transfer.v2
-  objective_ref: objective.tiny-language-model-project
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: tiny-language-model-project.s3
-  variants:
-  - prompt: A team reports only the target whose loss improved. What is missing?
-    answer: a
-    options:
-    - id: a
-      text: The rest of the fixed evaluation and its agreed aggregation
-    - id: c
-      text: The new checkpoint’s training loss alone
-    - id: b
-      text: A larger smoothing constant chosen after inspection
-    feedback: The complete preselected evaluation must support the claim.
-    id: tiny-language-model-project.transfer.v2.1
-  - prompt: A saved checkpoint omits the vocabulary ordering. What becomes ambiguous?
-    answer: a
-    options:
-    - id: c
-      text: Whether the held-out observations have labels
-    - id: b
-      text: Whether natural logarithms can be calculated
-    - id: a
-      text: Which token each probability-table column represents
-    feedback: Values need their matching input and output meanings.
-    id: tiny-language-model-project.transfer.v2.2
-  - prompt: Does looking up a probability in a frozen count table update its counts?
-    answer: a
-    options:
-    - id: c
-      text: Yes; sampling changes the smoothing rule
-    - id: a
-      text: No; fitting and lookup are separate operations here
-    - id: b
-      text: Yes; every query adds the predicted pair
-    feedback: Inference reads the frozen table unless an explicit learning procedure updates it.
-    id: tiny-language-model-project.transfer.v2.3
-  - prompt: What does this project demonstrate directly?
-    answer: a
-    options:
-    - id: c
-      text: A tested instruction-and-preference adaptation pipeline
-    - id: b
-      text: A complete transformer pretraining run
-    - id: a
-      text: A count-model fitting, checkpoint, and evaluation workflow
-    feedback: The toy makes part of the lifecycle inspectable without implementing neural or post-training
-      mechanisms.
-    id: tiny-language-model-project.transfer.v2.4
+  - id: tiny-language-model-project.base
+    objective_ref: objective.tiny-language-model-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Compute the conditional distribution: trace the inputs, operation, and result before choosing.'
+    remediation_scene: tiny-language-model-project.s2
+    variants:
+      - id: tiny-language-model-project.base.1
+        prompt: What is C1’s smoothed probability of cat after red?
+        options:
+          - id: a
+            text: 2/7
+          - id: b
+            text: 1/2
+          - id: c
+            text: 1/5
+        answer: a
+        feedback: Add one to its count and five to the total.
+        retired: true
+      - id: tiny-language-model-project.base.2
+        prompt: What is C2’s probability of cat after red?
+        options:
+          - id: b
+            text: 2/7
+          - id: c
+            text: '1'
+          - id: a
+            text: 3/8
+        answer: a
+        feedback: The count becomes two, then add-one smoothing gives 3/8.
+        retired: true
+  - id: tiny-language-model-project.transfer
+    objective_ref: objective.tiny-language-model-project
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Deliver the lifecycle trace: trace the inputs, operation, and result before choosing.'
+    remediation_scene: tiny-language-model-project.s4
+    variants:
+      - id: tiny-language-model-project.transfer.1
+        prompt: Does the added sentence improve the probability of every held-out transition?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only with smoothing
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Probability mass shifts; red→dog receives less.
+        retired: true
+      - id: tiny-language-model-project.transfer.2
+        prompt: Does this count model implement transformer backpropagation?
+        options:
+          - id: c
+            text: Only if saved as a checkpoint
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: The lifecycle analogy does not make the mechanisms identical.
+        retired: true
+  - id: tiny-language-model-project.base.v2
+    objective_ref: objective.tiny-language-model-project
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: tiny-language-model-project.s3
+    variants:
+      - prompt: A fresh count model has vocabulary size 5. After a context, cat has count 3 and dog count 1; all other counts are zero. With add-one smoothing, enter the denominator and the two target probabilities.
+        answers:
+          denominator: 9
+          cat: 0.4444444444444444
+          dog: 0.2222222222222222
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Add one to each of five counts before normalizing
+          - id: b
+            text: Add one only to the observed target being queried
+          - id: c
+            text: Use the raw context count as the smoothed denominator
+        feedback: Smoothing increases the total by the vocabulary size, not by one.
+        id: tiny-language-model-project.base.v2.1
+        retired: true
+      - prompt: A fresh count model has vocabulary size 5. After a context, cat has count 1 and dog count 2; all other counts are zero. With add-one smoothing, enter the denominator and the two target probabilities.
+        answers:
+          denominator: 8
+          cat: 0.25
+          dog: 0.375
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Add one to each of five counts before normalizing
+          - id: b
+            text: Add one only to the observed target being queried
+          - id: c
+            text: Use the raw context count as the smoothed denominator
+        feedback: Smoothing increases the total by the vocabulary size, not by one.
+        id: tiny-language-model-project.base.v2.2
+        retired: true
+      - prompt: A fresh count model has vocabulary size 5. After a context, cat has count 2 and dog count 2; all other counts are zero. With add-one smoothing, enter the denominator and the two target probabilities.
+        answers:
+          denominator: 9
+          cat: 0.3333333333333333
+          dog: 0.3333333333333333
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: Use the raw context count as the smoothed denominator
+          - id: a
+            text: Add one to each of five counts before normalizing
+          - id: b
+            text: Add one only to the observed target being queried
+        feedback: Smoothing increases the total by the vocabulary size, not by one.
+        id: tiny-language-model-project.base.v2.3
+        retired: true
+      - prompt: A fresh count model has vocabulary size 5. After a context, cat has count 4 and dog count 1; all other counts are zero. With add-one smoothing, enter the denominator and the two target probabilities.
+        answers:
+          denominator: 10
+          cat: 0.5
+          dog: 0.2
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Add one only to the observed target being queried
+          - id: c
+            text: Use the raw context count as the smoothed denominator
+          - id: a
+            text: Add one to each of five counts before normalizing
+        feedback: Smoothing increases the total by the vocabulary size, not by one.
+        id: tiny-language-model-project.base.v2.4
+        retired: true
+    numeric_fields:
+      - id: denominator
+        label: Smoothed denominator
+      - id: cat
+        label: Probability of cat
+      - id: dog
+        label: Probability of dog
+    absolute_tolerance: 1e-6
+  - id: tiny-language-model-project.transfer.v2
+    objective_ref: objective.tiny-language-model-project
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: tiny-language-model-project.s3
+    variants:
+      - prompt: A team reports only the target whose loss improved. What is missing?
+        answer: a
+        options:
+          - id: a
+            text: The rest of the fixed evaluation and its agreed aggregation
+          - id: c
+            text: The new checkpoint’s training loss alone
+          - id: b
+            text: A larger smoothing constant chosen after inspection
+        feedback: The complete preselected evaluation must support the claim.
+        id: tiny-language-model-project.transfer.v2.1
+        retired: true
+      - prompt: A saved checkpoint omits the vocabulary ordering. What becomes ambiguous?
+        answer: a
+        options:
+          - id: c
+            text: Whether the held-out observations have labels
+          - id: b
+            text: Whether natural logarithms can be calculated
+          - id: a
+            text: Which token each probability-table column represents
+        feedback: Values need their matching input and output meanings.
+        id: tiny-language-model-project.transfer.v2.2
+        retired: true
+      - prompt: Does looking up a probability in a frozen count table update its counts?
+        answer: a
+        options:
+          - id: c
+            text: Yes; sampling changes the smoothing rule
+          - id: a
+            text: No; fitting and lookup are separate operations here
+          - id: b
+            text: Yes; every query adds the predicted pair
+        feedback: Inference reads the frozen table unless an explicit learning procedure updates it.
+        id: tiny-language-model-project.transfer.v2.3
+        retired: true
+      - prompt: What does this project demonstrate directly?
+        answer: a
+        options:
+          - id: c
+            text: A tested instruction-and-preference adaptation pipeline
+          - id: b
+            text: A complete transformer pretraining run
+          - id: a
+            text: A count-model fitting, checkpoint, and evaluation workflow
+        feedback: The toy makes part of the lifecycle inspectable without implementing neural or post-training mechanisms.
+        id: tiny-language-model-project.transfer.v2.4
+        retired: true
+  - id: tiny-language-model-project.base.v3
+    objective_ref: objective.tiny-language-model-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Keep three numbers apart: probabilities (what the model predicts), perplexity (how surprised it is on text, in "equally likely choices"), and temperature (how the sampler reshapes the probabilities).'
+    remediation_scene: tiny-language-model-project.neural
+    variants:
+      - id: tiny-language-model-project.base.v3.1
+        prompt: You sample from the bird-name model at temperature 0.5 instead of 1. What happens to the next-character probabilities?
+        options:
+          - id: b
+            text: Each probability is halved, then the row is renormalized
+          - id: a
+            text: Likely characters get likelier and unlikely ones rarer
+          - id: c
+            text: The weights are retrained to make the model more confident
+        answer: a
+        feedback: T = 0.5 raises each probability to the power 2 and renormalizes, which sharpens the distribution. Halving every probability and renormalizing would change nothing, and temperature never touches the weights; it only reshapes the probabilities at sampling time.
+      - id: tiny-language-model-project.base.v3.2
+        prompt: The kept checkpoint has a held-out perplexity of 14.64 per character. What does that number mean?
+        options:
+          - id: a
+            text: It is as unsure as choosing among about 15 equal options
+          - id: b
+            text: About 14.64% of held-out characters are predicted wrongly
+          - id: c
+            text: It makes about 14.64 wrong guesses in each held-out name
+        answer: a
+        feedback: Perplexity is e to the average −ln p, read as an effective number of equally likely choices per step. It isn't an error rate or a count of mistakes; a model can have low perplexity and still pick the wrong top character often.
+      - id: tiny-language-model-project.base.v3.3
+        prompt: 'A ledger shows training perplexity falling at every step to 400, while held-out perplexity is 14.76 at step 250, 14.64 at 300, and 14.89 at 350. Which checkpoint should you keep?'
+        options:
+          - id: c
+            text: Step 250, the last one before held-out perplexity rose
+          - id: b
+            text: Step 400, which has the lowest training perplexity
+          - id: a
+            text: Step 300, which has the lowest held-out perplexity
+        answer: a
+        feedback: Keep the checkpoint with the best held-out score, step 300. Held-out perplexity was still falling from 250 to 300, so 250 isn't the turning point. Training perplexity rewards memorizing the 98 training names.
+      - id: tiny-language-model-project.base.v3.4
+        prompt: The neural model reaches a held-out perplexity of 14.64 against the bigram model's 18.28. What best explains the gap?
+        options:
+          - id: b
+            text: It memorized the 12 held-out names during training
+          - id: a
+            text: It uses two characters of context and learned vectors
+          - id: c
+            text: It works with a larger vocabulary of characters
+        answer: a
+        feedback: Two characters of context and shared learned vectors let it predict better from less evidence. The held-out names never entered training, and both models use the same 27-character vocabulary.
+      - id: tiny-language-model-project.base.v3.5
+        prompt: 'Why do the bigram model''s samples at temperature 1 look like "mvxjncmhetar"?'
+        options:
+          - id: a
+            text: Add-one smoothing spreads a lot of probability over unseen pairs
+          - id: b
+            text: The sampler ignores the previous character when it chooses
+          - id: c
+            text: Temperature 1 flattens every row into a uniform distribution
+        answer: a
+        feedback: With 27 × 27 pairs each given one pretend count and only 762 real pairs, much of each row sits on pairs that never occurred. The sampler does use the previous character, and T = 1 leaves the probabilities unchanged.
+  - id: tiny-language-model-project.calculate
+    objective_ref: objective.tiny-language-model-project
+    task: base
+    response_type: numeric
+    points: 1
+    hint: 'Add-one smoothing: (count + 1) / (row total + V). Perplexity: e raised to the average of −ln p. Temperature T: raise each probability to 1/T, then divide by the new total.'
+    remediation_scene: tiny-language-model-project.s4
+    absolute_tolerance: 0.005
+    variants:
+      - id: tiny-language-model-project.calculate.1
+        prompt: In a character model with V = 27, the letter q appears 3 times in training, always followed by u. With add-one smoothing, what is P(u | q)? Give a decimal.
+        answer: 0.133
+        feedback: (3 + 1) / (3 + 27) = 4 / 30 ≈ 0.133. Without smoothing it would be 1; add-one moves most of that probability onto 26 letters that never followed q.
+      - id: tiny-language-model-project.calculate.2
+        prompt: A model gives the two held-out tokens probabilities 0.25 and 0.5. What is its perplexity on them? Give a decimal.
+        answer: 2.828
+        feedback: 'The losses are −ln 0.25 = 1.386 and −ln 0.5 = 0.693, averaging 1.040, and e^1.040 ≈ 2.83. Averaging the probabilities first and inverting (1 / 0.375 = 2.67) gives the wrong answer.'
+      - id: tiny-language-model-project.calculate.3
+        prompt: Checkpoint C1 gives each of two held-out pairs probability 2/7. What is its perplexity on them? Give a decimal.
+        answer: 3.5
+        feedback: Both losses are −ln(2/7) = 1.253, so the average is 1.253 and e^1.253 = 7/2 = 3.5. When every probability is the same p, perplexity is simply 1/p.
+      - id: tiny-language-model-project.calculate.4
+        prompt: Two possible next tokens have probabilities 0.8 and 0.2. After applying temperature T = 0.5, what is the probability of the first? Give a decimal.
+        answer: 0.941
+        feedback: 'Raise each to 1/T = 2: 0.64 and 0.04. Renormalize: 0.64 / 0.68 ≈ 0.941. Lower temperature makes the favorite even more likely.'
+      - id: tiny-language-model-project.calculate.5
+        prompt: A context has been seen 5 times, followed by the target twice. The vocabulary has 5 tokens. With add-one smoothing, what is the target's probability? Give a decimal.
+        answer: 0.3
+        feedback: (2 + 1) / (5 + 5) = 3 / 10 = 0.3. The denominator grows by the vocabulary size, not by 1.
+  - id: tiny-language-model-project.transfer.v3
+    objective_ref: objective.tiny-language-model-project
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Ask what each number is measured on (training or held-out text), whether two models split text the same way, and whether the evidence you need still exists.'
+    remediation_scene: tiny-language-model-project.mistakes
+    variants:
+      - id: tiny-language-model-project.transfer.v3.1
+        prompt: 'A team reports that its character model "reached perplexity 1.9 after 10,000 steps," measured on its training text. What should they report instead?'
+        options:
+          - id: b
+            text: Perplexity after even more steps, to show it has converged
+          - id: a
+            text: Held-out perplexity at each saved checkpoint
+          - id: c
+            text: Samples at a higher temperature, to show variety
+        answer: a
+        feedback: Training perplexity mostly measures recall of the training text and keeps falling as the model memorizes. Held-out perplexity at each checkpoint shows prediction and which checkpoint to keep. More steps or livelier samples don't answer that.
+      - id: tiny-language-model-project.transfer.v3.2
+        prompt: One product completes code; another writes bedtime stories. How should their sampling temperatures differ?
+        options:
+          - id: a
+            text: Lower for code, where the likeliest token is usually right
+          - id: c
+            text: Higher for code, so that it explores more possible fixes
+          - id: b
+            text: The same for both, since temperature only affects speed
+        answer: a
+        feedback: Code usually has one right continuation, so a low temperature keeps to it; stories benefit from variety, so a higher one helps. Temperature changes which tokens are chosen, not how fast they're produced.
+      - id: tiny-language-model-project.transfer.v3.3
+        prompt: On the same text, a character-level model has perplexity 12 and a word-level model has perplexity 150. What can you conclude?
+        options:
+          - id: b
+            text: The character model is better, because its perplexity is lower
+          - id: c
+            text: The word model is better, because words carry more meaning
+          - id: a
+            text: Nothing yet; they predict different units, so compare per text
+        answer: a
+        feedback: Perplexity is per token, and a word is many characters, so the two numbers measure surprise over different steps. Compare models that tokenize the same way, or convert both to a per-character or per-byte measure.
+      - id: tiny-language-model-project.transfer.v3.4
+        prompt: A training script saves every checkpoint to the same file name. Held-out perplexity was lowest at step 3,000, and the run ended at step 5,000. What has been lost?
+        options:
+          - id: a
+            text: The step-3,000 weights; only step 5,000 remains on disk
+          - id: b
+            text: Nothing, because the final weights include all earlier learning
+          - id: c
+            text: The training data, which was stored beside the checkpoint
+        answer: a
+        feedback: Overwriting keeps only the latest weights, and those scored worse on held-out text. Later training changes the weights, so step 3,000's state can't be recovered from step 5,000's. Save checkpoints under separate names.
+      - id: tiny-language-model-project.transfer.v3.5
+        prompt: 'A bird-name generator at temperature 0.2 keeps producing real training names like "sparrow" and "swallow." Why?'
+        options:
+          - id: c
+            text: The held-out names must have leaked into the training set
+          - id: a
+            text: Low temperature follows the likeliest path, often a seen name
+          - id: b
+            text: The model is broken, as sampling can't repeat training data
+        answer: a
+        feedback: At low temperature the sampler nearly always takes the likeliest next character, which tends to retrace common training names. Sparrow and swallow are training names, so no leak is needed; raise the temperature for more invention.

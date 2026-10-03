@@ -1,203 +1,433 @@
 schema_version: 0.2-draft
 lesson:
   id: vision-language-interfaces
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Connect a vision encoder to a language model
   state: draft
-  summary: Follow an image from pixels to a language model’s answer.
+  summary: A photo of a pill bottle becomes 576 "words" that no dictionary contains. Follow them into a language model, and find out where the dose on the label got lost.
   slot: M23.3
   category: learning
   sources:
-  - title: LLaVA
-    url: https://arxiv.org/abs/2304.08485
-  - title: Flamingo
-    url: https://arxiv.org/abs/2204.14198
+    - title: "Visual Instruction Tuning (LLaVA; Liu, Li, Wu & Lee, 2023)"
+      url: https://arxiv.org/abs/2304.08485
+    - title: "Improved Baselines with Visual Instruction Tuning (LLaVA-1.5; Liu, Li, Li & Lee, 2023)"
+      url: https://arxiv.org/abs/2310.03744
+    - title: "Flamingo: a Visual Language Model for Few-Shot Learning (Alayrac et al., 2022)"
+      url: https://arxiv.org/abs/2204.14198
+    - title: "BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models (Li et al., 2023)"
+      url: https://arxiv.org/abs/2301.12597
 objectives:
-- id: objective.vision-language-interfaces
-  version: 1-draft
-  statement: A vision-language model converts visual inputs into representations consumed by a language model
-    through projections, prefixes, or cross-attention; interfaces and training determine what visual evidence
-    survives.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - vision-language-interfaces.base
-  - vision-language-interfaces.transfer
-  prerequisites:
-  - anyOf:
-    - objective.contrastive-image-text-learning
-  - anyOf:
-    - objective.transformer-families
+  - id: objective.vision-language-interfaces
+    version: 2-draft
+    statement: A vision-language model converts visual inputs into representations consumed by a language model through projections, prefixes, or cross-attention; interfaces and training determine what visual evidence survives.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - vision-language-interfaces.base.v2
+      - vision-language-interfaces.transfer.v2
+      - vision-language-interfaces.calculate
+    prerequisites:
+      - anyOf:
+          - objective.contrastive-image-text-learning
+      - anyOf:
+          - objective.transformer-families
 scenes:
-- id: vision-language-interfaces.s1
-  title: Begin with visual features
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.vision-language-interfaces
-  markdown: 'A **vision encoder** turns an image into numerical features, often one vector per image patch
-    or one pooled vector. A **projector** is a learned transformation that makes these features compatible
-    with the language model''s input width.
+  - id: vision-language-interfaces.s1
+    title: A photo becomes 576 tokens
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.vision-language-interfaces
+    markdown: |-
+      Amara photographs a pill bottle and asks Lumen, "How many tablets should I take?" CLIP from the last lesson can tell a pill bottle from a cereal box, but it can't *answer* a question. A language model can answer questions, but it can't see. A **vision-language model (VLM)** joins the two.
 
+      The simplest widely used design is **LLaVA** (Liu et al., 2023; the name stands for Large Language and Vision Assistant). Here is the LLaVA-1.5 version, step by step:
 
-    For example, mapping a 768-dimensional visual vector to a 1,024-dimensional input requires a transformation
-    that computes the new values. Simply renaming the coordinates would not connect the two representations.'
-  text_mode: 'A **vision encoder** turns an image into numerical features, often one vector per image patch
-    or one pooled vector. A **projector** is a learned transformation that makes these features compatible
-    with the language model''s input width.
+      1. **Vision encoder.** CLIP's image tower, a ViT-L/14, takes the photo at 336 × 336 pixels. Its 14 × 14 patches make a $24 \times 24$ grid, so it outputs $24^2 = 576$ feature vectors, each 1,024 numbers long.
+      2. **Projector.** A small two-layer network (an MLP) maps each 1,024-number vector to the language model's token width, 4,096 numbers for a 7-billion-parameter model.
+      3. **Language model.** The 576 projected vectors go in front of the question's text tokens, and the language model reads the whole sequence exactly as if it were text.
 
+      The language model never sees pixels. It sees 576 vectors that sit where word embeddings would sit, so they are often called **visual tokens**.
+    diagram:
+      caption: The LLaVA design. The image enters the language model as a prefix of 576 visual tokens.
+      description: The 336-pixel photo goes into a frozen CLIP vision encoder, which outputs 576 patch features of 1,024 numbers each. An MLP projector turns them into 576 visual tokens of 4,096 numbers each. The visual tokens and the question's text tokens both go into the language model, which writes the answer.
+      nodes:
+        - id: photo
+          label: Photo, 336 × 336
+          col: 0
+          row: 0
+          tone: data
+        - id: venc
+          label: Vision encoder
+          note: CLIP ViT-L/14
+          col: 1
+          row: 0
+          tone: muted
+        - id: proj
+          label: MLP projector
+          note: 1,024 → 4,096 numbers per token
+          col: 2
+          row: 0
+          tone: accent
+        - id: question
+          label: Question tokens
+          note: "How many tablets should I take?"
+          col: 2
+          row: 2
+          tone: data
+        - id: llm
+          label: Language model
+          note: reads visual + text tokens
+          col: 3
+          row: 1
+        - id: answer
+          label: Answer
+          col: 4
+          row: 1
+      edges:
+        - from: photo
+          to: venc
+        - from: venc
+          to: proj
+          label: 576 patch features
+        - from: proj
+          to: llm
+          label: 576 visual tokens
+        - from: question
+          to: llm
+        - from: llm
+          to: answer
+    bridges: []
+  - id: vision-language-interfaces.s3
+    title: A small bridge between two big models
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-language-interfaces
+    markdown: |-
+      Count the projector's weights. Its first layer maps 1,024 numbers to 4,096: $1{,}024 \times 4{,}096 + 4{,}096 = 4{,}198{,}400$ parameters, including biases. Its second maps 4,096 to 4,096: $4{,}096 \times 4{,}096 + 4{,}096 = 16{,}781{,}312$. Together, about 21 million, against about 300 million in the vision encoder and 7 billion in the language model.
 
-    For example, mapping a 768-dimensional visual vector to a 1,024-dimensional input requires a transformation
-    that computes the new values. Simply renaming the coordinates would not connect the two representations.'
-  bridges: []
-- id: vision-language-interfaces.s2
-  title: Expose features to language computation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-language-interfaces
-  markdown: 'A system can make those visual features available to the language model in different ways. A **prefix**
-    places projected visual vectors before text in the input sequence. **Cross-attention** lets text positions
-    access a separate sequence of visual features.
+      That imbalance is the whole trick. Two large models, each trained separately, are connected by a bridge small enough to train cheaply. LLaVA first trains *only* the projector on captioned images, with both big models frozen, so their skills stay intact while the bridge learns to translate. The training lifecycle lesson later in this module walks through the full recipe.
 
+      :::mixup "The projector translates the image into words the language model already knows."
+      Its outputs are continuous vectors of 4,096 numbers, and they generally don't match the embedding of any vocabulary word. They are sometimes called *soft tokens*. A visual token can carry "shiny, cylindrical, white label, small print near the bottom" all at once, which no single word could.
+      :::
+    bridges: []
+  - id: vision-language-interfaces.s2
+    title: Prefix, cross-attention, or resampler
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-language-interfaces
+    markdown: |-
+      LLaVA puts every visual token into the language model's input, a **prefix** design. Two other designs are common: new cross-attention layers inside the language model, and a **resampler**, a small network that squeezes the image into a fixed number of tokens first.
 
-    A **resampler** can compress a variable amount of visual information into a fixed number of representations.
-    These choices affect which details remain available and how much context and computation the image uses.
+      | Design | How the image gets in | Visual tokens the language model handles | Example |
+      | --- | --- | --- | --- |
+      | Prefix | Projected patch features go in front of the text | 576 per 336-px image | LLaVA (2023) |
+      | Cross-attention | New layers inside the language model let text tokens attend to image features | none in its own sequence | Flamingo (DeepMind, 2022) |
+      | Resampler | A fixed set of learned queries summarizes the patches first | a fixed number, such as 32 or 64 | BLIP-2 (2023), Flamingo |
 
+      A resampler is a small transformer with, say, 32 learned query vectors. The queries cross-attend to all 576 patch features, and whatever they collect becomes 32 output tokens, whether the image had 576 patches or 2,304. BLIP-2 (Salesforce, 2023) calls its version the **Q-Former** and uses 32 queries; Flamingo's **Perceiver Resampler** outputs 64.
 
-    The connection does not turn an image into a perfect description. Some details may already have been lost
-    during preprocessing or encoding.'
-  text_mode: 'A system can make those visual features available to the language model in different ways. A
-    **prefix** places projected visual vectors before text in the input sequence. **Cross-attention** lets
-    text positions access a separate sequence of visual features.
+      Flamingo also kept its language model frozen and slid new cross-attention layers between the existing ones. Each new layer's output passes through a gate, $\tanh(\alpha)$, with $\alpha$ starting at 0. At the start of training the gate is closed, and the model behaves exactly like the original language model. As $\alpha$ grows, visual information flows in gradually.
 
+      :::predict Amara's pill bottle has a dose line in small print near the bottom edge. Which design is most likely to lose it: a 576-token prefix or a 32-query resampler?
+      The resampler squeezes 576 patch features into 32 vectors, about 18 times fewer. If none of the 32 queries happens to gather the small print, the language model can't recover it. The prefix passes all 576 patch features through, at the price of 18 times more tokens in the context.
+      :::
+    bridges: []
+  - id: vision-language-interfaces.s5
+    title: Count what the image costs
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-language-interfaces
+    markdown: |-
+      Visual tokens take space in the context, like pasted text. For a square image of side $H$ pixels with patch size $P$:
 
-    A **resampler** can compress a variable amount of visual information into a fixed number of representations.
-    These choices affect which details remain available and how much context and computation the image uses.
+      $$N_\text{image} = \left(\frac{H}{P}\right)^2$$
 
+      | Image side | Patches per side ($P = 14$) | Visual tokens |
+      | ---: | ---: | ---: |
+      | 224 | 16 | 256 |
+      | 336 | 24 | 576 |
+      | 672 | 48 | 2,304 |
 
-    The connection does not turn an image into a perfect description. Some details may already have been lost
-    during preprocessing or encoding.'
-  bridges: []
-- id: vision-language-interfaces.s3
-  title: Train the connection
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-language-interfaces
-  markdown: A staged recipe may first align an interface while freezing major encoders, then tune selected
-    components on visual instructions. Other models train more components jointly. Record which weights update
-    and the image preprocessing used; the architecture alone does not establish successful grounding.
-  text_mode: A staged recipe may first align an interface while freezing major encoders, then tune selected
-    components on visual instructions. Other models train more components jointly. Record which weights update
-    and the image preprocessing used; the architecture alone does not establish successful grounding.
-  bridges: []
-- id: vision-language-interfaces.s4
-  title: Trace a visual question failure
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-language-interfaces
-  markdown: If a small label disappears during resizing, the language model cannot reliably recover it from
-    absent detail. It may still generate a plausible answer from text priors. Inspect preprocessing, feature
-    extraction, fusion, and generation separately when diagnosing a wrong visual response.
-  text_mode: If a small label disappears during resizing, the language model cannot reliably recover it from
-    absent detail. It may still generate a plausible answer from text priors. Inspect preprocessing, feature
-    extraction, fusion, and generation separately when diagnosing a wrong visual response.
-  bridges: []
-- id: vision-language-interfaces.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.vision-language-interfaces
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A vision-language interface makes visual features available to a language model. Trace which details
-    survive preprocessing, encoding, and the connection between them.
-- id: vision-language-interfaces.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.vision-language-interfaces
-  markdown: A vision-language interface makes visual features available to a language model. Trace which details
-    survive preprocessing, encoding, and the connection between them.
-  text_mode: A vision-language interface makes visual features available to a language model. Trace which details
-    survive preprocessing, encoding, and the connection between them.
+      Doubling the side quadruples the tokens, and attention cost grows with the *square* of sequence length (the transformer lessons). A 40-token question alone makes $40^2 = 1{,}600$ attention scores per head per layer; with 576 visual tokens in front, $616^2 = 379{,}456$.
+
+      Sharper images still matter for small print, so many recent VLMs, including LLaVA-NeXT (2024), use **tiling**: cut a large image into 336-pixel tiles, encode each tile separately, and add one shrunken overview of the whole image. A 672 × 672 photo becomes 4 tiles plus 1 overview, $5 \times 576 = 2{,}880$ tokens.
+
+      ```python run
+      def image_tokens(width, height, patch=14):
+          """Patch tokens a ViT makes from one image of this size."""
+          return (width // patch) * (height // patch)
+
+      print("224 px:", image_tokens(224, 224))
+      print("336 px:", image_tokens(336, 336))
+      print("672 px:", image_tokens(672, 672))
+
+      # Tiling: cut a 672 x 672 photo into 336-px tiles, plus one shrunken overview.
+      tiles = (672 // 336) * (672 // 336)
+      tiled = (tiles + 1) * image_tokens(336, 336)
+      print("672 px as", tiles, "tiles + overview:", tiled)
+
+      # How many 336-px photos fit in a 4,096-token context with 300 text tokens?
+      context, text = 4096, 300
+      print("photos that fit:", (context - text) // image_tokens(336, 336))
+      print("with a 64-token resampler:", (context - text) // 64)
+      ```
+
+      Six photos fill a 4,096-token context with a prefix design; with a 64-token resampler, 59 fit. Change `patch=14` to `patch=16` or the context to 32,768 and see how the budget moves.
+    bridges: []
+  - id: vision-language-interfaces.s4
+    title: Where the dose went missing
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-language-interfaces
+    markdown: |-
+      Lumen answers Amara: "Take one tablet twice daily." The label actually says "two tablets." Where did the error enter? Trace the pipeline backwards.
+
+      Her phone photo is 4,032 × 3,024 pixels. Standard CLIP preprocessing shrinks the short side to 336, a factor of 9, and crops the center square. The dose line was 27 pixels tall, so it is now 3 pixels tall, too small for a 14-pixel patch to read. The crop also cut 12.5% off each side of the photo.
+
+      Once the words are unreadable, the language model still has to say something. It falls back on what pill bottle labels usually say, and "one tablet twice daily" is a very common phrase. The answer sounds right because it came from the language model's habits, not from the photo.
+
+      | Stage | Question to ask | Check |
+      | --- | --- | --- |
+      | Preprocessing | Did the detail survive resizing and cropping? | Look at the 336 × 336 image the model actually received |
+      | Encoder and interface | Did the visual tokens carry it? | Try a tiled or higher-resolution version |
+      | Language model | Did it use what it got? | Crop to just the label; see if the answer changes |
+
+      For Lumen, the fix is tiling for text-heavy photos, plus an instruction to say "I can't read the dose clearly" when the print is too small. The grounding evaluation lesson at the end of this module shows how to test that the fix works.
+    bridges: []
+  - id: vision-language-interfaces.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.vision-language-interfaces
+    markdown: Token counts to work out by hand, plus a receipt reader, a slide-deck assistant, and a robot camera, test whether you can trace an image through a VLM and choose its interface.
+    takeaway: |-
+      A VLM encodes the image into patch features, projects them to the language model's width, and feeds them in as a prefix, through cross-attention, or through a resampler. At patch 14, a 336-pixel image costs 576 tokens, and anything lost to resizing can't be recovered later.
+  - id: vision-language-interfaces.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.vision-language-interfaces
+    markdown: |-
+      A vision-language interface makes visual features available to a language model. Trace which details survive preprocessing, encoding, and the connection between them.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - vision-language-interfaces.s1
-    - vision-language-interfaces.s2
-    - vision-language-interfaces.s3
-    - vision-language-interfaces.s4
-    - vision-language-interfaces.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - vision-language-interfaces.s1
+        - vision-language-interfaces.s3
+        - vision-language-interfaces.s2
+        - vision-language-interfaces.s5
+        - vision-language-interfaces.s4
+        - vision-language-interfaces.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     vision-language-interfaces.recap: vision-language-interfaces.check
 assessment_families:
-- id: vision-language-interfaces.base
-  objective_ref: objective.vision-language-interfaces
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Expose features to language computation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: vision-language-interfaces.s2
-  variants:
-  - id: vision-language-interfaces.base.1
-    prompt: Why use a projector between feature widths?
-    options:
-    - id: c
-      text: To replace all language tokens with file names
-    - id: a
-      text: To provide a learned compatible representation interface
-    - id: b
-      text: To guarantee no visual information is lost
-    answer: a
-    feedback: Dimensions and learned representation spaces must be connected.
-  - id: vision-language-interfaces.base.2
-    prompt: What does cross-attention let language queries access?
-    options:
-    - id: a
-      text: Visual key/value representations
-    - id: b
-      text: Only optimizer moments
-    - id: c
-      text: Only future answer labels
-    answer: a
-    feedback: It supplies an explicit cross-modal information path.
-- id: vision-language-interfaces.transfer
-  objective_ref: objective.vision-language-interfaces
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a visual question failure: trace the inputs, operation, and result before choosing.'
-  remediation_scene: vision-language-interfaces.s4
-  variants:
-  - id: vision-language-interfaces.transfer.1
-    prompt: Can resizing remove evidence needed to read a tiny label?
-    options:
-    - id: a
-      text: 'Yes'
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if the image is grayscale
-    answer: a
-    feedback: Preprocessing can destroy detail before language generation.
-  - id: vision-language-interfaces.transfer.2
-    prompt: Does connecting two pretrained encoders alone prove visual grounding?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if dimensions match
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Training and evaluation establish whether the interface is useful.
+  - id: vision-language-interfaces.base
+    objective_ref: objective.vision-language-interfaces
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Expose features to language computation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: vision-language-interfaces.s2
+    variants:
+      - id: vision-language-interfaces.base.1
+        prompt: Why use a projector between feature widths?
+        options:
+          - id: c
+            text: To replace all language tokens with file names
+          - id: a
+            text: To provide a learned compatible representation interface
+          - id: b
+            text: To guarantee no visual information is lost
+        answer: a
+        feedback: Dimensions and learned representation spaces must be connected.
+        retired: true
+      - id: vision-language-interfaces.base.2
+        prompt: What does cross-attention let language queries access?
+        options:
+          - id: a
+            text: Visual key/value representations
+          - id: b
+            text: Only optimizer moments
+          - id: c
+            text: Only future answer labels
+        answer: a
+        feedback: It supplies an explicit cross-modal information path.
+        retired: true
+  - id: vision-language-interfaces.transfer
+    objective_ref: objective.vision-language-interfaces
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a visual question failure: trace the inputs, operation, and result before choosing.'
+    remediation_scene: vision-language-interfaces.s4
+    variants:
+      - id: vision-language-interfaces.transfer.1
+        prompt: Can resizing remove evidence needed to read a tiny label?
+        options:
+          - id: a
+            text: 'Yes'
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if the image is grayscale
+        answer: a
+        feedback: Preprocessing can destroy detail before language generation.
+        retired: true
+      - id: vision-language-interfaces.transfer.2
+        prompt: Does connecting two pretrained encoders alone prove visual grounding?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if dimensions match
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Training and evaluation establish whether the interface is useful.
+        retired: true
+  - id: vision-language-interfaces.base.v2
+    objective_ref: objective.vision-language-interfaces
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Follow one image through encoder, projector, and interface. Ask what each piece outputs, how many tokens reach the language model, and what was fixed in size along the way.
+    remediation_scene: vision-language-interfaces.s2
+    variants:
+      - id: vision-language-interfaces.base.v2.1
+        prompt: In a LLaVA-style model, what does the language model receive for one image?
+        options:
+          - id: b
+            text: A caption written by the vision encoder, split into ordinary text tokens
+          - id: a
+            text: A sequence of projected patch vectors placed before the text tokens
+          - id: c
+            text: The raw pixel values, flattened into one long sequence of numbers
+        answer: a
+        feedback: The projector maps each patch feature to the language model's width, and those vectors go in as a prefix. No caption is written first, and the language model never sees pixels.
+      - id: vision-language-interfaces.base.v2.2
+        prompt: A VLM designer switches from a 576-token prefix to a resampler with 32 learned queries. What changes most directly?
+        options:
+          - id: a
+            text: Each image costs 32 tokens, and fine detail must fit through those 32 summaries
+          - id: c
+            text: The vision encoder now splits images into 32 larger patches instead of 576
+          - id: b
+            text: The language model can now read images of any size at full detail
+        answer: a
+        feedback: The queries cross-attend to all 576 patch features and output a fixed 32 tokens, which saves context but can drop small details. The encoder's patches don't change, and compression doesn't add detail.
+      - id: vision-language-interfaces.base.v2.3
+        prompt: Flamingo inserts new cross-attention layers into a frozen language model, each scaled by tanh(α) with α starting at 0. Why start at 0?
+        options:
+          - id: c
+            text: So the visual features are ignored for the whole of training
+          - id: b
+            text: So the new layers train faster by skipping their gradients at first
+          - id: a
+            text: So the model starts out behaving exactly like the original language model
+        answer: a
+        feedback: tanh(0) = 0 closes the gate, so the new layers add nothing and the pretrained model's behavior is untouched at the start. α still receives gradients and opens the gate as training finds visual information useful.
+      - id: vision-language-interfaces.base.v2.4
+        prompt: A projector maps 1,024-number patch features to a 4,096-wide language model through two layers, 1,024 → 4,096 → 4,096. Roughly how many parameters does it have?
+        options:
+          - id: b
+            text: About 4 million, since it maps 1,024 numbers to 4,096
+          - id: a
+            text: About 21 million, counting both weight matrices and biases
+          - id: c
+            text: About 7 billion, the same as the language model it feeds
+        answer: a
+        feedback: 1,024 × 4,096 + 4,096 ≈ 4.2 million for the first layer and 4,096 × 4,096 + 4,096 ≈ 16.8 million for the second, about 21 million in all. 4 million counts only the first layer.
+  - id: vision-language-interfaces.transfer.v2
+    objective_ref: objective.vision-language-interfaces
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Weigh detail against context. Small print needs pixels that survive preprocessing; many images need a fixed, small number of tokens each.
+    remediation_scene: vision-language-interfaces.s4
+    variants:
+      - id: vision-language-interfaces.transfer.v2.1
+        prompt: A receipt-reading VLM resizes 3,000-pixel-tall receipts to 336 pixels and often misreads the totals, giving common-looking amounts. What is the best first fix?
+        options:
+          - id: b
+            text: Fine-tune the language model on more examples of receipt totals
+          - id: c
+            text: Switch to a 32-query resampler so the image uses fewer tokens
+          - id: a
+            text: Tile the receipt at higher resolution so the digits stay readable
+        answer: a
+        feedback: Shrinking by about 9 times leaves digits a few pixels tall, so the language model falls back on typical-looking totals. Tiling keeps the print readable. More receipt text training teaches better guesses, and a resampler compresses even further.
+      - id: vision-language-interfaces.transfer.v2.2
+        prompt: A slide-deck assistant must answer questions about 40 slides at once, using a model with an 8,192-token context. Which interface fits best?
+        options:
+          - id: a
+            text: A resampler that turns each slide into a fixed 64 tokens
+          - id: b
+            text: A 576-token prefix per slide, fed in at full resolution
+          - id: c
+            text: A 2,880-token tiled encoding per slide for full detail
+        answer: a
+        feedback: 40 × 64 = 2,560 tokens fits with room for text. 40 × 576 = 23,040 tokens overflows the context almost three times over, and tiling makes that worse. For fine print on one slide, a second close-up pass can follow.
+      - id: vision-language-interfaces.transfer.v2.3
+        prompt: A team connects a pretrained vision encoder to a pretrained language model with an untrained projector and asks it about photos. The answers ignore the images. Why?
+        options:
+          - id: c
+            text: The two models use different patch sizes, so their tokens can't line up
+          - id: a
+            text: The projector hasn't learned to map image features into vectors the model can use
+          - id: b
+            text: The language model needs to be retrained from scratch on images first
+        answer: a
+        feedback: Random projector weights turn good visual features into vectors the language model has never learned to read, so it answers from text alone. Training the small projector on captioned images, with both big models frozen, is LLaVA's first stage. Retraining from scratch is unnecessary.
+      - id: vision-language-interfaces.transfer.v2.4
+        prompt: A warehouse robot's VLM answers "Is the aisle clear?" from one camera frame. A small cable across the floor near the edge is often missed. What should the team check first?
+        options:
+          - id: b
+            text: Whether the language model was trained on enough warehouse text
+          - id: c
+            text: Whether the answer is phrased too confidently for the risk involved
+          - id: a
+            text: Whether the resize and center crop remove or shrink the cable away
+        answer: a
+        feedback: Trace backwards from the input. A center crop can cut off the frame's edges, and resizing can shrink a thin cable below one patch. More text training can't restore missing pixels, and a phrasing fix doesn't make the cable visible.
+  - id: vision-language-interfaces.calculate
+    objective_ref: objective.vision-language-interfaces
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Divide the image side by the patch size to get patches per side, and square it. For tiling, multiply by the number of tiles plus one overview.
+    remediation_scene: vision-language-interfaces.s5
+    absolute_tolerance: 0.5
+    variants:
+      - id: vision-language-interfaces.calculate.1
+        prompt: A ViT with 14-pixel patches encodes a 448 × 448 image. How many visual tokens does it produce?
+        answer: 1024
+        feedback: 448 ÷ 14 = 32 patches per side, and 32² = 1,024.
+      - id: vision-language-interfaces.calculate.2
+        prompt: A vision encoder uses 16-pixel patches on a 384 × 384 image. How many visual tokens?
+        answer: 576
+        feedback: 384 ÷ 16 = 24 per side, and 24² = 576, the same count as 336 pixels at patch 14.
+      - id: vision-language-interfaces.calculate.3
+        prompt: A 672 × 672 photo is split into 336-pixel tiles, and a shrunken 336-pixel overview is added. At patch 14, how many visual tokens in total?
+        answer: 2880
+        feedback: There are 2 × 2 = 4 tiles plus 1 overview, 5 images of 576 tokens each, so 2,880.
+      - id: vision-language-interfaces.calculate.4
+        prompt: A 336 × 672 image (tall and narrow) is split into two 336-pixel tiles plus one overview. At patch 14, how many visual tokens?
+        answer: 1728
+        feedback: There are 2 tiles plus 1 overview, 3 × 576 = 1,728 tokens.
+      - id: vision-language-interfaces.calculate.5
+        prompt: A model has an 8,192-token context. You reserve 500 tokens for text. How many 336-pixel images at patch 14 (576 tokens each, no tiling) fit in the rest?
+        answer: 13
+        feedback: 8,192 − 500 = 7,692 tokens remain, and 7,692 ÷ 576 = 13.35, so 13 whole images fit.

@@ -1,196 +1,432 @@
 schema_version: 0.2-draft
 lesson:
   id: temporal-difference-and-q-learning
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Update values from sampled transitions
   state: draft
-  summary: Update a value estimate using a reward and the next situation.
+  summary: Pip doesn't know how slippery the rug is. It can still learn the value of every square, one step at a time, by learning from its own surprise.
   slot: M24.4
   category: learning
   sources:
-  - title: Dive into Deep Learning — reinforcement learning
-    url: https://d2l.ai/chapter_reinforcement-learning/index.html
+    - title: "Reinforcement Learning: An Introduction, 2nd edition, chapter 6 (Sutton & Barto, 2018)"
+      url: http://incompleteideas.net/book/the-book-2nd.html
+    - title: "Learning to predict by the methods of temporal differences (Sutton, 1988)"
+      url: https://doi.org/10.1007/BF00115009
+    - title: Dive into Deep Learning — reinforcement learning
+      url: https://d2l.ai/chapter_reinforcement-learning/index.html
 objectives:
-- id: objective.temporal-difference-and-q-learning
-  version: 1-draft
-  statement: Monte Carlo methods learn from completed returns, temporal-difference methods bootstrap from estimates,
-    and Q-learning uses an off-policy greedy next-action target under defined convergence assumptions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - temporal-difference-and-q-learning.base
-  - temporal-difference-and-q-learning.transfer
-  prerequisites:
-  - anyOf:
-    - objective.mdps-and-bellman-equations
-  - anyOf:
-    - objective.monte-carlo
+  - id: objective.temporal-difference-and-q-learning
+    version: 2-draft
+    statement: Monte Carlo methods learn from completed returns, temporal-difference methods bootstrap from estimates, and Q-learning uses an off-policy greedy next-action target under defined convergence assumptions.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - temporal-difference-and-q-learning.base.v2
+      - temporal-difference-and-q-learning.transfer.v2
+      - temporal-difference-and-q-learning.calculate
+    prerequisites:
+      - anyOf:
+          - objective.mdps-and-bellman-equations
+      - anyOf:
+          - objective.monte-carlo
 scenes:
-- id: temporal-difference-and-q-learning.s1
-  title: Wait for a return or bootstrap
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.temporal-difference-and-q-learning
-  markdown: Monte Carlo value estimation uses sampled returns from completed episodes. Temporal-difference
-    learning can update earlier using reward plus an estimated next value. Bootstrapping reduces the need to
-    wait but introduces dependence on estimates that may themselves be inaccurate.
-  text_mode: Monte Carlo value estimation uses sampled returns from completed episodes. Temporal-difference
-    learning can update earlier using reward plus an estimated next value. Bootstrapping reduces the need to
-    wait but introduces dependence on estimates that may themselves be inaccurate.
-  bridges: []
-- id: temporal-difference-and-q-learning.s2
-  title: Calculate a TD correction
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.temporal-difference-and-q-learning
-  markdown: With current value three, reward one, next value four, and gamma one-half, the target is 1 + 0.5×4
-    = 3, so the TD error is zero. If the next value were six, the target would be four and the error one. A
-    learning rate scales the correction.
-  text_mode: With current value three, reward one, next value four, and gamma one-half, the target is 1 + 0.5×4
-    = 3, so the TD error is zero. If the next value were six, the target would be four and the error one. A
-    learning rate scales the correction.
-  bridges: []
-- id: temporal-difference-and-q-learning.s3
-  title: Learn action values
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.temporal-difference-and-q-learning
-  markdown: '**Q(state, action)** estimates the return from taking that action in that state and then following
-    a specified strategy. **Q-learning** updates this estimate toward the observed reward plus γ times the
-    largest next-state Q-value.
+  - id: temporal-difference-and-q-learning.s1
+    title: No map? Wait for the ending, or learn on the way
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.temporal-difference-and-q-learning
+    markdown: |-
+      In the MDP lesson we knew the rug sends Pip to the dock 80% of the time. A real Pip on a new rug knows nothing of the sort. All it has is experience: "I was at the Door, went forward, got −1, landed on the Rug." Can it still learn $v(\text{Door})$?
 
+      **Monte Carlo** learning waits until the episode ends, adds up the actual return, and nudges the estimate toward it:
 
-    If the old estimate is 2, the target is 4, and the learning rate is 0.25, the update is 2 + 0.25 × (4 −
-    2) = 2.5. At a true terminal state, there is no later return to add.
+      $$V(S_t) \leftarrow V(S_t) + \alpha\,\big[G_t - V(S_t)\big]$$
 
+      The step size $\alpha$ (alpha) sets how far to move. Say $V(\text{Door}) = 5$, $\alpha = 0.5$, and this episode Pip slipped twice: rewards −1, −1, −1, +10, so $G = -1 - 0.9 - 0.81 + 7.29 = 4.58$. The new estimate is $5 + 0.5 \times (4.58 - 5) = 4.79$. It works, but Pip learns nothing about the Door until it docks, and one lucky or unlucky episode swings the estimate a lot.
 
-    The policy collecting experience can explore while Q-learning''s target uses a greedy next action. That
-    makes Q-learning **off-policy**: its learning target can follow a different policy from the one collecting
-    data. **SARSA** instead uses the next action actually selected by the behavior policy, giving an **on-policy**
-    target.'
-  text_mode: '**Q(state, action)** estimates the return from taking that action in that state and then following
-    a specified strategy. **Q-learning** updates this estimate toward the observed reward plus γ times the
-    largest next-state Q-value.
+      **Temporal-difference (TD) learning** doesn't wait. After a single step it already has a better guess: the reward it just got plus its *current estimate* of where it landed. Using an estimate to update another estimate is called **bootstrapping**. It's like updating your arrival time at every landmark on a drive home instead of only once you're parked.
+    bridges: []
+  - id: temporal-difference-and-q-learning.s2
+    title: Calculate a TD correction
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.temporal-difference-and-q-learning
+    markdown: |-
+      Pip believes $V(\text{Door}) = 5$ and $V(\text{Rug}) = 8$. It moves from the Door to the Rug and gets −1. With $\gamma = 0.9$ and $\alpha = 0.5$:
 
+      1. The **TD target** is $-1 + 0.9 \times 8 = 6.2$. That's a one-step-better guess at the Door's value.
+      2. The **TD error** is $6.2 - 5 = 1.2$: the move went better than Pip expected.
+      3. The update gives $5 + 0.5 \times 1.2 = 5.6$.
 
-    If the old estimate is 2, the target is 4, and the learning rate is 0.25, the update is 2 + 0.25 × (4 −
-    2) = 2.5. At a true terminal state, there is no later return to add.
+      :::papers TD(0)
+      $$\delta_t = R_{t+1} + \gamma\, V(S_{t+1}) - V(S_t)$$
+      $$V(S_t) \leftarrow V(S_t) + \alpha\, \delta_t$$
 
+      $\delta_t$ (delta) is the TD error, the surprise between what Pip expected and what one step revealed. In our numbers $R_{t+1} = -1$, $V(S_{t+1}) = 8$, $V(S_t) = 5$, and $\delta_t = 1.2$. Richard Sutton formalized this rule in 1988. It is the Bellman expectation equation with the probabilities replaced by one sampled step.
+      :::
 
-    The policy collecting experience can explore while Q-learning''s target uses a greedy next action. That
-    makes Q-learning **off-policy**: its learning target can follow a different policy from the one collecting
-    data. **SARSA** instead uses the next action actually selected by the behavior policy, giving an **on-policy**
-    target.'
-  bridges: []
-- id: temporal-difference-and-q-learning.s4
-  title: Respect the assumptions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.temporal-difference-and-q-learning
-  markdown: Tabular convergence results require conditions on visits, learning rates, and the environment.
-    Function approximation, bootstrapping, and off-policy learning can create instability together. A working
-    toy table does not guarantee that a large neural Q-network will train reliably without additional design.
-  text_mode: Tabular convergence results require conditions on visits, learning rates, and the environment.
-    Function approximation, bootstrapping, and off-policy learning can create instability together. A working
-    toy table does not guarantee that a large neural Q-network will train reliably without additional design.
-  bridges: []
-- id: temporal-difference-and-q-learning.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.temporal-difference-and-q-learning
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Monte Carlo methods use completed returns. Temporal-difference methods use a reward plus an estimated
-    future value; Q-learning builds that target from the best estimated next action.
-- id: temporal-difference-and-q-learning.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.temporal-difference-and-q-learning
-  markdown: Monte Carlo methods use completed returns. Temporal-difference methods use a reward plus an estimated
-    future value; Q-learning builds that target from the best estimated next action.
-  text_mode: Monte Carlo methods use completed returns. Temporal-difference methods use a reward plus an estimated
-    future value; Q-learning builds that target from the best estimated next action.
+      :::predict Suppose Pip had believed V(Rug) = 4 instead. What happens to V(Door)?
+      Target $-1 + 0.9 \times 4 = 2.6$, error $2.6 - 5 = -2.4$, new value $5 + 0.5 \times (-2.4) = 3.8$. Same experience, opposite correction: TD is only as good as the estimate it bootstraps from. As V(Rug) itself improves, the Door's target improves too.
+      :::
+
+      :::story TD-Gammon
+      In the early 1990s Gerald Tesauro at IBM trained a neural network to evaluate backgammon positions using TD learning, with the program playing against itself. TD-Gammon reached close to the level of the best human players, and its unconventional choices changed how some experts played certain opening moves.
+      :::
+    bridges: []
+  - id: temporal-difference-and-q-learning.s3
+    title: Learn action values with Q-learning
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.temporal-difference-and-q-learning
+    markdown: |-
+      State values tell Pip how good a square is, but not which way to move. Without a model, it can't look one step ahead to compare actions. So it learns **action values** instead: $Q(s, a)$, the expected return from taking action $a$ in state $s$ and acting well afterwards. The best action is then simply the one with the largest $Q$.
+
+      **Q-learning** (Chris Watkins, 1989) applies the TD idea to $Q$, using the *best* next action in the target:
+
+      $$Q(S_t, A_t) \leftarrow Q(S_t, A_t) + \alpha\,\big[R_{t+1} + \gamma \max_{a} Q(S_{t+1}, a) - Q(S_t, A_t)\big]$$
+
+      On the Rug, Pip has $Q(\text{Rug}, \text{forward}) = 6$ and $Q(\text{Rug}, \text{back}) = 2$. It goes forward and slips: reward −1, still on the Rug. The target is $-1 + 0.9 \times \max(6, 2) = 4.4$, the error is $4.4 - 6 = -1.6$, and with $\alpha = 0.5$ the new $Q(\text{Rug}, \text{forward})$ is $5.2$.
+
+      The code runs Q-learning in Pip's upstairs hallway: four squares and then the dock, no rug, with 20% random exploration.
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(0)
+      n_cells, dock = 5, 4                 # cells 0..3 are hallway, cell 4 is the dock
+      alpha, gamma, epsilon = 0.5, 0.9, 0.2
+      Q = np.zeros((n_cells, 2))           # actions: 0 = back, 1 = forward
+
+      for episode in range(300):
+          s = 0
+          while s != dock:
+              a = rng.integers(2) if rng.random() < epsilon else int(np.argmax(Q[s]))
+              s2 = min(s + 1, dock) if a == 1 else max(s - 1, 0)
+              r = 10 if s2 == dock else -1
+              target = r if s2 == dock else r + gamma * Q[s2].max()   # no future after docking
+              Q[s, a] += alpha * (target - Q[s, a])
+              s = s2
+
+      for s in range(dock):
+          print(f"cell {s}: Q(back) = {Q[s, 0]:6.2f}   Q(forward) = {Q[s, 1]:6.2f}")
+      ```
+
+      Forward values come out as 4.58, 6.20, 8.00, and 10.00, exactly the discounted returns you'd compute by hand; cell 1's 6.2 is the rug-route return from the first lesson. Try `range(5)` episodes to see half-learned values. Or set `epsilon = 0`: the forward values still come out right, but the back values freeze at wrong numbers, because Pip never tries them again.
+    bridges: []
+  - id: temporal-difference-and-q-learning.s5
+    title: "SARSA: learn the policy you actually follow"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.temporal-difference-and-q-learning
+    markdown: |-
+      Q-learning's target assumes Pip will take the best action next, even though Pip really explores 20% of the time. Learning about one policy (the greedy one) while following another (the exploring one) makes Q-learning **off-policy**.
+
+      **SARSA** is the **on-policy** alternative. Its name lists what one update uses: State, Action, Reward, next State, next Action. The target uses the action Pip *actually* takes next:
+
+      $$Q(S_t, A_t) \leftarrow Q(S_t, A_t) + \alpha\,\big[R_{t+1} + \gamma\, Q(S_{t+1}, A_{t+1}) - Q(S_t, A_t)\big]$$
+
+      Replay the slip on the Rug. This time Pip's next choice, an exploring one, is "back". SARSA's target is $-1 + 0.9 \times Q(\text{Rug}, \text{back}) = -1 + 0.9 \times 2 = 0.8$. The error is $-5.2$ and the new value is $3.4$, far below Q-learning's $5.2$.
+
+      That difference matters near danger. Sutton and Barto's "cliff walking" example puts the shortest route along a cliff edge. Q-learning learns the edge route, because the greedy policy never falls. SARSA learns a route a few steps back, because it counts the random steps its exploring self will really take. Picture Pip's route passing the top of the stairs.
+
+      :::mixup "Off-policy means Q-learning ignores the exploratory moves."
+      It learns from every move, exploratory ones included. What's "off" is the target: it values each state as if the *best* action came next, not the action the agent will actually take.
+      :::
+    bridges: []
+  - id: temporal-difference-and-q-learning.s4
+    title: Know when the table can be trusted
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.temporal-difference-and-q-learning
+    markdown: |-
+      Two practical rules keep tabular TD methods honest.
+
+      **Don't bootstrap past the end.** When Pip docks, the episode is over, so the target is just the reward, +10. Adding $\gamma \times$ some estimate for "the square after the dock" invents a future that doesn't exist. The code above handles this with `target = r if s2 == dock`.
+
+      **Keep visiting everything.** Tabular Q-learning is proven to converge to the optimal values if every state–action pair keeps being tried and the step size shrinks appropriately over time (Watkins & Dayan, 1992). Stop exploring, and unvisited pairs keep their starting guesses forever.
+
+      Tables stop working when states are camera images, since Pip will never see the same image twice. Replacing the table with a neural network brings back the danger that the next lesson has to tame: bootstrapping, off-policy targets, and function approximation together can make values spiral instead of settle.
+    bridges: []
+  - id: temporal-difference-and-q-learning.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.temporal-difference-and-q-learning
+    markdown: Compute a few TD and Q-learning updates by hand, then decide between Monte Carlo, TD, Q-learning, and SARSA for a commute estimate, a cliff-side robot, and a game with a terminal state.
+    takeaway: |-
+      TD learning nudges an estimate by α times the TD error: reward plus γ times the next estimate, minus the current one. Q-learning's target uses the best next action; SARSA's uses the action actually taken.
+  - id: temporal-difference-and-q-learning.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.temporal-difference-and-q-learning
+    markdown: |-
+      Monte Carlo methods use completed returns. Temporal-difference methods use a reward plus an estimated future value; Q-learning builds that target from the best estimated next action.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - temporal-difference-and-q-learning.s1
-    - temporal-difference-and-q-learning.s2
-    - temporal-difference-and-q-learning.s3
-    - temporal-difference-and-q-learning.s4
-    - temporal-difference-and-q-learning.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - temporal-difference-and-q-learning.s1
+        - temporal-difference-and-q-learning.s2
+        - temporal-difference-and-q-learning.s3
+        - temporal-difference-and-q-learning.s5
+        - temporal-difference-and-q-learning.s4
+        - temporal-difference-and-q-learning.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     temporal-difference-and-q-learning.recap: temporal-difference-and-q-learning.check
 assessment_families:
-- id: temporal-difference-and-q-learning.base
-  objective_ref: objective.temporal-difference-and-q-learning
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Calculate a TD correction: trace the inputs, operation, and result before choosing.'
-  remediation_scene: temporal-difference-and-q-learning.s2
-  variants:
-  - id: temporal-difference-and-q-learning.base.1
-    prompt: What distinguishes TD from a pure full-return Monte Carlo update?
-    options:
-    - id: b
-      text: TD never uses rewards
-    - id: c
-      text: Monte Carlo always needs a known transition model
-    - id: a
-      text: TD can bootstrap from an estimated next value
-    answer: a
-    feedback: Bootstrapping substitutes an estimate for part of the future return.
-  - id: temporal-difference-and-q-learning.base.2
-    prompt: Target 4 minus current value 3 gives TD error what?
-    options:
-    - id: c
-      text: '-1'
-    - id: a
-      text: '1'
-    - id: b
-      text: '7'
-    answer: a
-    feedback: TD error is target minus current estimate.
-- id: temporal-difference-and-q-learning.transfer
-  objective_ref: objective.temporal-difference-and-q-learning
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Respect the assumptions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: temporal-difference-and-q-learning.s4
-  variants:
-  - id: temporal-difference-and-q-learning.transfer.1
-    prompt: Why is Q-learning called off-policy?
-    options:
-    - id: c
-      text: It uses no observations
-    - id: a
-      text: Its greedy target can differ from the exploratory behavior policy
-    - id: b
-      text: It never chooses actions
-    answer: a
-    feedback: Learning and data-collection policies can differ.
-  - id: temporal-difference-and-q-learning.transfer.2
-    prompt: Should a true terminal transition bootstrap from an imagined future episode value?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the reward is zero
-    answer: a
-    feedback: The episode’s return ends at terminal state.
+  - id: temporal-difference-and-q-learning.base
+    objective_ref: objective.temporal-difference-and-q-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Calculate a TD correction: trace the inputs, operation, and result before choosing.'
+    remediation_scene: temporal-difference-and-q-learning.s2
+    variants:
+      - id: temporal-difference-and-q-learning.base.1
+        prompt: What distinguishes TD from a pure full-return Monte Carlo update?
+        options:
+          - id: b
+            text: TD never uses rewards
+          - id: c
+            text: Monte Carlo always needs a known transition model
+          - id: a
+            text: TD can bootstrap from an estimated next value
+        answer: a
+        feedback: Bootstrapping substitutes an estimate for part of the future return.
+        retired: true
+      - id: temporal-difference-and-q-learning.base.2
+        prompt: Target 4 minus current value 3 gives TD error what?
+        options:
+          - id: c
+            text: '-1'
+          - id: a
+            text: '1'
+          - id: b
+            text: '7'
+        answer: a
+        feedback: TD error is target minus current estimate.
+        retired: true
+  - id: temporal-difference-and-q-learning.transfer
+    objective_ref: objective.temporal-difference-and-q-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Respect the assumptions: trace the inputs, operation, and result before choosing.'
+    remediation_scene: temporal-difference-and-q-learning.s4
+    variants:
+      - id: temporal-difference-and-q-learning.transfer.1
+        prompt: Why is Q-learning called off-policy?
+        options:
+          - id: c
+            text: It uses no observations
+          - id: a
+            text: Its greedy target can differ from the exploratory behavior policy
+          - id: b
+            text: It never chooses actions
+        answer: a
+        feedback: Learning and data-collection policies can differ.
+        retired: true
+      - id: temporal-difference-and-q-learning.transfer.2
+        prompt: Should a true terminal transition bootstrap from an imagined future episode value?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the reward is zero
+        answer: a
+        feedback: The episode’s return ends at terminal state.
+        retired: true
+  - id: temporal-difference-and-q-learning.base.v2
+    objective_ref: objective.temporal-difference-and-q-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Look at what each target is built from. Monte Carlo uses the actual full return; TD uses one reward plus an estimate; Q-learning takes the max next action, SARSA the one actually taken.
+    remediation_scene: temporal-difference-and-q-learning.s2
+    variants:
+      - id: temporal-difference-and-q-learning.base.v2.1
+        prompt: Pip's episodes last about 200 steps. Why can TD learning improve V(Door) sooner than Monte Carlo can?
+        options:
+          - id: b
+            text: TD uses a larger step size, so each update moves further
+          - id: c
+            text: TD skips the rewards and learns from state estimates alone
+          - id: a
+            text: TD updates after one step, using the estimate of the next state
+        answer: a
+        feedback: TD bootstraps, so it can update right after the first move. Monte Carlo must wait for the episode to end to know the return. Both use a step size, and TD's target still includes the real reward.
+      - id: temporal-difference-and-q-learning.base.v2.2
+        prompt: An exploring agent takes a random action 20% of the time. Its update target uses the largest next Q-value regardless of what it does next. Which method is this, and what kind?
+        options:
+          - id: a
+            text: Q-learning, which is off-policy
+          - id: b
+            text: SARSA, which is on-policy
+          - id: c
+            text: Monte Carlo, which is off-policy
+        answer: a
+        feedback: A max over next actions is Q-learning's signature. It learns the greedy policy's values while behaving with exploration, which is what off-policy means. SARSA would use the next action actually taken.
+      - id: temporal-difference-and-q-learning.base.v2.3
+        prompt: A TD update gives a negative TD error for a state. What does that tell you?
+        options:
+          - id: c
+            text: The reward on that step was negative
+          - id: a
+            text: The step turned out worse than the estimate expected
+          - id: b
+            text: The step size α is too large and should be reduced
+        answer: a
+        feedback: δ = target − estimate, so a negative δ means reward plus discounted next value fell short of what was predicted. A negative reward can still give a positive δ, as Pip's −1 step did with δ = +1.2.
+      - id: temporal-difference-and-q-learning.base.v2.4
+        prompt: Q(Rug, forward) = 6 and Q(Rug, back) = 2. Pip goes forward and slips back onto the Rug, and then its next chosen action is back. Why does SARSA lower Q(Rug, forward) more than Q-learning does?
+        options:
+          - id: b
+            text: SARSA uses a larger discount factor than Q-learning
+          - id: a
+            text: SARSA's target uses Q(Rug, back) = 2, not the max of 6
+          - id: c
+            text: SARSA also subtracts a penalty for exploratory actions
+        answer: a
+        feedback: SARSA bootstraps from the action actually taken next, so its target is −1 + 0.9 × 2 = 0.8 instead of Q-learning's −1 + 0.9 × 6 = 4.4. Both can use the same γ, and there is no extra penalty term.
+  - id: temporal-difference-and-q-learning.transfer.v2
+    objective_ref: objective.temporal-difference-and-q-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide whether you need to learn before the episode ends, whether exploration mistakes are dangerous, and whether the episode really ends at this step.
+    remediation_scene: temporal-difference-and-q-learning.s5
+    variants:
+      - id: temporal-difference-and-q-learning.transfer.v2.1
+        prompt: A commuter predicts total travel time and wants to revise the prediction at every station, not only on arrival. Which learning rule matches that habit?
+        options:
+          - id: a
+            text: TD learning, bootstrapping from the new estimate at each station
+          - id: b
+            text: Monte Carlo, averaging each full trip's actual duration
+          - id: c
+            text: A bandit, choosing the fastest route from past averages
+        answer: a
+        feedback: Updating at each station toward "time so far plus current estimate of the rest" is exactly a TD update. Monte Carlo would wait until arrival, and a bandit chooses among options instead of predicting along the way.
+      - id: temporal-difference-and-q-learning.transfer.v2.2
+        prompt: A warehouse robot will keep exploring randomly 10% of the time even after deployment, and one aisle runs past a loading-dock drop. Which method is more likely to learn a route that keeps a safe margin from the drop?
+        options:
+          - id: c
+            text: Q-learning, because its max target learns faster
+          - id: b
+            text: Monte Carlo, because it waits for complete episodes
+          - id: a
+            text: SARSA, because it values the moves it will really make
+        answer: a
+        feedback: SARSA's target includes the exploratory steps the robot actually takes, so routes where a random step is disastrous look worse. Q-learning values the edge route as if no random step would ever happen, like the cliff-walking example.
+      - id: temporal-difference-and-q-learning.transfer.v2.3
+        prompt: In a game agent's training code, the step that wins the game uses the target r + γ max Q(next, a), where "next" is a blank screen. What is the fix?
+        options:
+          - id: a
+            text: Use just r as the target when the game has ended
+          - id: b
+            text: Lower γ on the final step so the blank screen counts less
+          - id: c
+            text: Add a small penalty so that winning moves are not overvalued
+        answer: a
+        feedback: A terminal step has no future, so the target is the reward alone. Shrinking γ or adding a penalty still mixes in an invented value for a screen that never leads anywhere.
+      - id: temporal-difference-and-q-learning.transfer.v2.4
+        prompt: A tabular Q-learner for a thermostat stops exploring after its first day. A week later, one setting it tried once on day one still has its original low Q-value. What explains this?
+        options:
+          - id: b
+            text: Q-learning only updates the action with the highest value
+          - id: a
+            text: Without exploration, that action is never retried or updated
+          - id: c
+            text: Its step size was too small for such a rare action
+        answer: a
+        feedback: Q-learning updates only the pairs it visits. Tabular convergence requires every state–action pair to keep being tried; with exploration switched off, an unlucky early estimate is frozen.
+  - id: temporal-difference-and-q-learning.calculate
+    objective_ref: objective.temporal-difference-and-q-learning
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: "Build the target first (reward plus γ times the right next estimate, or just the reward at a terminal step), then δ = target − old value, then old value + α × δ."
+    remediation_scene: temporal-difference-and-q-learning.s2
+    absolute_tolerance: 0.01
+    numeric_fields:
+      - id: target
+        label: Target
+      - id: td_error
+        label: TD error δ
+      - id: new_value
+        label: Updated value
+    variants:
+      - id: temporal-difference-and-q-learning.calculate.1
+        prompt: Q-learning. Q(s, a) = 4. The agent gets reward −1 and lands in a state whose Q-values are 6 and 2. With γ = 0.9 and α = 0.5, record the target, the TD error, and the updated Q(s, a), then choose the reason for the target you used.
+        feedback: Target −1 + 0.9 × 6 = 4.4; δ = 4.4 − 4 = 0.4; new value 4 + 0.5 × 0.4 = 4.2.
+        answers:
+          target: 4.4
+          td_error: 0.4
+          new_value: 4.2
+        reason_answer: max
+        reason_options:
+          - id: actual
+            text: The target uses the Q-value of the action the agent will actually take next.
+          - id: max
+            text: The target uses the largest next Q-value, whatever the agent does next.
+          - id: average
+            text: The target uses the average of the next state's Q-values.
+      - id: temporal-difference-and-q-learning.calculate.2
+        prompt: SARSA. Q(s, a) = 4. The agent gets reward −1 and lands in a state whose Q-values are 6 (action x) and 2 (action y), and its next chosen action is y. With γ = 0.9 and α = 0.5, record the target, the TD error, and the updated Q(s, a), then choose the reason for the target you used.
+        feedback: Target −1 + 0.9 × 2 = 0.8; δ = 0.8 − 4 = −3.2; new value 4 + 0.5 × (−3.2) = 2.4.
+        answers:
+          target: 0.8
+          td_error: -3.2
+          new_value: 2.4
+        reason_answer: actual
+        reason_options:
+          - id: max
+            text: The target uses the largest next Q-value, whatever the agent does next.
+          - id: average
+            text: The target uses the average of the next state's Q-values.
+          - id: actual
+            text: The target uses the Q-value of the action the agent will actually take next.
+      - id: temporal-difference-and-q-learning.calculate.3
+        prompt: TD(0). V(s) = 3. The agent gets reward 1 and lands in a state with V = 6. With γ = 0.5 and α = 0.5, record the target, the TD error, and the updated V(s), then choose how the update works.
+        feedback: Target 1 + 0.5 × 6 = 4; δ = 4 − 3 = 1; new value 3 + 0.5 × 1 = 3.5.
+        answers:
+          target: 4
+          td_error: 1
+          new_value: 3.5
+        reason_answer: partial
+        reason_options:
+          - id: replace
+            text: TD(0) replaces V(s) with the target outright.
+          - id: partial
+            text: TD(0) moves V(s) a fraction α of the way toward the target.
+          - id: wait
+            text: TD(0) waits for the episode's full return before moving V(s).
+      - id: temporal-difference-and-q-learning.calculate.4
+        prompt: Q-learning. Q(s, a) = 7. The action docks Pip, reward +10, and the episode ends. With γ = 0.9 and α = 0.1, record the target, the TD error, and the updated Q(s, a), then choose the reason for the target you used.
+        feedback: Nothing follows the dock, so the target is 10; δ = 10 − 7 = 3; new value 7 + 0.1 × 3 = 7.3.
+        answers:
+          target: 10
+          td_error: 3
+          new_value: 7.3
+        reason_answer: terminal
+        reason_options:
+          - id: terminal
+            text: The episode has ended, so the target is the reward alone.
+          - id: max
+            text: The target adds γ times the largest Q-value of the dock state.
+          - id: actual
+            text: The target adds γ times the Q-value of the next action taken.

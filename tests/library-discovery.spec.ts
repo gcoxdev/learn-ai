@@ -41,12 +41,12 @@ test("rapid library edits keep the latest query and every selected facet", async
     edit("at");
     select("Module", "M15");
     edit("atten");
-    select("Estimated time", "6-to-10");
+    select("Estimated time", "11-to-20");
     edit("attention");
     select("Lesson type", "mechanism");
   });
   await expect(page).toHaveURL(
-    /\/library\/\?q=attention&module=M15&time=6-to-10&archetype=mechanism$/,
+    /\/library\/\?q=attention&module=M15&time=11-to-20&archetype=mechanism$/,
   );
   await expect(search).toHaveValue("attention");
   await expect(search).toBeFocused();
@@ -55,7 +55,7 @@ test("rapid library edits keep the latest query and every selected facet", async
   ).toHaveValue("M15");
   await expect(
     page.getByRole("combobox", { name: "Estimated time" }),
-  ).toHaveValue("6-to-10");
+  ).toHaveValue("11-to-20");
   await expect(
     page.locator('.library-card[href*="/learn/attention/"]'),
   ).toHaveCount(1);
@@ -78,7 +78,7 @@ test("library facets survive reload, lesson return, and browser Back", async ({
     .selectOption("M15");
   await page
     .getByRole("combobox", { name: "Estimated time" })
-    .selectOption("6-to-10");
+    .selectOption("11-to-20");
   await page
     .getByRole("combobox", { name: "Lesson type" })
     .selectOption("mechanism");
@@ -89,7 +89,7 @@ test("library facets survive reload, lesson return, and browser Back", async ({
   const filteredUrl = page.url();
   expect(new URL(filteredUrl).searchParams.get("q")).toBe("attention");
   expect(new URL(filteredUrl).searchParams.get("module")).toBe("M15");
-  expect(new URL(filteredUrl).searchParams.get("time")).toBe("6-to-10");
+  expect(new URL(filteredUrl).searchParams.get("time")).toBe("11-to-20");
   expect(new URL(filteredUrl).searchParams.get("archetype")).toBe("mechanism");
   expect(new URL(filteredUrl).searchParams.get("evidence")).toBe(
     "not-demonstrated",
@@ -129,7 +129,7 @@ test("pagination keeps filters on lesson return and resets when a facet changes"
 }) => {
   await ready(
     page,
-    "/library/?time=6-to-10&archetype=mechanism&evidence=not-demonstrated",
+    "/library/?time=11-to-20&archetype=mechanism&evidence=not-demonstrated",
   );
   await page.getByRole("link", { name: "Next page", exact: true }).click();
   await expect(page).toHaveURL(/page=2$/);
@@ -156,8 +156,8 @@ test("pagination keeps filters on lesson return and resets when a facet changes"
       (lesson) =>
         lesson.slot.startsWith("M15.") &&
         lesson.archetype === "mechanism" &&
-        lesson.minutes > 5 &&
-        lesson.minutes <= 10,
+        lesson.minutes > 10 &&
+        lesson.minutes <= 20,
     ).length,
   );
   await page

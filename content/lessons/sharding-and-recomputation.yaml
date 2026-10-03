@@ -1,208 +1,446 @@
 schema_version: 0.2-draft
 lesson:
   id: sharding-and-recomputation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Save memory by sharing state or recreating it
   state: draft
-  summary: Choose whether to split, move, or recalculate stored values by finding what actually fills memory.
+  summary: Plain data parallelism keeps 256 identical copies of the optimizer. Remove the duplicates and the 7B model's states drop from 112 GB to under half a gigabyte per GPU.
   slot: M17.5
   category: learning
   sources:
-  - title: ZeRO
-    url: https://arxiv.org/abs/1910.02054
-  - title: Training Deep Nets with Sublinear Memory Cost
-    url: https://arxiv.org/abs/1604.06174
+    - title: "ZeRO: Memory Optimizations Toward Training Trillion Parameter Models (Rajbhandari et al., 2019)"
+      url: https://arxiv.org/abs/1910.02054
+    - title: "PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel (Zhao et al., 2023)"
+      url: https://arxiv.org/abs/2304.11277
+    - title: "Training Deep Nets with Sublinear Memory Cost (Chen et al., 2016)"
+      url: https://arxiv.org/abs/1604.06174
+    - title: "Reducing Activation Recomputation in Large Transformer Models (Korthikanti et al., 2022)"
+      url: https://arxiv.org/abs/2205.05198
+    - title: "ZeRO-Offload: Democratizing Billion-Scale Model Training (Ren et al., 2021)"
+      url: https://arxiv.org/abs/2101.06840
 objectives:
-- id: objective.sharding-and-recomputation
-  version: 1-draft
-  statement: State sharding, activation checkpointing, and offloading reduce different memory allocations and
-    trade them for communication, recomputation, or transfer latency.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - sharding-and-recomputation.base
-  - sharding-and-recomputation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.training-memory
-  - anyOf:
-    - objective.model-parallel-training
+  - id: objective.sharding-and-recomputation
+    version: 2-draft
+    statement: State sharding, activation checkpointing, and offloading reduce different memory allocations and trade them for communication, recomputation, or transfer latency.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - sharding-and-recomputation.base.v2
+      - sharding-and-recomputation.transfer.v2
+      - sharding-and-recomputation.calculate
+    prerequisites:
+      - anyOf:
+          - objective.training-memory
+      - anyOf:
+          - objective.model-parallel-training
 scenes:
-- id: sharding-and-recomputation.s1
-  title: Store each part where it is needed
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.sharding-and-recomputation
-  markdown: 'A **shard** is one partition of a larger array or collection. With four workers, a 400 MB optimizer
-    array could be stored as four 100 MB pieces instead of four complete copies.
+  - id: sharding-and-recomputation.s1
+    title: Stop storing the same optimizer on every GPU
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.sharding-and-recomputation
+    markdown: |-
+      In plain data parallelism every GPU keeps the full model states: 112 GB for the team's 7B model. Look closer and most of that is pure duplication. The fp32 master weights and Adam's $m$ and $v$, 84 GB, are identical on all 256 GPUs, because every GPU applies the same update.
 
+      **ZeRO** (the Zero Redundancy Optimizer; Rajbhandari et al., Microsoft, 2019) removes the duplicates. Each GPU keeps only a **shard**, a 1/N slice of an array, and updates only its own slice. It comes in three stages, each sharding one more item:
 
-    Training-state sharding applies this idea to optimizer state, gradients, or parameters that model replicas
-    would otherwise duplicate. Workers exchange or gather values when their calculations need them. Different
-    sharding designs keep different amounts locally, so inspect who owns each array and when the pieces move.'
-  text_mode: 'A **shard** is one partition of a larger array or collection. With four workers, a 400 MB optimizer
-    array could be stored as four 100 MB pieces instead of four complete copies.
+      | Stage | What is sharded | Per-GPU model states | 7B model, N = 64 |
+      | --- | --- | --- | ---: |
+      | Plain data parallel | Nothing | 16 bytes × params | 112 GB |
+      | ZeRO-1 | Optimizer states (master, $m$, $v$) | 2 + 2 bytes + 12/N bytes | 29.3 GB |
+      | ZeRO-2 | + gradients | 2 bytes + 14/N bytes | 15.5 GB |
+      | ZeRO-3 | + bf16 weights | 16/N bytes | 1.75 GB |
 
+      :::papers ZeRO's memory formulas
+      With $\Psi$ parameters, $N_d$ data-parallel GPUs, and $K = 12$ bytes of optimizer state per parameter, per-GPU model states are
 
-    Training-state sharding applies this idea to optimizer state, gradients, or parameters that model replicas
-    would otherwise duplicate. Workers exchange or gather values when their calculations need them. Different
-    sharding designs keep different amounts locally, so inspect who owns each array and when the pieces move.'
-  bridges: []
-- id: sharding-and-recomputation.s2
-  title: Checkpoint activations selectively
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sharding-and-recomputation
-  markdown: Activation checkpointing saves selected intermediate boundaries and recomputes missing forward
-    values during backward differentiation. This is distinct from saving a model checkpoint to disk. A four-block
-    segment may save its input instead of every internal activation, then rerun the segment when gradients
-    need them.
-  text_mode: Activation checkpointing saves selected intermediate boundaries and recomputes missing forward
-    values during backward differentiation. This is distinct from saving a model checkpoint to disk. A four-block
-    segment may save its input instead of every internal activation, then rerun the segment when gradients
-    need them.
-  bridges: []
-- id: sharding-and-recomputation.s3
-  title: Move state to another memory tier
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sharding-and-recomputation
-  markdown: 'Offloading stores selected tensors in CPU memory or storage and transfers them when required.
-    It can make a larger run fit, while adding bandwidth and latency costs. Prefetching helps only when transfers
-    finish before the data are needed and sufficient staging memory exists.
+      $$\underbrace{(2 + 2 + K)\Psi}_{\text{plain}} \;\to\; \underbrace{4\Psi + \tfrac{K\Psi}{N_d}}_{\text{ZeRO-1}} \;\to\; \underbrace{2\Psi + \tfrac{(2+K)\Psi}{N_d}}_{\text{ZeRO-2}} \;\to\; \underbrace{\tfrac{(4+K)\Psi}{N_d}}_{\text{ZeRO-3}}$$
 
+      For $\Psi$ = 7 billion and $N_d$ = 64 these give the table's 112, 29.3, 15.5, and 1.75 GB. The paper's own example, 7.5 billion parameters on 64 GPUs, goes 120 → 31.4 → 16.6 → 1.9 GB.
+      :::
 
-    **Prefetching** starts a transfer before the value is needed, like bringing ingredients to the counter
-    in advance. It hides delay only if there is enough time and space to finish that transfer. Reading from
-    a slower tier after computation has already stalled cannot recover the lost waiting time.'
-  text_mode: 'Offloading stores selected tensors in CPU memory or storage and transfers them when required.
-    It can make a larger run fit, while adding bandwidth and latency costs. Prefetching helps only when transfers
-    finish before the data are needed and sufficient staging memory exists.
+      :::predict The team shards over all 256 GPUs. What does each stage give now?
+      ZeRO-1: 28 + 84/256 ≈ 28.3 GB. ZeRO-2: 14 + 98/256 ≈ 14.4 GB. ZeRO-3: 112/256 ≈ 0.44 GB. ZeRO-1 and ZeRO-2 barely improve on N = 64, because the unsharded bf16 weights and gradients (28 GB, then 14 GB) set a floor. Only ZeRO-3 keeps shrinking.
+      :::
 
+      ```python run
+      P = 7e9          # parameters
+      N = 64           # data-parallel GPUs sharing the model states
+      K = 12           # fp32 master weights + Adam m + v: 4 + 4 + 4 bytes
 
-    **Prefetching** starts a transfer before the value is needed, like bringing ingredients to the counter
-    in advance. It hides delay only if there is enough time and space to finish that transfer. Reading from
-    a slower tier after computation has already stalled cannot recover the lost waiting time.'
-  bridges: []
-- id: sharding-and-recomputation.s4
-  title: Choose the limiting allocation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sharding-and-recomputation
-  markdown: 'If long sequences dominate activation memory, optimizer-only sharding may not solve the failure.
-    If optimizer state dominates, recomputing activations addresses a smaller target. Profile peak allocations
-    and communication under a representative step, including temporary gathered parameters and checkpoint writes.
+      stages = {
+          "plain data parallel": 2 * P + 2 * P + K * P,
+          "ZeRO-1 (optimizer)":  2 * P + 2 * P + K * P / N,
+          "ZeRO-2 (+gradients)": 2 * P + (2 + K) * P / N,
+          "ZeRO-3 (+weights)":   (2 + 2 + K) * P / N,
+      }
+      for name, nbytes in stages.items():
+          print(f"{name:21s} {nbytes / 1e9:7.2f} GB per GPU")
 
+      # Activation checkpointing: keep only each layer's input, recompute the rest
+      L, s, b, h = 32, 4096, 1, 4096
+      full = L * 34 * s * b * h                    # every activation kept (fused attention)
+      ckpt = L * 2 * s * b * h + 34 * s * b * h    # layer inputs + one layer rebuilt at a time
+      print(f"activations kept: {full / 1e9:5.2f} GB; checkpointed: {ckpt / 1e9:5.2f} GB")
+      ```
 
-    If activations take 8 GB and optimizer state takes 1 GB, halving optimizer state saves only 0.5 GB. Recomputing
-    some activations might address more of the shortage. Conversely, a tiny batch with a huge optimizer state
-    can favor sharding. Match the method to measured memory use.'
-  text_mode: 'If long sequences dominate activation memory, optimizer-only sharding may not solve the failure.
-    If optimizer state dominates, recomputing activations addresses a smaller target. Profile peak allocations
-    and communication under a representative step, including temporary gathered parameters and checkpoint writes.
+      Change `N` to 8 (one machine): 38.50, 26.25, and 14.00 GB. Add the 18.3 GB of activations and all three fit on an 80 GB A100, but on a 40 GB GPU only ZeRO-3 does.
+    bridges: []
+  - id: sharding-and-recomputation.zero3
+    title: "ZeRO-3 in motion: gather, compute, scatter"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sharding-and-recomputation
+    markdown: |-
+      If a GPU holds only 1/256 of the weights, how does it run a layer? It borrows the rest just in time. For each layer, ZeRO-3:
 
+      1. **All-gathers** the layer's weights from every GPU's shard, runs the forward pass, and frees the borrowed weights.
+      2. Does the same again during backward, when the layer's weights are needed a second time.
+      3. **Reduce-scatters** the layer's gradients: they are summed across GPUs, but each GPU keeps only the sum for its own shard.
+      4. Updates its own shard of the master weights with its own shard of $m$ and $v$.
 
-    If activations take 8 GB and optimizer state takes 1 GB, halving optimizer state saves only 0.5 GB. Recomputing
-    some activations might address more of the shortage. Conversely, a tiny batch with a huge optimizer state
-    can favor sharding. Match the method to measured memory use.'
-  bridges: []
-- id: sharding-and-recomputation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.sharding-and-recomputation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Sharding splits stored state, offloading moves it to another memory tier, and recomputation recreates
-    values later. Choose according to what fills memory and what extra work you can afford.
-- id: sharding-and-recomputation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.sharding-and-recomputation
-  markdown: Sharding splits stored state, offloading moves it to another memory tier, and recomputation recreates
-    values later. Choose according to what fills memory and what extra work you can afford.
-  text_mode: Sharding splits stored state, offloading moves it to another memory tier, and recomputation recreates
-    values later. Choose according to what fills memory and what extra work you can afford.
+      Only one or two layers' full weights exist on a GPU at any moment: about 0.44 GB per layer for the 7B model (7 billion ÷ 32 layers × 2 bytes). To hide the gathering, ZeRO-3 uses **prefetching**: it starts fetching the next layer's weights while the current layer computes.
+
+      What does it cost? Recall from the data-parallel lesson that an all-reduce is a reduce-scatter followed by an all-gather. ZeRO-1 and ZeRO-2 send the same bytes as plain data parallelism, just arranged differently. ZeRO-3 adds one extra all-gather of the weights, so it moves about 1.5 times as much data. PyTorch's **FSDP** (Fully Sharded Data Parallel) implements the same idea; its default full-sharding mode corresponds to ZeRO-3.
+    diagram:
+      caption: One layer's journey through a ZeRO-3 step, seen from one GPU.
+      description: The GPU starts with a 1/N shard of the layer's weights. An all-gather assembles the full layer weights temporarily. The GPU runs forward, and later backward, then frees them. The layer's full gradients are reduce-scattered, leaving a 1/N gradient shard. The GPU updates its own shard of master weights, m, and v, which produces the next step's weight shard.
+      nodes:
+        - id: shard
+          label: Weight shard (1/N)
+          note: all this GPU keeps
+          col: 0
+          row: 0
+          tone: data
+        - id: full
+          label: Full layer weights
+          note: temporary
+          col: 2
+          row: 0
+          tone: warn
+        - id: compute
+          label: Forward + backward
+          col: 4
+          row: 0
+          tone: accent
+        - id: gshard
+          label: Gradient shard
+          note: 1/N of the summed grads
+          col: 4
+          row: 2
+          tone: data
+        - id: update
+          label: Update own shard
+          note: master, m, v are 1/N
+          col: 0
+          row: 2
+        - id: alt
+          label: Other GPUs' shards
+          col: 2
+          row: 1
+          tone: muted
+      edges:
+        - from: shard
+          to: full
+          label: all-gather
+        - from: alt
+          to: full
+          dashed: true
+        - from: full
+          to: compute
+        - from: compute
+          to: gshard
+          label: reduce-scatter
+        - from: gshard
+          to: update
+        - from: update
+          to: shard
+          label: next step
+    bridges: []
+  - id: sharding-and-recomputation.s2
+    title: Recompute activations instead of storing them
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sharding-and-recomputation
+    markdown: |-
+      Sharding shrinks model states, but each 4,096-token sequence still leaves 18.3 GB of activations (from the lesson on training memory). **Activation checkpointing** keeps only a few activations, usually each layer's input, and throws the rest away during forward. When backward reaches a layer, it reruns that layer's forward from the saved input to rebuild what it needs. Chen et al. (2016) popularized the idea.
+
+      For the team's model, each layer's input is 4,096 × 4,096 × 2 bytes ≈ 34 MB, so 32 of them take 1.07 GB. Add one layer rebuilt at a time (0.57 GB) and activations drop from 18.3 GB to about 1.64 GB.
+
+      :::predict A forward pass costs 1 unit of compute and a backward pass about 2. How much extra compute does full checkpointing add?
+      One extra forward: 3 units become 4, a third more, about 33%. Korthikanti et al. (2022) measured 30–40% in practice and showed that recomputing only the attention-score part saves most of the memory for a few percent of extra compute.
+      :::
+
+      :::mixup "Activation checkpointing means saving the model to disk."
+      Same word, different thing. A training checkpoint saves weights and optimizer state to storage so you can resume after a crash (the last lesson in this module). Activation checkpointing decides which intermediate values stay in GPU memory during one step.
+      :::
+    bridges: []
+  - id: sharding-and-recomputation.s3
+    title: Park state in CPU memory
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sharding-and-recomputation
+    markdown: |-
+      A server's CPU memory is often several times larger than its GPUs' memory, but it sits across a PCIe link of about 32 GB/s each way, about 60 times slower than HBM. **Offloading** stores some tensors there and copies them over when needed.
+
+      What you move matters. Shipping the 7B model's 84 GB of optimizer state across PCIe each step would take about 2.6 s each way. ZeRO-Offload (Ren et al., 2021) avoids that: it keeps the optimizer states on the CPU and runs the Adam update there too, so only 14 GB of bf16 gradients travel to the CPU and 14 GB of updated bf16 weights come back, about 0.44 s each way. Prefetching helps only if each transfer finishes before the GPU needs its data; a GPU that has already stalled can't win back the wait.
+    bridges: []
+  - id: sharding-and-recomputation.s4
+    title: Choose the lever that fits the biggest line
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sharding-and-recomputation
+    markdown: |-
+      Each lever shrinks one line of the budget and adds one cost:
+
+      | Lever | Shrinks | Costs |
+      | --- | --- | --- |
+      | ZeRO-1 or ZeRO-2 | Optimizer states, gradients | Nothing extra over data parallelism |
+      | ZeRO-3 / FSDP | Weights too | About 1.5× the communication |
+      | Activation checkpointing | Activations | About 33% more compute |
+      | Offloading | Whatever you move | PCIe transfers on the critical path |
+
+      So measure first. A long-context fine-tune of a 1B model might hold 60 GB of activations and only 16 GB of states: sharding the optimizer saves little, checkpointing saves most. A 20B model on short sequences is the reverse.
+
+      For a 7B model this is simpler than the 3-D layout from the model-parallelism lesson, so the team settles on FSDP (ZeRO-3) across all 256 GPUs plus activation checkpointing. Each GPU holds 0.44 GB of model states and about 1.6 GB of activations per sequence, leaving room to process all 4 of its sequences at once instead of accumulating them one at a time.
+    bridges: []
+  - id: sharding-and-recomputation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.sharding-and-recomputation
+    markdown: ZeRO memory for several models and cluster sizes, a long-context fine-tune, a slow offload, and a slow network test whether you can pick the lever that fits the biggest line.
+    takeaway: |-
+      ZeRO shards optimizer states, then gradients, then weights across data-parallel GPUs, dividing that memory by N. Activation checkpointing trades about a third more compute for most of the activation memory. Pick whichever targets your biggest line.
+  - id: sharding-and-recomputation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.sharding-and-recomputation
+    markdown: |-
+      Sharding splits stored state, offloading moves it to another memory tier, and recomputation recreates values later. Choose according to what fills memory and what extra work you can afford.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - sharding-and-recomputation.s1
-    - sharding-and-recomputation.s2
-    - sharding-and-recomputation.s3
-    - sharding-and-recomputation.s4
-    - sharding-and-recomputation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - sharding-and-recomputation.s1
+        - sharding-and-recomputation.zero3
+        - sharding-and-recomputation.s2
+        - sharding-and-recomputation.s3
+        - sharding-and-recomputation.s4
+        - sharding-and-recomputation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     sharding-and-recomputation.recap: sharding-and-recomputation.check
 assessment_families:
-- id: sharding-and-recomputation.base
-  objective_ref: objective.sharding-and-recomputation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Checkpoint activations selectively: trace the inputs, operation, and result before choosing.'
-  remediation_scene: sharding-and-recomputation.s2
-  variants:
-  - id: sharding-and-recomputation.base.1
-    prompt: What does optimizer-state sharding reduce?
-    options:
-    - id: a
-      text: Duplicate local optimizer-state storage
-    - id: b
-      text: The mathematical existence of all optimizer state
-    - id: c
-      text: Every activation automatically
-    answer: a
-    feedback: State remains distributed across owners.
-  - id: sharding-and-recomputation.base.2
-    prompt: Is activation checkpointing the same as saving weights to disk?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only for large batches
-    - id: a
-      text: No; it controls saved intermediates for backward computation
-    answer: a
-    feedback: The same word describes different mechanisms.
-- id: sharding-and-recomputation.transfer
-  objective_ref: objective.sharding-and-recomputation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Choose the limiting allocation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: sharding-and-recomputation.s4
-  variants:
-  - id: sharding-and-recomputation.transfer.1
-    prompt: A long-sequence run is dominated by activations. What directly targets that allocation?
-    options:
-    - id: b
-      text: Only renaming optimizer files
-    - id: c
-      text: Only vocabulary sorting
-    - id: a
-      text: Activation recomputation
-    answer: a
-    feedback: Recomputation reduces saved intermediate tensors.
-  - id: sharding-and-recomputation.transfer.2
-    prompt: Why can offloading make a fitting model slow?
-    options:
-    - id: c
-      text: It always changes the prediction target
-    - id: a
-      text: State transfers may sit on the critical path
-    - id: b
-      text: CPU memory removes all latency
-    answer: a
-    feedback: Capacity savings introduce data movement.
+  - id: sharding-and-recomputation.base
+    objective_ref: objective.sharding-and-recomputation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Checkpoint activations selectively: trace the inputs, operation, and result before choosing.'
+    remediation_scene: sharding-and-recomputation.s2
+    variants:
+      - id: sharding-and-recomputation.base.1
+        prompt: What does optimizer-state sharding reduce?
+        options:
+          - id: a
+            text: Duplicate local optimizer-state storage
+          - id: b
+            text: The mathematical existence of all optimizer state
+          - id: c
+            text: Every activation automatically
+        answer: a
+        feedback: State remains distributed across owners.
+        retired: true
+      - id: sharding-and-recomputation.base.2
+        prompt: Is activation checkpointing the same as saving weights to disk?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only for large batches
+          - id: a
+            text: No; it controls saved intermediates for backward computation
+        answer: a
+        feedback: The same word describes different mechanisms.
+        retired: true
+  - id: sharding-and-recomputation.transfer
+    objective_ref: objective.sharding-and-recomputation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Choose the limiting allocation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: sharding-and-recomputation.s4
+    variants:
+      - id: sharding-and-recomputation.transfer.1
+        prompt: A long-sequence run is dominated by activations. What directly targets that allocation?
+        options:
+          - id: b
+            text: Only renaming optimizer files
+          - id: c
+            text: Only vocabulary sorting
+          - id: a
+            text: Activation recomputation
+        answer: a
+        feedback: Recomputation reduces saved intermediate tensors.
+        retired: true
+      - id: sharding-and-recomputation.transfer.2
+        prompt: Why can offloading make a fitting model slow?
+        options:
+          - id: c
+            text: It always changes the prediction target
+          - id: a
+            text: State transfers may sit on the critical path
+          - id: b
+            text: CPU memory removes all latency
+        answer: a
+        feedback: Capacity savings introduce data movement.
+        retired: true
+  - id: sharding-and-recomputation.base.v2
+    objective_ref: objective.sharding-and-recomputation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: ZeRO-1 shards the optimizer states, ZeRO-2 adds gradients, ZeRO-3 adds weights. Whatever isn't sharded stays full-size on every GPU.
+    remediation_scene: sharding-and-recomputation.s1
+    variants:
+      - id: sharding-and-recomputation.base.v2.1
+        prompt: Which model states does ZeRO stage 2 split across the data-parallel GPUs?
+        options:
+          - id: b
+            text: The optimizer states only
+          - id: a
+            text: The optimizer states and gradients
+          - id: c
+            text: The optimizer states, gradients, and weights
+        answer: a
+        feedback: Stage 1 shards the optimizer states, stage 2 adds the gradients, and stage 3 adds the weights themselves.
+      - id: sharding-and-recomputation.base.v2.2
+        prompt: With ZeRO-1 over 256 GPUs, the 7B model still needs about 28 GB of model states per GPU rather than almost nothing. Why?
+        options:
+          - id: a
+            text: The bf16 weights and gradients, 4 bytes per parameter, stay unsharded
+          - id: b
+            text: Optimizer states can only be split into at most 8 pieces in practice
+          - id: c
+            text: ZeRO-1 keeps a spare copy of the master weights on each GPU for safety
+        answer: a
+        feedback: ZeRO-1 divides the 12 bytes of optimizer state by 256, but every GPU still holds 2 + 2 bytes per parameter of weights and gradients, 28 GB. Stages 2 and 3 remove that floor.
+      - id: sharding-and-recomputation.base.v2.3
+        prompt: In ZeRO-3, what happens just before a GPU computes a layer's forward pass?
+        options:
+          - id: c
+            text: It reduce-scatters that layer's gradients across the GPUs
+          - id: b
+            text: It loads the whole model's weights from CPU memory at once
+          - id: a
+            text: It all-gathers that layer's weights, then frees them after use
+        answer: a
+        feedback: Each GPU borrows one layer's full weights at a time with an all-gather and frees them after use. Reduce-scatter happens to gradients in the backward pass, and nothing loads the whole model at once.
+      - id: sharding-and-recomputation.base.v2.4
+        prompt: Full activation checkpointing reruns each layer's forward pass during backward. If forward costs 1 unit and backward 2, how much does compute per step grow?
+        options:
+          - id: b
+            text: It doubles, since forward now runs twice
+          - id: a
+            text: It grows by about a third, from 3 units to 4
+          - id: c
+            text: It barely changes, since recomputed values are cached
+        answer: a
+        feedback: The extra forward adds 1 unit to the original 3, a 33% increase. Forward runs twice, but it's only a third of the original step; nothing is cached, which is the whole point.
+  - id: sharding-and-recomputation.transfer.v2
+    objective_ref: objective.sharding-and-recomputation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Find the biggest line of the memory budget first, then pick the lever that shrinks that line at a cost you can afford.
+    remediation_scene: sharding-and-recomputation.s4
+    variants:
+      - id: sharding-and-recomputation.transfer.v2.1
+        prompt: A 1B-parameter model is fine-tuned on 32,000-token documents with ZeRO-3 on 8 GPUs. Each GPU holds 2 GB of model states and 60 GB of activations, and it runs out of memory. Which change targets the largest line?
+        options:
+          - id: a
+            text: Turn on activation checkpointing
+          - id: b
+            text: Shard the states over 16 GPUs
+          - id: c
+            text: Offload optimizer states to CPU
+        answer: a
+        feedback: Activations are 60 of the 62 GB, and checkpointing cuts them to a small fraction. More sharding or offloading only chips at the 2 GB of states.
+      - id: sharding-and-recomputation.transfer.v2.2
+        prompt: A 20B-parameter model trains with plain data parallelism on 64 GPUs using short sequences. Model states need 320 GB per GPU; activations need 6 GB. Which change helps most?
+        options:
+          - id: c
+            text: Checkpoint activations to recompute them in backward
+          - id: a
+            text: Shard the model states across the GPUs with ZeRO
+          - id: b
+            text: Shorten the sequences further to cut memory use
+        answer: a
+        feedback: Model states dominate, and ZeRO-3 over 64 GPUs cuts 320 GB to 5 GB per GPU. Checkpointing or shorter sequences only shrink the 6 GB of activations.
+      - id: sharding-and-recomputation.transfer.v2.3
+        prompt: After a team offloads optimizer states to CPU memory, the step time triples and GPUs sit idle between layers. What best explains it?
+        options:
+          - id: b
+            text: CPU memory has less total capacity than the GPUs' memory
+          - id: a
+            text: PCIe transfers now sit on the critical path, not overlapped
+          - id: c
+            text: Offloading changes the optimizer, so training needs more steps
+        answer: a
+        feedback: PCIe is far slower than HBM, and transfers that aren't prefetched or overlapped make the GPU wait. CPU memory is usually larger, and offloading doesn't change the math of the update.
+      - id: sharding-and-recomputation.transfer.v2.4
+        prompt: A cluster has a slow network between machines. A model already fits with ZeRO-2, and the team considers moving to ZeRO-3 anyway. What should they expect?
+        options:
+          - id: a
+            text: About 50% more communication for memory savings they don't need
+          - id: b
+            text: Faster steps, since each GPU now stores and moves less data
+          - id: c
+            text: Identical speed, since sharding the weights costs no traffic
+        answer: a
+        feedback: ZeRO-3 adds an all-gather of the weights, about 1.5 times data-parallel traffic. On a slow network that can slow every step, so stop at the stage that fits.
+  - id: sharding-and-recomputation.calculate
+    objective_ref: objective.sharding-and-recomputation
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Per GPU with Ψ parameters and N GPUs: ZeRO-1 = 4Ψ + 12Ψ/N, ZeRO-2 = 2Ψ + 14Ψ/N, ZeRO-3 = 16Ψ/N bytes. Give GB to one decimal place (1 GB = 10⁹ bytes)."
+    remediation_scene: sharding-and-recomputation.s1
+    absolute_tolerance: 0.1
+    variants:
+      - id: sharding-and-recomputation.calculate.1
+        prompt: With ZeRO-3 across 16 GPUs, how many GB of model states does each GPU hold for a 7-billion-parameter model?
+        answer: 7
+        feedback: 16 × 7 billion ÷ 16 = 7 billion bytes = 7 GB.
+      - id: sharding-and-recomputation.calculate.2
+        prompt: With ZeRO-1 across the 8 GPUs of one machine, how many GB of model states does each GPU hold for a 7-billion-parameter model?
+        answer: 38.5
+        feedback: 4 × 7 = 28 GB of unsharded weights and gradients, plus 12 × 7 ÷ 8 = 10.5 GB of sharded optimizer state, is 38.5 GB.
+      - id: sharding-and-recomputation.calculate.3
+        prompt: With ZeRO-2 across 16 GPUs, how many GB of model states does each GPU hold for a 7-billion-parameter model?
+        answer: 20.1
+        feedback: 2 × 7 = 14 GB of unsharded weights, plus 14 × 7 ÷ 16 ≈ 6.1 GB of sharded gradients and optimizer state, is about 20.1 GB.
+      - id: sharding-and-recomputation.calculate.4
+        prompt: With ZeRO-3 across 32 GPUs, how many GB of model states does each GPU hold for a 13-billion-parameter model?
+        answer: 6.5
+        feedback: 16 × 13 billion = 208 GB, divided by 32 GPUs = 6.5 GB each.
+      - id: sharding-and-recomputation.calculate.5
+        prompt: Forward costs 1 unit and backward 2 units. With full activation checkpointing adding one extra forward, by what percentage does compute per step increase?
+        answer: 33.3
+        feedback: The step goes from 3 units to 4, an increase of 1/3 ≈ 33.3%.
+      - id: sharding-and-recomputation.calculate.6
+        prompt: With checkpointing, a 32-layer model keeps only each layer's bf16 input, 2 × s × b × h bytes. For s = 2,048 tokens, b = 2 sequences and h = 4,096, how many GB do those saved inputs take?
+        answer: 1.1
+        feedback: 2 × 2,048 × 2 × 4,096 ≈ 33.6 million bytes per layer; × 32 layers ≈ 1.07 GB, about 1.1 GB.

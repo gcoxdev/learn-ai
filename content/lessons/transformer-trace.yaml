@@ -1,301 +1,468 @@
 schema_version: 0.2-draft
 lesson:
   id: transformer-trace
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Follow one token through a transformer
   state: draft
-  summary: Trace a decoder-only transformer from token representations through contextual updates to vocabulary
-    scores.
+  summary: Follow "a bird sings" through GPT-2 small, from token IDs to the scores that pick the next word, with the shape of every tensor along the way. Then see why long prompts get expensive.
   slot: M15.8
   category: destination
   sources:
-  - title: Dive into Deep Learning — transformer architecture
-    url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/transformer.html
-  - title: Attention Is All You Need
-    url: https://arxiv.org/abs/1706.03762
-  - title: 'FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness'
-    url: https://arxiv.org/abs/2205.14135
+    - title: "Language Models are Unsupervised Multitask Learners (GPT-2; Radford et al., 2019)"
+      url: https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf
+    - title: "Attention Is All You Need (Vaswani et al., 2017)"
+      url: https://arxiv.org/abs/1706.03762
+    - title: Dive into Deep Learning — transformer architecture
+      url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/transformer.html
+    - title: "nanoGPT, a minimal GPT-2 implementation (Andrej Karpathy)"
+      url: https://github.com/karpathy/nanoGPT
+    - title: 'FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness (Dao et al., 2022)'
+      url: https://arxiv.org/abs/2205.14135
 objectives:
-- id: objective.transformer-trace
-  version: 1-draft
-  statement: Trace a decoder-only transformer from token representations through contextual updates to vocabulary
-    scores.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - transformer-trace.base
-  - transformer-trace.transfer
-  prerequisites:
-  - anyOf:
-    - objective.softmax-attention
-  - anyOf:
-    - objective.nonlinearity
-  - anyOf:
-    - objective.next-token
+  - id: objective.transformer-trace
+    version: 2-draft
+    statement: Trace a decoder-only transformer from token representations through contextual updates to vocabulary scores.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - transformer-trace.base.v2
+      - transformer-trace.transfer.v2
+      - transformer-trace.calculate
+    prerequisites:
+      - anyOf:
+          - objective.softmax-attention
+      - anyOf:
+          - objective.nonlinearity
+      - anyOf:
+          - objective.next-token
 scenes:
-- title: Keep one position in view
-  markdown: 'Start with the prompt “a bird sings”. Tokenization chooses IDs, and embedding lookup supplies
-    vectors. Follow the last prompt position: after the network processes it, its final representation helps
-    score the next token.
+  - title: Seven stops from text to the next token
+    markdown: |-
+      You type "a bird sings" and GPT-2 small proposes the next word. Everything you've built in this module happens in between, in a fixed order. Here is the model's configuration, and the route we'll follow:
 
+      | Setting | GPT-2 small |
+      | --- | --- |
+      | Vocabulary | 50,257 tokens |
+      | Maximum context | 1,024 tokens |
+      | Width $d_{\text{model}}$ | 768 |
+      | Blocks | 12 |
+      | Heads per block | 12, each 64 wide |
 
-    A decoder-only transformer repeats blocks over these representations. This is a conceptual trace of the
-    main components, not a claim that every architecture uses the same block order or parameter shapes.'
-  id: transformer-trace.s1
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-trace
-  text_mode: 'Start with the prompt “a bird sings”. Tokenization chooses IDs, and embedding lookup supplies
-    vectors. Follow the last prompt position: after the network processes it, its final representation helps
-    score the next token.
+      Suppose the tokenizer splits the prompt into three tokens, so $T = 3$. The shapes below are what you'd see printed at each stop in a real implementation such as nanoGPT.
+    diagram:
+      caption: A decoder-only forward pass, with GPT-2 small's shapes for a 3-token prompt.
+      description: Text becomes three token IDs. Each ID looks up an embedding, and a position vector is added, giving a 3 by 768 array. Twelve blocks transform it, keeping the shape 3 by 768. A final norm follows. The unembedding multiplies by a 768 by 50,257 matrix to give logits of shape 3 by 50,257. Softmax on the last row gives next-token probabilities, and a token is picked. That token is appended to the IDs and the pass repeats.
+      nodes:
+        - id: text
+          label: Text
+          note: "“a bird sings”"
+          col: 0
+          row: 0
+        - id: ids
+          label: Token IDs
+          note: shape (3,)
+          col: 1
+          row: 0
+          tone: data
+        - id: emb
+          label: Embeddings + positions
+          note: (3, 768)
+          col: 2
+          row: 0
+        - id: blocks
+          label: 12 blocks
+          note: (3, 768) in, (3, 768) out
+          col: 3
+          row: 0
+          tone: accent
+        - id: norm
+          label: Final norm
+          note: (3, 768)
+          col: 4
+          row: 0
+        - id: unemb
+          label: Unembedding
+          note: × (768, 50,257)
+          col: 4
+          row: 1
+        - id: logits
+          label: Logits
+          note: (3, 50,257)
+          col: 3
+          row: 1
+          tone: data
+        - id: next
+          label: Next token
+          note: softmax on the last row, then pick
+          col: 2
+          row: 1
+          tone: accent
+      edges:
+        - from: text
+          to: ids
+          label: tokenize
+        - from: ids
+          to: emb
+          label: look up
+        - from: emb
+          to: blocks
+        - from: blocks
+          to: norm
+        - from: norm
+          to: unemb
+        - from: unemb
+          to: logits
+        - from: logits
+          to: next
+        - from: next
+          to: ids
+          label: append and repeat
+          dashed: true
+    id: transformer-trace.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.transformer-trace
+  - title: "Stops 1–2: IDs become vectors with positions"
+    markdown: |-
+      The tokenizer turns the text into three integers, one per token. Their exact values depend on the tokenizer's vocabulary; what matters is the shape, (3,).
 
+      Each ID picks one row of the **token embedding** table, a $50{,}257 \times 768$ matrix of learned numbers. Three IDs give three rows: shape (3, 768). GPT-2 then adds rows 0, 1, and 2 of its learned position table ($1{,}024 \times 768$), also (3, 768). The sum, (3, 768), is the start of the residual stream.
 
-    A decoder-only transformer repeats blocks over these representations. This is a conceptual trace of the
-    main components, not a claim that every architecture uses the same block order or parameter shapes.'
-- title: Order must enter the computation
-  markdown: 'A plain collection of token embeddings does not by itself specify sequence positions. Transformers
-    include positional information. Designs may add positional vectors or modify query/key calculations using
-    position, as rotary methods do.
+      Without that second addition, the blocks couldn't tell "a bird sings" from "sings bird a". That's the permutation problem from the positions lesson.
+    id: transformer-trace.s2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-trace
+  - title: "Stop 3: twelve blocks, same shape in and out"
+    markdown: |-
+      Each of the 12 blocks runs the pre-norm recipe from the block lesson on the (3, 768) stream:
 
+      | Inside one block | Shape |
+      | --- | --- |
+      | Norm, then $Q$, $K$, $V$ split into heads | (12, 3, 64) each |
+      | Scores $QK^\top / \sqrt{64}$, causal mask, softmax | (12, 3, 3) |
+      | Weights times values, concatenate, $W_O$ | (3, 768) |
+      | Add to the stream | (3, 768) |
+      | Norm, MLP up, GELU | (3, 3,072) |
+      | MLP down, add to the stream | (3, 768) |
 
-    Consider “dog bites person” and “person bites dog”. The same vocabulary entries appear, but the order changes
-    the sentence. Positional mechanisms give the computation information it needs to distinguish such cases.
-    Their detailed mathematics belongs in the positional-encoding lesson.'
-  id: transformer-trace.s2
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-trace
-  text_mode: 'A plain collection of token embeddings does not by itself specify sequence positions. Transformers
-    include positional information. Designs may add positional vectors or modify query/key calculations using
-    position, as rotary methods do.
+      Only one step lets the three tokens exchange information: the (12, 3, 3) score grids. Everything else works on each token's row separately. Because every block keeps the shape (3, 768), you can stack as many as you like; GPT-2's largest version stacks 48.
+    bridges:
+      - vectors
+    id: transformer-trace.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-trace
+  - title: "Stops 4–6: final norm, unembedding, logits"
+    markdown: |-
+      After block 12, one last norm tidies the stream, still (3, 768). Now the model has to turn 768 numbers back into a verdict over 50,257 possible tokens.
 
+      The **unembedding** is a $768 \times 50{,}257$ matrix. Multiplying the stream by it gives the **logits**, one score per vocabulary token for each position: shape (3, 50,257). GPT-2 doesn't store a separate matrix for this: it reuses the token embedding table, transposed. A token whose embedding points the same way as the final vector gets a high score.
 
-    Consider “dog bites person” and “person bites dog”. The same vocabulary entries appear, but the order changes
-    the sentence. Positional mechanisms give the computation information it needs to distinguish such cases.
-    Their detailed mathematics belongs in the positional-encoding lesson.'
-- title: Attention supplies contextual information
-  markdown: 'At the position we follow, attention computes permitted mixtures of information from earlier and
-    current positions. Multiple heads can use different learned projections and therefore different mixtures.
-    Their outputs are combined through an output projection.
+      :::predict All three rows have logits. Which row predicts what comes after "sings"?
+      The last one. Row 1 is the model's guess for the token after "a", and row 2 for the token after "bird". During training those rows matter, since each is compared with the real next token. When generating, only the last row is new.
+      :::
 
+      Softmax turns the last row into probabilities. With three invented logits for " loudly", " sweetly", and ".", say [2.0, 1.0, 0.1], the probabilities are [0.659, 0.242, 0.099]. A decoding rule from the next-token prediction lesson, such as taking the top token or sampling, picks one.
+    id: transformer-trace.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-trace
+  - title: Attention weights are not next-word odds
+    markdown: |-
+      :::mixup "The model attended 80% to 'bird', so it will probably say 'bird' next."
+      Attention weights live inside one head of one block and decide how to mix *input* positions. The next-word probabilities come from the last row of the logits, after 12 blocks, 144 heads, and the unembedding. A head can put 0.8 on "bird" while "bird" gets a tiny probability as the next word; repeating it would be odd English.
+      :::
 
-    A projection is a learned numerical transformation of a vector. It can mix coordinates rather than simply
-    selecting one. The single-head experiment explains the central scoring-and-mixing operation; tensor shapes
-    and efficient multi-head implementations need a deeper follow-up.'
-  bridges:
-  - vectors
-  id: transformer-trace.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-trace
-  text_mode: 'At the position we follow, attention computes permitted mixtures of information from earlier
-    and current positions. Multiple heads can use different learned projections and therefore different mixtures.
-    Their outputs are combined through an output projection.
+      Keep the two softmaxes apart by their shapes. An attention softmax runs over positions, a row of length $T$ (here 3). The output softmax runs over the vocabulary, a row of length 50,257.
+    id: transformer-trace.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-trace
+  - title: "Stop 7: append and go again"
+    markdown: |-
+      Say the model picks " sweetly". The IDs become four tokens and the whole pass runs again with $T = 4$: shapes (4, 768), score grids (12, 4, 4), logits (4, 50,257), and a new last row. Generating 100 tokens means 100 passes, with the weights fixed the entire time. That's inference; training is the separate process that changes the weights, using every row's logits against the real next tokens.
 
+      Notice the waste. The second pass recomputes the keys and values of "a", "bird", and "sings", which haven't changed, since the causal mask keeps earlier tokens from ever seeing later ones. Real systems keep them in a **KV cache** and compute only the new token's query, key, and value. The next scene counts what that costs, and a later lesson on cached inference works through it in detail.
 
-    A projection is a learned numerical transformation of a vector. It can mix coordinates rather than simply
-    selecting one. The single-head experiment explains the central scoring-and-mixing operation; tensor shapes
-    and efficient multi-head implementations need a deeper follow-up.'
-- title: Keep a residual path; transform each position
-  markdown: 'A residual connection adds a block’s update to its incoming representation. For a toy vector [1,
-    2] and an attention update [0.5, −0.25], the sum is [1.5, 1.75]. This preserves a direct route for information
-    while also allowing changes.
+      A chatbot adds more around this loop, such as a system prompt, safety checks, and tools. The loop itself is exactly what you just traced.
+    id: transformer-trace.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-trace
+  - id: transformer-trace.extension-context-cost
+    title: Why long prompts get expensive
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-trace
+    markdown: |-
+      Every head in every block builds a $T \times T$ score grid. For GPT-2 small at its full context, $T = 1{,}024$:
 
+      $$12 \text{ blocks} \times 12 \text{ heads} \times 1{,}024^2 = 150{,}994{,}944 \text{ scores}$$
 
-    Feed-forward components then apply learned transformations and nonlinearities at each position. Normalization
-    controls representation statistics. Common block variants arrange normalization and residual additions
-    differently; neither normalization nor the feed-forward network replaces attention’s cross-position mixing.'
-  id: transformer-trace.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-trace
-  text_mode: 'A residual connection adds a block’s update to its incoming representation. For a toy vector
-    [1, 2] and an attention update [0.5, −0.25], the sum is [1.5, 1.75]. This preserves a direct route for
-    information while also allowing changes.
+      At 2 bytes per number, that's about 302 MB for one sequence, if every grid is stored at once, as naive training does for the backward pass. Double $T$ and the count quadruples. This is the **quadratic cost** of attention, written $O(T^2)$.
 
+      :::predict How does the number of scores change from T = 1,024 to T = 4,096?
+      $4{,}096 / 1{,}024 = 4$, and $4^2 = 16$, so about 2.4 billion scores, roughly 4.8 GB at 2 bytes each. The weights of the model didn't grow at all.
+      :::
 
-    Feed-forward components then apply learned transformations and nonlinearities at each position. Normalization
-    controls representation statistics. Common block variants arrange normalization and residual additions
-    differently; neither normalization nor the feed-forward network replaces attention’s cross-position mixing.'
-- title: Project to the vocabulary, then choose
-  markdown: 'After the final block and the architecture’s final processing, a vocabulary projection gives a
-    score, or logit, for each possible next token. A distribution can be formed from those logits and a decoding
-    policy selects an output.
+      The KV cache grows only linearly. Each token stores one key and one value vector per block:
 
+      $$\text{KV bytes} = 2 \times n_{\text{layers}} \times n_{\text{heads}} \times d_{\text{head}} \times T \times \text{bytes per number}$$
 
-    Do not confuse two uses of normalization. Attention weights mix input-position values inside a head. Vocabulary
-    probabilities describe candidate output tokens near the end. A head attending strongly to “bird” does not
-    mean the next generated token must be “bird”.'
-  id: transformer-trace.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-trace
-  text_mode: 'After the final block and the architecture’s final processing, a vocabulary projection gives
-    a score, or logit, for each possible next token. A distribution can be formed from those logits and a decoding
-    policy selects an output.
+      For GPT-2 small: $2 \times 12 \times 12 \times 64 \times 2 = 36{,}864$ bytes per token, about 37.7 MB at $T = 1{,}024$.
 
+      ```python run
+      n_layer, n_head, d_model = 12, 12, 768        # GPT-2 small
+      bytes_per = 2                                 # 16-bit numbers
 
-    Do not confuse two uses of normalization. Attention weights mix input-position values inside a head. Vocabulary
-    probabilities describe candidate output tokens near the end. A head attending strongly to “bird” does not
-    mean the next generated token must be “bird”.'
-- title: One block is a mechanism, not the entire product
-  markdown: 'The selected token is appended and generation continues with fixed model parameters during ordinary
-    inference. Training, by contrast, computes losses and updates parameters. Retrieval, tools, safety controls,
-    and the user interface may surround the model.
+      for T in [256, 1024, 4096]:
+          scores = n_layer * n_head * T * T         # one T x T grid per head per layer
+          kv = 2 * n_layer * d_model * T * bytes_per   # keys + values for every layer
+          print(f"T = {T:5,}: {scores:>13,} scores = {scores * bytes_per / 1e6:7.1f} MB"
+                f"   KV cache {kv / 1e6:6.1f} MB")
+      ```
 
-
-    You can now trace IDs → embeddings and positions → contextual blocks → vocabulary logits → selected token.
-    Encoder-only and encoder–decoder families reuse related components for different information flow and objectives;
-    this lesson’s assessed trace is specifically decoder-only.'
-  id: transformer-trace.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-trace
-  text_mode: 'The selected token is appended and generation continues with fixed model parameters during ordinary
-    inference. Training, by contrast, computes losses and updates parameters. Retrieval, tools, safety controls,
-    and the user interface may surround the model.
-
-
-    You can now trace IDs → embeddings and positions → contextual blocks → vocabulary logits → selected token.
-    Encoder-only and encoder–decoder families reuse related components for different information flow and objectives;
-    this lesson’s assessed trace is specifically decoder-only.'
-- id: transformer-trace.extension-context-cost
-  title: Count the cost of looking across a context
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-trace
-  markdown: 'For standard dense self-attention over T positions, each query can compare with up to T keys,
-    giving work on the scale of T squared for those comparisons. Doubling T quadruples the number of position
-    pairs. A causal mask removes future access but does not turn this whole training or prefill computation
-    into a constant-size operation.
-
-
-    During cached autoregressive decoding, one new query can attend to retained keys, so its attention work
-    grows with retained context. The KV cache stores earlier per-layer key/value activations and normally grows
-    with retained positions. Efficient kernels can avoid materializing a full score matrix, while different
-    attention patterns or architectures change the accounting. Distinguish arithmetic, stored intermediates,
-    and total end-to-end latency.'
-  text_mode: 'For standard dense self-attention over T positions, each query can compare with up to T keys,
-    giving work on the scale of T squared for those comparisons. Doubling T quadruples the number of position
-    pairs. A causal mask removes future access but does not turn this whole training or prefill computation
-    into a constant-size operation.
-
-
-    During cached autoregressive decoding, one new query can attend to retained keys, so its attention work
-    grows with retained context. The KV cache stores earlier per-layer key/value activations and normally grows
-    with retained positions. Efficient kernels can avoid materializing a full score matrix, while different
-    attention patterns or architectures change the accounting. Distinguish arithmetic, stored intermediates,
-    and total end-to-end latency.'
-  bridges:
-  - algorithm-cost
-- id: transformer-trace.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.transformer-trace
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Follow token IDs through embeddings, position information, contextual blocks, and vocabulary scores.
-    Attention weights mix information inside the network; vocabulary probabilities guide the next output token.
-- id: transformer-trace.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.transformer-trace
-  markdown: Follow token IDs through embeddings, position information, contextual blocks, and vocabulary scores.
-    Attention weights mix information inside the network; vocabulary probabilities guide the next output token.
-  text_mode: Follow token IDs through embeddings, position information, contextual blocks, and vocabulary scores.
-    Attention weights mix information inside the network; vocabulary probabilities guide the next output token.
+      Try a 7B-class model with 32 layers and $d_{\text{model}} = 4096$: set `n_layer, n_head, d_model = 32, 32, 4096` and `T` to 4096. Its KV cache alone is about 2.1 GB per conversation. Methods like FlashAttention (Dao et al., 2022) compute exact attention in tiles without ever storing a full $T \times T$ grid, so memory grows only linearly with $T$; the arithmetic still grows as $T^2$.
+    bridges:
+      - algorithm-cost
+  - id: transformer-trace.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.transformer-trace
+    markdown: Tensor shapes at each stop, attention grids to size up, and a few chatbot and long-document situations test whether you can trace a forward pass and predict its cost.
+    takeaway: |-
+      Token IDs become embeddings plus positions, pass through blocks that keep the shape T × d_model, then a final norm and the unembedding give T × vocabulary logits; the last row picks the next token. Attention's score grids grow as T², the KV cache as T.
+  - id: transformer-trace.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.transformer-trace
+    markdown: |-
+      Follow token IDs through embeddings, position information, contextual blocks, and vocabulary scores. Attention weights mix information inside the network; vocabulary probabilities guide the next output token.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - transformer-trace.s1
-    - transformer-trace.s2
-    - transformer-trace.s3
-    - transformer-trace.s4
-    - transformer-trace.s5
-    - transformer-trace.s6
-    - transformer-trace.extension-context-cost
-    - transformer-trace.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - transformer-trace.s1
+        - transformer-trace.s2
+        - transformer-trace.s3
+        - transformer-trace.s4
+        - transformer-trace.s5
+        - transformer-trace.s6
+        - transformer-trace.extension-context-cost
+        - transformer-trace.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     transformer-trace.recap: transformer-trace.check
 assessment_families:
-- response_type: single_choice
-  hint: 'Track the type of object at each stage: IDs, vectors, contextual vectors, then vocabulary scores.'
-  variants:
-  - prompt: Which sequence is a coherent decoder-only forward trace?
-    options:
-    - id: b
-      text: Token IDs → attention weights → immediate decoding, with no value mixing or later layers.
-    - id: answer
-      text: Token IDs → embeddings/positions → transformer blocks → vocabulary logits.
-    - id: a
-      text: Vocabulary probabilities → tokenizer training → a guaranteed factual answer.
-    answer: answer
-    feedback: The model transforms representations through contextual blocks before projecting to vocabulary
-      scores. Attention weights alone are not the final next-token distribution.
-    id: transformer-trace.base.1
-  - prompt: What does a residual addition do in the toy case [2, 1] + [−0.5, 0.25]?
-    options:
-    - id: answer
-      text: It produces [1.5, 1.25] by adding an update coordinate by coordinate.
-    - id: a
-      text: It discards the incoming representation and outputs only [−0.5, 0.25].
-    - id: b
-      text: It directly chooses a token ID from the vocabulary.
-    answer: answer
-    feedback: Residual addition combines the incoming representation and its update. It is a vector operation
-      inside the network, not a decoding policy.
-    id: transformer-trace.base.2
-  id: transformer-trace.base
-  objective_ref: objective.transformer-trace
-  task: base
-  points: 1
-  remediation_scene: transformer-trace.s1
-- response_type: single_choice
-  hint: Attention mixes information from input positions; the output projection scores possible next tokens.
-  variants:
-  - prompt: An attention head gives an input position weight 0.8. Does that mean the token at that position
-      has next-token probability 0.8?
-    options:
-    - id: answer
-      text: No; attention-position weights and output-vocabulary probabilities are different quantities.
-    - id: a
-      text: Yes; the attention row is always the final vocabulary distribution.
-    - id: b
-      text: Yes; residual connections copy attention weights into output probabilities unchanged.
-    answer: answer
-    feedback: Attention weights control value mixing inside a head. Further transformations and a vocabulary
-      projection determine the output logits.
-    id: transformer-trace.transfer.1
-  - prompt: Two prompts contain the same words in different orders. Why does positional information matter?
-    options:
-    - id: a
-      text: It guarantees that both prompts produce exactly the same answer.
-    - id: b
-      text: It replaces all learned embeddings with the token IDs themselves.
-    - id: answer
-      text: It lets the computation distinguish where tokens occur and how their order differs.
-    answer: answer
-    feedback: Order can change meaning. Position-aware computation can distinguish arrangements even when the
-      vocabulary entries are the same.
-    id: transformer-trace.transfer.2
-  id: transformer-trace.transfer
-  objective_ref: objective.transformer-trace
-  task: transfer
-  points: 1
-  remediation_scene: transformer-trace.s1
+  - response_type: single_choice
+    hint: 'Track the type of object at each stage: IDs, vectors, contextual vectors, then vocabulary scores.'
+    variants:
+      - prompt: Which sequence is a coherent decoder-only forward trace?
+        options:
+          - id: b
+            text: Token IDs → attention weights → immediate decoding, with no value mixing or later layers.
+          - id: answer
+            text: Token IDs → embeddings/positions → transformer blocks → vocabulary logits.
+          - id: a
+            text: Vocabulary probabilities → tokenizer training → a guaranteed factual answer.
+        answer: answer
+        feedback: The model transforms representations through contextual blocks before projecting to vocabulary scores. Attention weights alone are not the final next-token distribution.
+        id: transformer-trace.base.1
+        retired: true
+      - prompt: What does a residual addition do in the toy case [2, 1] + [−0.5, 0.25]?
+        options:
+          - id: answer
+            text: It produces [1.5, 1.25] by adding an update coordinate by coordinate.
+          - id: a
+            text: It discards the incoming representation and outputs only [−0.5, 0.25].
+          - id: b
+            text: It directly chooses a token ID from the vocabulary.
+        answer: answer
+        feedback: Residual addition combines the incoming representation and its update. It is a vector operation inside the network, not a decoding policy.
+        id: transformer-trace.base.2
+        retired: true
+    id: transformer-trace.base
+    objective_ref: objective.transformer-trace
+    task: base
+    points: 1
+    remediation_scene: transformer-trace.s1
+  - response_type: single_choice
+    hint: Attention mixes information from input positions; the output projection scores possible next tokens.
+    variants:
+      - prompt: An attention head gives an input position weight 0.8. Does that mean the token at that position has next-token probability 0.8?
+        options:
+          - id: answer
+            text: No; attention-position weights and output-vocabulary probabilities are different quantities.
+          - id: a
+            text: Yes; the attention row is always the final vocabulary distribution.
+          - id: b
+            text: Yes; residual connections copy attention weights into output probabilities unchanged.
+        answer: answer
+        feedback: Attention weights control value mixing inside a head. Further transformations and a vocabulary projection determine the output logits.
+        id: transformer-trace.transfer.1
+        retired: true
+      - prompt: Two prompts contain the same words in different orders. Why does positional information matter?
+        options:
+          - id: a
+            text: It guarantees that both prompts produce exactly the same answer.
+          - id: b
+            text: It replaces all learned embeddings with the token IDs themselves.
+          - id: answer
+            text: It lets the computation distinguish where tokens occur and how their order differs.
+        answer: answer
+        feedback: Order can change meaning. Position-aware computation can distinguish arrangements even when the vocabulary entries are the same.
+        id: transformer-trace.transfer.2
+        retired: true
+    id: transformer-trace.transfer
+    objective_ref: objective.transformer-trace
+    task: transfer
+    points: 1
+    remediation_scene: transformer-trace.s1
+  - id: transformer-trace.base.v2
+    objective_ref: objective.transformer-trace
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Walk the seven stops in order: IDs (T,), embeddings plus positions (T, d), blocks (T, d), final norm (T, d), unembedding to logits (T, vocabulary), then the last row picks.'
+    remediation_scene: transformer-trace.s3
+    variants:
+      - id: transformer-trace.base.v2.1
+        prompt: GPT-2 small reads a 10-token prompt. What is the shape of its logits?
+        options:
+          - id: b
+            text: (10, 768), one row per token and one column per feature
+          - id: a
+            text: (10, 50,257), one row per position and one column per token
+          - id: c
+            text: (50,257, 768), one row per vocabulary token
+        answer: a
+        feedback: The unembedding maps each position's 768 numbers to 50,257 vocabulary scores. (10, 768) is the stream before the unembedding, and (50,257, 768) is the shape of the embedding table itself.
+      - id: transformer-trace.base.v2.2
+        prompt: When generating the word after a 10-token prompt, which row of the logits is used?
+        options:
+          - id: c
+            text: The first row, since the prompt starts there
+          - id: b
+            text: The average of all ten rows, to use the whole prompt
+          - id: a
+            text: The last row, which has seen all ten tokens
+        answer: a
+        feedback: Under the causal mask only the last position has seen the whole prompt, and it is the one trained to predict what follows. Earlier rows predict tokens that are already known.
+      - id: transformer-trace.base.v2.3
+        prompt: Which order matches a GPT-2-style forward pass?
+        options:
+          - id: a
+            text: Embeddings + positions → blocks → final norm → unembedding
+          - id: b
+            text: Embeddings + positions → blocks → unembedding → final norm
+          - id: c
+            text: Blocks → embeddings + positions → final norm → unembedding
+        answer: a
+        feedback: The final norm tidies the stream before it is compared with the vocabulary. Normalizing after the unembedding would rescale logits instead, and blocks need vectors, so embeddings come first.
+      - id: transformer-trace.base.v2.4
+        prompt: In GPT-2 small with a 3-token prompt, what shape leaves block 7?
+        options:
+          - id: c
+            text: (12, 3, 64), since the block splits into 12 heads
+          - id: a
+            text: (3, 768), the same shape that entered the block
+          - id: b
+            text: (3, 3,072), since the MLP widens each vector
+        answer: a
+        feedback: Heads are concatenated back and the MLP narrows back to 768 inside the block, so every block keeps (3, 768). That is what lets blocks stack.
+  - id: transformer-trace.transfer.v2
+    objective_ref: objective.transformer-trace
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Separate the three costs. Score grids grow with T², the KV cache grows with T, and the model's weights don't grow with T at all.
+    remediation_scene: transformer-trace.extension-context-cost
+    variants:
+      - id: transformer-trace.transfer.v2.1
+        prompt: A team raises its model's context from 4,096 to 8,192 tokens without changing anything else. How does the memory for storing every attention score grid change?
+        options:
+          - id: b
+            text: It doubles, since there are twice as many tokens
+          - id: a
+            text: It grows about four times, since each grid is T × T
+          - id: c
+            text: It stays the same, since the weights didn't change
+        answer: a
+        feedback: Each head's grid has T² entries, so doubling T quadruples it. Doubling is the KV cache's growth, and the weights are indeed unchanged, but scores depend on T, not on the weights.
+      - id: transformer-trace.transfer.v2.2
+        prompt: A chatbot keeps a KV cache for each conversation. One conversation grows from 2,000 to 4,000 tokens. How does its cache change?
+        options:
+          - id: a
+            text: It doubles, since each token adds one key and one value per block
+          - id: c
+            text: It quadruples, since attention cost grows with the square of T
+          - id: b
+            text: It stays the same, since the model's weights are fixed
+        answer: a
+        feedback: The cache stores a fixed amount per token, 2 × layers × d_model numbers, so it grows linearly. The T² growth belongs to the score grids, not the cache.
+      - id: transformer-trace.transfer.v2.3
+        prompt: While generating, one head puts weight 0.8 on the token "bird". A colleague predicts "bird" has about an 80% chance of being the next word. What is the better reading?
+        options:
+          - id: c
+            text: Right, since attention weights and output probabilities are both softmaxes
+          - id: b
+            text: Nearly right, but the 0.8 must be multiplied by the other heads' weights
+          - id: a
+            text: The weight mixes input positions; next-word odds come from the logits
+        answer: a
+        feedback: Both are softmaxes, but over different things. An attention row spans input positions; the output softmax spans 50,257 vocabulary tokens after every block and the unembedding.
+      - id: transformer-trace.transfer.v2.4
+        prompt: You open a GPT-2 checkpoint and find no separate output matrix. How does the model turn its final 768-number vectors into 50,257 logits?
+        options:
+          - id: b
+            text: It multiplies by the position table, which has one row per token
+          - id: a
+            text: It multiplies by the token embedding table, transposed
+          - id: c
+            text: It reads the last block's attention weights as the logits
+        answer: a
+        feedback: GPT-2 ties its unembedding to the token embedding table, so each logit is a dot product between the final vector and a token's embedding. The position table has 1,024 rows, not 50,257, and attention weights span positions, not vocabulary.
+  - id: transformer-trace.calculate
+    objective_ref: objective.transformer-trace
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Each head builds one T × T grid of scores. Multiply T² by the number of heads, and by the number of layers if the question asks for the whole model.
+    remediation_scene: transformer-trace.extension-context-cost
+    absolute_tolerance: 0.5
+    variants:
+      - id: transformer-trace.calculate.1
+        prompt: A layer with 12 heads processes 512 tokens. How many attention scores does that one layer compute?
+        answer: 3145728
+        feedback: 512² = 262,144 scores per head, times 12 heads = 3,145,728.
+      - id: transformer-trace.calculate.2
+        prompt: A layer with 16 heads processes 2,048 tokens. How many attention scores does that one layer compute?
+        answer: 67108864
+        feedback: 2,048² = 4,194,304 per head, times 16 = 67,108,864.
+      - id: transformer-trace.calculate.3
+        prompt: A layer with 8 heads processes 1,000 tokens. How many attention scores does that one layer compute?
+        answer: 8000000
+        feedback: 1,000² = 1,000,000 per head, times 8 = 8,000,000.
+      - id: transformer-trace.calculate.4
+        prompt: A layer with 32 heads processes 4,096 tokens. How many attention scores does that one layer compute?
+        answer: 536870912
+        feedback: 4,096² = 16,777,216 per head, times 32 = 536,870,912. At 2 bytes each that is about 1.07 GB for one layer.
+      - id: transformer-trace.calculate.5
+        prompt: GPT-2 small (12 layers, 12 heads each) processes a 100-token prompt. How many attention scores does the whole model compute?
+        answer: 1440000
+        feedback: 100² = 10,000 per head, times 12 heads = 120,000 per layer, times 12 layers = 1,440,000.

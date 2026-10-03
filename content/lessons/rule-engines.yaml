@@ -1,196 +1,445 @@
 schema_version: 0.2-draft
 lesson:
   id: rule-engines
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: From facts to conclusions—and backward from a goal
   state: draft
-  summary: Follow a shipping rule forward from known facts or backward from the question you want answered.
+  summary: Give your smart home five if–then rules and a few sensor readings. Watch it chain them forward into actions, or work backward from one question, and see what happens when two rules disagree.
   slot: M04.3
   category: learning
   sources:
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
 objectives:
-- id: objective.rule-engines
-  version: 1-draft
-  statement: Rule engines apply explicit conditions; forward chaining starts from facts, while backward chaining
-    searches for support for a requested conclusion.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - rule-engines.base
-  - rule-engines.transfer
-  prerequisites:
-  - anyOf:
-    - objective.first-order-logic
+  - id: objective.rule-engines
+    version: 2-draft
+    statement: Rule engines apply explicit conditions; forward chaining starts from facts, while backward chaining searches for support for a requested conclusion.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - rule-engines.base.v2
+      - rule-engines.transfer.v2
+      - rule-engines.calc
+    prerequisites:
+      - anyOf:
+          - objective.first-order-logic
 scenes:
-- id: rule-engines.s1
-  title: Separate the rule from the facts
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.rule-engines
-  markdown: 'Consider a shipping rule: “If an order is paid for and its items are in stock, it is ready to
-    ship.” The **rule base** stores this condition and conclusion. **Working memory** holds the facts about
-    current orders. The **inference engine** checks which rules those facts allow it to apply.
+  - id: rule-engines.s1
+    title: Your smart home is a rule engine
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.rule-engines
+    markdown: |-
+      It's a cold winter evening. You walk into the hallway, and within a second the light comes on, the heating starts, and your phone buzzes: *"The bedroom window is open."* No single rule said "buzz the phone when someone walks in." Several small rules fired one after another.
 
+      Here is the whole rule set:
 
-    We can write “order 7 has been paid for” as Paid(order7). The name in parentheses matters: a payment for
-    order 8 cannot satisfy the condition for order 7. The engine must match facts about the same order.'
-  text_mode: 'Consider a shipping rule: “If an order is paid for and its items are in stock, it is ready to
-    ship.” The **rule base** stores this condition and conclusion. **Working memory** holds the facts about
-    current orders. The **inference engine** checks which rules those facts allow it to apply.
+      | Rule | If… | Then… |
+      | --- | --- | --- |
+      | R1 | motion and dark | light_on |
+      | R2 | motion | someone_home |
+      | R3 | someone_home and cold | heating_on |
+      | R4 | heating_on and window_open | window_alert |
+      | R5 | away | alarm_armed |
 
+      A program that applies rules like these is a **rule engine**. It has three parts. The **rule base** stores the if–then rules. **Working memory** holds the facts currently known, like `motion` or `cold`. The **inference engine** is the loop that checks which rules match the facts and fires them. You met this design in module 1's lesson on expert systems; now you'll run it step by step.
+    diagram:
+      caption: The match–fire cycle of a rule engine. New facts go back into working memory and may trigger more rules.
+      description: The rule base and working memory both feed a Match step, which finds rules whose conditions all hold. Match passes the ready rules to a Resolve conflicts step, which decides what to fire when rules disagree. Resolve passes its choice to the Fire step, which triggers an action such as buzzing the phone or sends each conclusion back to working memory as a new fact, and the cycle repeats.
+      nodes:
+        - id: rules
+          label: Rule base
+          note: R1 … R5
+          col: 0
+          row: 0
+          tone: data
+        - id: match
+          label: Match
+          note: conditions all hold?
+          col: 1
+          row: 0
+          tone: accent
+        - id: resolve
+          label: Resolve conflicts
+          note: pick when rules clash
+          col: 3
+          row: 0
+          tone: warn
+        - id: fire
+          label: Fire
+          note: add a fact or act
+          col: 3
+          row: 2
+        - id: memory
+          label: Working memory
+          note: motion, dark, cold…
+          col: 1
+          row: 2
+          tone: data
+      edges:
+        - from: rules
+          to: match
+        - from: memory
+          to: match
+          label: known facts
+        - from: match
+          to: resolve
+          label: ready rules
+        - from: resolve
+          to: fire
+          label: chosen rule
+        - from: fire
+          to: memory
+          label: new facts
+    bridges: []
+  - id: rule-engines.s2
+    title: 'Forward chaining: fire everything you can'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.rule-engines
+    markdown: |-
+      Start with the evening's sensor facts: motion, dark, cold, window_open. **Forward chaining** starts from known facts, fires every rule whose conditions all hold, adds the conclusions to working memory, and repeats until a round adds nothing new.
 
-    We can write “order 7 has been paid for” as Paid(order7). The name in parentheses matters: a payment for
-    order 8 cannot satisfy the condition for order 7. The engine must match facts about the same order.'
-  bridges: []
-- id: rule-engines.s2
-  title: Forward chaining follows available facts
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.rule-engines
-  markdown: Start with Paid(order7) and InStock(order7). The shipping rule derives Ready(order7). A second
-    rule might derive NotifyWarehouse(order7). Forward chaining continues from newly available facts until
-    no useful new conclusion is produced or a stopping condition is reached.
-  text_mode: Start with Paid(order7) and InStock(order7). The shipping rule derives Ready(order7). A second
-    rule might derive NotifyWarehouse(order7). Forward chaining continues from newly available facts until
-    no useful new conclusion is produced or a stopping condition is reached.
-  bridges: []
-- id: rule-engines.s3
-  title: Backward chaining starts with the question
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.rule-engines
-  markdown: 'To establish Ready(order7), look for a rule with that conclusion, then try to prove Paid(order7)
-    and InStock(order7). These become subgoals. The approach can avoid deriving unrelated facts, but repeated
-    goals, loops, and alternative rules need bookkeeping and a clear search strategy.
+      | Round | Rules that fire | New facts |
+      | --- | --- | --- |
+      | 1 | R1, R2 | light_on, someone_home |
+      | 2 | R3 (needed someone_home from round 1) | heating_on |
+      | 3 | R4 (needed heating_on from round 2) | window_alert |
+      | 4 | none | stop |
 
+      R5 never fires: nobody said `away`. Here's the whole engine in Python:
 
-    Try both directions with one missing fact. Starting forward with only Paid(order7) gives no shipping conclusion.
-    Starting backward from Ready(order7) creates two questions: “Was it paid?” and “Is it in stock?” The first
-    is answered; the second remains open. “Not established” is different from “proved false.” Fetch a stock
-    record before claiming readiness.'
-  text_mode: 'To establish Ready(order7), look for a rule with that conclusion, then try to prove Paid(order7)
-    and InStock(order7). These become subgoals. The approach can avoid deriving unrelated facts, but repeated
-    goals, loops, and alternative rules need bookkeeping and a clear search strategy.
+      ```python run
+      rules = [
+          ("R1", {"motion", "dark"}, "light_on"),
+          ("R2", {"motion"}, "someone_home"),
+          ("R3", {"someone_home", "cold"}, "heating_on"),
+          ("R4", {"heating_on", "window_open"}, "window_alert"),
+          ("R5", {"away"}, "alarm_armed"),
+      ]
+      facts = {"motion", "dark", "cold", "window_open"}
 
+      round_no = 0
+      while True:
+          ready = [(name, then) for name, ifs, then in rules
+                   if ifs <= facts and then not in facts]   # all conditions known
+          if not ready:
+              break
+          round_no += 1
+          for name, then in ready:
+              print(f"round {round_no}: {name} fires -> {then}")
+          facts |= {then for _, then in ready}
+      print("stopped after", round_no, "rounds with", len(facts), "facts")
+      ```
 
-    Try both directions with one missing fact. Starting forward with only Paid(order7) gives no shipping conclusion.
-    Starting backward from Ready(order7) creates two questions: “Was it paid?” and “Is it in stock?” The first
-    is answered; the second remains open. “Not established” is different from “proved false.” Fetch a stock
-    record before claiming readiness.'
-  bridges: []
-- id: rule-engines.s4
-  title: Inspect conflicts and missing knowledge
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.rule-engines
-  markdown: Rules can conflict, use stale facts, or omit an exception. A trace shows which premises and rules
-    produced a conclusion; it does not prove those premises were correct. Decide how priorities, negation,
-    updates, and uncertainty behave. A reliable expert system needs maintained knowledge as well as a correct
-    engine.
-  text_mode: Rules can conflict, use stale facts, or omit an exception. A trace shows which premises and rules
-    produced a conclusion; it does not prove those premises were correct. Decide how priorities, negation,
-    updates, and uncertainty behave. A reliable expert system needs maintained knowledge as well as a correct
-    engine.
-  bridges: []
-- id: rule-engines.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.rule-engines
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Forward chaining starts with known facts and follows rules to conclusions. Backward chaining starts
-    with a question and looks for the facts needed to answer it.
-- id: rule-engines.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.rule-engines
-  markdown: Forward chaining starts with known facts and follows rules to conclusions. Backward chaining starts
-    with a question and looks for the facts needed to answer it.
-  text_mode: Forward chaining starts with known facts and follows rules to conclusions. Backward chaining starts
-    with a question and looks for the facts needed to answer it.
+      Remove `"cold"` from the starting facts and predict the output before running it. (Only R1 and R2 fire, in one round.) Because every conclusion comes from a named rule, the engine can also explain itself: "heating_on because of R3, using someone_home (from R2, from motion) and cold."
+
+      :::deeper Why real engines don't recheck everything
+      Our loop rechecks every rule against every fact each round. Production engines with thousands of rules use Charles Forgy's **Rete algorithm** (late 1970s), which remembers partial matches, so a new fact only updates the rules it touches.
+      :::
+    bridges: []
+  - id: rule-engines.s3
+    title: 'Backward chaining: start from the question'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.rule-engines
+    markdown: |-
+      Sometimes you only care about one thing: *should the phone warn me about the window?* **Backward chaining** starts from that goal, finds a rule that concludes it, and turns the rule's conditions into **subgoals**, smaller questions to answer the same way.
+
+      | Goal | How to get it | Status |
+      | --- | --- | --- |
+      | window_alert | R4: need heating_on and window_open | open |
+      | window_open | a known fact | ✓ |
+      | heating_on | R3: need someone_home and cold | open |
+      | someone_home | R2: need motion | open |
+      | motion | a known fact | ✓ |
+      | cold | a known fact | ✓ → all proved |
+
+      It never looked at R1 or R5, because the light and the alarm don't bear on the window question. Prolog, from the last lesson, answers every query this way.
+
+      :::predict Suppose the thermostat hasn't reported yet, so `cold` is missing. What should the backward chainer do?
+      It gets stuck on the subgoal `cold`: no fact, no rule concludes it. The honest answer is "not proved yet," and a good engine can *ask*: read the thermostat or ask the user. MYCIN, the 1970s infection-diagnosis system, worked backward like this and asked the doctor for each missing lab result.
+      :::
+
+      | | Forward chaining | Backward chaining |
+      | --- | --- | --- |
+      | Starts from | facts | a question |
+      | Good when | new data keeps arriving and you want every consequence | you have one question and many irrelevant rules |
+      | Example | smart home, alarm monitoring | diagnosis, Prolog queries |
+
+      :::mixup "If the engine can't prove it, it's false."
+      "Not proved" and "false" are different answers. Without a temperature reading, heating_on isn't proved, but the house may well be cold. Some systems choose to treat unprovable as false (Prolog's *negation as failure*). That's a deliberate assumption about complete data, and the knowledge graph lesson returns to it.
+      :::
+    bridges: []
+  - id: rule-engines.s4
+    title: When two rules disagree
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.rule-engines
+    markdown: |-
+      You leave for a winter weekend and tell the house `away`. On a cold Saturday night the cat trots down the hallway. R5 arms the alarm, while R2 concludes someone_home and R3 switches on the heating for nobody. The rules aren't wrong individually; they just never expected each other.
+
+      Choosing which matched rule to fire first, or which to suppress, is called **conflict resolution**. Engines use a few standard strategies:
+
+      - **Priority:** give each rule a number, and let safety rules outrank comfort rules.
+      - **Specificity:** prefer the rule with more conditions. Add R6: "if away and motion, then notify_phone ('pet or intruder?')" and let it beat R2.
+      - **Recency:** prefer rules that match the newest facts.
+
+      Adding R6 is usually the cleanest fix: it states what you actually want for this combination, instead of leaving it to rule order. This is also the everyday cost of rule systems, as the XCON story showed: every new situation can mean a new rule and a fresh check that it doesn't clash with the others. Keep a test list of situations ("away + cat," "home + cold") and rerun it after every rule change.
+    bridges: []
+  - id: rule-engines.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.rule-engines
+    markdown: Tax checkers, factory alarms, a diagnosis assistant, and a few rule sets to run by hand test whether you can pick a direction and follow the chain.
+    takeaway: |-
+      Forward chaining fires every rule it can, starting from the facts, until nothing new appears. Backward chaining starts from one question and only chases the rules and facts that question needs.
+  - id: rule-engines.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.rule-engines
+    markdown: |-
+      Forward chaining starts with known facts and follows rules to conclusions. Backward chaining starts with a question and looks for the facts needed to answer it.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - rule-engines.s1
-    - rule-engines.s2
-    - rule-engines.s3
-    - rule-engines.s4
-    - rule-engines.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - rule-engines.s1
+        - rule-engines.s2
+        - rule-engines.s3
+        - rule-engines.s4
+        - rule-engines.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     rule-engines.recap: rule-engines.check
 assessment_families:
-- id: rule-engines.base
-  objective_ref: objective.rule-engines
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Forward chaining follows available facts: trace the inputs, operation, and result before choosing.'
-  remediation_scene: rule-engines.s2
-  variants:
-  - id: rule-engines.base.1
-    prompt: Which approach starts from available facts and derives new facts?
-    options:
-    - id: b
-      text: Backward chaining only
-    - id: c
-      text: Token sampling
-    - id: a
-      text: Forward chaining
-    answer: a
-    feedback: Forward chaining propagates consequences from the working facts.
-  - id: rule-engines.base.2
-    prompt: Which approach starts by asking what could establish a goal?
-    options:
-    - id: c
-      text: Only data normalization
-    - id: a
-      text: Backward chaining
-    - id: b
-      text: Random pixel generation
-    answer: a
-    feedback: Backward chaining turns a requested conclusion into supporting subgoals.
-- id: rule-engines.transfer
-  objective_ref: objective.rule-engines
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Inspect conflicts and missing knowledge: trace the inputs, operation, and result before choosing.'
-  remediation_scene: rule-engines.s4
-  variants:
-  - id: rule-engines.transfer.1
-    prompt: A shipping rule requires payment and stock. Only payment is known. Is readiness established?
-    options:
-    - id: c
-      text: Yes; unknown always means true
-    - id: a
-      text: No; the stock condition still needs support
-    - id: b
-      text: Yes; one condition is enough
-    answer: a
-    feedback: A conjunction requires support for both conditions.
-  - id: rule-engines.transfer.2
-    prompt: An explanation lists every rule used. Does it certify the real-world facts?
-    options:
-    - id: a
-      text: No; a valid trace can still use stale or wrong inputs
-    - id: b
-      text: Yes; traces make collection errors impossible
-    - id: c
-      text: Only if printed in a table
-    answer: a
-    feedback: Inference transparency and factual validity are separate.
+  - id: rule-engines.base
+    objective_ref: objective.rule-engines
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Forward chaining follows available facts: trace the inputs, operation, and result before choosing.'
+    remediation_scene: rule-engines.s2
+    variants:
+      - id: rule-engines.base.1
+        prompt: Which approach starts from available facts and derives new facts?
+        options:
+          - id: b
+            text: Backward chaining only
+          - id: c
+            text: Token sampling
+          - id: a
+            text: Forward chaining
+        answer: a
+        feedback: Forward chaining propagates consequences from the working facts.
+        retired: true
+      - id: rule-engines.base.2
+        prompt: Which approach starts by asking what could establish a goal?
+        options:
+          - id: c
+            text: Only data normalization
+          - id: a
+            text: Backward chaining
+          - id: b
+            text: Random pixel generation
+        answer: a
+        feedback: Backward chaining turns a requested conclusion into supporting subgoals.
+        retired: true
+  - id: rule-engines.transfer
+    objective_ref: objective.rule-engines
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Inspect conflicts and missing knowledge: trace the inputs, operation, and result before choosing.'
+    remediation_scene: rule-engines.s4
+    variants:
+      - id: rule-engines.transfer.1
+        prompt: A shipping rule requires payment and stock. Only payment is known. Is readiness established?
+        options:
+          - id: c
+            text: Yes; unknown always means true
+          - id: a
+            text: No; the stock condition still needs support
+          - id: b
+            text: Yes; one condition is enough
+        answer: a
+        feedback: A conjunction requires support for both conditions.
+        retired: true
+      - id: rule-engines.transfer.2
+        prompt: An explanation lists every rule used. Does it certify the real-world facts?
+        options:
+          - id: a
+            text: No; a valid trace can still use stale or wrong inputs
+          - id: b
+            text: Yes; traces make collection errors impossible
+          - id: c
+            text: Only if printed in a table
+        answer: a
+        feedback: Inference transparency and factual validity are separate.
+        retired: true
+  - id: rule-engines.base.v2
+    objective_ref: objective.rule-engines
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Decide the direction first. Forward chaining asks "what can I fire with these facts?"; backward chaining asks "which rule concludes my goal, and what does it need?"
+    remediation_scene: rule-engines.s3
+    variants:
+      - id: rule-engines.base.v2.1
+        prompt: 'Rules: R1 motion ∧ dark → light_on; R2 motion → someone_home. Working memory holds only motion. What does forward chaining add?'
+        options:
+          - id: b
+            text: someone_home and light_on
+          - id: a
+            text: someone_home
+          - id: c
+            text: No new facts, since R1 can't fire
+        answer: a
+        feedback: R2 needs only motion, so it fires. R1 also needs dark, which isn't known, so light_on is not added. One rule failing doesn't stop the others.
+      - id: rule-engines.base.v2.2
+        prompt: A backward chainer is asked whether heating_on is true. What does it do first?
+        options:
+          - id: a
+            text: Find rules that conclude heating_on and make their conditions subgoals
+          - id: c
+            text: Fire each rule whose conditions hold and see if heating_on appears
+          - id: b
+            text: Ask the user whether the heating is on before looking at any rules
+        answer: a
+        feedback: Backward chaining works from the goal to the rules that could conclude it. Firing everything that holds is forward chaining, and asking the user is what it does only when a subgoal has no fact or rule behind it.
+      - id: rule-engines.base.v2.3
+        prompt: When does the forward-chaining loop in the lesson stop?
+        options:
+          - id: b
+            text: As soon as each rule has fired once
+          - id: c
+            text: As soon as the first new conclusion appears
+          - id: a
+            text: When a full round adds no new facts
+        answer: a
+        feedback: The loop keeps going while any rule can add a fact that isn't known yet. Some rules may never fire (like R5), and stopping at the first conclusion would miss chains like R2 → R3 → R4.
+      - id: rule-engines.base.v2.4
+        prompt: Why does backward chaining for window_alert never look at R1 (motion ∧ dark → light_on)?
+        options:
+          - id: c
+            text: R1 already fired earlier, so it was used up
+          - id: a
+            text: light_on isn't needed by any subgoal of window_alert
+          - id: b
+            text: Backward chaining skips rules that have two conditions
+        answer: a
+        feedback: Backward chaining only expands rules that conclude a current goal or subgoal, and none of them needs light_on. Rules don't get used up, and R4 and R3 also have two conditions.
+      - id: rule-engines.base.v2.5
+        prompt: R3 needs someone_home and cold. The engine has proved someone_home, but there's no temperature reading and no rule concludes cold. What should a backward chainer report about heating_on?
+        options:
+          - id: b
+            text: It's false, since one condition is missing
+          - id: c
+            text: It's true, since one of two conditions holds
+          - id: a
+            text: It's not proved yet; get a temperature reading
+        answer: a
+        feedback: A missing fact makes the goal unproved, not false; the house may be cold. The engine can ask for the reading, as MYCIN asked doctors for lab results. Both conditions are needed for R3 to fire.
+  - id: rule-engines.transfer.v2
+    objective_ref: objective.rule-engines
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask whether the job starts from a stream of new facts or from one question, and whether a result points to a bad rule or a bad fact.
+    remediation_scene: rule-engines.s4
+    variants:
+      - id: rule-engines.transfer.v2.1
+        prompt: A tax program has 2,000 rules. It needs to answer one question for a household, "Is a refund owed?" Which strategy suits this job best?
+        options:
+          - id: b
+            text: Forward chaining, since firing all rules finds the refund fastest
+          - id: a
+            text: Backward chaining, since it explores just the rules the refund needs
+          - id: c
+            text: Either one, since both fire the same rules in the same order
+        answer: a
+        feedback: With one question and many rules, working backward from the goal skips the rules that don't bear on it. Forward chaining would derive every consequence of the facts, most of them irrelevant, and the two strategies visit rules in different orders.
+      - id: rule-engines.transfer.v2.2
+        prompt: A factory monitor receives a steady stream of sensor readings and must raise any alarm that applies. Which strategy fits?
+        options:
+          - id: a
+            text: Forward chaining, reacting to each reading as it arrives
+          - id: b
+            text: Backward chaining from each possible alarm, one at a time
+          - id: c
+            text: Backward chaining from the most recent sensor reading
+        answer: a
+        feedback: New data keeps arriving and you want every consequence, which is forward chaining's strength. Checking each alarm backward repeats work on every reading, and a reading is a fact, not a goal to work back from.
+      - id: rule-engines.transfer.v2.3
+        prompt: 'A thermostat has "if someone is home, heat to 21°C" and "if it''s after 11 p.m., heat to 17°C." At midnight someone is home, and both fire. What is the most reliable fix?'
+        options:
+          - id: c
+            text: Let whichever rule appears first in the file win
+          - id: b
+            text: Fire both rules and keep the setting that ran last
+          - id: a
+            text: Add a more specific rule for "home and after 11 p.m."
+        answer: a
+        feedback: A specific rule states what you actually want for this combination, and specificity lets it win. File order and "last one wins" make the result depend on accidents of how the rules were written or scheduled.
+      - id: rule-engines.transfer.v2.4
+        prompt: A diagnosis assistant is working backward and needs "patient has a fever" to finish a line of reasoning. No temperature is on file. What should it do next?
+        options:
+          - id: a
+            text: Ask the clinician for the patient's temperature
+          - id: b
+            text: Assume there's no fever and carry on reasoning
+          - id: c
+            text: Switch to forward chaining from the facts on file
+        answer: a
+        feedback: A missing fact is an open subgoal, so the MYCIN-style move is to ask for it. Assuming "no fever" treats unknown as false, and forward chaining from the same facts can't produce a temperature that isn't there.
+      - id: rule-engines.transfer.v2.5
+        prompt: A loan engine rejects Sam. Its explanation says rule L7 fired because Sam's income is under 20,000. Sam actually earns 45,000. Where is the fault most likely to be?
+        options:
+          - id: b
+            text: The inference engine applied rule L7 incorrectly
+          - id: a
+            text: The income fact in working memory is wrong or stale
+          - id: c
+            text: Rule L7's income threshold is set too low
+        answer: a
+        feedback: The explanation shows L7 fired correctly for the fact it was given; the fact itself is wrong. Changing the threshold or blaming the engine would leave the bad record in place.
+  - id: rule-engines.calc
+    objective_ref: objective.rule-engines
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Work in rounds. Fire each rule whose conditions are all known, add its conclusion, and repeat until a round adds nothing. Count only facts that weren't known at the start.
+    remediation_scene: rule-engines.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: rule-engines.calc.1
+        prompt: 'Rules: A → B; B ∧ C → D; D → E; F → G. Starting facts: A, C. How many new facts does forward chaining add before it stops?'
+        answer: 3
+        feedback: 'Round 1 adds B. Round 2 adds D (B and C known). Round 3 adds E. G needs F, which never appears. New facts: B, D, E.'
+      - id: rule-engines.calc.2
+        prompt: 'Rules: A ∧ B → C; C → D; E → F; D ∧ F → G. Starting facts: A, B. How many new facts does forward chaining add before it stops?'
+        answer: 2
+        feedback: 'C, then D. F needs E, which is never known, so G (which needs F) can''t fire either.'
+      - id: rule-engines.calc.3
+        prompt: 'Rules: A → B; A → C; B ∧ C → D; D → A. Starting facts: A. How many new facts does forward chaining add before it stops?'
+        answer: 3
+        feedback: 'Round 1 adds B and C, round 2 adds D. D → A adds nothing, since A is already known, so the loop stops with 3 new facts.'
+      - id: rule-engines.calc.4
+        prompt: 'Rules: A ∧ B → C; C ∧ D → E; B → D; E → F. Starting facts: A, B. How many new facts does forward chaining add before it stops?'
+        answer: 4
+        feedback: 'Round 1 adds C and D. Round 2 adds E. Round 3 adds F. That is 4 new facts.'
+      - id: rule-engines.calc.5
+        prompt: 'Rules: P → Q; Q ∧ R → S; S → T; U → R. Starting facts: P. How many new facts does forward chaining add before it stops?'
+        answer: 1
+        feedback: 'Only Q. S needs R, R needs U, and U is never known, so the chain stops after one new fact.'

@@ -1,295 +1,472 @@
 schema_version: 0.2-draft
 lesson:
   id: embeddings
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: From token IDs to learned vectors
   state: draft
-  summary: Distinguish an integer token ID, a learned embedding, and a representation that changes with context.
+  summary: Is "coffee" closer to "tea" or to "coffin"? See how a model learns lists of numbers that put tea next door, and why king − man + woman ≈ queen needs fine print.
   slot: M14.5
   category: learning
   sources:
-  - title: Efficient Estimation of Word Representations in Vector Space
-    url: https://arxiv.org/abs/1301.3781
-  - title: PyTorch — embedding lookup
-    url: https://docs.pytorch.org/docs/2.14/generated/torch.nn.modules.sparse.Embedding.html
+    - title: Efficient Estimation of Word Representations in Vector Space (Mikolov et al., 2013)
+      url: https://arxiv.org/abs/1301.3781
+    - title: Distributed Representations of Words and Phrases and their Compositionality (Mikolov et al., 2013), skip-gram with negative sampling
+      url: https://arxiv.org/abs/1310.4546
+    - title: Linguistic Regularities in Continuous Space Word Representations (Mikolov, Yih & Zweig, 2013)
+      url: https://aclanthology.org/N13-1090/
+    - title: "Man is to Computer Programmer as Woman is to Homemaker? Debiasing Word Embeddings (Bolukbasi et al., 2016)"
+      url: https://arxiv.org/abs/1607.06520
+    - title: "Fair Is Better than Sensational: Man Is to Doctor as Woman Is to Doctor (Nissim, van Noord & van der Goot, 2020)"
+      url: https://aclanthology.org/2020.cl-2.7/
+    - title: Deep Contextualized Word Representations (Peters et al., 2018), ELMo
+      url: https://arxiv.org/abs/1802.05365
+    - title: "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding (Devlin et al., 2018)"
+      url: https://arxiv.org/abs/1810.04805
+    - title: PyTorch — embedding lookup
+      url: https://docs.pytorch.org/docs/2.14/generated/torch.nn.modules.sparse.Embedding.html
 objectives:
-- id: objective.embeddings
-  version: 1-draft
-  statement: Distinguish an integer token ID, a learned embedding, and a representation that changes with context.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - embeddings.base
-  - embeddings.transfer
-  prerequisites:
-  - anyOf:
-    - objective.vectors
-  - anyOf:
-    - objective.tokenization
-  - anyOf:
-    - objective.weights-and-predictions
+  - id: objective.embeddings
+    version: 2-draft
+    statement: Distinguish an integer token ID, a learned embedding, and a representation that changes with context.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - embeddings.base.v2
+      - embeddings.transfer.v2
+      - embeddings.cosine
+    prerequisites:
+      - anyOf:
+          - objective.vectors
+      - anyOf:
+          - objective.tokenization
+      - anyOf:
+          - objective.weights-and-predictions
 scenes:
-- title: Use the ID to find a row
-  markdown: 'An embedding table has one row per vocabulary token. ID 17 selects row 17, which might contain
-    [0.2, −0.4, 0.7]. This ordered list is a **vector**; its **dimension** is the number of entries, here three.
+  - title: Coffee, coffin, and a table of numbers
+    markdown: |-
+      Which word is closer to *coffee*: *tea* or *coffin*? By spelling, *coffin*. By meaning, *tea*. Token IDs can't tell you, since they're just addresses. The model needs something that carries meaning.
 
+      That something is an **embedding**: a learned list of numbers, a **vector**, for each token in the vocabulary. All the vectors sit in one **embedding table** with one row per token, and the token's ID picks its row:
 
-    The row supplies the token’s starting representation. Its values are learned parameters, while the ID only
-    selects the row—it does not multiply its entries by 17. The table’s width fixes the representation size.
+      | ID | Token | Row (made-up, 3 numbers) |
+      | ---: | --- | --- |
+      | 17 | tea | [2, 1, 0] |
+      | 18 | coffin | [0, 1, 2] |
+      | 42 | coffee | [2, 2, 1] |
 
+      Looking up ID 42 returns [2, 2, 1]; nothing is multiplied by 42. The number of entries in each row is the **dimension**. Ours is 3; word2vec's widely shared Google News vectors use 300, and GPT-2's smallest model uses 768.
 
-    These example values are invented. An embedding row is not a dictionary definition, and tokens with consecutive
-    IDs need not have similar vectors.'
-  id: embeddings.s1
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.embeddings
-  text_mode: 'An embedding table has one row per vocabulary token. ID 17 selects row 17, which might contain
-    [0.2, −0.4, 0.7]. This ordered list is a **vector**; its **dimension** is the number of entries, here three.
+      The rows start random. Training nudges them, like any other weights, until tokens used in similar ways get similar rows, as *tea* and *coffee* have here.
+    id: embeddings.s1
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.embeddings
+  - id: embeddings.extension-distributional
+    title: Learn a word from its neighbors
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.embeddings
+    markdown: |-
+      "You shall know a word by the company it keeps," wrote the linguist J. R. Firth in 1957. This **distributional hypothesis** says that words used in similar contexts have similar meanings.
 
+      In 2013, Tomas Mikolov and colleagues at Google turned this into a fast training recipe called **word2vec**. Its **skip-gram** version slides a window across text. For each center word, it makes one training pair with every word within, say, 2 positions:
 
-    The row supplies the token’s starting representation. Its values are learned parameters, while the ID only
-    selects the row—it does not multiply its entries by 17. The table’s width fixes the representation size.
+      "I drink hot **tea** every morning" → (tea, drink), (tea, hot), (tea, every), (tea, morning)
 
+      Training nudges the center word's embedding to score its real neighbors high and a few randomly drawn words low. Those random words are called **negative samples**.
 
-    These example values are invented. An embedding row is not a dictionary definition, and tokens with consecutive
-    IDs need not have similar vectors.'
-- title: Training shapes the table
-  markdown: 'An embedding table contains adjustable numbers, called parameters. Training uses examples to adjust
-    those numbers toward a goal, such as predicting a nearby word. **Loss** is a number that measures how far
-    a prediction is from the desired answer. A **gradient** describes how small changes to each parameter would
-    locally change that loss. These clues can guide changes to a trainable table; you do not need to calculate
-    them to understand how looking up a row works. Some applications **freeze** the table: they keep its numbers
-    fixed during further training.
+      :::papers Skip-gram with negative sampling
+      $$\log \sigma(\mathbf{u}_{o} \cdot \mathbf{v}_{c}) + \sum_{k=1}^{K} \log \sigma(-\mathbf{u}_{k} \cdot \mathbf{v}_{c})$$
 
+      $\mathbf{v}_c$ is the center word's embedding (*tea*), $\mathbf{u}_o$ is a separate "context" vector for a true neighbor (*hot*), and the $\mathbf{u}_k$ are the context vectors of $K$ random words. $\sigma$ squashes a score into 0–1. Training pushes this quantity up: make $\mathbf{u}_{\text{hot}} \cdot \mathbf{v}_{\text{tea}}$ large and the random words' scores small.
+      :::
 
-    Research on distributional word representations showed how patterns of use can produce useful geometric
-    relationships. That does not mean every coordinate has a human-readable concept, or that every relationship
-    is reliable.'
-  bridges:
-  - vectors
-  id: embeddings.s2
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.embeddings
-  text_mode: 'An embedding table contains adjustable numbers, called parameters. Training uses examples to
-    adjust those numbers toward a goal, such as predicting a nearby word. **Loss** is a number that measures
-    how far a prediction is from the desired answer. A **gradient** describes how small changes to each parameter
-    would locally change that loss. These clues can guide changes to a trainable table; you do not need to
-    calculate them to understand how looking up a row works. Some applications **freeze** the table: they keep
-    its numbers fixed during further training.
+      Now suppose *coffee* also appears next to *drink*, *hot*, and *morning*. Its vector gets pushed toward scoring the same neighbors high, so it ends up near *tea*. Nobody labeled them as drinks; shared neighbors did it.
+    diagram:
+      caption: A skip-gram window of size 2. The center word's vector is trained to predict each word within two positions.
+      description: In the sentence "I drink hot tea every morning", the center word "tea" is linked by arrows to its four neighbors within two positions, "drink", "hot", "every", and "morning". Each arrow is one training pair. The word "I" is three positions away, outside the window, and gets no pair.
+      nodes:
+        - id: i
+          label: I
+          note: outside the window
+          col: 0
+          row: 0
+          tone: muted
+        - id: drink
+          label: drink
+          col: 1
+          row: 0
+        - id: hot
+          label: hot
+          col: 2
+          row: 0
+        - id: every
+          label: every
+          col: 4
+          row: 0
+        - id: morning
+          label: morning
+          col: 5
+          row: 0
+        - id: tea
+          label: tea
+          note: center word
+          col: 3
+          row: 2
+          tone: accent
+      edges:
+        - from: tea
+          to: drink
+          label: predict
+        - from: tea
+          to: hot
+          label: predict
+        - from: tea
+          to: every
+          label: predict
+        - from: tea
+          to: morning
+          label: predict
+    bridges:
+      - vectors
+  - title: Measure the angle, not the length
+    markdown: |-
+      To compare vectors we need a number. The **dot product** multiplies matching entries and adds them. **Cosine similarity** divides the dot product by both lengths, so it measures only the angle between the vectors: 1 means the same direction, 0 means unrelated (at right angles), and −1 means opposite.
 
+      $$\cos(\mathbf{a}, \mathbf{b}) = \frac{\mathbf{a} \cdot \mathbf{b}}{\lVert \mathbf{a} \rVert \, \lVert \mathbf{b} \rVert}$$
 
-    Research on distributional word representations showed how patterns of use can produce useful geometric
-    relationships. That does not mean every coordinate has a human-readable concept, or that every relationship
-    is reliable.'
-- title: A row is not the whole meaning in a sentence
-  markdown: 'The word “bank” in “river bank” and “savings bank” may start from the same token embedding when
-    represented by the same ID. After contextual processing, its hidden representation can differ between sentences.
+      With the rows from the table, tea = [2, 1, 0] and coffee = [2, 2, 1]:
 
+      - dot product: $2 \times 2 + 1 \times 2 + 0 \times 1 = 6$
+      - lengths: $\lVert \text{tea} \rVert = \sqrt{4 + 1 + 0} = \sqrt{5} \approx 2.236$ and $\lVert \text{coffee} \rVert = \sqrt{4 + 4 + 1} = 3$
+      - cosine: $6 / (2.236 \times 3) \approx 0.894$
 
-    Distinguish the initial lookup from later computation. A learned embedding table is shared model state.
-    A particular sentence’s contextual activations are calculated for that input.'
-  type: table
-  columns:
-  - Object
-  - Role
-  rows:
-  - - Token ID
-    - Select a vocabulary entry
-  - - Embedding row
-    - Learned initial vector
-  - - Contextual representation
-    - Input-dependent vector after processing
-  id: embeddings.s3
-  depth: mechanics
-  objective_refs:
-  - objective.embeddings
-  text_mode: 'The word “bank” in “river bank” and “savings bank” may start from the same token embedding when
-    represented by the same ID. After contextual processing, its hidden representation can differ between sentences.
+      For tea and coffin = [0, 1, 2], the dot product is 1 and both lengths are $\sqrt{5}$, so the cosine is $1/5 = 0.2$. Tea is much closer to coffee.
 
+      :::predict Double coffee's vector to [4, 4, 2]. What happens to the dot product with tea, and to the cosine?
+      The dot product doubles to 12, but coffee's length also doubles to 6, so the cosine stays $12 / (2.236 \times 6) \approx 0.894$. Cosine ignores length, which is why it's the usual way to compare embeddings.
+      :::
+    bridges:
+      - vectors
+    id: embeddings.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.embeddings
+  - title: King − man + woman ≈ queen, with the fine print
+    markdown: |-
+      The most famous embedding result came from Mikolov, Yih, and Zweig in 2013: take the vector for *king*, subtract *man*, add *woman*, and the nearest word vector is *queen*. The idea is that the step from *man* to *woman* points in roughly the same direction as the step from *king* to *queen*.
 
-    Distinguish the initial lookup from later computation. A learned embedding table is shared model state.
-    A particular sentence’s contextual activations are calculated for that input.'
-- title: Choose what vector similarity should measure
-  markdown: 'Nearby vectors can help with retrieval or comparison, depending on how they were trained. Their
-    relationships may also reflect ambiguity, frequency, social bias, or a task different from yours.
+      The fine print matters. The code below uses made-up 4-number vectors.
 
+      ```python run
+      import numpy as np
 
-    The **dot product** multiplies matching entries and adds them: [1, 0] with [2, 0] gives 2. **Cosine similarity**
-    divides that result by both vector lengths: 2 / (1 × 2) = 1. These vectors point the same way but have
-    different magnitudes.
+      # made-up 4-number embeddings; real ones have hundreds of numbers
+      vec = {
+          "king":   np.array([0.9, 0.5, 0.7, 0.1]),
+          "queen":  np.array([0.8, 0.2, 0.9, 0.3]),
+          "man":    np.array([0.1, 0.5, 0.6, 0.2]),
+          "woman":  np.array([0.1, 0.3, 0.7, 0.2]),
+          "prince": np.array([0.7, 0.5, 0.3, 0.2]),
+          "tea":    np.array([0.0, 0.1, 0.1, 0.9]),
+      }
 
+      def cosine(a, b):
+          return a @ b / (np.linalg.norm(a) * np.linalg.norm(b))
 
-    Doubling a candidate vector doubles its dot product while leaving this cosine unchanged. Choose the comparison
-    that fits your purpose; proximity alone does not verify a fact.'
-  id: embeddings.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.embeddings
-  text_mode: 'Nearby vectors can help with retrieval or comparison, depending on how they were trained. Their
-    relationships may also reflect ambiguity, frequency, social bias, or a task different from yours.
+      target = vec["king"] - vec["man"] + vec["woman"]
+      ranked = sorted(vec, key=lambda w: cosine(target, vec[w]), reverse=True)
+      for w in ranked:
+          print(f"{w:7} cosine {cosine(target, vec[w]):.3f}")
 
+      exclude = {"king", "man", "woman"}
+      print("nearest, all words:     ", ranked[0])
+      print("nearest, query excluded:", [w for w in ranked if w not in exclude][0])
+      ```
 
-    The **dot product** multiplies matching entries and adds them: [1, 0] with [2, 0] gives 2. **Cosine similarity**
-    divides that result by both vector lengths: 2 / (1 × 2) = 1. These vectors point the same way but have
-    different magnitudes.
+      The closest vector to king − man + woman is *king* itself (0.984), with *queen* just behind (0.978). The standard analogy test quietly **excludes the three query words** from the answers, so *queen* wins. Real embeddings behave similarly, and published examples were picked because they worked; many analogies fail. Change queen's vector to [0.8, 0.5, 0.3, 0.3] and predict the new answer before you rerun.
 
+      The same arithmetic exposed a real problem. Bolukbasi and colleagues (2016) found that word2vec vectors trained on Google News completed "man is to computer programmer as woman is to ___" with *homemaker*. The exclusion rule exaggerates some such headlines (Nissim and colleagues, 2020), but the associations are real: embeddings learn the stereotypes in their text. Before using embeddings to rank people, test them for the biases you care about.
+    id: embeddings.s2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.embeddings
+  - title: One vector for "bank" isn't enough
+    markdown: |-
+      word2vec gives each word exactly one vector: a **static embedding**. So *bank* in "we sat on the river bank" and "the bank approved my loan" gets the same vector, a blend of both senses.
 
-    Doubling a candidate vector doubles its dot product while leaving this cosine unchanged. Choose the comparison
-    that fits your purpose; proximity alone does not verify a fact.'
-- title: Follow the distinction through a language model
-  markdown: 'Tokenization produces IDs. Lookup produces initial vectors. Contextual layers transform those
-    vectors. A vocabulary projection later produces scores for possible output tokens. Some architectures share
-    input and output embedding weights; others do not.
+      In 2018, ELMo (Peters et al., using LSTMs) and BERT (Devlin et al., using transformers) fixed this by computing a fresh vector for each occurrence from the whole sentence. These are **contextual embeddings**. The table sorts out the three objects: the ID picks a row, the row is the shared starting vector, and the model's layers turn it into a vector for *this* sentence. So the river *bank* and the money *bank* start from the same row but come out different.
+    type: table
+    columns:
+      - Object
+      - Role
+    rows:
+      - - Token ID
+        - Select a vocabulary entry
+      - - Embedding row
+        - Learned initial vector
+      - - Contextual representation
+        - Input-dependent vector after processing
+    id: embeddings.s3
+    depth: mechanics
+    objective_refs:
+      - objective.embeddings
+  - title: Follow one token through a language model
+    markdown: |-
+      Now the whole path. Text becomes IDs; each ID fetches its row; the model's layers mix each vector with its neighbors' into contextual vectors. At the end, the model scores every vocabulary token as the possible next one, usually by a dot product of the final vector with each token's output vector.
 
+      Those output vectors form a second table, the same size as the first. Many models reuse the input embedding table for this, a trick called **weight tying**, which saves parameters. The savings are large: GPT-2's smallest model has 50,257 tokens × 768 numbers ≈ 38.6 million parameters in its embedding table alone, and GPT-2 does tie the two.
 
-    This lesson’s key distinction survives those choices: an ID, a parameter row, and a contextual activation
-    are different objects. Keeping them separate makes attention and caching much easier to understand.'
-  id: embeddings.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.embeddings
-  text_mode: 'Tokenization produces IDs. Lookup produces initial vectors. Contextual layers transform those
-    vectors. A vocabulary projection later produces scores for possible output tokens. Some architectures share
-    input and output embedding weights; others do not.
-
-
-    This lesson’s key distinction survives those choices: an ID, a parameter row, and a contextual activation
-    are different objects. Keeping them separate makes attention and caching much easier to understand.'
-- id: embeddings.extension-distributional
-  title: Learn a vector from neighboring language
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.embeddings
-  markdown: 'Distributional word embeddings learn from patterns of occurrence. A word2vec-style task can use
-    a word to predict nearby words, or context to predict a word, with objective and approximation choices
-    that affect the learned vectors. Words used in similar contexts may acquire related representations, but
-    correlation in text does not certify interchangeable meaning or truth.
-
-
-    A static word embedding supplies one vector for a vocabulary entry, so different senses of “bank” share
-    that entry in a basic word-level setup. A contextual model transforms a token’s representation using its
-    surrounding input. Compare the initial lookup vector with the later contextual activation: both are vectors,
-    but they play different roles and contain different context information.'
-  text_mode: 'Distributional word embeddings learn from patterns of occurrence. A word2vec-style task can use
-    a word to predict nearby words, or context to predict a word, with objective and approximation choices
-    that affect the learned vectors. Words used in similar contexts may acquire related representations, but
-    correlation in text does not certify interchangeable meaning or truth.
-
-
-    A static word embedding supplies one vector for a vocabulary entry, so different senses of “bank” share
-    that entry in a basic word-level setup. A contextual model transforms a token’s representation using its
-    surrounding input. Compare the initial lookup vector with the later contextual activation: both are vectors,
-    but they play different roles and contain different context information.'
-  bridges:
-  - vectors
-- id: embeddings.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.embeddings
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Token IDs select learned starting vectors. Contextual layers then calculate input-dependent representations.
-    Similarity can be useful without being a guarantee of truth.
-- id: embeddings.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.embeddings
-  markdown: Token IDs select learned starting vectors. Contextual layers then calculate input-dependent representations.
-    Similarity can be useful without being a guarantee of truth.
-  text_mode: Token IDs select learned starting vectors. Contextual layers then calculate input-dependent representations.
-    Similarity can be useful without being a guarantee of truth.
+      So choosing a vocabulary size also sizes these tables. The next lesson shows how that vocabulary is learned.
+    id: embeddings.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.embeddings
+  - id: embeddings.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.embeddings
+    markdown: A few cosine similarities to compute, then skip-gram pairs, an analogy blog post, a support search, and a hiring tool.
+    takeaway: |-
+      A token ID picks a row of learned numbers, and training makes tokens with similar neighbors get similar rows. Compare rows by cosine, read analogies with their fine print, and use contextual vectors when one word has several senses.
+  - id: embeddings.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.embeddings
+    markdown: |-
+      Token IDs select learned starting vectors. Contextual layers then calculate input-dependent representations. Similarity can be useful without being a guarantee of truth.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - embeddings.s1
-    - embeddings.s2
-    - embeddings.s3
-    - embeddings.s4
-    - embeddings.s5
-    - embeddings.extension-distributional
-    - embeddings.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - embeddings.s1
+        - embeddings.extension-distributional
+        - embeddings.s4
+        - embeddings.s2
+        - embeddings.s3
+        - embeddings.s5
+        - embeddings.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     embeddings.recap: embeddings.check
 assessment_families:
-- response_type: single_choice
-  hint: The ID is an address into the table. The selected row supplies the representation.
-  variants:
-  - prompt: Token ID 9 selects an embedding row [0.1, 0.4]. What reaches the next layer as the initial representation?
-    options:
-    - id: a
-      text: The scalar sum 0.5, necessarily.
-    - id: b
-      text: A guarantee that the token is more important than ID 8.
-    - id: answer
-      text: The selected two-coordinate vector [0.1, 0.4].
-    answer: answer
-    feedback: Lookup selects a vector. An ID’s numeric order does not provide an importance ranking, and lookup
-      does not automatically sum the coordinates.
-    id: embeddings.base.1
-  - prompt: What can change an embedding table when it is trainable?
-    options:
-    - id: b
-      text: Changing a token’s font without changing the model input.
-    - id: answer
-      text: Parameter updates driven by a learning objective.
-    - id: a
-      text: Merely displaying the same token in a user interface.
-    answer: answer
-    feedback: The table consists of model parameters. Training can update them; visual presentation outside
-      the input computation is a different matter.
-    id: embeddings.base.2
-  id: embeddings.base
-  objective_ref: objective.embeddings
-  task: base
-  points: 1
-  remediation_scene: embeddings.s1
-- response_type: single_choice
-  hint: Separate the shared table row from the activations computed for an individual input.
-  variants:
-  - prompt: The same token ID appears in two different sentences. Can its later contextual vector differ even
-      if the embedding table is unchanged?
-    options:
-    - id: b
-      text: Only if the tokenizer assigns a new ID during every request.
-    - id: answer
-      text: Yes; the surrounding context affects the later computation.
-    - id: a
-      text: No; every layer must copy the initial lookup row unchanged.
-    answer: answer
-    feedback: A shared starting row does not force identical contextual activations. Layers can mix information
-      from different surrounding tokens.
-    id: embeddings.transfer.1
-  - prompt: A search retrieves a misleading document because its vector is close to the query. Which interpretation
-      is sound?
-    options:
-    - id: answer
-      text: The representation and similarity score need task-specific evaluation; closeness is not truth.
-    - id: a
-      text: Embedding proximity mathematically proves the document is correct.
-    - id: b
-      text: Every coordinate must correspond to a verified fact.
-    answer: answer
-    feedback: Similarity measures a relationship in a learned representation space. It does not independently
-      verify a document’s claims.
-    id: embeddings.transfer.2
-  id: embeddings.transfer
-  objective_ref: objective.embeddings
-  task: transfer
-  points: 1
-  remediation_scene: embeddings.s1
+  - response_type: single_choice
+    hint: The ID is an address into the table. The selected row supplies the representation.
+    variants:
+      - prompt: Token ID 9 selects an embedding row [0.1, 0.4]. What reaches the next layer as the initial representation?
+        options:
+          - id: a
+            text: The scalar sum 0.5, necessarily.
+          - id: b
+            text: A guarantee that the token is more important than ID 8.
+          - id: answer
+            text: The selected two-coordinate vector [0.1, 0.4].
+        answer: answer
+        feedback: Lookup selects a vector. An ID’s numeric order does not provide an importance ranking, and lookup does not automatically sum the coordinates.
+        id: embeddings.base.1
+        retired: true
+      - prompt: What can change an embedding table when it is trainable?
+        options:
+          - id: b
+            text: Changing a token’s font without changing the model input.
+          - id: answer
+            text: Parameter updates driven by a learning objective.
+          - id: a
+            text: Merely displaying the same token in a user interface.
+        answer: answer
+        feedback: The table consists of model parameters. Training can update them; visual presentation outside the input computation is a different matter.
+        id: embeddings.base.2
+        retired: true
+    id: embeddings.base
+    objective_ref: objective.embeddings
+    task: base
+    points: 1
+    remediation_scene: embeddings.s1
+  - response_type: single_choice
+    hint: Separate the shared table row from the activations computed for an individual input.
+    variants:
+      - prompt: The same token ID appears in two different sentences. Can its later contextual vector differ even if the embedding table is unchanged?
+        options:
+          - id: b
+            text: Only if the tokenizer assigns a new ID during every request.
+          - id: answer
+            text: Yes; the surrounding context affects the later computation.
+          - id: a
+            text: No; every layer must copy the initial lookup row unchanged.
+        answer: answer
+        feedback: A shared starting row does not force identical contextual activations. Layers can mix information from different surrounding tokens.
+        id: embeddings.transfer.1
+        retired: true
+      - prompt: A search retrieves a misleading document because its vector is close to the query. Which interpretation is sound?
+        options:
+          - id: answer
+            text: The representation and similarity score need task-specific evaluation; closeness is not truth.
+          - id: a
+            text: Embedding proximity mathematically proves the document is correct.
+          - id: b
+            text: Every coordinate must correspond to a verified fact.
+        answer: answer
+        feedback: Similarity measures a relationship in a learned representation space. It does not independently verify a document’s claims.
+        id: embeddings.transfer.2
+        retired: true
+    id: embeddings.transfer
+    objective_ref: objective.embeddings
+    task: transfer
+    points: 1
+    remediation_scene: embeddings.s1
+  - id: embeddings.base.v2
+    objective_ref: objective.embeddings
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: An ID only picks a row. Skip-gram pairs each center word with every word inside the window. Words end up close when they share neighbors, and cosine ignores length.
+    remediation_scene: embeddings.extension-distributional
+    variants:
+      - id: embeddings.base.v2.1
+        prompt: Token ID 9 selects the embedding row [0.1, 0.4, −0.2]. What enters the model's first layer for that token?
+        options:
+          - id: b
+            text: The row multiplied by 9, the token's ID
+          - id: a
+            text: The vector [0.1, 0.4, −0.2] itself
+          - id: c
+            text: The sum of the row's entries, 0.3
+        answer: a
+        feedback: The ID is only used to find the row; the row itself is the token's starting representation. Multiplying by the ID would make token 9 nine times "bigger" than token 1 for no reason, and summing would throw away the separate numbers.
+      - id: embeddings.base.v2.2
+        prompt: 'With a window of 2, which words does skip-gram pair with the center word "soup" in "we ate hot soup at noon"?'
+        options:
+          - id: c
+            text: we, ate, and hot, the words before it
+          - id: b
+            text: hot and at, the words touching it
+          - id: a
+            text: ate, hot, at, and noon, two on each side
+        answer: a
+        feedback: A window of 2 reaches two positions left (ate, hot) and two right (at, noon). "We" is three away. The window runs in both directions, so the words after the center count too.
+      - id: embeddings.base.v2.3
+        prompt: In a word2vec model trained on cooking blogs, why would "tea" and "coffee" end up with similar vectors?
+        options:
+          - id: a
+            text: They appear near the same words, like drink, hot, and cup
+          - id: b
+            text: Their spellings share letters, so their IDs sit close together
+          - id: c
+            text: Someone labeled both as drinks before training began
+        answer: a
+        feedback: Skip-gram trains each word's vector to predict its neighbors, so words with the same neighbors get pushed the same way. word2vec never looks at spelling, IDs carry no meaning, and no labels are used.
+      - id: embeddings.base.v2.4
+        prompt: Vector b is exactly 3 times vector a. What is their cosine similarity?
+        options:
+          - id: b
+            text: 3, since b is three times as long as a
+          - id: c
+            text: 1/3, since their lengths are different
+          - id: a
+            text: 1, since they point in the same direction
+        answer: a
+        feedback: Cosine divides the dot product by both lengths, so scaling a vector cancels out. Same direction gives 1. Cosine never exceeds 1; the dot product is what would grow with length.
+      - id: embeddings.base.v2.5
+        prompt: A word2vec model has one vector for "bank". What does it give "bank" in "river bank" and in "bank loan"?
+        options:
+          - id: a
+            text: The same vector, a blend of both senses
+          - id: b
+            text: Two vectors, chosen by the nearby words
+          - id: c
+            text: The vector of whichever neighbor is closer
+        answer: a
+        feedback: A static embedding is one row per word, looked up the same way everywhere. Choosing a vector from the sentence is exactly what contextual models like ELMo and BERT added.
+  - id: embeddings.transfer.v2
+    objective_ref: objective.embeddings
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Closeness in an embedding reflects how words were used in the training text. Ask what the ranking was allowed to return, and what patterns that text contained.
+    remediation_scene: embeddings.s2
+    variants:
+      - id: embeddings.transfer.v2.1
+        prompt: A blog post claims an embedding "believes" doctor − man + woman = nurse, because "nurse" was the nearest word. What should you check first?
+        options:
+          - id: b
+            text: Whether the vectors had enough dimensions to store "nurse"
+          - id: a
+            text: Whether "doctor" was excluded, forcing a different answer
+          - id: c
+            text: Whether dot product or cosine was used to rank the words
+        answer: a
+        feedback: The standard analogy test removes the query words from the answers, so "doctor" can't win even if it is the closest vector. Nissim and colleagues showed this rule exaggerates some famous biased analogies. Dimension count and the ranking measure don't explain a forced answer.
+      - id: embeddings.transfer.v2.2
+        prompt: A help-center search ranks articles by embedding cosine. The query "cancel my subscription" returns "How to subscribe to our newsletter" first. What is the most likely reason?
+        options:
+          - id: a
+            text: The texts share topic words, so their vectors point the same way
+          - id: b
+            text: Cosine similarity breaks when two texts differ in length
+          - id: c
+            text: The search compared token IDs instead of vectors
+        answer: a
+        feedback: Both texts are about subscriptions, so they're close in the embedding, even though the user wants the opposite action. Similarity isn't the same as answering the question. Cosine handles different lengths fine, and ID comparison wouldn't match "subscription" to "subscribe" at all.
+      - id: embeddings.transfer.v2.3
+        prompt: A hiring tool ranks résumés by embedding similarity to "software engineer". Résumés that mention women's colleges rank lower. What is the most likely cause?
+        options:
+          - id: c
+            text: The tokenizer can't encode the names of those colleges
+          - id: b
+            text: Cosine similarity penalizes résumés that are longer
+          - id: a
+            text: The embeddings learned gender associations from their text
+        answer: a
+        feedback: Embeddings absorb the associations in their training text, including stereotypes linking jobs and gender, as Bolukbasi and colleagues showed for word2vec. Cosine ignores length, and subword tokenizers can encode any name.
+      - id: embeddings.transfer.v2.4
+        prompt: You need to tell "Apple" the company from "apple" the fruit in lowercase customer reviews. Which representation fits best?
+        options:
+          - id: b
+            text: Static word2vec vectors, one for each word
+          - id: a
+            text: Contextual vectors computed for each sentence
+          - id: c
+            text: Token IDs, compared by how close their numbers are
+        answer: a
+        feedback: In lowercase text both uses are the same word, so a static vector can't separate them, and IDs carry no meaning. A contextual model like BERT gives "apple" in "apple stock fell" a different vector from "apple pie."
+  - id: embeddings.cosine
+    objective_ref: objective.embeddings
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Multiply matching entries and add them for the dot product. Each length is the square root of the sum of squares. Divide the dot product by both lengths.
+    remediation_scene: embeddings.s4
+    absolute_tolerance: 0.01
+    variants:
+      - id: embeddings.cosine.1
+        prompt: What is the cosine similarity of [3, 4] and [4, 3]?
+        answer: 0.96
+        feedback: The dot product is 3 × 4 + 4 × 3 = 24. Both lengths are √(9 + 16) = 5, so the cosine is 24 / 25 = 0.96.
+      - id: embeddings.cosine.2
+        prompt: What is the cosine similarity of [1, 0] and [3, 4]?
+        answer: 0.6
+        feedback: The dot product is 1 × 3 + 0 × 4 = 3. The lengths are 1 and 5, so the cosine is 3 / 5 = 0.6.
+      - id: embeddings.cosine.3
+        prompt: What is the cosine similarity of [1, 2, 2] and [2, 1, 2]?
+        answer: 0.889
+        feedback: The dot product is 2 + 2 + 4 = 8. Both lengths are √(1 + 4 + 4) = 3, so the cosine is 8 / 9 ≈ 0.889.
+      - id: embeddings.cosine.4
+        prompt: What is the cosine similarity of [1, 2, 2] and [2, −1, 2]?
+        answer: 0.444
+        feedback: The dot product is 2 − 2 + 4 = 4. Both lengths are 3, so the cosine is 4 / 9 ≈ 0.444. A negative entry pulls the similarity down.
+      - id: embeddings.cosine.5
+        prompt: What is the cosine similarity of [2, 0] and [−1, 0]?
+        answer: -1
+        feedback: The dot product is −2, and the lengths are 2 and 1, so the cosine is −2 / 2 = −1. The vectors point in exactly opposite directions.

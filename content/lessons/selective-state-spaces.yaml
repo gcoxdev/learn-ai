@@ -1,200 +1,385 @@
 schema_version: 0.2-draft
 lesson:
   id: selective-state-spaces
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Let the current input control what the state retains
   state: draft
-  summary: Let incoming content affect what a sequence model keeps in its compact memory.
+  summary: Ask a model to remember the colors and ignore every "um", and a fixed filter fails. Mamba lets each token set its own step size, which turns a state-space model into a learned gate.
   slot: M19.5
   category: learning
   sources:
-  - title: 'Mamba: Linear-Time Sequence Modeling with Selective State Spaces'
-    url: https://arxiv.org/abs/2312.00752
+    - title: "Mamba: Linear-Time Sequence Modeling with Selective State Spaces (Gu & Dao, 2023)"
+      url: https://arxiv.org/abs/2312.00752
+    - title: "Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality (Dao & Gu, 2024)"
+      url: https://arxiv.org/abs/2405.21060
+    - title: "An Empirical Study of Mamba-based Language Models (Waleffe et al., 2024)"
+      url: https://arxiv.org/abs/2406.07887
 objectives:
-- id: objective.selective-state-spaces
-  version: 1-draft
-  statement: Selective state-space models make selected dynamics input-dependent, enabling content-sensitive
-    state updates; hardware-aware scans and fixed-size recurrent state create a different tradeoff from attention.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - selective-state-spaces.base
-  - selective-state-spaces.transfer
-  prerequisites:
-  - anyOf:
-    - objective.state-space-sequences
+  - id: objective.selective-state-spaces
+    version: 2-draft
+    statement: Selective state-space models make selected dynamics input-dependent, enabling content-sensitive state updates; hardware-aware scans and fixed-size recurrent state create a different tradeoff from attention.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - selective-state-spaces.base.v2
+      - selective-state-spaces.transfer.v2
+      - selective-state-spaces.step
+    prerequisites:
+      - anyOf:
+          - objective.state-space-sequences
 scenes:
-- id: selective-state-spaces.s1
-  title: A fixed filter treats content uniformly
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.selective-state-spaces
-  markdown: In a time-invariant recurrence, the same update rule applies regardless of whether an input is
-    important. Selective models let input-derived quantities control parts of the state update or readout.
-    This supports retaining some information and discarding other information based on content.
-  text_mode: In a time-invariant recurrence, the same update rule applies regardless of whether an input is
-    important. Selective models let input-derived quantities control parts of the state update or readout.
-    This supports retaining some information and discarding other information based on content.
-  bridges: []
-- id: selective-state-spaces.s2
-  title: Understand the gate-like effect
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.selective-state-spaces
-  markdown: 'Consider a toy update h_t = a_t h_previous + b_t x_t. A value a_t near one retains more past state;
-    near zero suppresses it. This illustrates selection intuitively but is not a complete Mamba block or a
-    claim that every learned coefficient has this simple scalar interpretation.
+  - id: selective-state-spaces.s1
+    title: Keep the colors, skip the ums
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.selective-state-spaces
+    markdown: |-
+      Someone reads you a list: "red, um, um, blue, um, um, um, green." Later you're asked for the colors. You kept three words and threw away five, and you decided *as each word arrived*.
 
+      A time-invariant SSM from the last lesson can't do that. Its kernel gives the word three steps back the same weight whether it was "blue" or "um". Gu and Dao (2023) built a benchmark on exactly this, the **selective copying** task: remember the content tokens scattered at random positions among filler tokens. A network built on a plain S4 layer scored 18% on it; the same network with the S4 layer swapped for a selective one scored 97%.
 
-    With old state 4 and input 2, choosing a = 1 and b = 0 keeps 4. Choosing a = 0 and b = 1 replaces it with
-    2. Intermediate values mix old and new information. A selective model computes suitable coefficients from
-    the input through learned operations; it does not receive human instructions to “remember this fact” for
-    each coordinate.'
-  text_mode: 'Consider a toy update h_t = a_t h_previous + b_t x_t. A value a_t near one retains more past
-    state; near zero suppresses it. This illustrates selection intuitively but is not a complete Mamba block
-    or a claim that every learned coefficient has this simple scalar interpretation.
+      Their fix, the core of **Mamba** (December 2023), is to let the current input change the update itself. The model computes, from each token, how much of the old state to keep, how strongly to write the new token, and what to read out. That is a **selective state-space model**. Nobody labels which words matter; training on ordinary text teaches the model which inputs should push the update toward "keep" and which toward "overwrite".
+    bridges: []
+  - id: selective-state-spaces.s2
+    title: A gate hidden in the step size
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.selective-state-spaces
+    markdown: |-
+      Recall discretization: the step size $\Delta$ turns a continuous $A$ into $\bar{A} = e^{\Delta A}$. In S4, $\Delta$ was one learned number. Mamba computes it from each token.
 
+      :::papers The selective SSM ("S6") in Mamba
+      For each token $x_t$:
 
-    With old state 4 and input 2, choosing a = 1 and b = 0 keeps 4. Choosing a = 0 and b = 1 replaces it with
-    2. Intermediate values mix old and new information. A selective model computes suitable coefficients from
-    the input through learned operations; it does not receive human instructions to “remember this fact” for
-    each coordinate.'
-  bridges: []
-- id: selective-state-spaces.s3
-  title: Selection changes the execution options
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.selective-state-spaces
-  markdown: 'Input-dependent dynamics prevent directly reusing one fixed convolution kernel for every sequence.
-    Structured scan algorithms can parallelize compatible recurrences during training, while decoding updates
-    recurrent state incrementally. Implementation details determine which intermediate tensors are materialized
-    and how data move through hardware.
+      $$\Delta_t = \text{softplus}(\text{Linear}(x_t)), \quad B_t = \text{Linear}(x_t), \quad C_t = \text{Linear}(x_t)$$
 
+      $$\bar{A}_t = e^{\Delta_t A}, \qquad h_t = \bar{A}_t\, h_{t-1} + \bar{B}_t\, x_t, \qquad y_t = C_t\, h_t$$
 
-    A **scan** is an algorithm for computing a sequence of accumulated operations. Some recurrence updates
-    can be composed in groups, allowing parallel work while preserving their dependence structure. The exact
-    recurrence determines which composition is valid. This is an implementation advantage under stated structure,
-    not a claim that sequence order becomes irrelevant.'
-  text_mode: 'Input-dependent dynamics prevent directly reusing one fixed convolution kernel for every sequence.
-    Structured scan algorithms can parallelize compatible recurrences during training, while decoding updates
-    recurrent state incrementally. Implementation details determine which intermediate tensors are materialized
-    and how data move through hardware.
+      $A$ itself stays a fixed learned (diagonal, negative) matrix, but $\bar{A}_t$ changes with every token because $\Delta_t$ does. Softplus, $\ln(1 + e^z)$, keeps $\Delta$ positive. The paper proves that with one state number, $A = -1$ and $B = 1$, this becomes exactly a gated RNN:
 
+      $$h_t = (1 - g_t)\, h_{t-1} + g_t\, x_t, \qquad g_t = \sigma(\text{Linear}(x_t))$$
+      :::
 
-    A **scan** is an algorithm for computing a sequence of accumulated operations. Some recurrence updates
-    can be composed in groups, allowing parallel work while preserving their dependence structure. The exact
-    recurrence determines which composition is valid. This is an implementation advantage under stated structure,
-    not a claim that sequence order becomes irrelevant.'
-  bridges: []
-- id: selective-state-spaces.s4
-  title: Measure memory and retrieval separately
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.selective-state-spaces
-  markdown: A fixed-size recurrent state avoids a token-by-token cache growing with context at inference, but
-    compresses history. Test exact recall, selective copying, language quality, and runtime. Strong performance
-    on long sequences does not establish that every detail remains recoverable indefinitely.
-  text_mode: A fixed-size recurrent state avoids a token-by-token cache growing with context at inference,
-    but compresses history. Test exact recall, selective copying, language quality, and runtime. Strong performance
-    on long sequences does not establish that every detail remains recoverable indefinitely.
-  bridges: []
-- id: selective-state-spaces.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.selective-state-spaces
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Selective state updates let the current input influence what is kept. A fixed-size memory avoids
-    a growing token cache, but its ability to recall details must be tested.
-- id: selective-state-spaces.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.selective-state-spaces
-  markdown: Selective state updates let the current input influence what is kept. A fixed-size memory avoids
-    a growing token cache, but its ability to recall details must be tested.
-  text_mode: Selective state updates let the current input influence what is kept. A fixed-size memory avoids
-    a growing token cache, but its ability to recall details must be tested.
+      Work it through. Call the learned score $z_t = \text{Linear}(x_t)$. Then $\bar{A}_t = e^{-\text{softplus}(z_t)} = 1/(1 + e^{z_t})$, and the write weight is $g_t = 1 - \bar{A}_t$:
+
+      | Score $z_t$ | $\Delta_t$ | Keep $\bar{A}_t$ | Write $g_t$ | Effect |
+      | ---: | ---: | ---: | ---: | --- |
+      | −3 | 0.049 | 0.953 | 0.047 | ignore this token |
+      | 0 | 0.693 | 0.500 | 0.500 | blend old and new |
+      | 3 | 3.049 | 0.047 | 0.953 | overwrite with this token |
+
+      A tiny step barely moves the state; a big step lets the state jump to the new input. The program runs the list, with colors scored 3 and "um" scored −3, against a fixed step that always keeps half:
+
+      ```python run
+      import numpy as np
+
+      words  = ["red", "um", "um", "blue", "um", "um", "um"]
+      values = [5.0,   1.0,  1.0,  8.0,    1.0,  1.0,  1.0]    # what each word would write
+      z      = [3.0,  -3.0, -3.0,  3.0,   -3.0, -3.0, -3.0]    # learned score: "keep this?"
+
+      def selective_step(h, x, z_t):
+          delta = np.log1p(np.exp(z_t))    # softplus: step size chosen by the input
+          a_bar = np.exp(-delta)           # zero-order hold with A = -1
+          return a_bar * h + (1 - a_bar) * x
+
+      h_sel = h_lti = 0.0
+      for w, x, z_t in zip(words, values, z):
+          h_sel = selective_step(h_sel, x, z_t)
+          h_lti = 0.5 * h_lti + 0.5 * x    # time-invariant: same step for every word
+          print(f"{w:5s} selective state {h_sel:5.2f}   fixed-step state {h_lti:5.2f}")
+      ```
+
+      After "blue" the selective state is 7.83 and still 6.90 three ums later. The fixed-step state has slid to 1.46, most of the way to "um".
+
+      :::predict What happens if "um" gets a score of 0 instead of −3?
+      Each "um" now writes with weight 0.5, so the state halves its distance to 1 every time. Three ums after "blue", it would be about 1.8. Try it: change the −3.0s to 0.0.
+      :::
+    bridges: []
+  - id: selective-state-spaces.s3
+    title: No fixed kernel, so scan instead
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.selective-state-spaces
+    markdown: |-
+      Selection costs something. In the last lesson, input $j$ reached output $t$ with weight $CA^{t-j}B$, which depends only on the distance. Now that weight is $C_t\,\bar{A}_t \bar{A}_{t-1} \cdots \bar{A}_{j+1}\,\bar{B}_j$: it depends on *which tokens came in between*. There is no single kernel, so the fast convolution view is gone.
+
+      The recurrence still has a useful property. Doing step $(a_1, b_1)$ and then step $(a_2, b_2)$, where each step means $h \mapsto a h + b$, is the same as one combined step $(a_2 a_1,\; a_2 b_1 + b_2)$. Combining is associative, so a **parallel scan** can merge neighboring steps in rounds: 8 steps take 3 rounds, and a million take 20.
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(1)
+      n = 8
+      a = rng.uniform(0.1, 1.0, n)       # per-step keep factor, chosen by each input
+      b = rng.uniform(-1.0, 1.0, n)      # per-step write term (B-bar times x)
+
+      h, sequential = 0.0, []            # one step after another: n dependent steps
+      for t in range(n):
+          h = a[t] * h + b[t]
+          sequential.append(h)
+
+      def combine(first, then):          # doing step (a1, b1), then (a2, b2) ...
+          a1, b1 = first
+          a2, b2 = then
+          return (a2 * a1, a2 * b1 + b2)  # ... is one step (a2*a1, a2*b1 + b2)
+
+      steps, span, rounds = list(zip(a, b)), 1, 0
+      while span < n:                    # each round's combines are independent: run them in parallel
+          steps = [steps[i] if i < span else combine(steps[i - span], steps[i]) for i in range(n)]
+          span, rounds = span * 2, rounds + 1
+
+      print("sequential:", np.round(sequential, 4))
+      print("scan      :", np.round([s[1] for s in steps], 4))
+      print("parallel rounds:", rounds, "instead of", n, "dependent steps")
+      ```
+
+      Mamba's scan is also **hardware-aware**, in the same spirit as FlashAttention from module 17. The full set of states is $N$ times bigger than the input (Mamba's benchmarks used $N = 16$ numbers per channel), so writing it to the GPU's large, slow main memory would be the bottleneck. Instead the kernel loads $\Delta$, $A$, $B$, $C$ into the small, fast on-chip memory, discretizes and scans there, and writes back only the outputs. For training, it recomputes the states during the backward pass instead of storing them.
+    bridges: []
+  - id: selective-state-spaces.s4
+    title: What selection buys, and where it still falls short
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.selective-state-spaces
+    markdown: |-
+      The Mamba paper reported about 5× higher generation throughput than transformers of similar size, and a 3-billion-parameter Mamba that beat same-size transformers and matched transformers twice its size in language modeling. On the synthetic induction-heads task it extrapolated perfectly to million-token sequences, 4,000 times longer than it was trained on.
+
+      Its generation memory is also flat. Each layer carries a fixed state of (channels × $N$) numbers, the same at token 100 as at token 100,000, where a transformer's KV cache keeps growing.
+
+      :::mixup "A selective state can remember anything the model decides is important."
+      Selection chooses *what to write*, but the state still has a fixed size. Hand it a phone book in the prompt and ask for one number: every entry looked equally worth keeping when it arrived. In a controlled NVIDIA study (Waleffe et al., 2024), 8B-parameter pure Mamba-style models matched or beat an equal transformer on many tasks but lagged on tasks that need copying or in-context lookup, such as five-shot MMLU and phone-book lookup.
+      :::
+
+      **Mamba-2** (Dao & Gu, 2024) simplified $A$ to a single number per head (a scalar times the identity). With that restriction, the selective SSM turns out to equal a form of masked linear attention, where the mask applies the products of $\bar{A}$ decays. The authors named this **state space duality (SSD)**. The payoff is practical: the layer can be computed mostly with matrix multiplications, which GPUs run fastest. They reported a core layer 2–8× faster than Mamba's scan, with room for states 8× larger or more.
+
+      So if your coding assistant must quote exact identifiers from far back, run lookup tests before choosing a pure SSM. The next lesson shows the usual answer: keep a few attention layers.
+    bridges: []
+  - id: selective-state-spaces.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.selective-state-spaces
+    markdown: Compute selective updates from step sizes, then decide what selection does for a filler-filled transcript, a long-context chatbot, and a phone-book lookup.
+    takeaway: |-
+      Mamba computes Δ, B, and C from each token, so a small step keeps the state and a large step overwrites it, like an RNN gate. That breaks the convolution view, so it trains with a hardware-aware parallel scan, and it keeps a fixed-size state.
+  - id: selective-state-spaces.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.selective-state-spaces
+    markdown: |-
+      Selective state updates let the current input influence what is kept. A fixed-size memory avoids a growing token cache, but its ability to recall details must be tested.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - selective-state-spaces.s1
-    - selective-state-spaces.s2
-    - selective-state-spaces.s3
-    - selective-state-spaces.s4
-    - selective-state-spaces.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - selective-state-spaces.s1
+        - selective-state-spaces.s2
+        - selective-state-spaces.s3
+        - selective-state-spaces.s4
+        - selective-state-spaces.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     selective-state-spaces.recap: selective-state-spaces.check
 assessment_families:
-- id: selective-state-spaces.base
-  objective_ref: objective.selective-state-spaces
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Understand the gate-like effect: trace the inputs, operation, and result before choosing.'
-  remediation_scene: selective-state-spaces.s2
-  variants:
-  - id: selective-state-spaces.base.1
-    prompt: What makes a state-space model selective here?
-    options:
-    - id: b
-      text: Its weights are manually chosen after every token
-    - id: c
-      text: It stores all tokens without compression
-    - id: a
-      text: Some update quantities depend on the input
-    answer: a
-    feedback: Content can influence retention and processing.
-  - id: selective-state-spaces.base.2
-    prompt: In the toy update, a_t near zero does what to previous state?
-    options:
-    - id: c
-      text: Doubles it
-    - id: a
-      text: Suppresses its contribution
-    - id: b
-      text: Always preserves it exactly
-    answer: a
-    feedback: The previous state is multiplied by a_t.
-- id: selective-state-spaces.transfer
-  objective_ref: objective.selective-state-spaces
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Measure memory and retrieval separately: trace the inputs, operation, and result before choosing.'
-  remediation_scene: selective-state-spaces.s4
-  variants:
-  - id: selective-state-spaces.transfer.1
-    prompt: Why does input dependence complicate a fixed convolution implementation?
-    options:
-    - id: c
-      text: It removes every parallel algorithm
-    - id: a
-      text: The effective dynamics vary with the sequence content
-    - id: b
-      text: Convolution cannot multiply numbers
-    answer: a
-    feedback: A single time-invariant kernel no longer describes all updates.
-  - id: selective-state-spaces.transfer.2
-    prompt: Does fixed-size recurrent memory guarantee exact unlimited recall?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only with a long prompt
-    answer: a
-    feedback: Finite learned summaries can lose information.
+  - id: selective-state-spaces.base
+    objective_ref: objective.selective-state-spaces
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: A keep factor near 1 preserves the old state; near 0 it wipes it.
+    remediation_scene: selective-state-spaces.s2
+    variants:
+      - id: selective-state-spaces.base.1
+        prompt: What makes a state-space model selective here?
+        options:
+          - id: b
+            text: Its weights are manually chosen after every token
+          - id: c
+            text: It stores all tokens without compression
+          - id: a
+            text: Some update quantities depend on the input
+        answer: a
+        feedback: Content can influence retention and processing.
+        retired: true
+      - id: selective-state-spaces.base.2
+        prompt: In the toy update, a_t near zero does what to previous state?
+        options:
+          - id: c
+            text: Doubles it
+          - id: a
+            text: Suppresses its contribution
+          - id: b
+            text: Always preserves it exactly
+        answer: a
+        feedback: The previous state is multiplied by a_t.
+        retired: true
+  - id: selective-state-spaces.transfer
+    objective_ref: objective.selective-state-spaces
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Selection decides what to write, but the state's size stays fixed.
+    remediation_scene: selective-state-spaces.s4
+    variants:
+      - id: selective-state-spaces.transfer.1
+        prompt: Why does input dependence complicate a fixed convolution implementation?
+        options:
+          - id: c
+            text: It removes every parallel algorithm
+          - id: a
+            text: The effective dynamics vary with the sequence content
+          - id: b
+            text: Convolution cannot multiply numbers
+        answer: a
+        feedback: A single time-invariant kernel no longer describes all updates.
+        retired: true
+      - id: selective-state-spaces.transfer.2
+        prompt: Does fixed-size recurrent memory guarantee exact unlimited recall?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only with a long prompt
+        answer: a
+        feedback: Finite learned summaries can lose information.
+        retired: true
+  - id: selective-state-spaces.base.v2
+    objective_ref: objective.selective-state-spaces
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Trace Δ: the token sets Δ, Δ sets Ā = e^(ΔA), and Ā near 1 keeps the state while Ā near 0 overwrites it. Then ask what that does to the convolution kernel."
+    remediation_scene: selective-state-spaces.s2
+    variants:
+      - id: selective-state-spaces.base.v2.1
+        prompt: In Mamba's selective SSM, which quantities are computed from the current token?
+        options:
+          - id: b
+            text: A fresh matrix A per token, while B and C stay fixed
+          - id: a
+            text: The step size Δ and the matrices B and C, while A stays fixed
+          - id: c
+            text: The readout C alone, so the state update matches S4's
+        answer: a
+        feedback: Δ, B, and C come from linear projections of the token. A is a fixed learned matrix, but its discretized form e^(ΔA) still changes per token because Δ does. If only C changed, the state couldn't choose what to keep.
+      - id: selective-state-spaces.base.v2.2
+        prompt: A token produces a very large step size Δ, with A = −1. What happens to the state?
+        options:
+          - id: a
+            text: Ā is near 0, so the state is mostly replaced by this token
+          - id: c
+            text: Ā is near 1, so the state is kept and this token is ignored
+          - id: b
+            text: Ā is above 1, so the state grows larger with every token
+        answer: a
+        feedback: Ā = e^(−Δ) shrinks toward 0 as Δ grows, and the write weight 1 − Ā approaches 1. A tiny Δ is what keeps the state. Because A is negative, Ā stays between 0 and 1.
+      - id: selective-state-spaces.base.v2.3
+        prompt: Why can't a selective SSM be computed as one convolution the way S4 can?
+        options:
+          - id: c
+            text: Its state grows with every token, so the kernel length has no fixed limit
+          - id: b
+            text: Softplus is nonlinear, so none of the computation can run in parallel
+          - id: a
+            text: An input's effect depends on the tokens in between, not just the distance
+        answer: a
+        feedback: The weight from input j to output t is a product of the Ā's of every token in between, which changes with content, so no single kernel exists. The state stays fixed-size, and the parallel scan still runs in parallel.
+      - id: selective-state-spaces.base.v2.4
+        prompt: What makes Mamba's scan "hardware-aware"?
+        options:
+          - id: b
+            text: It saves every intermediate state to GPU main memory so the backward pass can reuse it
+          - id: a
+            text: It keeps the expanded states in fast on-chip memory and writes back only the outputs
+          - id: c
+            text: It replaces the recurrence with an FFT convolution that GPUs are designed to run
+        answer: a
+        feedback: The states are N times larger than the input, so the kernel avoids writing them to slow main memory and recomputes them in the backward pass instead. There is no FFT convolution for a selective SSM.
+  - id: selective-state-spaces.transfer.v2
+    objective_ref: objective.selective-state-spaces
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Selection controls what enters a fixed-size state. Ask whether the task needs a choice about what to keep, or exact recall of many items.
+    remediation_scene: selective-state-spaces.s4
+    variants:
+      - id: selective-state-spaces.transfer.v2.1
+        prompt: A transcription model reads speech full of fillers ("um", "you know"). Which mechanism lets a selective SSM keep the content words in its state?
+        options:
+          - id: a
+            text: Filler tokens produce a small Δ, so they barely change the state
+          - id: b
+            text: Filler tokens produce a large Δ, so the state skips past them
+          - id: c
+            text: Filler tokens are masked out by the tokenizer before they arrive
+        answer: a
+        feedback: A small step keeps Ā near 1, so the filler hardly writes. A large step would do the opposite and overwrite the state with the filler. Nothing removes the fillers before the model sees them.
+      - id: selective-state-spaces.transfer.v2.2
+        prompt: A chatbot built on a pure Mamba model serves conversations of 2,000 and of 100,000 tokens. How does its per-conversation generation memory compare?
+        options:
+          - id: c
+            text: It grows about 50 times, like a transformer's KV cache
+          - id: a
+            text: It is about the same, since each layer keeps a fixed state
+          - id: b
+            text: It grows about 7 times, since the state grows with log n
+        answer: a
+        feedback: Each layer carries a state of fixed size, so a longer conversation costs more time but not more state. A KV cache grows in proportion to the tokens. The log n in a parallel scan is its number of rounds, not the state's size.
+      - id: selective-state-spaces.transfer.v2.3
+        prompt: A team plans to replace its transformer with an equal-size pure Mamba model for a support bot that must quote exact order numbers from long pasted histories. What should they do first?
+        options:
+          - id: b
+            text: Switch right away, since selection lets Mamba keep whichever details matter
+          - id: c
+            text: Rule Mamba out, since state-space models do poorly on language overall
+          - id: a
+            text: Run copying and lookup tests, where pure SSMs have lagged transformers
+        answer: a
+        feedback: Controlled studies found pure Mamba models match transformers on many language tasks but lag on copying and in-context lookup, exactly this bot's job. Selection chooses what to write, not how much fits, and Mamba is competitive on language in general.
+      - id: selective-state-spaces.transfer.v2.4
+        prompt: Mamba-2's layer runs 2–8× faster than Mamba's scan and allows larger states. Which change made that possible?
+        options:
+          - id: a
+            text: Restricting A to one number per head, so the layer maps to matrix multiplications
+          - id: b
+            text: Making A depend on the input as well, so the model no longer needs a scan
+          - id: c
+            text: Removing selection from Δ, so the layer becomes a fixed convolution again
+        answer: a
+        feedback: With A a scalar times the identity, the selective SSM equals a masked form of linear attention (state space duality), which GPUs compute well with matrix multiplications. Mamba-2 keeps selection; it doesn't return to a fixed kernel.
+  - id: selective-state-spaces.step
+    objective_ref: objective.selective-state-spaces
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "With A = −1, the keep factor is Ā = e^(−Δ). The new state is Ā × (old state) + (1 − Ā) × (input)."
+    remediation_scene: selective-state-spaces.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: selective-state-spaces.step.1
+        prompt: "A selective SSM with A = −1 uses Ā = e^(−Δ) and h_new = Ā·h + (1 − Ā)·x. The token gives Δ = 0.693 (so e^(−Δ) = 0.5). With h = 6 and x = 2, what is h_new?"
+        answer: 4
+        feedback: "Ā = 0.5, so h_new = 0.5 × 6 + 0.5 × 2 = 3 + 1 = 4."
+      - id: selective-state-spaces.step.2
+        prompt: "A selective SSM with A = −1 uses Ā = e^(−Δ) and h_new = Ā·h + (1 − Ā)·x. A filler token gives Δ = 0.01. With h = 6 and x = 2, what is h_new? Give two decimal places."
+        answer: 5.96
+        feedback: "Ā = e^(−0.01) ≈ 0.990, so h_new ≈ 0.990 × 6 + 0.010 × 2 ≈ 5.96. The state barely moves."
+      - id: selective-state-spaces.step.3
+        prompt: "A selective SSM with A = −1 uses Ā = e^(−Δ) and h_new = Ā·h + (1 − Ā)·x. An important token gives Δ = 3. With h = 6 and x = 2, what is h_new? Give two decimal places."
+        answer: 2.2
+        feedback: "Ā = e^(−3) ≈ 0.0498, so h_new ≈ 0.0498 × 6 + 0.9502 × 2 ≈ 0.30 + 1.90 = 2.20. The state jumps most of the way to the new input."
+      - id: selective-state-spaces.step.4
+        prompt: "A selective SSM with A = −1 uses Ā = e^(−Δ) and h_new = Ā·h + (1 − Ā)·x. A token gives Δ = 1 and x = 0, with h = 10. What is h_new? Give two decimal places."
+        answer: 3.68
+        feedback: "Ā = e^(−1) ≈ 0.368, so h_new ≈ 3.68 + 0 = 3.68."

@@ -1,201 +1,479 @@
 schema_version: 0.2-draft
 lesson:
   id: symbolic-neural-boundaries
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Combine explicit knowledge with learned perception
   state: draft
-  summary: Connect a picture recognizer to a rule checker, and follow what happens when an uncertain observation
-    becomes a fact.
+  summary: '"Keep the hall lit at night, but don''t wake the baby." A language model writes the rules, a checker vets them, a camera feeds them facts. See where this partnership shines, and where it breaks.'
   slot: M04.8
   category: learning
   sources:
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
 objectives:
-- id: objective.symbolic-neural-boundaries
-  version: 1-draft
-  statement: Symbolic and neural components can complement each other when interfaces preserve uncertainty,
-    grounding, constraints, and the limits of each representation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - symbolic-neural-boundaries.base
-  - symbolic-neural-boundaries.transfer
-  prerequisites:
-  - anyOf:
-    - objective.knowledge-graphs
-  - anyOf:
-    - objective.defaults-and-exceptions
-  - anyOf:
-    - objective.features-and-bias
+  - id: objective.symbolic-neural-boundaries
+    version: 2-draft
+    statement: Symbolic and neural components can complement each other when interfaces preserve uncertainty, grounding, constraints, and the limits of each representation.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - symbolic-neural-boundaries.base.v2
+      - symbolic-neural-boundaries.transfer.v2
+      - symbolic-neural-boundaries.calc
+    prerequisites:
+      - anyOf:
+          - objective.knowledge-graphs
+      - anyOf:
+          - objective.defaults-and-exceptions
+      - anyOf:
+          - objective.features-and-bias
 scenes:
-- id: symbolic-neural-boundaries.s1
-  title: Different components can answer different questions
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.symbolic-neural-boundaries
-  markdown: A vision model estimates which objects are present. A rule system checks whether a represented
-    arrangement satisfies a requirement. A planner searches possible actions. Combining them can make a useful
-    system, but a correct rule cannot compensate automatically for a mistaken object label.
-  text_mode: A vision model estimates which objects are present. A rule system checks whether a represented
-    arrangement satisfies a requirement. A planner searches possible actions. Combining them can make a useful
-    system, but a correct rule cannot compensate automatically for a mistaken object label.
-  bridges: []
-- id: symbolic-neural-boundaries.s2
-  title: Connect a symbol to an observation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.symbolic-neural-boundaries
-  markdown: '**Grounding** connects a symbol to what was observed. Suppose a camera-based detector reports
-    “cup on table.” Before a planner treats this as a fact, it may need to know which camera supplied it, when
-    it was seen, and how uncertain the detection was.
+  - id: symbolic-neural-boundaries.s1
+    title: Two kinds of smart in one house
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.symbolic-neural-boundaries
+    markdown: |-
+      Back to the smart home from the start of this module. This time you don't write rules. You just say: *"Keep the hallway lit at night, but don't wake the baby."* A language model turns that into candidate rules. A checker makes sure they're well-formed and safe. The rule engine runs them, fed by facts from a camera whose detector is a neural network.
 
+      Each part does what it's good at:
 
-    That source history is **provenance**. A confidence score can record the detector’s estimate, though it
-    needs testing before we interpret it as a reliable probability. Preserving this information lets another
-    component request a clearer view instead of acting on an uncertain label.'
-  text_mode: '**Grounding** connects a symbol to what was observed. Suppose a camera-based detector reports
-    “cup on table.” Before a planner treats this as a fact, it may need to know which camera supplied it, when
-    it was seen, and how uncertain the detection was.
+      | | Learned (neural) parts | Symbolic parts |
+      | --- | --- | --- |
+      | Strong at | messy input: speech, photos, vague requests | exact rules, proofs, checkable steps |
+      | Weak at | guarantees; they can be confidently wrong | anything nobody wrote down |
+      | Fixing a mistake | retrain on more examples | edit one rule |
+      | In this house | language model, camera detector | checker, rule engine |
 
+      A system that combines the two is often called **neurosymbolic**. The interesting part is the boundary: each arrow below that crosses from one kind of part to the other is a place where meaning can be lost.
+    diagram:
+      caption: A neurosymbolic smart home. Learned parts propose and perceive; symbolic parts check and act.
+      description: Your spoken request goes to a language model, which proposes rules to a checker. The checker sends rejected rules back to the model with a reason, and passes accepted rules to the rule engine. Separately, the camera detector sends detections to a grounding check, which applies a confidence threshold and records the source and time before passing facts to the rule engine. The rule engine controls the lights.
+      nodes:
+        - id: voice
+          label: Your request
+          note: don't wake the baby
+          col: 0
+          row: 0
+        - id: llm
+          label: Language model
+          note: proposes rules
+          col: 1
+          row: 0
+          tone: accent
+        - id: checker
+          label: Rule checker
+          note: form, names, safety
+          col: 2
+          row: 0
+          tone: warn
+        - id: engine
+          label: Rule engine
+          col: 3
+          row: 1
+        - id: lights
+          label: Lights
+          col: 4
+          row: 1
+        - id: camera
+          label: Camera detector
+          note: neural network
+          col: 0
+          row: 2
+          tone: accent
+        - id: ground
+          label: Grounding check
+          note: threshold, source, time
+          col: 2
+          row: 2
+          tone: warn
+      edges:
+        - from: voice
+          to: llm
+        - from: llm
+          to: checker
+          label: proposed rule
+          bend: 1
+        - from: checker
+          to: llm
+          label: rejected, with reason
+          dashed: true
+          bend: 1
+        - from: checker
+          to: engine
+          label: accepted rule
+        - from: camera
+          to: ground
+          label: detection
+        - from: ground
+          to: engine
+          label: fact
+        - from: engine
+          to: lights
+    bridges: []
+  - id: symbolic-neural-boundaries.s2
+    title: 'Grounding: where does "motion" come from?'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.symbolic-neural-boundaries
+    markdown: |-
+      The rule engine reasons about the symbol `motion(hallway)`, but the camera doesn't output symbols. Its detector outputs something like "person, confidence 0.62." Connecting a symbol to the evidence that makes it true or false is called **grounding**. (Stevan Harnad named the general puzzle, how symbols get their meaning, the *symbol grounding problem* in 1990.)
 
-    That source history is **provenance**. A confidence score can record the detector’s estimate, though it
-    needs testing before we interpret it as a reliable probability. Preserving this information lets another
-    component request a clearer view instead of acting on an uncertain label.'
-  bridges: []
-- id: symbolic-neural-boundaries.s3
-  title: Trace a failure across the boundary
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.symbolic-neural-boundaries
-  markdown: A robot plans to pick up a cup because a perception system misidentified a reflection. The planner
-    may be logically correct relative to its supplied facts. Diagnosis should inspect sensing and grounding
-    before blaming the search procedure. End-to-end success requires all relevant component assumptions to
-    hold.
-  text_mode: A robot plans to pick up a cup because a perception system misidentified a reflection. The planner
-    may be logically correct relative to its supplied facts. Diagnosis should inspect sensing and grounding
-    before blaming the search procedure. End-to-end success requires all relevant component assumptions to
-    hold.
-  bridges: []
-- id: symbolic-neural-boundaries.s4
-  title: Be clear about what the checker checks
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.symbolic-neural-boundaries
-  markdown: 'JSON is a text format for named values. A checker might accept {"cups": 2} because it contains
-    the expected field and a number. If the table holds one cup, the record has the right format but the wrong
-    count. We need another observation to check the count.
+      The simplest grounding step is a threshold. Say the house asserts `motion(hallway)` only when the confidence is at or above 0.8:
 
+      | Time | Detector output | Confidence | Asserted as a fact? |
+      | --- | --- | ---: | --- |
+      | 22:14 | person | 0.97 | yes |
+      | 01:40 | person | 0.62 | no: kept as a *possible* sighting |
+      | 03:12 | cat | 0.88 | yes, if cats count as motion |
 
-    Symbolic checkers can enforce specified formats, constraints, or proof rules. Learned models can propose
-    candidates for them to inspect. Together they can check more than either component alone, provided we state
-    exactly which properties the checks cover.'
-  text_mode: 'JSON is a text format for named values. A checker might accept {"cups": 2} because it contains
-    the expected field and a number. If the table holds one cup, the record has the right format but the wrong
-    count. We need another observation to check the count.
+      :::predict You lower the threshold to 0.6. What changes, and what's the risk?
+      The 01:40 sighting becomes a fact, so the light turns on. If it was a real person, good. If it was a shadow, the baby wakes. A lower threshold trades missed motion for false alarms.
+      :::
 
+      Store each fact with its **provenance**, the record of where it came from: `{fact: motion(hallway), source: camera_2, time: 01:40, confidence: 0.62}`. Then a later step can weigh it, trace it, or ask a second sensor before acting.
+    bridges: []
+  - id: symbolic-neural-boundaries.s3
+    title: Trace a failure across the boundary
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.symbolic-neural-boundaries
+    markdown: |-
+      At 03:00 a car's headlights sweep across the hall mirror. The hallway light snaps on and your phone buzzes: *"Motion while everyone is asleep."* Walk the chain:
 
-    Symbolic checkers can enforce specified formats, constraints, or proof rules. Learned models can propose
-    candidates for them to inspect. Together they can check more than either component alone, provided we state
-    exactly which properties the checks cover.'
-  bridges: []
-- id: symbolic-neural-boundaries.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.symbolic-neural-boundaries
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A learned detector and a rule-based planner can work together. Keep the observations, uncertainty,
-    and meaning of each symbol clear as information passes between them.
-- id: symbolic-neural-boundaries.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.symbolic-neural-boundaries
-  markdown: A learned detector and a rule-based planner can work together. Keep the observations, uncertainty,
-    and meaning of each symbol clear as information passes between them.
-  text_mode: A learned detector and a rule-based planner can work together. Keep the observations, uncertainty,
-    and meaning of each symbol clear as information passes between them.
+      | Step | Input | Output | Correct? |
+      | --- | --- | --- | --- |
+      | Detector | photo with a bright reflection | person, 0.85 | **no** |
+      | Grounding | 0.85 ≥ 0.8 | motion(hallway) | followed its rule, got a false fact |
+      | Rule engine | motion, night | light on, alert | yes, given its facts |
+
+      The rules did exactly what they said. The error entered at the detector and passed through grounding unchallenged. So fix it there: require the camera *and* the motion sensor to agree, or retrain the detector on reflections.
+
+      :::mixup "The decisions come from logic rules, so they're certain."
+      The rules are certain *about their inputs*. When a learned component supplies those inputs, its mistakes flow straight through the logic. Diagnose from the first step of the chain, not the last.
+      :::
+    bridges: []
+  - id: symbolic-neural-boundaries.s4
+    title: The model proposes, the checker verifies
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.symbolic-neural-boundaries
+    markdown: |-
+      Now the other boundary. The language model is good at turning "don't wake the baby" into something rule-shaped, but it can misspell a name or propose something unsafe. A symbolic checker catches those:
+
+      ```python run
+      proposals = [                      # pretend a language model wrote these
+          "IF motion AND night THEN hall_light_on",
+          "IF night THEN front_door_unlock",
+          "IF motion AND night THEN hall_ligth_on",
+          "IF baby_asleep AND night THEN hall_light_dim",
+          "turn the lights on when it gets dark",
+      ]
+      known = {"motion", "night", "baby_asleep", "hall_light_on",
+               "hall_light_dim", "front_door_unlock"}
+      forbidden = {"front_door_unlock"}  # safety policy: never automate this
+
+      def check(rule):
+          if not rule.startswith("IF ") or " THEN " not in rule:
+              return "rejected: not in IF ... THEN ... form"
+          cond, action = rule[3:].split(" THEN ")
+          for name in cond.split(" AND ") + [action]:
+              if name not in known:
+                  return f"rejected: unknown name '{name}'"
+          if action in forbidden:
+              return "rejected: breaks the safety policy"
+          return "accepted"
+
+      for rule in proposals:
+          print(f"{check(rule):40} {rule}")
+      ```
+
+      Two of five pass, and each rejection gives the model a reason to try again. The checker covers form, names, and one safety policy. Both accepted rules can fire together (full light *and* dimmed light while the baby sleeps), and nothing here checks that. A checker verifies exactly what you wrote into it, so add a check for each property you care about, such as "no two accepted rules act on the same light."
+
+      The same pattern drives some of the most striking recent results:
+
+      | System | The learned part proposes | The symbolic part checks |
+      | --- | --- | --- |
+      | AlphaCode (DeepMind, 2022) | candidate programs | running them on example tests |
+      | FunSearch (DeepMind, 2023) | small programs for math problems | an evaluator that scores each one |
+      | AlphaGeometry (DeepMind, 2024) | helpful extra points and lines | a deduction engine that finishes the proof |
+      | AlphaProof (DeepMind, 2024) | proof steps | the Lean proof checker |
+
+      AlphaGeometry solved 25 of 30 olympiad geometry problems in its test set, and AlphaProof with AlphaGeometry 2 reached silver-medal standard at the 2024 International Mathematical Olympiad.
+    bridges: []
+  - id: symbolic-neural-boundaries.module-map
+    title: What this module gave you
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.symbolic-neural-boundaries
+    markdown: |-
+      Every idea in this module is still at work, often next to a neural network:
+
+      | Lesson idea | Where it lives today |
+      | --- | --- |
+      | Truth tables and SAT | chip verification, package installers |
+      | Rules and chaining | tax, insurance, and smart-home engines |
+      | Knowledge graphs | Wikidata, search-engine fact panels |
+      | Proof checking | Lean checking AI-written proofs |
+      | Program synthesis | Flash Fill, code assistants plus tests |
+
+      When you meet a new AI system, ask the question this lesson practiced: which parts learn, which parts check, and what exactly crosses the boundary between them?
+    bridges: []
+  - id: symbolic-neural-boundaries.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.symbolic-neural-boundaries
+    markdown: Proof checkers, warehouse robots, form readers, and a few detector thresholds test whether you can find where an error crossed the boundary and what a check really covers.
+    takeaway: |-
+      Learned parts perceive and propose; symbolic parts check and act on exact rules. Ground each symbol in evidence with its source and confidence, and remember that a checker verifies only the properties you wrote into it.
+  - id: symbolic-neural-boundaries.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.symbolic-neural-boundaries
+    markdown: |-
+      A learned detector and a rule-based planner can work together. Keep the observations, uncertainty, and meaning of each symbol clear as information passes between them.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - symbolic-neural-boundaries.s1
-    - symbolic-neural-boundaries.s2
-    - symbolic-neural-boundaries.s3
-    - symbolic-neural-boundaries.s4
-    - symbolic-neural-boundaries.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - symbolic-neural-boundaries.s1
+        - symbolic-neural-boundaries.s2
+        - symbolic-neural-boundaries.s3
+        - symbolic-neural-boundaries.s4
+        - symbolic-neural-boundaries.module-map
+        - symbolic-neural-boundaries.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     symbolic-neural-boundaries.recap: symbolic-neural-boundaries.check
 assessment_families:
-- id: symbolic-neural-boundaries.base
-  objective_ref: objective.symbolic-neural-boundaries
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Ground a symbol in observations: trace the inputs, operation, and result before choosing.'
-  remediation_scene: symbolic-neural-boundaries.s2
-  variants:
-  - id: symbolic-neural-boundaries.base.1
-    prompt: A planner is correct relative to a false object detection. Can the full system still fail?
-    options:
-    - id: c
-      text: Only if the planner is slow
-    - id: a
-      text: Yes; perception errors can invalidate supplied facts
-    - id: b
-      text: No; logical correctness repairs every sensor
-    answer: a
-    feedback: Component correctness is conditional on its inputs and assumptions.
-  - id: symbolic-neural-boundaries.base.2
-    prompt: What is grounding in this context?
-    options:
-    - id: a
-      text: Connecting symbols to observations and their interpretation
-    - id: b
-      text: Only storing a graph on disk
-    - id: c
-      text: Only lowering an electrical voltage
-    answer: a
-    feedback: A symbolic fact needs a defined relationship to measured or interpreted evidence.
-- id: symbolic-neural-boundaries.transfer
-  objective_ref: objective.symbolic-neural-boundaries
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Use constraints with clear scope: trace the inputs, operation, and result before choosing.'
-  remediation_scene: symbolic-neural-boundaries.s4
-  variants:
-  - id: symbolic-neural-boundaries.transfer.1
-    prompt: A checker verifies JSON syntax. Has it verified factual truth?
-    options:
-    - id: a
-      text: No; its formal property is only part of correctness
-    - id: b
-      text: Yes; valid syntax implies true content
-    - id: c
-      text: Only when keys are short
-    answer: a
-    feedback: A checker guarantees only the property it actually checks.
-  - id: symbolic-neural-boundaries.transfer.2
-    prompt: What should a hybrid-system diagram show at component boundaries?
-    options:
-    - id: b
-      text: Only brand names
-    - id: c
-      text: Only the newest model
-    - id: a
-      text: Data meaning, uncertainty, and checked assumptions
-    answer: a
-    feedback: Explicit interfaces help trace both strengths and failures.
+  - id: symbolic-neural-boundaries.base
+    objective_ref: objective.symbolic-neural-boundaries
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Ground a symbol in observations: trace the inputs, operation, and result before choosing.'
+    remediation_scene: symbolic-neural-boundaries.s2
+    variants:
+      - id: symbolic-neural-boundaries.base.1
+        prompt: A planner is correct relative to a false object detection. Can the full system still fail?
+        options:
+          - id: c
+            text: Only if the planner is slow
+          - id: a
+            text: Yes; perception errors can invalidate supplied facts
+          - id: b
+            text: No; logical correctness repairs every sensor
+        answer: a
+        feedback: Component correctness is conditional on its inputs and assumptions.
+        retired: true
+      - id: symbolic-neural-boundaries.base.2
+        prompt: What is grounding in this context?
+        options:
+          - id: a
+            text: Connecting symbols to observations and their interpretation
+          - id: b
+            text: Only storing a graph on disk
+          - id: c
+            text: Only lowering an electrical voltage
+        answer: a
+        feedback: A symbolic fact needs a defined relationship to measured or interpreted evidence.
+        retired: true
+  - id: symbolic-neural-boundaries.transfer
+    objective_ref: objective.symbolic-neural-boundaries
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Use constraints with clear scope: trace the inputs, operation, and result before choosing.'
+    remediation_scene: symbolic-neural-boundaries.s4
+    variants:
+      - id: symbolic-neural-boundaries.transfer.1
+        prompt: A checker verifies JSON syntax. Has it verified factual truth?
+        options:
+          - id: a
+            text: No; its formal property is only part of correctness
+          - id: b
+            text: Yes; valid syntax implies true content
+          - id: c
+            text: Only when keys are short
+        answer: a
+        feedback: A checker guarantees only the property it actually checks.
+        retired: true
+      - id: symbolic-neural-boundaries.transfer.2
+        prompt: What should a hybrid-system diagram show at component boundaries?
+        options:
+          - id: b
+            text: Only brand names
+          - id: c
+            text: Only the newest model
+          - id: a
+            text: Data meaning, uncertainty, and checked assumptions
+        answer: a
+        feedback: Explicit interfaces help trace both strengths and failures.
+        retired: true
+  - id: symbolic-neural-boundaries.base.v2
+    objective_ref: objective.symbolic-neural-boundaries
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Follow the information across each boundary. Where did a learned part hand a symbol to a rule, and what did each check actually test?
+    remediation_scene: symbolic-neural-boundaries.s3
+    variants:
+      - id: symbolic-neural-boundaries.base.v2.1
+        prompt: In the smart home, what does grounding mean for the symbol motion(hallway)?
+        options:
+          - id: b
+            text: Storing it in the rule base so that rules can use it
+          - id: a
+            text: Tying it to the sensor evidence that makes it true or false
+          - id: c
+            text: Declaring its type and allowed values in an ontology
+        answer: a
+        feedback: Grounding connects the symbol to what was observed, such as a detection above a threshold. Storing or typing a symbol says nothing about when it is actually true in the house.
+      - id: symbolic-neural-boundaries.base.v2.2
+        prompt: Headlights reflect off the hall mirror. The detector reports "person, 0.85," and the rule engine turns on the light and sends an alert. Which part should you fix first?
+        options:
+          - id: c
+            text: The alert rule, because intruders are rare at night
+          - id: b
+            text: The rule engine, because it fired on a false fact
+          - id: a
+            text: The detector or its grounding, because the fact was wrong
+        answer: a
+        feedback: The rule engine behaved correctly given motion(hallway); the error entered at the detector and passed the threshold. Fix the first wrong step, for example by requiring a second sensor to agree.
+      - id: symbolic-neural-boundaries.base.v2.3
+        prompt: The lesson's checker accepted "IF baby_asleep AND night THEN hall_light_dim." What has been verified?
+        options:
+          - id: a
+            text: Its form, its names, and the one safety policy
+          - id: b
+            text: That dimming is what the user wanted at night
+          - id: c
+            text: That it can't clash with another accepted rule
+        answer: a
+        feedback: The checker tests exactly three things. Intent and conflicts with other rules weren't checked, and in fact it can fire together with the full-light rule.
+      - id: symbolic-neural-boundaries.base.v2.4
+        prompt: Why store a detection as {fact, source, time, confidence} rather than as the fact alone?
+        options:
+          - id: b
+            text: So the rule engine runs faster on compact facts
+          - id: c
+            text: So the fact counts as proved once it is stored
+          - id: a
+            text: So later steps can weigh it, trace it, or recheck it
+        answer: a
+        feedback: Provenance lets a planner ask a second sensor, discount a weak detection, or trace a failure back to camera_2 at 01:40. Extra fields make a record bigger, not faster, and storing a fact doesn't make it true.
+      - id: symbolic-neural-boundaries.base.v2.5
+        prompt: Which job in the smart home suits the language model rather than the rule engine?
+        options:
+          - id: a
+            text: Turning "don't wake the baby" into candidate rules
+          - id: c
+            text: Making sure the front door is never unlocked by a rule
+          - id: b
+            text: Firing each rule whose conditions hold as facts change
+        answer: a
+        feedback: Interpreting a vague request is the learned part's strength. Enforcing a hard safety policy and firing rules exactly are symbolic jobs, where you want checkable, predictable behavior.
+  - id: symbolic-neural-boundaries.transfer.v2
+    objective_ref: objective.symbolic-neural-boundaries
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name what the learned part produced and what the symbolic part checked. Anything outside that check is still unverified.
+    remediation_scene: symbolic-neural-boundaries.s4
+    variants:
+      - id: symbolic-neural-boundaries.transfer.v2.1
+        prompt: An AI system proposes a proof, and the Lean proof checker accepts it. What does acceptance show?
+        options:
+          - id: b
+            text: The stated theorem captures what the mathematician meant
+          - id: a
+            text: The proof is valid for the theorem exactly as written
+          - id: c
+            text: The model understands why the theorem is true
+        answer: a
+        feedback: A proof checker verifies each step against the formal statement. Whether that statement matches the intended idea is a separate question, and passing the check says nothing about understanding.
+      - id: symbolic-neural-boundaries.transfer.v2.2
+        prompt: A language model writes a function, and it passes the 4 unit tests you have. What is the most accurate description?
+        options:
+          - id: c
+            text: Correct, since an automatic checker ran it
+          - id: b
+            text: Unreliable, since a language model wrote it
+          - id: a
+            text: It handles those 4 cases; other inputs are untested
+        answer: a
+        feedback: Tests verify exactly the cases they cover. Being checked by a program doesn't extend to other inputs, and who wrote the code matters less than what has been tested.
+      - id: symbolic-neural-boundaries.transfer.v2.3
+        prompt: A model reads scanned forms from a US clinic into JSON, and a validator checks that each date is in YYYY-MM-DD format. A form says 03/04/2024 (March 4), and the model writes 2024-04-03. What check is missing?
+        options:
+          - id: a
+            text: That each value matches the source document
+          - id: b
+            text: A stricter pattern for the date format
+          - id: c
+            text: A second model that rewrites the JSON
+        answer: a
+        feedback: The validator checks form, and the wrong date has perfect form. Catching it needs a comparison with the source, such as spot checks or a rule about the clinic's date style.
+      - id: symbolic-neural-boundaries.transfer.v2.4
+        prompt: A warehouse robot's planner is proven never to plan a route through a marked no-go zone. It still drives into a fresh spill. Why?
+        options:
+          - id: c
+            text: The planner's proof must contain a hidden error
+          - id: a
+            text: The spill was never grounded as a no-go zone
+          - id: b
+            text: Planners can only track a few zones at once
+        answer: a
+        feedback: The proof holds for the zones the planner is given. Perception never turned the spill into a no-go symbol, so the guarantee didn't cover it; the failure is at the boundary.
+      - id: symbolic-neural-boundaries.transfer.v2.5
+        prompt: A team has a language model propose thousands of timetabling heuristics and an evaluator score each on real school timetables. What does the evaluator contribute?
+        options:
+          - id: b
+            text: New ideas the language model couldn't produce
+          - id: a
+            text: A dependable score, so weak proposals are dropped
+          - id: c
+            text: Training data that makes each proposal correct
+        answer: a
+        feedback: As in FunSearch, the model supplies variety and the evaluator supplies judgment. The evaluator doesn't invent heuristics, and a score filters proposals rather than fixing them.
+  - id: symbolic-neural-boundaries.calc
+    objective_ref: objective.symbolic-neural-boundaries
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Compare each confidence with the threshold. "At or above" means a value equal to the threshold counts.
+    remediation_scene: symbolic-neural-boundaries.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: symbolic-neural-boundaries.calc.1
+        prompt: 'The house asserts motion(hallway) when a person detection has confidence at or above 0.8. Tonight''s detections: 0.91, 0.55, 0.78, 0.83. How many become facts?'
+        answer: 2
+        feedback: 0.91 and 0.83 pass. 0.78 is close but below 0.8, and 0.55 is well below.
+      - id: symbolic-neural-boundaries.calc.2
+        prompt: 'The house asserts motion(hallway) when a person detection has confidence at or above 0.7. Tonight''s detections: 0.62, 0.70, 0.95, 0.69. How many become facts?'
+        answer: 2
+        feedback: 0.70 counts because it equals the threshold, and 0.95 passes easily. 0.69 and 0.62 fall short.
+      - id: symbolic-neural-boundaries.calc.3
+        prompt: 'The house asserts motion(hallway) when a person detection has confidence at or above 0.9. Tonight''s detections: 0.88, 0.93, 0.97, 0.91, 0.40. How many become facts?'
+        answer: 3
+        feedback: 0.93, 0.97, and 0.91 pass. 0.88 and 0.40 are kept only as possible sightings.
+      - id: symbolic-neural-boundaries.calc.4
+        prompt: 'The house asserts motion(hallway) when a person detection has confidence at or above 0.5. Tonight''s detections: 0.45, 0.30. How many become facts?'
+        answer: 0
+        feedback: Both are below 0.5, so no fact is asserted and the rules never see motion, even though something may have moved.
+      - id: symbolic-neural-boundaries.calc.5
+        prompt: 'The house asserts motion(hallway) when a person detection has confidence at or above 0.6. Tonight''s detections: 0.61, 0.59, 0.60, 0.99. How many become facts?'
+        answer: 3
+        feedback: 0.61, 0.60 (equal to the threshold), and 0.99 pass. Only 0.59 falls short.

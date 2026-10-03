@@ -4,189 +4,434 @@ lesson:
   version: 0.3.0-draft
   title: Plan for traffic, failures, and ongoing resource use
   state: draft
-  summary: Keep the service useful when demand or a dependency exceeds its limits.
+  summary: Why does a server that's only 90% busy make people wait ten times longer than the work takes? Little's law, one queueing formula, and an error budget answer it.
   slot: M33.7
   category: learning
   sources:
-  - title: MLPerf Inference
-    url: https://arxiv.org/abs/1911.02549
-  - title: The ML Test Score
-    url: https://research.google/pubs/the-ml-test-score-a-rubric-for-ml-production-readiness-and-technical-debt-reduction/
+    - title: "A Proof for the Queuing Formula: L = λW (John D. C. Little, Operations Research, 1961)"
+      url: https://doi.org/10.1287/opre.9.3.383
+    - title: Google SRE Book, "Service Level Objectives"
+      url: https://sre.google/sre-book/service-level-objectives/
+    - title: Google SRE Book, "Embracing Risk" (error budgets)
+      url: https://sre.google/sre-book/embracing-risk/
+    - title: Google SRE Workbook, "Alerting on SLOs" (burn rates)
+      url: https://sre.google/workbook/alerting-on-slos/
 objectives:
-- id: objective.operational-capacity-and-reliability
-  version: 1-draft
-  statement: AI operations need capacity estimates, service objectives, failure handling, and scoped cost/resource
-    measurements; quality and reliability should be assessed at the expected traffic distribution.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - operational-capacity-and-reliability.base
-  - operational-capacity-and-reliability.transfer
-  prerequisites:
-  - anyOf:
-    - objective.ai-service-boundaries
-  - anyOf:
-    - objective.serving-metrics-and-cost
+  - id: objective.operational-capacity-and-reliability
+    version: 2-draft
+    statement: Plan capacity for an AI service using Little's law, the rise in waiting as utilization nears 1, SLOs with error budgets and burn rates, and headroom for failures and wasted work.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - operational-capacity-and-reliability.base.v2
+      - operational-capacity-and-reliability.transfer.v2
+      - operational-capacity-and-reliability.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.ai-service-boundaries
+      - anyOf:
+          - objective.serving-metrics-and-cost
 scenes:
-- id: operational-capacity-and-reliability.s1
-  title: Estimate demand and service time
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.operational-capacity-and-reliability
-  markdown: 'Traffic varies by time, request length, and tool use. A service averaging ten requests per second
-    can still receive bursts far above that rate. Capacity planning needs peak and tail behavior, batching
-    effects, and available fallback or admission policies.
+  - id: operational-capacity-and-reliability.s1
+    title: Little's law, from two numbers on a dashboard
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.operational-capacity-and-reliability
+    markdown: |-
+      To keep visitors' account data in-house, the county now runs Linden's model on its own GPU servers. Each copy of the running model, a **replica**, finishes about 4 requests a second, so each request uses about 0.25 s of its time.
 
+      On the next snow day, with chat and email both running on these servers, 5 requests a second arrived for ten minutes. A replica can't store up capacity, so the line grew by 1 request every second: 600 waiting after ten minutes, and a newcomer faced 600 ÷ 4 = 150 s of queue. When arrivals beat capacity, the queue has no steady size at all.
 
-    Suppose requests arrive at 12 per second while the service can complete only 10 per second at that workload.
-    The queue grows by roughly two requests per second while those rates persist: about 120 extra waiting requests
-    after a minute. Adding a queue stores the problem; it does not increase processing capacity.'
-  text_mode: 'Traffic varies by time, request length, and tool use. A service averaging ten requests per second
-    can still receive bursts far above that rate. Capacity planning needs peak and tail behavior, batching
-    effects, and available fallback or admission policies.
+      On an ordinary busy morning, the dashboard shows 3.6 requests arriving each second and, on average, 9 requests in the system (waiting or being served). **Little's law** links those two numbers to a third:
 
+      $$L = \lambda W$$
 
-    Suppose requests arrive at 12 per second while the service can complete only 10 per second at that workload.
-    The queue grows by roughly two requests per second while those rates persist: about 120 extra waiting requests
-    after a minute. Adding a queue stores the problem; it does not increase processing capacity.'
-  bridges: []
-- id: operational-capacity-and-reliability.s2
-  title: Define service objectives
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.operational-capacity-and-reliability
-  markdown: Choose measurable targets for availability, latency, and correct completion under a stated workload.
-    A server returning a fast error is not equivalent to completing the task. Track dependency outages, malformed
-    outputs, and quality regressions alongside ordinary infrastructure metrics.
-  text_mode: Choose measurable targets for availability, latency, and correct completion under a stated workload.
-    A server returning a fast error is not equivalent to completing the task. Track dependency outages, malformed
-    outputs, and quality regressions alongside ordinary infrastructure metrics.
-  bridges: []
-- id: operational-capacity-and-reliability.s3
-  title: Account for idle and wasted work
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.operational-capacity-and-reliability
-  markdown: Retries, rejected generations, unused replicas, and repeated retrieval all consume resources. Improving
-    cache reuse or task design can save more than a small kernel optimization in some workloads. Energy and
-    cost estimates should disclose included components and utilization assumptions.
-  text_mode: Retries, rejected generations, unused replicas, and repeated retrieval all consume resources.
-    Improving cache reuse or task design can save more than a small kernel optimization in some workloads.
-    Energy and cost estimates should disclose included components and utilization assumptions.
-  bridges: []
-- id: operational-capacity-and-reliability.s4
-  title: Practice graceful degradation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.operational-capacity-and-reliability
-  markdown: '**Graceful degradation** preserves a useful limited service during trouble, such as showing verified
-    opening hours while disabling a slower open-ended assistant. Other responses include queued completion,
-    a supported partial answer, or temporary unavailability, depending on the task. Test failure modes and
-    recovery rather than improvising during incidents. Revisit capacity after model or traffic changes, because
-    previous service measurements may no longer apply.'
-  text_mode: '**Graceful degradation** preserves a useful limited service during trouble, such as showing verified
-    opening hours while disabling a slower open-ended assistant. Other responses include queued completion,
-    a supported partial answer, or temporary unavailability, depending on the task. Test failure modes and
-    recovery rather than improvising during incidents. Revisit capacity after model or traffic changes, because
-    previous service measurements may no longer apply.'
-  bridges: []
-- id: operational-capacity-and-reliability.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.operational-capacity-and-reliability
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A queue does not create capacity. Plan for realistic demand, measure useful completion, and test
-    a limited service and recovery path for failures.
-- id: operational-capacity-and-reliability.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.operational-capacity-and-reliability
-  markdown: A queue does not create capacity. Plan for realistic demand, measure useful completion, and test
-    a limited service and recovery path for failures.
-  text_mode: A queue does not create capacity. Plan for realistic demand, measure useful completion, and test
-    a limited service and recovery path for failures.
+      $L$ is the average number of requests in the system, $\lambda$ (lambda) the arrival rate, and $W$ the average time each request spends inside. So $W = L / \lambda = 9 / 3.6 = 2.5$ s. John Little proved in 1961 that this holds for almost any stable queue, whatever the arrival pattern. But each request needs only 0.25 s of work. Where did the other 2.25 s go?
+    bridges: []
+    diagram:
+      caption: What Little's law counts. L includes requests waiting and requests being served.
+      description: Requests arrive at rate lambda, 3.6 per second, into a queue where they wait. The replica serves them at 4 per second, and they leave as answers. L, the number in the system, counts everything in the queue plus the request being served, 9 on average; W is the time from arrival to leaving, 2.5 seconds.
+      nodes:
+        - id: arrive
+          label: Arrivals
+          note: λ = 3.6 per second
+          col: 0
+          row: 0
+        - id: queue
+          label: Queue
+          note: waiting requests
+          col: 1
+          row: 0
+          tone: warn
+        - id: replica
+          label: Replica
+          note: serves 4 per second
+          col: 2
+          row: 0
+          tone: accent
+        - id: done
+          label: Answers
+          col: 3
+          row: 0
+          tone: data
+        - id: count
+          label: L = 9 in the system
+          note: queue + in service; W = 2.5 s
+          col: 1
+          row: 1
+          tone: muted
+      edges:
+        - from: arrive
+          to: queue
+        - from: queue
+          to: replica
+        - from: replica
+          to: done
+        - from: count
+          to: queue
+          dashed: true
+  - id: operational-capacity-and-reliability.mm1
+    title: Why 90% busy feels broken
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.operational-capacity-and-reliability
+    markdown: |-
+      **Utilization**, written $\rho$ (rho), is the fraction of time the replica is busy: $\rho = \lambda / \mu$, where $\mu$ is its service rate. That morning, $\rho = 3.6 / 4 = 0.9$.
+
+      Requests don't arrive evenly. Sometimes three come at once and queue while the replica is busy; sometimes it sits idle, and idle time can't be saved for later. The simplest queueing model, **M/M/1** (random arrivals, random service times, one server), gives the average time in the system:
+
+      $$W = \frac{1}{\mu - \lambda} = \frac{1/\mu}{1 - \rho}$$
+
+      At $\rho = 0.9$: $W = 0.25 / 0.1 = 2.5$ s, exactly what Little's law found. The factor $1/(1-\rho)$ is the whole story:
+
+      | $\rho$ | 0.5 | 0.8 | 0.9 | 0.95 | 0.99 |
+      | --- | ---: | ---: | ---: | ---: | ---: |
+      | $W$ (s) | 0.5 | 1.25 | 2.5 | 5 | 25 |
+
+      ```python run
+      import random
+
+      random.seed(1)
+      mu = 4.0                     # the replica finishes 4 requests a second on average
+
+      def simulate(lam, n=100_000):
+          """Average time in system for one server, random arrivals and service times."""
+          clock = free_at = total = 0.0
+          for _ in range(n):
+              clock += random.expovariate(lam)          # next arrival
+              start = max(clock, free_at)               # wait if the server is busy
+              free_at = start + random.expovariate(mu)  # finish time
+              total += free_at - clock
+          return total / n
+
+      print(" rho  arrivals/s  formula W  simulated W")
+      for rho in [0.5, 0.8, 0.9, 0.95]:
+          lam = rho * mu
+          print(f"{rho:4}  {lam:10.2f}  {1 / (mu - lam):8.2f} s  {simulate(lam):9.2f} s")
+      ```
+
+      The simulation lands close to the formula; near $\rho = 1$ it needs far more requests to settle. Try adding 0.98 to the list.
+
+      :::predict At 90% busy, traffic grows about 5%, from 3.6 to 3.8 requests a second. What happens to W?
+      It doubles, from 2.5 s to 5 s, because $1 - \rho$ halves from 0.1 to 0.05. Near full load, a small rise in traffic causes a huge rise in waiting. Real model servers batch requests, so they aren't exactly M/M/1, but the shape of this curve holds for any queue with random arrivals.
+      :::
+
+      :::mixup "90% utilization means we still have 10% spare capacity."
+      On paper, yes. In waiting time, the last 10% is the most expensive capacity you have. Many teams plan for about 60–80% at peak for exactly this reason.
+      :::
+  - id: operational-capacity-and-reliability.s2
+    title: Write an SLO, then spend the error budget
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.operational-capacity-and-reliability
+    markdown: |-
+      A **service level indicator (SLI)** is a measured quantity; a **service level objective (SLO)** is a target for it, in the terms of Google's *Site Reliability Engineering* book. Linden's SLI is the share of requests that get a contract-valid answer, or a proper fallback, within 4 s. A fast error page doesn't count as good. The SLO: 99.9% good over 30 days.
+
+      The **error budget** is the 0.1% the SLO allows to go wrong. Over 30 days that's 30 × 24 × 60 × 0.001 = **43.2 minutes** of full outage, or, at 300,000 requests a month, 300 bad requests. The **burn rate** is how fast you're spending it: the current bad rate divided by the allowed one.
+
+      ```python run
+      slo = 0.999                  # 99.9% of requests must be good
+      days = 30
+      requests = 300_000           # requests in 30 days
+
+      budget_minutes = days * 24 * 60 * (1 - slo)
+      budget_requests = requests * (1 - slo)
+      print(f"error budget: {budget_minutes:.1f} minutes, or {budget_requests:.0f} bad requests")
+
+      # an incident: 5% of requests fail for 2 hours
+      bad_rate, hours = 0.05, 2
+      per_hour = requests / (days * 24)
+      spent = per_hour * hours * bad_rate
+      burn = bad_rate / (1 - slo)
+      print(f"incident used {spent:.0f} bad requests = {spent / budget_requests:.0%} of the budget")
+      print(f"burn rate {burn:.0f}x: the whole budget would be gone in {days * 24 / burn:.1f} hours")
+      ```
+
+      Failing 5% of requests for two hours used 14% of the budget. That incident's burn rate was 50, so a month's budget would be gone in 14.4 hours at that pace. Google's *SRE Workbook* suggests paging someone when the burn rate over the last hour reaches 14.4, which spends 2% of a 30-day budget in that one hour. The budget also settles arguments. While it lasts, the team ships changes; once it's spent, risky releases wait until reliability recovers. Try `slo = 0.9999` and watch the budget shrink to 4.3 minutes.
+    bridges: []
+  - id: operational-capacity-and-reliability.s3
+    title: Plan capacity with headroom
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.operational-capacity-and-reliability
+    markdown: |-
+      **Capacity planning** means choosing how many replicas to run for the peak you expect. Linden's worked plan:
+
+      | Step | Number |
+      | --- | --- |
+      | Peak forecast: last snow day's 5 requests/s plus 20% growth | 6 /s |
+      | Wasted work: retries and rejected outputs add 10% | 6.6 /s |
+      | Target utilization at peak | 0.7 |
+      | Each replica may carry 4 × 0.7 | 2.8 /s |
+      | Replicas: 6.6 ÷ 2.8 = 2.36, round up | 3 |
+      | One spare, in case a replica fails on the busiest day | 4 |
+
+      With 4 replicas, peak utilization is 6.6 ÷ 16 ≈ 0.41, and 0.55 if one fails. Without the spare, a failure would push the other two to about 0.83, and time in the system from about 0.6 s to about 1.4 s.
+
+      The wasted-work row is easy to forget. Every retry, and every reply the output check rejects and regenerates, uses a replica exactly like a useful answer. Cutting that waste is capacity you don't have to buy.
+    bridges: []
+  - id: operational-capacity-and-reliability.s4
+    title: When demand beats even the plan, shed load
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.operational-capacity-and-reliability
+    markdown: |-
+      Some days will exceed any plan. Letting the queue grow without limit guarantees that *everyone* waits past the deadline. **Load shedding** refuses some work early so the rest is served on time. Linden's rule: if the queue already holds more than 4 s of work (16 requests per healthy replica), new questions skip the model and go straight to the fallback ladder from the lesson on service boundaries, the closures-page passage or the front desk number. A true fallback in half a second counts as good in the SLI; a full answer in 40 seconds doesn't.
+
+      Rerun the load test and redo this plan whenever the model, the prompt length, or the traffic changes. Every number above came from measurements that a change can quietly invalidate.
+    bridges: []
+  - id: operational-capacity-and-reliability.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.operational-capacity-and-reliability
+    markdown: A call center, a payments API, a service burning its budget, a replica count, and a handful of Little's-law and error-budget sums test whether you can plan for load.
+    takeaway: Little's law (L = λW) turns dashboard numbers into waiting time, and waiting explodes as utilization nears 1, so plan for about 70% at peak plus a spare. Write an SLO, track its error budget and burn rate, and shed load to a true fallback rather than let everyone wait.
+  - id: operational-capacity-and-reliability.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.operational-capacity-and-reliability
+    markdown: |-
+      A queue does not create capacity. Plan for realistic demand, measure useful completion, and test a limited service and recovery path for failures.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - operational-capacity-and-reliability.s1
-    - operational-capacity-and-reliability.s2
-    - operational-capacity-and-reliability.s3
-    - operational-capacity-and-reliability.s4
-    - operational-capacity-and-reliability.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - operational-capacity-and-reliability.s1
+        - operational-capacity-and-reliability.mm1
+        - operational-capacity-and-reliability.s2
+        - operational-capacity-and-reliability.s3
+        - operational-capacity-and-reliability.s4
+        - operational-capacity-and-reliability.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     operational-capacity-and-reliability.recap: operational-capacity-and-reliability.check
 assessment_families:
-- id: operational-capacity-and-reliability.base
-  objective_ref: objective.operational-capacity-and-reliability
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Define service objectives: trace the inputs, operation, and result before choosing.'
-  remediation_scene: operational-capacity-and-reliability.s2
-  variants:
-  - id: operational-capacity-and-reliability.base.1
-    prompt: Why is average request rate insufficient for capacity planning?
-    options:
-    - id: b
-      text: Every request has identical cost
-    - id: c
-      text: Only total parameter count matters
-    - id: a
-      text: Bursts and variable work can dominate queues and tails
-    answer: a
-    feedback: Demand distribution affects service behavior.
-  - id: operational-capacity-and-reliability.base.2
-    prompt: Does a fast error response equal successful task latency?
-    options:
-    - id: c
-      text: Only if HTTP returns a response
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Service success must include the intended outcome.
-- id: operational-capacity-and-reliability.transfer
-  objective_ref: objective.operational-capacity-and-reliability
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Practice graceful degradation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: operational-capacity-and-reliability.s4
-  variants:
-  - id: operational-capacity-and-reliability.transfer.1
-    prompt: Should retries and discarded generations count toward resource cost?
-    options:
-    - id: c
-      text: Only if the user sees them
-    - id: a
-      text: 'Yes'
-    - id: b
-      text: 'No'
-    answer: a
-    feedback: Unsuccessful work still consumes resources.
-  - id: operational-capacity-and-reliability.transfer.2
-    prompt: What makes fallback behavior useful?
-    options:
-    - id: a
-      text: It is tested and appropriate to the task’s quality and failure constraints
-    - id: b
-      text: It always invents an answer
-    - id: c
-      text: It hides every outage
-    answer: a
-    feedback: Graceful degradation preserves clear and bounded behavior.
+  - id: operational-capacity-and-reliability.base
+    objective_ref: objective.operational-capacity-and-reliability
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Define service objectives: trace the inputs, operation, and result before choosing.'
+    remediation_scene: operational-capacity-and-reliability.s2
+    variants:
+      - id: operational-capacity-and-reliability.base.1
+        prompt: Why is average request rate insufficient for capacity planning?
+        options:
+          - id: b
+            text: Every request has identical cost
+          - id: c
+            text: Only total parameter count matters
+          - id: a
+            text: Bursts and variable work can dominate queues and tails
+        answer: a
+        feedback: Demand distribution affects service behavior.
+        retired: true
+      - id: operational-capacity-and-reliability.base.2
+        prompt: Does a fast error response equal successful task latency?
+        options:
+          - id: c
+            text: Only if HTTP returns a response
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Service success must include the intended outcome.
+        retired: true
+  - id: operational-capacity-and-reliability.transfer
+    objective_ref: objective.operational-capacity-and-reliability
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Practice graceful degradation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: operational-capacity-and-reliability.s4
+    variants:
+      - id: operational-capacity-and-reliability.transfer.1
+        prompt: Should retries and discarded generations count toward resource cost?
+        options:
+          - id: c
+            text: Only if the user sees them
+          - id: a
+            text: 'Yes'
+          - id: b
+            text: 'No'
+        answer: a
+        feedback: Unsuccessful work still consumes resources.
+        retired: true
+      - id: operational-capacity-and-reliability.transfer.2
+        prompt: What makes fallback behavior useful?
+        options:
+          - id: a
+            text: It is tested and appropriate to the task’s quality and failure constraints
+          - id: b
+            text: It always invents an answer
+          - id: c
+            text: It hides every outage
+        answer: a
+        feedback: Graceful degradation preserves clear and bounded behavior.
+        retired: true
+  - id: operational-capacity-and-reliability.base.v2
+    objective_ref: objective.operational-capacity-and-reliability
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: L = λW links requests in the system, arrival rate, and time inside. Waiting grows like 1/(1 − ρ) as utilization ρ nears 1. Only requests that meet the SLI's definition of good count as good.
+    remediation_scene: operational-capacity-and-reliability.mm1
+    variants:
+      - id: operational-capacity-and-reliability.base.v2.1
+        prompt: A replica is 90% busy, and requests spend 2.5 s in the system on average. Traffic grows until it is 95% busy. In the M/M/1 model, roughly what happens to the time in the system?
+        options:
+          - id: b
+            text: It rises about 5%, to roughly 2.6 s
+          - id: a
+            text: It roughly doubles, to about 5 s
+          - id: c
+            text: It holds steady until the replica is full
+        answer: a
+        feedback: Time in the system scales with 1/(1 − ρ), and 1 − ρ halves from 0.1 to 0.05, so W doubles. Assuming waits grow in step with traffic is the classic mistake; near full load they grow much faster.
+      - id: operational-capacity-and-reliability.base.v2.2
+        prompt: A service averages 20 requests in the system while 5 new requests arrive each second. What is the average time a request spends in the system?
+        options:
+          - id: c
+            text: 0.25 s, from 5 ÷ 20
+          - id: b
+            text: 100 s, from 20 × 5
+          - id: a
+            text: 4 s, from 20 ÷ 5
+        answer: a
+        feedback: Little's law gives W = L / λ = 20 / 5 = 4 s. Multiplying gives the wrong units (requests squared per second), and 5 ÷ 20 inverts the relationship.
+      - id: operational-capacity-and-reliability.base.v2.3
+        prompt: The SLI is "the share of requests that get a valid answer or a proper fallback within 4 s." Which request counts as good?
+        options:
+          - id: a
+            text: A correct fallback passage delivered in 3.4 s
+          - id: b
+            text: An error page delivered in 0.2 s
+          - id: c
+            text: A full, correct answer delivered in 6 s
+        answer: a
+        feedback: A good request must be both acceptable and on time. The fast error page fails the first test, and the 6-second answer fails the second, however good it is.
+      - id: operational-capacity-and-reliability.base.v2.4
+        prompt: Requests arrive at 5 a second for 10 minutes, but the service completes only 4 a second. Roughly how many are waiting at the end?
+        options:
+          - id: b
+            text: About 60, one extra for each 10 s
+          - id: a
+            text: About 600, one extra each second
+          - id: c
+            text: None, as the queue absorbs the burst
+        answer: a
+        feedback: The queue grows by 5 − 4 = 1 request per second, so 600 seconds leaves about 600 waiting. A queue stores the excess; it doesn't add capacity.
+  - id: operational-capacity-and-reliability.transfer.v2
+    objective_ref: objective.operational-capacity-and-reliability
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Translate the situation into λ, W, ρ, or an error budget, then ask what the numbers imply about waiting, spending, or replicas.
+    remediation_scene: operational-capacity-and-reliability.s3
+    variants:
+      - id: operational-capacity-and-reliability.transfer.v2.1
+        prompt: A call center's agents are busy 97% of the time. Each call lasts about 4 minutes, yet callers wait around 20 minutes on hold. What explains the long holds?
+        options:
+          - id: a
+            text: At 97% busy, random arrivals make waits far longer than a call
+          - id: b
+            text: The agents must be taking far longer than 4 minutes per call
+          - id: c
+            text: Callers must be arriving in evenly spaced groups every hour
+        answer: a
+        feedback: Near full utilization, waiting grows like 1/(1 − ρ), so a 4-minute job can mean a 20-minute wait with no one working slowly. Evenly spaced arrivals would actually shorten waits; randomness is what creates the queue.
+      - id: operational-capacity-and-reliability.transfer.v2.2
+        prompt: A payments API has an SLO of 99.95% over 30 days. How much full outage does its error budget allow?
+        options:
+          - id: c
+            text: About 3.6 minutes
+          - id: a
+            text: About 21.6 minutes
+          - id: b
+            text: About 43.2 minutes
+        answer: a
+        feedback: 30 × 24 × 60 = 43,200 minutes, × 0.0005 = 21.6 minutes. 43.2 minutes is the budget for 99.9%, twice as generous.
+      - id: operational-capacity-and-reliability.transfer.v2.3
+        prompt: A service with a 99.9% SLO is failing 2% of its requests right now. What is the burn rate, and what does it mean for a 30-day budget?
+        options:
+          - id: b
+            text: 2, so the budget would last about 15 days
+          - id: c
+            text: 0.02, so the budget is barely being touched
+          - id: a
+            text: 20, so the budget would last about 1.5 days
+        answer: a
+        feedback: Burn rate = 2% ÷ 0.1% = 20, and 30 days ÷ 20 = 1.5 days. Reading 2% as a burn rate of 2 forgets to divide by the allowed 0.1%.
+      - id: operational-capacity-and-reliability.transfer.v2.4
+        prompt: A translation service expects a peak of 9 requests a second. Each replica handles 3 a second, and the team targets 75% utilization. How many replicas does it need before adding a spare?
+        options:
+          - id: a
+            text: 4, since each may carry 2.25 a second
+          - id: b
+            text: 3, since 3 × 3 covers the 9 a second
+          - id: c
+            text: 12, since 9 ÷ 0.75 is 12 replicas
+        answer: a
+        feedback: Each replica may carry 3 × 0.75 = 2.25 a second, and 9 ÷ 2.25 = 4. Three replicas would run at 100%, where waits explode, and 9 ÷ 0.75 = 12 is a rate, not a replica count.
+  - id: operational-capacity-and-reliability.calc.v2
+    objective_ref: objective.operational-capacity-and-reliability
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Little's law is L = λW. An error budget is (1 − SLO) × the period or × the request count. In M/M/1, W = 1/(μ − λ).
+    remediation_scene: operational-capacity-and-reliability.s2
+    absolute_tolerance: 0.05
+    variants:
+      - id: operational-capacity-and-reliability.calc.v2.1
+        prompt: Requests arrive at 8 a second and each spends 1.5 s in the system on average. How many requests are in the system on average?
+        answer: 12
+        feedback: L = λW = 8 × 1.5 = 12 requests, counting both waiting and in service.
+      - id: operational-capacity-and-reliability.calc.v2.2
+        prompt: A dashboard shows 30 requests in the system on average and 6 arriving per second. What is the average time in the system, in seconds?
+        answer: 5
+        feedback: W = L / λ = 30 / 6 = 5 s.
+      - id: operational-capacity-and-reliability.calc.v2.3
+        prompt: An SLO is 99.5% over 30 days. How many minutes of full outage does the error budget allow?
+        answer: 216
+        feedback: 30 × 24 × 60 = 43,200 minutes, and 0.5% of that is 216 minutes, about 3.6 hours.
+      - id: operational-capacity-and-reliability.calc.v2.4
+        prompt: A service handles 2,000,000 requests a month with an SLO of 99.9% good requests. How many bad requests does the monthly error budget allow?
+        answer: 2000
+        feedback: 0.1% of 2,000,000 = 2,000 bad requests a month.
+      - id: operational-capacity-and-reliability.calc.v2.5
+        prompt: In the M/M/1 model, a server completes 10 requests a second on average and 8 arrive each second. What is the average time in the system, in seconds?
+        answer: 0.5
+        feedback: W = 1/(μ − λ) = 1/(10 − 8) = 0.5 s, five times the 0.1 s of work each request needs, because the server is 80% busy.

@@ -1,213 +1,430 @@
 schema_version: 0.2-draft
 lesson:
   id: feedback-and-robot-control
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Correct motion using measured error
   state: draft
-  summary: Correct a robot’s motion by comparing what happened with what was intended.
+  summary: Tidy's lift stops 8 cm short of the shelf every time, and turning up the gain makes it bounce. Three small terms, P, I, and D, explain both.
   slot: M30.2
   category: learning
   sources:
-  - title: Modern Robotics — authors’ textbook and resources
-    url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
+    - title: Modern Robotics — authors’ textbook and resources
+      url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
+    - title: "Feedback Systems: An Introduction for Scientists and Engineers (Åström & Murray), free online edition"
+      url: https://fbswiki.org/wiki/index.php/Feedback_Systems:_An_Introduction_for_Scientists_and_Engineers
 objectives:
-- id: objective.feedback-and-robot-control
-  version: 1-draft
-  statement: Feedback control adjusts actions from state error; PID, optimal control, and model predictive
-    control make different assumptions about dynamics, costs, constraints, and prediction.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - feedback-and-robot-control.base
-  - feedback-and-robot-control.transfer
-  prerequisites:
-  - anyOf:
-    - objective.robot-sensors-and-frames
-  - anyOf:
-    - objective.dynamics-and-noise
+  - id: objective.feedback-and-robot-control
+    version: 2-draft
+    statement: Contrast open- and closed-loop control, compute a PID output by hand, explain steady-state error, overshoot, and integral windup, and describe how model predictive control plans over a horizon and replans.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - feedback-and-robot-control.base.v2
+      - feedback-and-robot-control.transfer.v2
+      - feedback-and-robot-control.calculate
+    prerequisites:
+      - anyOf:
+          - objective.robot-sensors-and-frames
+      - anyOf:
+          - objective.dynamics-and-noise
 scenes:
-- id: feedback-and-robot-control.s1
-  title: Close the feedback loop
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.feedback-and-robot-control
-  markdown: An open-loop command runs without checking the resulting state. Feedback compares a desired state
-    with measured or estimated state and adjusts control. Disturbances, delay, noise, and actuator saturation
-    influence whether the loop tracks its target stably.
-  text_mode: An open-loop command runs without checking the resulting state. Feedback compares a desired state
-    with measured or estimated state and adjusts control. Disturbances, delay, noise, and actuator saturation
-    influence whether the loop tracks its target stably.
-  bridges: []
-- id: feedback-and-robot-control.s2
-  title: Interpret the PID terms
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.feedback-and-robot-control
-  markdown: '**PID** stands for **proportional–integral–derivative** control. Its three terms respond to current
-    error, accumulated error, and the rate at which error changes.
+  - id: feedback-and-robot-control.s1
+    title: The lift that worked until the mug was full
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.feedback-and-robot-control
+    markdown: |-
+      Tidy, our kitchen robot, has a lift: a carriage that slides the arm up its column to reach the shelf at 0.30 m. In testing, "run the motor at half power for 1.2 seconds" landed the empty gripper exactly on 0.30 m. Then Tidy picked up a full mug, and the same command stopped 4 cm low. On a cold morning, with stiffer grease, it stopped 6 cm low.
 
+      That command was **open loop**: it runs without checking the result. It works only as long as the world matches the test.
 
-    If the target position is 5 and the measured position is 3, the error is 2. With proportional gain 0.5,
-    the proportional contribution is 1 under this toy convention.
+      The fix is to measure and correct. A **closed-loop** (feedback) controller reads the lift's height from the joint encoder, compares it with the target, and sets the motor from the difference, the **error**, many times a second. A full mug or stiff grease now just means the error stays bigger for longer, and the controller keeps pushing.
 
+      The physical system being controlled is called the **plant**; here, the carriage, its motor, and whatever it carries. Anything that pushes the plant off course, like the mug's weight, is a **disturbance**.
+    diagram:
+      caption: A feedback loop. The controller sees only the error; the sensor closes the loop.
+      description: The target height and the measured height meet at a comparison, which produces the error. The error goes to the controller, which sends a motor force to the lift (the plant). A disturbance, the mug's weight, also acts on the lift. The joint encoder measures the lift's height and feeds it back to the comparison.
+      nodes:
+        - id: target
+          label: Target height
+          note: 0.30 m
+          col: 0
+          row: 0
+          tone: muted
+        - id: compare
+          label: Compare
+          note: error = target − measured
+          col: 1
+          row: 0
+          tone: accent
+        - id: controller
+          label: Controller (PID)
+          col: 2
+          row: 0
+        - id: plant
+          label: Lift (the plant)
+          col: 3
+          row: 0
+        - id: disturb
+          label: Disturbance
+          note: mug weight, stiff grease
+          col: 3
+          row: 1
+          tone: warn
+        - id: sensor
+          label: Joint encoder
+          note: measures height
+          col: 2
+          row: 1
+          tone: data
+      edges:
+        - from: target
+          to: compare
+        - from: compare
+          to: controller
+          label: error
+        - from: controller
+          to: plant
+          label: motor force
+        - from: disturb
+          to: plant
+          dashed: true
+        - from: plant
+          to: sensor
+        - from: sensor
+          to: compare
+          label: measured height
+    bridges: []
+  - id: feedback-and-robot-control.s2
+    title: Three reasons to push
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.feedback-and-robot-control
+    markdown: |-
+      The workhorse of robot control is **PID**, short for **proportional–integral–derivative**. It adds three reasons to push:
 
-    Now consider errors [2, 1, 1] measured one second apart. A simple accumulated-error estimate is (2 + 1
-    + 1) × 1 second = 4 error-seconds. The latest rate estimate is (1 − 1)/1 second = 0. Separate gains multiply
-    the three quantities. Integrals and derivatives describe accumulation and change in continuous time; the
-    side lessons explain those ideas.'
-  text_mode: '**PID** stands for **proportional–integral–derivative** control. Its three terms respond to current
-    error, accumulated error, and the rate at which error changes.
+      | Term | Reacts to | Plain meaning |
+      | --- | --- | --- |
+      | P, proportional | The error now | Far from the target? Push harder. |
+      | I, integral | Error added up over time | Been short for a while? Push harder still. |
+      | D, derivative | How fast the error is changing | Closing in fast? Brake. |
 
+      Work one update of Tidy's lift, 100 times a second ($\Delta t = 0.01$ s). The target is 0.30 m and the carriage is at 0.26 m, so the error is $e = 0.04$ m. The gains are $K_p = 25$, $K_i = 30$, $K_d = 0.5$.
 
-    If the target position is 5 and the measured position is 3, the error is 2. With proportional gain 0.5,
-    the proportional contribution is 1 under this toy convention.
+      - **P:** $25 \times 0.04 = 1.0$ N.
+      - **I:** the errors so far add up to 0.05 m·s, so $30 \times 0.05 = 1.5$ N.
+      - **D:** a step ago the error was 0.05, so it's shrinking at $(0.04 - 0.05)/0.01 = -1.0$ m/s, and $0.5 \times (-1.0) = -0.5$ N.
 
+      The motor force is $1.0 + 1.5 - 0.5 = 2.0$ N. The D term is negative: the carriage is rising fast, so the controller eases off before it arrives.
 
-    Now consider errors [2, 1, 1] measured one second apart. A simple accumulated-error estimate is (2 + 1
-    + 1) × 1 second = 4 error-seconds. The latest rate estimate is (1 − 1)/1 second = 0. Separate gains multiply
-    the three quantities. Integrals and derivatives describe accumulation and change in continuous time; the
-    side lessons explain those ideas.'
-  bridges:
-  - dynamics-and-noise
-  - integrals-density
-  - derivatives
-- id: feedback-and-robot-control.s3
-  title: Understand stability and limits
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.feedback-and-robot-control
-  markdown: 'The **plant** is the physical system being controlled. Useful gains depend on its dynamics and
-    the loop''s timing.
+      :::papers The PID law
+      $$u(t) = K_p\, e(t) + K_i \int_0^t e(\tau)\, d\tau + K_d \frac{de(t)}{dt}$$
 
+      $u$ is the command (our 2.0 N), and $e$ is target minus measured. A computer uses sums and differences: $\int e \approx \sum e_k \Delta t$ (our 0.05 m·s) and $de/dt \approx (e_k - e_{k-1})/\Delta t$ (our −1.0 m/s).
+      :::
+    bridges:
+      - dynamics-and-noise
+      - integrals-density
+      - derivatives
+  - id: feedback-and-robot-control.s3
+    title: Short, bouncy, or wound up
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.feedback-and-robot-control
+    markdown: |-
+      The mug and arm pull down on the carriage with a steady 2 N. Try P alone with $K_p = 25$. When the lift comes to rest, the motor must push exactly 2 N to hold it, and P only pushes when there is error: $25 \times e = 2$, so $e = 0.08$ m. The lift settles at 0.22 m, forever 8 cm short. That leftover gap is called **steady-state error**.
 
-    High gains can react quickly but cause overshoot or amplify noise. If an actuator reaches its output limit
-    while the integral term continues accumulating, **integral windup** can cause a large overshoot later.
-    Derivative estimates are also sensitive to noisy measurements.
+      :::predict Raise the gain to K_p = 400. Where does the lift settle, and what happens on the way?
+      At rest, $400 \times e = 2$ gives $e = 0.005$ m, so it settles at 0.295 m. But the big push builds up speed, and the carriage shoots past the target to 0.421 m before coming back: **overshoot**. High gain trades error for bounce.
+      :::
 
+      The I term fixes the gap properly: while any error remains, the integral keeps growing until it alone supplies the 2 N. Now suppose the motor can push at most 4 N. On the long, slow climb it's pinned at 4 N, yet the integral keeps piling up error it can't act on. By the time the lift arrives, the integral is huge and shoves the carriage far past the target. That's **integral windup**. The standard fix, **anti-windup**, freezes the integral while the motor is at its limit.
 
-    These examples explain the roles of the terms. They do not provide gain settings that can be transferred
-    directly to hardware.'
-  text_mode: 'The **plant** is the physical system being controlled. Useful gains depend on its dynamics and
-    the loop''s timing.
+      ```python run
+      def simulate(kp, ki=0.0, u_max=100.0, anti_windup=False, target=0.30):
+          """Tidy's lift: 1 kg carriage, 2 N net load, friction 10 N per m/s."""
+          x, v, integral, dt, peak = 0.0, 0.0, 0.0, 0.01, 0.0
+          for _ in range(600):                          # 6 seconds, 100 updates per second
+              err = target - x
+              u_raw = kp * err + ki * integral
+              u = max(-u_max, min(u_max, u_raw))        # the motor's force limit
+              if not (anti_windup and u != u_raw):      # anti-windup: freeze the integral while saturated
+                  integral += err * dt
+              v += (u - 2.0 - 10.0 * v) * dt            # net force = mass x acceleration
+              x += v * dt
+              peak = max(peak, x)
+          return x, peak
 
+      runs = [("P, gain 25          ", dict(kp=25)),
+              ("P, gain 400         ", dict(kp=400)),
+              ("PI (25, 30)         ", dict(kp=25, ki=30)),
+              ("PI, 4 N motor       ", dict(kp=25, ki=30, u_max=4)),
+              ("PI, 4 N, anti-windup", dict(kp=25, ki=30, u_max=4, anti_windup=True))]
+      for name, settings in runs:
+          final, peak = simulate(**settings)
+          print(f"{name}  final {final:.3f} m   peak {peak:.3f} m")
+      ```
 
-    High gains can react quickly but cause overshoot or amplify noise. If an actuator reaches its output limit
-    while the integral term continues accumulating, **integral windup** can cause a large overshoot later.
-    Derivative estimates are also sensitive to noisy measurements.
+      The PI controller ends at exactly 0.300 m. With the 4 N motor the peak jumps from 0.345 m to 0.450 m; anti-windup brings it back to 0.309 m. Try `u_max=3`, or raise `ki` to 100 and watch the bounce grow.
 
+      :::mixup "If it's slow, turn the gains up; more gain is always more accurate."
+      More gain shrinks the P-only gap but brings overshoot, and on a real robot the sensor delay makes very high gains oscillate or go unstable. D helps brake, but it differentiates noise too: a 1 mm encoder jitter between readings 10 ms apart looks like 0.1 m/s. Tune gains on the real plant, in small steps.
+      :::
+    bridges: []
+  - id: feedback-and-robot-control.s4
+    title: "Plan ahead, take one step, plan again"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.feedback-and-robot-control
+    markdown: |-
+      PID reacts to the error it has now. Tidy's base, driving up to the table, needs to think ahead: it must stop 5 cm from the edge, never exceed 0.5 m/s, and never brake harder than its wheels can grip.
 
-    These examples explain the roles of the terms. They do not provide gain settings that can be transferred
-    directly to hardware.'
-  bridges: []
-- id: feedback-and-robot-control.s4
-  title: Optimize future motion
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.feedback-and-robot-control
-  markdown: Optimal control selects actions using a dynamics model and cost. Model predictive control solves
-    a finite-horizon constrained problem, executes part, and replans. It can express motion and actuator constraints,
-    but performance depends on model accuracy, optimization time, and state estimates.
-  text_mode: Optimal control selects actions using a dynamics model and cost. Model predictive control solves
-    a finite-horizon constrained problem, executes part, and replans. It can express motion and actuator constraints,
-    but performance depends on model accuracy, optimization time, and state estimates.
-  bridges: []
-- id: feedback-and-robot-control.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.feedback-and-robot-control
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Feedback compares intended and measured behavior, then adjusts the command. The controller must
-    account for dynamics, delay, noise, and actuator limits.
-- id: feedback-and-robot-control.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.feedback-and-robot-control
-  markdown: Feedback compares intended and measured behavior, then adjusts the command. The controller must
-    account for dynamics, delay, noise, and actuator limits.
-  text_mode: Feedback compares intended and measured behavior, then adjusts the command. The controller must
-    account for dynamics, delay, noise, and actuator limits.
+      **Model predictive control (MPC)** handles this with a loop:
+
+      1. Use a model of the base to predict where each possible sequence of the next, say, 20 commands would take it, over the next 2 seconds (the **horizon**).
+      2. Pick the sequence with the lowest cost (distance from the stopping point, plus jerky commands) that obeys every limit.
+      3. Apply only the *first* command. Throw the rest away.
+      4. Measure the new state 0.1 s later and solve again.
+
+      Because it re-solves every step, MPC is still feedback: if someone steps in front of Tidy, the next plan accounts for them. The price is computation: an optimization must finish every 0.1 s, and plans are only as good as the model.
+
+      :::papers The MPC problem, solved at every step
+      $$\min_{u_0,\dots,u_{N-1}} \sum_{k=0}^{N-1} \big( \|x_k - x^*\|_Q^2 + \|u_k\|_R^2 \big) \quad \text{s.t.} \quad x_{k+1} = f(x_k, u_k),\;\; u_{\min} \le u_k \le u_{\max}$$
+
+      $x_k$ is the predicted state (position, speed), $x^*$ the target, $u_k$ the commands, and $N = 20$ the horizon. $Q$ and $R$ weigh "get there" against "go gently". Only $u_0$ is sent to the motors. With linear dynamics, a quadratic cost, no limits, and an endless horizon, the answer reduces to a fixed feedback gain: the **linear–quadratic regulator (LQR)**.
+      :::
+    bridges: []
+  - id: feedback-and-robot-control.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.feedback-and-robot-control
+    markdown: Compute a few PID outputs by hand, then tune a car's cruise control, a climbing drone, a conveyor pusher, and a shuttle stopping at a crosswalk.
+    takeaway: |-
+      Feedback pushes on the measured error: P on how far off, I on how long, D on how fast it's changing. Too little I leaves a gap, too much gain bounces, and a saturated motor needs anti-windup; MPC plans ahead and replans each step.
+  - id: feedback-and-robot-control.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.feedback-and-robot-control
+    markdown: |-
+      Feedback compares intended and measured behavior, then adjusts the command. The controller must account for dynamics, delay, noise, and actuator limits.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - feedback-and-robot-control.s1
-    - feedback-and-robot-control.s2
-    - feedback-and-robot-control.s3
-    - feedback-and-robot-control.s4
-    - feedback-and-robot-control.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - feedback-and-robot-control.s1
+        - feedback-and-robot-control.s2
+        - feedback-and-robot-control.s3
+        - feedback-and-robot-control.s4
+        - feedback-and-robot-control.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     feedback-and-robot-control.recap: feedback-and-robot-control.check
 assessment_families:
-- id: feedback-and-robot-control.base
-  objective_ref: objective.feedback-and-robot-control
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Interpret the PID terms: trace the inputs, operation, and result before choosing.'
-  remediation_scene: feedback-and-robot-control.s2
-  variants:
-  - id: feedback-and-robot-control.base.1
-    prompt: Target 5, measured 3, proportional gain 0.5 gives proportional contribution what?
-    options:
-    - id: c
-      text: '2.5'
-    - id: a
-      text: '1'
-    - id: b
-      text: '4'
-    answer: a
-    feedback: Error two is multiplied by one-half.
-  - id: feedback-and-robot-control.base.2
-    prompt: Which PID term accumulates past error?
-    options:
-    - id: a
-      text: Integral
-    - id: b
-      text: Proportional
-    - id: c
-      text: Derivative
-    answer: a
-    feedback: The integral term sums error over time.
-- id: feedback-and-robot-control.transfer
-  objective_ref: objective.feedback-and-robot-control
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Optimize future motion: trace the inputs, operation, and result before choosing.'
-  remediation_scene: feedback-and-robot-control.s4
-  variants:
-  - id: feedback-and-robot-control.transfer.1
-    prompt: Can increasing controller gain harm stability?
-    options:
-    - id: a
-      text: 'Yes'
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if there are no sensors
-    answer: a
-    feedback: Aggressive feedback interacts with delay and dynamics.
-  - id: feedback-and-robot-control.transfer.2
-    prompt: What does model predictive control repeatedly do?
-    options:
-    - id: b
-      text: Ignore new observations forever
-    - id: c
-      text: Guarantee exact dynamics
-    - id: a
-      text: Plan over a horizon, act partially, then replan
-    answer: a
-    feedback: Receding-horizon feedback incorporates updated state.
+  - id: feedback-and-robot-control.base
+    objective_ref: objective.feedback-and-robot-control
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Interpret the PID terms: trace the inputs, operation, and result before choosing.'
+    remediation_scene: feedback-and-robot-control.s2
+    variants:
+      - id: feedback-and-robot-control.base.1
+        prompt: Target 5, measured 3, proportional gain 0.5 gives proportional contribution what?
+        options:
+          - id: c
+            text: '2.5'
+          - id: a
+            text: '1'
+          - id: b
+            text: '4'
+        answer: a
+        feedback: Error two is multiplied by one-half.
+        retired: true
+      - id: feedback-and-robot-control.base.2
+        prompt: Which PID term accumulates past error?
+        options:
+          - id: a
+            text: Integral
+          - id: b
+            text: Proportional
+          - id: c
+            text: Derivative
+        answer: a
+        feedback: The integral term sums error over time.
+        retired: true
+  - id: feedback-and-robot-control.transfer
+    objective_ref: objective.feedback-and-robot-control
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Optimize future motion: trace the inputs, operation, and result before choosing.'
+    remediation_scene: feedback-and-robot-control.s4
+    variants:
+      - id: feedback-and-robot-control.transfer.1
+        prompt: Can increasing controller gain harm stability?
+        options:
+          - id: a
+            text: 'Yes'
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if there are no sensors
+        answer: a
+        feedback: Aggressive feedback interacts with delay and dynamics.
+        retired: true
+      - id: feedback-and-robot-control.transfer.2
+        prompt: What does model predictive control repeatedly do?
+        options:
+          - id: b
+            text: Ignore new observations forever
+          - id: c
+            text: Guarantee exact dynamics
+          - id: a
+            text: Plan over a horizon, act partially, then replan
+        answer: a
+        feedback: Receding-horizon feedback incorporates updated state.
+        retired: true
+  - id: feedback-and-robot-control.base.v2
+    objective_ref: objective.feedback-and-robot-control
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Ask what each term needs in order to push: P needs error now, I needs error that has lasted, D needs error that is changing."
+    remediation_scene: feedback-and-robot-control.s3
+    variants:
+      - id: feedback-and-robot-control.base.v2.1
+        prompt: A P-only controller with K_p = 50 holds a lift against a steady 3 N load. It always settles 6 cm below the target. Why?
+        options:
+          - id: b
+            text: The gain is so high that the lift overshoots and then sags back
+          - id: a
+            text: At rest the motor must give 3 N, and P gives that only at 0.06 m error
+          - id: c
+            text: The encoder is miscalibrated and reads 6 cm higher than the truth
+        answer: a
+        feedback: "Holding still takes 3 N, and a P controller pushes only in proportion to error: 50 × e = 3 gives e = 0.06 m. It's the steady-state error of P control, not overshoot or a sensor fault; a higher gain would shrink it but not remove it."
+      - id: feedback-and-robot-control.base.v2.2
+        prompt: Tidy's lift settles 8 cm short under P control. Which change removes the gap entirely rather than just shrinking it?
+        options:
+          - id: c
+            text: Raise K_p tenfold so that the proportional push gets stronger
+          - id: b
+            text: Add a D term so the controller reacts to the error's speed
+          - id: a
+            text: Add an I term that grows as long as any error remains
+        answer: a
+        feedback: The integral keeps growing while any error remains, until it alone supplies the holding force and the error reaches zero. A tenfold P gain only cuts the gap tenfold and invites overshoot; D is zero once the lift is still.
+      - id: feedback-and-robot-control.base.v2.3
+        prompt: A PI-controlled arm joint is held still by a person's hand for 3 seconds while its motor sits at maximum. When released, it swings well past its target. What happened?
+        options:
+          - id: a
+            text: The integral kept growing while the motor was maxed out and must unwind
+          - id: b
+            text: The sudden release produced a large derivative spike in the controller
+          - id: c
+            text: The proportional term jumped because the error was measured wrongly
+        answer: a
+        feedback: This is integral windup. The error sat there for 3 seconds, piling up in the integral, even though the motor couldn't push any harder; on release all that stored push drives the overshoot. A PI controller has no D term, and the P term only reflects the current error.
+      - id: feedback-and-robot-control.base.v2.4
+        prompt: Adding a D term makes a robot joint buzz and jitter, although P and I alone were smooth. The encoder reading wobbles by about 1 mm between samples. What is the likely cause?
+        options:
+          - id: b
+            text: The D term adds up past errors, so the wobble builds up over time
+          - id: a
+            text: The D term divides each wobble by the short time between samples
+          - id: c
+            text: The D term raises the steady-state error of the whole controller
+        answer: a
+        feedback: D uses (change in error) / Δt. A 1 mm wobble over 10 ms looks like 0.1 m/s, so noise becomes large, rapid commands. Adding up past errors is the I term's job, and D doesn't create steady-state error.
+  - id: feedback-and-robot-control.transfer.v2
+    objective_ref: objective.feedback-and-robot-control
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Name the symptom first (a leftover gap, a bounce, a lunge after saturation, or a command that ignores results), then pick the fix aimed at that symptom."
+    remediation_scene: feedback-and-robot-control.s3
+    variants:
+      - id: feedback-and-robot-control.transfer.v2.1
+        prompt: A car's cruise control uses only a proportional term. On a long uphill it settles 3 km/h below the set speed. What is the best fix?
+        options:
+          - id: a
+            text: Add an integral term so it keeps pushing until the gap closes
+          - id: c
+            text: Raise the proportional gain until the gap is too small to notice
+          - id: b
+            text: Add a derivative term to respond faster to the change in slope
+        answer: a
+        feedback: The hill is a steady disturbance, like the mug's weight, and P can only hold against it with some error. An integral term removes the gap. A much higher P gain shrinks it but makes the car surge and overshoot; D does nothing once speed is steady.
+      - id: feedback-and-robot-control.transfer.v2.2
+        prompt: A camera drone climbs to 50 m with its motors at full power for 5 seconds, then overshoots to 53 m. Below that limit its altitude control is smooth. What should you change?
+        options:
+          - id: c
+            text: Raise the integral gain so the controller corrects the overshoot faster
+          - id: a
+            text: Freeze the integral term whenever the motors are at their limit
+          - id: b
+            text: Filter the altimeter so the derivative term reacts more gently
+        answer: a
+        feedback: Overshoot only after a long saturated climb is the signature of integral windup; anti-windup stops the integral from storing push the motors couldn't deliver. A bigger integral gain winds up faster, and derivative filtering targets noise, not saturation.
+      - id: feedback-and-robot-control.transfer.v2.3
+        prompt: A warehouse pusher runs its motor for a fixed 0.8 s to shove boxes onto a belt. That worked in testing, but heavy boxes now stop short of the belt. Which change fixes the cause?
+        options:
+          - id: b
+            text: Lengthen the fixed run to 1.0 s to suit the heaviest boxes
+          - id: c
+            text: Re-measure the ideal run time for every box weight each week
+          - id: a
+            text: Measure the pusher's position and drive it until it reaches the belt
+        answer: a
+        feedback: A fixed timing is open loop, so any change in load changes the result. Measuring position and correcting against the target (closed loop) handles every weight. A longer fixed time over-shoves light boxes, and weekly tables are still open loop.
+      - id: feedback-and-robot-control.transfer.v2.4
+        prompt: A campus shuttle must stop smoothly at a crosswalk, respecting limits on speed and braking, while a pedestrian may step out. Why is model predictive control a good fit?
+        options:
+          - id: a
+            text: It plans ahead within the limits, applies the first step, then replans
+          - id: b
+            text: It computes one full stopping plan at the start and follows it exactly
+          - id: c
+            text: It drives from the error alone, so it needs no model of the shuttle
+        answer: a
+        feedback: MPC predicts over a horizon with the speed and braking limits built into the optimization, uses only the first command, and re-solves with fresh measurements, so a pedestrian changes the next plan. It does need a model; that's what the predictions use.
+  - id: feedback-and-robot-control.calculate
+    objective_ref: objective.feedback-and-robot-control
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Compute each term separately: K_p × error, K_i × (summed error × time), and K_d × (change in error ÷ time step). Then add them, keeping the signs."
+    remediation_scene: feedback-and-robot-control.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: feedback-and-robot-control.calculate.1
+        prompt: A P controller has K_p = 20. The target is 0.50 m and the measured position is 0.45 m. What command does it output, in newtons?
+        answer: 1
+        feedback: "The error is 0.50 − 0.45 = 0.05 m, and 20 × 0.05 = 1.0 N."
+      - id: feedback-and-robot-control.calculate.2
+        prompt: A PI controller has K_p = 10 and K_i = 5. The current error is 0.2 m and the accumulated error is 0.4 m·s. What command does it output, in newtons?
+        answer: 4
+        feedback: "P gives 10 × 0.2 = 2 N and I gives 5 × 0.4 = 2 N, for 4 N in total."
+      - id: feedback-and-robot-control.calculate.3
+        prompt: "A PID controller has K_p = 40, K_i = 10, K_d = 1, and a time step of 0.02 s. The error is 0.10 m, the previous error was 0.12 m, and the accumulated error is 0.2 m·s. What command does it output, in newtons?"
+        answer: 5
+        feedback: "P = 40 × 0.10 = 4. I = 10 × 0.2 = 2. The error changes at (0.10 − 0.12)/0.02 = −1 m/s, so D = 1 × (−1) = −1. Total: 4 + 2 − 1 = 5 N."
+      - id: feedback-and-robot-control.calculate.4
+        prompt: A PI controller has K_p = 30 and K_i = 20. The joint has overshot, so the error is −0.1 m, while the accumulated error is still 0.25 m·s. What command does it output, in newtons?
+        answer: 2
+        feedback: "P = 30 × (−0.1) = −3 N, pulling back. I = 20 × 0.25 = 5 N, still pushing forward from earlier. The total is +2 N, which is why stored integral keeps the overshoot going."
+      - id: feedback-and-robot-control.calculate.5
+        prompt: A P-only controller with K_p = 50 holds a lift against a steady 3 N load. At rest, how large is the steady-state error, in meters?
+        answer: 0.06
+        feedback: "At rest the motor must supply the 3 N load, so 50 × e = 3 and e = 0.06 m."

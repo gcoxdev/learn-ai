@@ -56,9 +56,7 @@ test("a project worksheet can be prepared and downloaded with the keyboard", asy
   const markdown = await readFile((await download.path())!, "utf8");
   expect(markdown).toContain(`Lesson ID: ${project.id}`);
   expect(markdown).toContain("Curriculum version: prototype-1");
-  expect(markdown).toContain(
-    "counts and arithmetic; preserved versions; fixed and fair comparison; honest scope",
-  );
+  expect(markdown).toMatch(/rubric/i);
   expect(markdown).toContain("I compared both checkpoints.");
   expect(markdown).toContain("tables.csv and a diagram");
   expect(markdown).toContain("Where is my evidence weakest?");

@@ -1,216 +1,413 @@
 schema_version: 0.2-draft
 lesson:
   id: vision-transformers
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Treat image patches as a sequence of representations
   state: draft
-  summary: Turn small image patches into tokens and calculate how patch size changes the work of attention.
+  summary: In 2020, a model that chops a photo into 196 squares and reads them like words matched the best CNNs. Count its tokens, and see why halving the patch size costs 16 times the attention.
   slot: M12.5
   category: learning
   sources:
-  - title: An Image is Worth 16x16 Words
-    url: https://arxiv.org/abs/2010.11929
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale (Dosovitskiy et al., 2020)"
+      url: https://arxiv.org/abs/2010.11929
+    - title: "Training data-efficient image transformers & distillation through attention (Touvron et al., 2020)"
+      url: https://arxiv.org/abs/2012.12877
+    - title: Dive into Deep Learning — transformers for vision
+      url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/vision-transformer.html
 objectives:
-- id: objective.vision-transformers
-  version: 1-draft
-  statement: Vision transformers embed image patches and use attention to mix their information; patch size,
-    positional information, and training choices determine cost and spatial detail.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - vision-transformers.base
-  - vision-transformers.transfer
-  prerequisites:
-  - anyOf:
-    - objective.attention
-  - anyOf:
-    - objective.neural-forward-pass
-  - anyOf:
-    - objective.image-geometry
+  - id: objective.vision-transformers
+    version: 2-draft
+    statement: Vision transformers embed image patches and use attention to mix their information; patch size, positional information, and training choices determine cost and spatial detail.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - vision-transformers.base.v2
+      - vision-transformers.transfer.v2
+      - vision-transformers.calculate
+    prerequisites:
+      - anyOf:
+          - objective.attention
+      - anyOf:
+          - objective.neural-forward-pass
+      - anyOf:
+          - objective.image-geometry
 scenes:
-- id: vision-transformers.s1
-  title: Turn a patch into a token
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.vision-transformers
-  markdown: 'Divide an image into small patches. An 8-by-8 RGB patch contains 8 × 8 × 3 = 192 values. **Flattening**
-    places these values in an ordered list. A learned **projection** multiplies that list by weights to produce
-    a feature vector of a chosen length.
+  - id: vision-transformers.s1
+    title: Cut the photo into words
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.vision-transformers
+    markdown: |-
+      A CNN looks at a photo through small windows and only sees the whole picture after many layers. But to decide whether a blurry shape is Biscuit's tail, it helps to glance at Biscuit's head on the other side of the photo, right away. Attention, which you met with transformers for text, lets every token look at every other token in a single layer. Could a photo be turned into tokens?
 
+      In 2020, Dosovitskiy and colleagues at Google showed that it could, in a paper titled *An Image is Worth 16x16 Words*. Their **Vision Transformer (ViT)** does this:
 
-    That vector is a **patch token**, one input to the transformer. It need not represent a whole object: the
-    patch may include part of a cat and part of its background. The model must learn useful relationships among
-    these pieces.'
-  text_mode: 'Divide an image into small patches. An 8-by-8 RGB patch contains 8 × 8 × 3 = 192 values. **Flattening**
-    places these values in an ordered list. A learned **projection** multiplies that list by weights to produce
-    a feature vector of a chosen length.
+      1. Cut the 224 × 224 photo into squares of 16 × 16 pixels, called **patches**. That's $224 / 16 = 14$ patches across and 14 down, $14^2 = 196$ patches.
+      2. **Flatten** each patch into a list: $16 \times 16 \times 3 = 768$ numbers.
+      3. Multiply each list by one learned matrix (a **projection**) to get a vector of a chosen width $D$. ViT-Base uses $D = 768$. Each vector is a **patch token**, the image's version of a word.
 
+      A patch token isn't an object. A patch might hold half of Biscuit's ear and some sky. The transformer's job is to relate the pieces.
 
-    That vector is a **patch token**, one input to the transformer. It need not represent a whole object: the
-    patch may include part of a cat and part of its background. The model must learn useful relationships among
-    these pieces.'
-  bridges: []
-- id: vision-transformers.s2
-  title: Count the sequence length
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-transformers
-  markdown: 'A 32 × 32 image split into nonoverlapping 8 × 8 patches yields 4 × 4 = 16 patch tokens, excluding
-    any special token. Halving patch width and height gives 64 patch tokens. Standard dense attention then
-    has sixteen times as many position pairs, because token count increased fourfold.
+      :::predict Pet search switches to 32 × 32 patches on the same 224 × 224 photo. How many patches?
+      $224 / 32 = 7$ per side, so $7^2 = 49$ patches, each holding $32 \times 32 \times 3 = 3{,}072$ numbers. Four times fewer tokens, each covering four times the area.
+      :::
+    bridges: []
+  - id: vision-transformers.s3
+    title: Tell the transformer where each patch was
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-transformers
+    markdown: |-
+      Attention compares every token with every other one, and it doesn't care what order they arrive in. Shuffle the 196 patches and each one gets exactly the same output as before, just in a new slot. So ViT adds a **position embedding** to each patch token: one learned vector per slot in the 14 × 14 grid, which lets the model tell "row 3, column 7" from "row 12, column 1".
 
+      :::mixup "The patches go in left to right, top to bottom, so the model knows where each one was."
+      Order in a list means nothing to attention; it treats its input like a bag of tokens. Remove the position embeddings, and a photo with its patches scrambled like a jigsaw gets exactly the same [CLS] output as the original.
+      :::
 
-    With 16 tokens, a full attention head considers 16 × 16 = 256 query–key position pairs. With 64, it considers
-    4,096, sixteen times as many. This is pair-count growth, not a promise that total runtime grows by exactly
-    sixteen: other operations and hardware matter too.'
-  text_mode: 'A 32 × 32 image split into nonoverlapping 8 × 8 patches yields 4 × 4 = 16 patch tokens, excluding
-    any special token. Halving patch width and height gives 64 patch tokens. Standard dense attention then
-    has sixteen times as many position pairs, because token count increased fourfold.
+      ViT also puts one extra learned token, **[CLS]** (for "classification"), at the front, the same trick BERT uses for text. After the transformer layers, the [CLS] token's output has gathered information from all 196 patches, and a small classification head turns it into scores such as "dog". That makes $196 + 1 = 197$ tokens.
 
+      :::papers The patch embedding, as in the ViT paper
+      $$z_0 = [\,x_{\text{class}};\; x_p^1 E;\; x_p^2 E;\; \dots;\; x_p^N E\,] + E_{\text{pos}}, \qquad N = \frac{HW}{P^2}$$
 
-    With 16 tokens, a full attention head considers 16 × 16 = 256 query–key position pairs. With 64, it considers
-    4,096, sixteen times as many. This is pair-count growth, not a promise that total runtime grows by exactly
-    sixteen: other operations and hardware matter too.'
-  bridges:
-  - matrices-tensors
-- id: vision-transformers.s3
-  title: Provide location and combine context
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-transformers
-  markdown: 'Positional information helps distinguish where patches occur. Attention mixes representations
-    across permitted positions, followed by other block operations such as feed-forward transformations and
-    normalization. A classification token or pooled features can feed an image-level head. Dense tasks need
-    suitable spatial outputs or decoders.
+      $x_p^i$ is the $i$-th flattened patch (768 numbers), $E$ is the 768 × $D$ projection, $x_{\text{class}}$ is the [CLS] token, and $E_{\text{pos}}$ holds 197 position vectors. With $H = W = 224$ and $P = 16$: $N = 50{,}176 / 256 = 196$. $z_0$ then passes through $L$ transformer layers (12 in ViT-Base), each made of multi-head attention and a feed-forward network with residual connections.
+      :::
+    diagram:
+      caption: A Vision Transformer. Patches become tokens, gain positions, and the [CLS] token's output is classified.
+      description: The 224 × 224 photo is cut into 196 patches of 16 × 16 pixels. Each patch is flattened and projected into a 768-number token. Position embeddings are added and a [CLS] token is placed in front, making 197 tokens. These pass through 12 transformer layers. The [CLS] token's output goes to a classification head, which outputs scores such as dog, cat, or no pet.
+      nodes:
+        - id: photo
+          label: Photo
+          note: 224 × 224 × 3
+          col: 0
+          row: 0
+          tone: data
+        - id: patches
+          label: 196 patches
+          note: 16 × 16 × 3 each
+          col: 1
+          row: 0
+          tone: data
+        - id: embed
+          label: Flatten + project
+          note: 768 numbers → D = 768
+          col: 2
+          row: 0
+        - id: pos
+          label: Add positions
+          note: + [CLS] → 197 tokens
+          col: 2
+          row: 1
+        - id: encoder
+          label: Transformer layers
+          note: attention + MLP, × 12
+          col: 1
+          row: 1
+          tone: accent
+        - id: head
+          label: Classification head
+          note: reads [CLS] → "dog"
+          col: 0
+          row: 1
+          tone: warn
+      edges:
+        - from: photo
+          to: patches
+          label: cut
+        - from: patches
+          to: embed
+        - from: embed
+          to: pos
+        - from: pos
+          to: encoder
+        - from: encoder
+          to: head
+          label: "[CLS]"
+    bridges: []
+  - id: vision-transformers.s2
+    title: Halve the patch, pay sixteen times the attention
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-transformers
+    markdown: |-
+      Each attention head compares every token with every token: with $N$ tokens that's $N^2$ query–key pairs, in every layer.
 
+      | Patch size | Patches | Tokens (+ [CLS]) | Pairs per head per layer |
+      | ---: | ---: | ---: | ---: |
+      | 32 | 49 | 50 | 2,500 |
+      | 16 | 196 | 197 | 38,809 |
+      | 8 | 784 | 785 | 616,225 |
 
-    **Attention** lets one position mix information from other positions using learned comparison scores. **Positional
-    information** supplies location cues that a plain unordered collection of patches lacks. A **head** for
-    classification is the final task-specific output calculation, distinct from an attention head inside the
-    transformer.'
-  text_mode: 'Positional information helps distinguish where patches occur. Attention mixes representations
-    across permitted positions, followed by other block operations such as feed-forward transformations and
-    normalization. A classification token or pooled features can feed an image-level head. Dense tasks need
-    suitable spatial outputs or decoders.
+      Halving the patch side from 16 to 8 makes 4 times as many tokens and about 16 times as many pairs. ViT-Base, with 12 heads in each of 12 layers, computes $38{,}809 \times 144 \approx 5.6$ million attention scores per photo at patch size 16.
 
+      ```python run
+      import numpy as np
 
-    **Attention** lets one position mix information from other positions using learned comparison scores. **Positional
-    information** supplies location cues that a plain unordered collection of patches lacks. A **head** for
-    classification is the final task-specific output calculation, distinct from an attention head inside the
-    transformer.'
-  bridges: []
-- id: vision-transformers.s4
-  title: Compare assumptions and training conditions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-transformers
-  markdown: Patch attention and convolution encode different structural preferences. Relative performance depends
-    on data, pretraining, augmentation, architecture, and compute. Smaller patches preserve detail but increase
-    sequence cost. Do not attribute a benchmark gain to attention alone when the training setup also changed.
-  text_mode: Patch attention and convolution encode different structural preferences. Relative performance
-    depends on data, pretraining, augmentation, architecture, and compute. Smaller patches preserve detail
-    but increase sequence cost. Do not attribute a benchmark gain to attention alone when the training setup
-    also changed.
-  bridges: []
-- id: vision-transformers.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.vision-transformers
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A vision transformer works with representations of image patches. Smaller patches retain finer
-    detail but create more tokens and more work for dense attention.
-- id: vision-transformers.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.vision-transformers
-  markdown: A vision transformer works with representations of image patches. Smaller patches retain finer
-    detail but create more tokens and more work for dense attention.
-  text_mode: A vision transformer works with representations of image patches. Smaller patches retain finer
-    detail but create more tokens and more work for dense attention.
+      photo = np.arange(224 * 224 * 3).reshape(224, 224, 3)   # stand-in pixels
+      P = 16                                                  # patch size
+
+      # Cut into a 14 x 14 grid of 16 x 16 x 3 patches, then flatten each patch.
+      n = 224 // P
+      patches = photo.reshape(n, P, n, P, 3).transpose(0, 2, 1, 3, 4).reshape(n * n, P * P * 3)
+      print("patches:", patches.shape)              # (number of patches, numbers per patch)
+
+      rng = np.random.default_rng(0)
+      E = rng.normal(size=(P * P * 3, 768)) * 0.02  # learned projection in a real ViT
+      tokens = patches @ E
+      print("patch tokens:", tokens.shape)
+
+      for P in (32, 16, 8):
+          N = (224 // P) ** 2 + 1                   # patches plus one [CLS] token
+          print(f"patch {P:2d}: {N:4d} tokens, {N * N:9,d} attention pairs per head")
+      ```
+
+      Try a 448 × 448 photo (change the 224 in the loop to 448): at patch size 16 it gives 784 patches, the same cost as patch size 8 on the 224 photo.
+
+      This trade-off matters for the photo app's sign reader. Small letters need fine detail, so it wants small patches or a bigger input, and it pays for either quadratically. Pet search can use large patches and run cheaply.
+    bridges:
+      - matrices-tensors
+  - id: vision-transformers.s4
+    title: What a ViT has to learn that a CNN is born with
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-transformers
+    markdown: |-
+      A CNN comes with two built-in assumptions: nearby pixels matter most (small filters), and a pattern means the same thing anywhere (shared weights). A ViT starts without them. Any patch can attend to any other from the first layer, and it must learn from data that neighbors usually matter.
+
+      The ViT paper found exactly the trade-off you'd expect. Trained on ImageNet's 1.3 million images alone, ViTs did slightly worse than comparable ResNets. Pretrained on much larger collections (14 million and 300 million images), they matched or beat the best CNNs. Later work such as DeiT (Touvron et al., 2020) trained ViTs well on ImageNet alone by adding heavy augmentation and learning from a CNN teacher.
+
+      So when a ViT beats a CNN on a benchmark, check what else changed: pretraining data, augmentation, training length. For a small, specialized dataset, such as 5,000 labeled photos of receipts, a CNN or a ViT pretrained on a large collection is a safer start than a ViT trained from scratch.
+    bridges: []
+  - id: vision-transformers.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.vision-transformers
+    markdown: Count patches and attention pairs for new image and patch sizes, then advise a medical-scan team, a small startup, and a satellite project on patch size and training data.
+    takeaway: |-
+      A ViT turns (H/P) × (W/P) patches into tokens, adds position embeddings, and lets attention compare every pair. Smaller patches keep finer detail, but tokens grow with 1/P² and attention cost with their square.
+  - id: vision-transformers.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.vision-transformers
+    markdown: |-
+      A vision transformer works with representations of image patches. Smaller patches retain finer detail but create more tokens and more work for dense attention.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - vision-transformers.s1
-    - vision-transformers.s2
-    - vision-transformers.s3
-    - vision-transformers.s4
-    - vision-transformers.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - vision-transformers.s1
+        - vision-transformers.s3
+        - vision-transformers.s2
+        - vision-transformers.s4
+        - vision-transformers.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     vision-transformers.recap: vision-transformers.check
 assessment_families:
-- id: vision-transformers.base
-  objective_ref: objective.vision-transformers
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Count the sequence length: trace the inputs, operation, and result before choosing.'
-  remediation_scene: vision-transformers.s2
-  variants:
-  - id: vision-transformers.base.1
-    prompt: A 24 × 24 image split into 6 × 6 patches produces how many patches?
-    options:
-    - id: a
-      text: '16'
-    - id: b
-      text: '4'
-    - id: c
-      text: '36'
-    answer: a
-    feedback: There are four patches along each axis, giving sixteen total.
-  - id: vision-transformers.base.2
-    prompt: Does one patch necessarily correspond to one object?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only in an RGB image
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Patch boundaries are a representation choice and can cut through objects.
-- id: vision-transformers.transfer
-  objective_ref: objective.vision-transformers
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compare assumptions and training conditions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: vision-transformers.s4
-  variants:
-  - id: vision-transformers.transfer.1
-    prompt: Token count doubles under dense attention. How does the number of token pairs scale?
-    options:
-    - id: b
-      text: It doubles
-    - id: c
-      text: It stays constant
-    - id: a
-      text: It quadruples
-    answer: a
-    feedback: Pair count is proportional to sequence length squared.
-  - id: vision-transformers.transfer.2
-    prompt: A vision transformer outperforms a CNN after much larger pretraining. What must a comparison acknowledge?
-    options:
-    - id: c
-      text: Data size never affects vision models
-    - id: a
-      text: Architecture and training data changed together
-    - id: b
-      text: Only attention caused the result
-    answer: a
-    feedback: Training conditions confound an architecture-only conclusion.
+  - id: vision-transformers.base
+    objective_ref: objective.vision-transformers
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Count the sequence length: trace the inputs, operation, and result before choosing.'
+    remediation_scene: vision-transformers.s2
+    variants:
+      - id: vision-transformers.base.1
+        prompt: A 24 × 24 image split into 6 × 6 patches produces how many patches?
+        options:
+          - id: a
+            text: '16'
+          - id: b
+            text: '4'
+          - id: c
+            text: '36'
+        answer: a
+        feedback: There are four patches along each axis, giving sixteen total.
+        retired: true
+      - id: vision-transformers.base.2
+        prompt: Does one patch necessarily correspond to one object?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only in an RGB image
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Patch boundaries are a representation choice and can cut through objects.
+        retired: true
+  - id: vision-transformers.transfer
+    objective_ref: objective.vision-transformers
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compare assumptions and training conditions: trace the inputs, operation, and result before choosing.'
+    remediation_scene: vision-transformers.s4
+    variants:
+      - id: vision-transformers.transfer.1
+        prompt: Token count doubles under dense attention. How does the number of token pairs scale?
+        options:
+          - id: b
+            text: It doubles
+          - id: c
+            text: It stays constant
+          - id: a
+            text: It quadruples
+        answer: a
+        feedback: Pair count is proportional to sequence length squared.
+        retired: true
+      - id: vision-transformers.transfer.2
+        prompt: A vision transformer outperforms a CNN after much larger pretraining. What must a comparison acknowledge?
+        options:
+          - id: c
+            text: Data size never affects vision models
+          - id: a
+            text: Architecture and training data changed together
+          - id: b
+            text: Only attention caused the result
+        answer: a
+        feedback: Training conditions confound an architecture-only conclusion.
+        retired: true
+  - id: vision-transformers.base.v2
+    objective_ref: objective.vision-transformers
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Count patches per side, square it, then square the token count for attention pairs. For position questions, remember that attention on its own ignores order.
+    remediation_scene: vision-transformers.s2
+    variants:
+      - id: vision-transformers.base.v2.1
+        prompt: A ViT's token count doubles, from 200 to 400. How does the number of query–key pairs per attention head change?
+        options:
+          - id: b
+            text: It doubles, from 40,000 to 80,000 pairs
+          - id: c
+            text: It rises by 200 × 200 = 40,000 pairs
+          - id: a
+            text: It quadruples, from 40,000 to 160,000 pairs
+        answer: a
+        feedback: Pairs grow with the square of the token count, 400² = 160,000 = 4 × 200². Doubling is the linear guess that misses the square.
+      - id: vision-transformers.base.v2.2
+        prompt: A ViT is trained with its position embeddings removed. What can it no longer tell apart?
+        options:
+          - id: a
+            text: A photo and the same photo with its patches shuffled
+          - id: b
+            text: Two photos that differ only in the colors of one patch
+          - id: c
+            text: Photos of different sizes that are resized to 224 × 224
+        answer: a
+        feedback: Attention treats its tokens as an unordered set, so without position embeddings a shuffled photo gives the same [CLS] output. The pixel values inside each patch still reach the model, so a color change is still visible.
+      - id: vision-transformers.base.v2.3
+        prompt: A ViT uses 16 × 16 patches on RGB photos. How many numbers go into the projection for each patch?
+        options:
+          - id: c
+            text: 256, one per pixel in the patch
+          - id: a
+            text: 768, from 16 × 16 pixels × 3 channels
+          - id: b
+            text: 196, one per patch in the photo
+        answer: a
+        feedback: Each patch is flattened to 16 × 16 × 3 = 768 numbers. Forgetting the three color channels gives 256, and 196 is the number of patches, not the size of one.
+      - id: vision-transformers.base.v2.4
+        prompt: In ViT, what is the extra [CLS] token for?
+        options:
+          - id: b
+            text: It marks where the photo's top-left patch starts in the sequence
+          - id: c
+            text: It holds the class label during training so the model can copy it
+          - id: a
+            text: It gathers information from all patches, and the head reads its output
+        answer: a
+        feedback: The [CLS] token starts as a learned vector, attends to every patch through the layers, and its final output feeds the classification head. Positions come from position embeddings, and the label is never an input.
+  - id: vision-transformers.transfer.v2
+    objective_ref: objective.vision-transformers
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Weigh detail against cost (smaller patches, more tokens, squared attention), and ask how much training data the model will see.
+    remediation_scene: vision-transformers.s4
+    variants:
+      - id: vision-transformers.transfer.v2.1
+        prompt: A medical team's ViT uses 32 × 32 patches and misses lesions only about 10 pixels wide. What change is most likely to help, and what does it cost?
+        options:
+          - id: a
+            text: Smaller patches, at roughly 16 times the attention cost for half the size
+          - id: b
+            text: Larger patches, which give each token more context about the lesion
+          - id: c
+            text: More transformer layers, at no change in the number of tokens
+        answer: a
+        feedback: A 10-pixel lesion occupies a small corner of a 32-pixel patch and gets blended with its surroundings; halving the patch side gives 4 times the tokens and about 16 times the pairs. Larger patches blend it further, and more layers still see the same coarse tokens.
+      - id: vision-transformers.transfer.v2.2
+        prompt: A startup has 3,000 labeled photos of machine parts and no pretrained model. Which starting point is safest?
+        options:
+          - id: c
+            text: Train a ViT from scratch, since attention sees the whole image at once
+          - id: a
+            text: Use a CNN, or a ViT pretrained on a large image collection
+          - id: b
+            text: Train a ViT from scratch with smaller patches for extra detail
+        answer: a
+        feedback: A ViT lacks a CNN's built-in locality and weight sharing, so on its own it needs lots of data to learn them; the ViT paper found it trailed ResNets even at ImageNet scale without big pretraining. Smaller patches add cost, not data.
+      - id: vision-transformers.transfer.v2.3
+        prompt: A paper reports a ViT beating a ResNet by 2 points. The ViT was pretrained on 300 million images; the ResNet saw 1.3 million. What is the fair conclusion?
+        options:
+          - id: b
+            text: Attention is a better way to see, since the ViT won on the same test set
+          - id: c
+            text: ResNets are obsolete, since they cannot use large pretraining sets
+          - id: a
+            text: The gain may come from data, not design, until both see the same data
+        answer: a
+        feedback: Architecture and pretraining data changed together, so the 2 points can't be credited to attention alone. ResNets can also be pretrained on large collections; that's the comparison to run.
+      - id: vision-transformers.transfer.v2.4
+        prompt: A satellite project doubles its input from 512 × 512 to 1024 × 1024 but keeps 16 × 16 patches. Roughly how does attention cost per layer change?
+        options:
+          - id: a
+            text: About 16 times, since tokens grow 4 times and pairs grow 16 times
+          - id: b
+            text: About 4 times, since the image now has 4 times as many pixels
+          - id: c
+            text: About 2 times, since each side of the image doubles in length
+        answer: a
+        feedback: Doubling each side gives 4 times the patches (1,024 → 4,096), and attention pairs grow with the square, 16 times. Four times is the token count, the right idea stopped one step early.
+  - id: vision-transformers.calculate
+    objective_ref: objective.vision-transformers
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Patches = (H ÷ P) × (W ÷ P). Add 1 only if the question asks for tokens including [CLS]; attention pairs are tokens squared.
+    remediation_scene: vision-transformers.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: vision-transformers.calculate.1
+        prompt: A 384 × 384 photo is cut into 16 × 16 patches. How many patches?
+        answer: 576
+        feedback: 384 / 16 = 24 per side, and 24² = 576 patches.
+      - id: vision-transformers.calculate.2
+        prompt: A 224 × 224 photo is cut into 14 × 14 patches. How many patches?
+        answer: 256
+        feedback: 224 / 14 = 16 per side, and 16² = 256 patches.
+      - id: vision-transformers.calculate.3
+        prompt: A 256 × 128 image (width × height) is cut into 16 × 16 patches. How many patches?
+        answer: 128
+        feedback: 256 / 16 = 16 across and 128 / 16 = 8 down, so 16 × 8 = 128 patches.
+      - id: vision-transformers.calculate.4
+        prompt: A 96 × 96 image is cut into 16 × 16 patches and a [CLS] token is added. How many query–key pairs does one attention head compute?
+        answer: 1369
+        feedback: 96 / 16 = 6 per side gives 36 patches, plus [CLS] makes 37 tokens, and 37² = 1,369 pairs.
+      - id: vision-transformers.calculate.5
+        prompt: A 224 × 224 photo is cut into 32 × 32 patches. How many patches?
+        answer: 49
+        feedback: 224 / 32 = 7 per side, and 7² = 49 patches.

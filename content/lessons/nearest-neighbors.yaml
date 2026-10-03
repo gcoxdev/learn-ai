@@ -1,219 +1,339 @@
 schema_version: 0.2-draft
 lesson:
   id: nearest-neighbors
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Predict from similar stored examples
   state: draft
-  summary: Predict from similar examples, and see how the meaning of “similar” changes the result.
+  summary: Estate agents price an apartment from similar ones nearby. Machines can too, but change the units, and the "similar" apartments change with them.
   slot: M07.3
   category: learning
   sources:
-  - title: An Introduction to Statistical Learning — authors’ materials
-    url: https://www.statlearning.com/
+    - title: An Introduction to Statistical Learning — authors’ materials
+      url: https://www.statlearning.com/
+    - title: Cover & Hart (1967), Nearest neighbor pattern classification
+      url: https://doi.org/10.1109/TIT.1967.1053964
 objectives:
-- id: objective.nearest-neighbors
-  version: 1-draft
-  statement: Nearest-neighbor methods use a distance and neighborhood rule; feature scaling, dimensionality,
-    ties, and reference-data quality shape their predictions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - nearest-neighbors.base
-  - nearest-neighbors.transfer
-  prerequisites:
-  - anyOf:
-    - objective.features-and-bias
-  - anyOf:
-    - objective.geometry-and-symmetry
+  - id: objective.nearest-neighbors
+    version: 2-draft
+    statement: Nearest-neighbor methods use a distance and neighborhood rule; feature scaling, dimensionality, ties, and reference-data quality shape their predictions.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - nearest-neighbors.base.v2
+      - nearest-neighbors.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.features-and-bias
+      - anyOf:
+          - objective.geometry-and-symmetry
 scenes:
-- id: nearest-neighbors.s1
-  title: Ask the closest examples
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.nearest-neighbors
-  markdown: 'To estimate a delivery time, find similar recorded deliveries and combine their answers. **k-nearest
-    neighbors** uses the k closest examples; k is simply how many to consult.
+  - id: nearest-neighbors.s1
+    title: Price an apartment the way an agent does
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.nearest-neighbors
+    markdown: |-
+      Ask an estate agent what an apartment should rent for, and they'll pull up "comps": similar places nearby that rented recently. That's the whole idea of **k-nearest neighbors** (kNN). To predict for a new case, find the k stored examples most similar to it and combine their answers.
 
+      Priya wants to price a 60 m² apartment 0.5 km from a subway station. Here are six recent listings:
 
-    A **regressor** predicts a number. For nearby deliveries taking 8, 10, and 12 minutes, their average predicts
-    10 minutes. A **classifier** instead combines labels to predict a category. “Nearby” means similar under
-    the chosen feature and distance rules, not necessarily near on a street.
+      | Listing | Size (m²) | To subway (km) | Rent |
+      | --- | ---: | ---: | ---: |
+      | A | 62 | 3.0 | \$1,300 |
+      | B | 58 | 2.8 | \$1,250 |
+      | C | 70 | 0.6 | \$1,900 |
+      | D | 55 | 0.4 | \$1,700 |
+      | E | 80 | 2.0 | \$1,600 |
+      | F | 48 | 1.5 | \$1,350 |
 
+      With k = 2, find the two most similar listings and average their rents. Averaging numbers this way makes kNN a **regressor**; letting the neighbors vote on a label makes it a **classifier**.
 
-    There may be little parameter fitting, but choosing the features, distance measure, scaling, and k still
-    determines the model.'
-  text_mode: 'To estimate a delivery time, find similar recorded deliveries and combine their answers. **k-nearest
-    neighbors** uses the k closest examples; k is simply how many to consult.
+      Notice what's missing: there are no weights to fit. kNN stores the examples and does all its work when a question arrives. The model is the data plus three choices: which features to compare, what "similar" means, and how many neighbors to ask.
 
+      :::story An idea from 1951
+      Evelyn Fix and Joseph Hodges described the nearest-neighbor rule in a 1951 report for the US Air Force School of Aviation Medicine. In 1967, Thomas Cover and Peter Hart proved a striking fact about it: with enough data, the error rate of the one-nearest-neighbor classifier is at most twice that of the best possible classifier.
+      :::
+    bridges: []
+  - id: nearest-neighbors.s2
+    title: How many neighbors should vote?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.nearest-neighbors
+    markdown: |-
+      Suppose each listing is also labelled by whether it rented within a week. A new apartment's three nearest neighbors are *fast, fast, slow*, so a majority vote predicts *fast*. The number k controls how much of the data speaks:
 
-    A **regressor** predicts a number. For nearby deliveries taking 8, 10, and 12 minutes, their average predicts
-    10 minutes. A **classifier** instead combines labels to predict a category. “Nearby” means similar under
-    the chosen feature and distance rules, not necessarily near on a street.
+      - **k = 1** trusts a single neighbor. If that listing was mislabelled, or rented fast by luck, the prediction copies the fluke.
+      - **Large k** averages over more listings. Predictions get steadier but blur local detail: a small studio far out and a big flat downtown start to look alike.
 
+      :::predict With k = 6, what rent does kNN predict for Priya's apartment, or for any apartment at all?
+      All six listings are always the neighbors, so every prediction is their average: 9,100 ÷ 6 ≈ \$1,517. When k equals the size of the dataset, kNN ignores the query entirely.
+      :::
 
-    There may be little parameter fitting, but choosing the features, distance measure, scaling, and k still
-    determines the model.'
-  bridges: []
-- id: nearest-neighbors.s2
-  title: Work through a vote
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.nearest-neighbors
-  markdown: 'A query’s three nearest labeled neighbors are red, red, and blue. Majority voting predicts red.
-    With one neighbor, a mislabeled closest example can dominate. With a very large neighborhood, local structure
-    can be washed out. Distance-weighted voting changes the combination rule and needs an explicit convention.
+      Small k gives a jumpy model and large k a flat one, so try several values on examples held out from the stored set and keep the best (the tuning lesson later in this module shows how). Don't score k on the stored examples themselves: each one is its own nearest neighbor at distance 0, so k = 1 always looks perfect there. Decide how to break ties, too. With two classes, an odd k avoids a 2–2 vote; with three or more classes, ties can still happen, and a common rule lets the closest neighbor decide.
+    bridges:
+      - geometry-and-symmetry
+  - id: nearest-neighbors.s3
+    title: Units decide who counts as near
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.nearest-neighbors
+    markdown: |-
+      Similarity is usually measured by **Euclidean distance**, the straight-line distance between two lists of features:
 
+      $$d(\mathbf{x}, \mathbf{q}) = \sqrt{\sum_{j=1}^{m} (x_j - q_j)^2}$$
 
-    Decide tie rules before testing. With two red and two blue neighbors, the majority does not choose a unique
-    answer. You could use total distance as a tie-breaker or ask for another neighbor under a stated rule.
-    An odd k avoids a two-class vote tie, but does not prevent every tie when there are more than two classes.'
-  text_mode: 'A query’s three nearest labeled neighbors are red, red, and blue. Majority voting predicts red.
-    With one neighbor, a mislabeled closest example can dominate. With a very large neighborhood, local structure
-    can be washed out. Distance-weighted voting changes the combination rule and needs an explicit convention.
+      Here $\mathbf{q}$ is the query, $\mathbf{x}$ a stored listing, and $j$ runs through the $m$ features. For listing A: $\sqrt{(62-60)^2 + (3.0-0.5)^2} = \sqrt{4 + 6.25} \approx 3.20$.
 
+      | Listing | Raw distance | Scaled distance |
+      | --- | ---: | ---: |
+      | A | 3.20 | 2.51 |
+      | B | 3.05 | 2.31 |
+      | C | 10.00 | 1.00 |
+      | D | 5.00 | 0.51 |
+      | E | 20.06 | 2.50 |
+      | F | 12.04 | 1.56 |
 
-    Decide tie rules before testing. With two red and two blue neighbors, the majority does not choose a unique
-    answer. You could use total distance as a tie-breaker or ask for another neighbor under a stated rule.
-    An odd k avoids a two-class vote tie, but does not prevent every tie when there are more than two classes.'
-  bridges:
-  - geometry-and-symmetry
-- id: nearest-neighbors.s3
-  title: Choose what distance means
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.nearest-neighbors
-  markdown: '**Euclidean distance** is straight-line distance between lists of numerical features. If only
-    one feature differs, the distance is the size of that difference. Its units therefore matter.
+      In raw units, the nearest two are B and A, predicting \$1,275. But both are nearly 3 km from a station! A difference of 1 m² counts as much as a difference of 1 km, so size swamps the distance.
 
+      Now **scale** the features: divide each by its typical spread, here about 10 m² for size and 1 km for distance (their standard deviations). Listing A's differences become 0.2 and 2.5, a distance of 2.51. The nearest two are now D and C, both close to a station, and the prediction jumps to \$1,800. Same data, same k: only the units changed.
 
-    Suppose features include income and age. Changing income from thousands of dollars to dollars multiplies
-    its numerical differences by 1,000. Without rescaling, income can dominate the distance and change which
-    people count as neighbors.
+      ```python run
+      import numpy as np
 
+      # Listings: [size in m², km to the nearest subway station], monthly rent
+      homes = np.array([[62, 3.0], [58, 2.8], [70, 0.6], [55, 0.4], [80, 2.0], [48, 1.5]])
+      rent  = np.array([1300, 1250, 1900, 1700, 1600, 1350])
+      query = np.array([60, 0.5])            # the apartment we want to price
 
-    Fit scaling rules on training data, and check whether closeness under those rules is useful for the task.
-    Categories and missing values also need a stated treatment.'
-  text_mode: '**Euclidean distance** is straight-line distance between lists of numerical features. If only
-    one feature differs, the distance is the size of that difference. Its units therefore matter.
+      def knn(X, q, k):
+          dist = np.sqrt(((X - q) ** 2).sum(axis=1))    # Euclidean distance
+          nearest = np.argsort(dist)[:k]
+          return nearest, rent[nearest].mean()
 
+      idx, guess = knn(homes, query, k=2)
+      print("raw units:    neighbors", idx, "-> predicted rent", guess)
 
-    Suppose features include income and age. Changing income from thousands of dollars to dollars multiplies
-    its numerical differences by 1,000. Without rescaling, income can dominate the distance and change which
-    people count as neighbors.
+      spread = homes.std(axis=0)                        # typical spread of each feature
+      print("spreads:", spread.round(2))
+      idx, guess = knn(homes / spread, query / spread, k=2)
+      print("scaled units: neighbors", idx, "-> predicted rent", guess)
+      ```
 
+      Listings are numbered from 0, so `[3 2]` means D and C. Try k=3, then measure distance in meters (multiply the second column and the query's 0.5 by 1,000) and watch which feature takes over.
 
-    Fit scaling rules on training data, and check whether closeness under those rules is useful for the task.
-    Categories and missing values also need a stated treatment.'
-  bridges: []
-- id: nearest-neighbors.s4
-  title: Know the cost and limits
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.nearest-neighbors
-  markdown: Exact lookup can be expensive in large reference sets. Approximate indexes trade speed for retrieval
-    accuracy. In high-dimensional spaces, distance can become less informative and data coverage sparse. Test
-    unseen queries, inspect neighbor explanations, and avoid treating similarity as proof of a causal relationship.
-  text_mode: Exact lookup can be expensive in large reference sets. Approximate indexes trade speed for retrieval
-    accuracy. In high-dimensional spaces, distance can become less informative and data coverage sparse. Test
-    unseen queries, inspect neighbor explanations, and avoid treating similarity as proof of a causal relationship.
-  bridges: []
-- id: nearest-neighbors.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.nearest-neighbors
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Nearest neighbors predicts from similar stored examples. The choice of features, units, distance
-    rule, and neighbor count determines what “similar” means.
-- id: nearest-neighbors.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.nearest-neighbors
-  markdown: Nearest neighbors predicts from similar stored examples. The choice of features, units, distance
-    rule, and neighbor count determines what “similar” means.
-  text_mode: Nearest neighbors predicts from similar stored examples. The choice of features, units, distance
-    rule, and neighbor count determines what “similar” means.
+      :::mixup "Scaling is cosmetic. The model sees the same information either way."
+      For kNN, the units *are* the model: they decide who counts as a neighbor. Compute each feature's spread from the stored training examples only, then divide every new query by those same numbers.
+      :::
+    bridges: []
+  - id: nearest-neighbors.s4
+    title: When every neighbor is far away
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.nearest-neighbors
+    markdown: |-
+      kNN rests on a hope: the nearest examples are genuinely close. With many features that hope fades, a problem called the **curse of dimensionality**. Scatter 1,000 random points in a cube and compare the nearest and farthest distances from a random query:
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(0)
+      for d in (2, 10, 100, 1000):
+          points = rng.random((1000, d))        # 1,000 random points in a d-dimensional cube
+          q = rng.random(d)                     # one random query
+          dist = np.sqrt(((points - q) ** 2).sum(axis=1))
+          print(f"d = {d:4d}: nearest / farthest distance = {dist.min() / dist.max():.2f}")
+      ```
+
+      With 2 features, the nearest point is over 100 times closer than the farthest (ratio 0.01). With 1,000 features, the ratio is 0.90: the "nearest" neighbor is almost as far away as the farthest one. Here's another view. To enclose 10% of evenly spread data, a cube-shaped neighborhood needs sides 0.1 long in one dimension, 0.79 in 10 dimensions, and 0.98 in 100, since $0.1^{1/d}$ climbs toward 1. A "local" neighborhood ends up spanning nearly the whole range of every feature.
+
+      So kNN works best with a few well-chosen, well-scaled features, or with **embeddings**: short lists of numbers produced by a trained neural network, arranged so that similar items land close together. Photo search and document retrieval work this way. They store millions of embeddings and use approximate nearest-neighbor indexes, which find almost-the-nearest items far faster than comparing the query with every stored one. Before you trust such an index, check a sample of its answers against an exact search.
+    bridges: []
+  - id: nearest-neighbors.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.nearest-neighbors
+    markdown: Compute distances and neighbor averages by hand, then fix medical, text, and photo-search systems whose idea of "near" has gone wrong.
+    takeaway: |-
+      kNN predicts from the most similar stored examples. The features, their units, the distance, and the number of neighbors together decide what "similar" means, so scale features and choose k on held-out data.
+  - id: nearest-neighbors.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.nearest-neighbors
+    markdown: |-
+      Nearest neighbors predicts from similar stored examples. The choice of features, units, distance rule, and neighbor count determines what “similar” means.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - nearest-neighbors.s1
-    - nearest-neighbors.s2
-    - nearest-neighbors.s3
-    - nearest-neighbors.s4
-    - nearest-neighbors.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - nearest-neighbors.s1
+        - nearest-neighbors.s2
+        - nearest-neighbors.s3
+        - nearest-neighbors.s4
+        - nearest-neighbors.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     nearest-neighbors.recap: nearest-neighbors.check
 assessment_families:
-- id: nearest-neighbors.base
-  objective_ref: objective.nearest-neighbors
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Work through a vote: trace the inputs, operation, and result before choosing.'
-  remediation_scene: nearest-neighbors.s2
-  variants:
-  - id: nearest-neighbors.base.1
-    prompt: Nearest labels [A, B, A, A, B] with majority voting predict what?
-    options:
-    - id: a
-      text: A
-    - id: b
-      text: B
-    - id: c
-      text: No label because k is odd
-    answer: a
-    feedback: Three of five neighbors vote for A.
-  - id: nearest-neighbors.base.2
-    prompt: Which choice directly changes what “near” means?
-    options:
-    - id: b
-      text: Only the output file extension
-    - id: c
-      text: Only the class display color
-    - id: a
-      text: Feature scaling and the distance metric
-    answer: a
-    feedback: Distances depend on coordinate representation and measurement units.
-- id: nearest-neighbors.transfer
-  objective_ref: objective.nearest-neighbors
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Know the cost and limits: trace the inputs, operation, and result before choosing.'
-  remediation_scene: nearest-neighbors.s4
-  variants:
-  - id: nearest-neighbors.transfer.1
-    prompt: One mislabeled nearest example causes an error with k = 1. What tradeoff can a larger k introduce?
-    options:
-    - id: b
-      text: Guaranteed perfect classification
-    - id: c
-      text: Elimination of all reference data
-    - id: a
-      text: More smoothing but possible loss of local detail
-    answer: a
-    feedback: A larger neighborhood can reduce sensitivity while increasing smoothing bias.
-  - id: nearest-neighbors.transfer.2
-    prompt: An approximate index returns a slightly different neighbor set. What should be evaluated?
-    options:
-    - id: c
-      text: A claim that approximation has no effect
-    - id: a
-      text: Both retrieval quality and downstream prediction
-    - id: b
-      text: Only index construction time
-    answer: a
-    feedback: Approximate retrieval can change the predictions built from its results.
+  - id: nearest-neighbors.base
+    objective_ref: objective.nearest-neighbors
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Work through a vote: trace the inputs, operation, and result before choosing.'
+    remediation_scene: nearest-neighbors.s2
+    variants:
+      - id: nearest-neighbors.base.1
+        prompt: Nearest labels [A, B, A, A, B] with majority voting predict what?
+        options:
+          - id: a
+            text: A
+          - id: b
+            text: B
+          - id: c
+            text: No label because k is odd
+        answer: a
+        feedback: Three of five neighbors vote for A.
+        retired: true
+      - id: nearest-neighbors.base.2
+        prompt: Which choice directly changes what “near” means?
+        options:
+          - id: b
+            text: Only the output file extension
+          - id: c
+            text: Only the class display color
+          - id: a
+            text: Feature scaling and the distance metric
+        answer: a
+        feedback: Distances depend on coordinate representation and measurement units.
+        retired: true
+  - id: nearest-neighbors.transfer
+    objective_ref: objective.nearest-neighbors
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Know the cost and limits: trace the inputs, operation, and result before choosing.'
+    remediation_scene: nearest-neighbors.s4
+    variants:
+      - id: nearest-neighbors.transfer.1
+        prompt: One mislabeled nearest example causes an error with k = 1. What tradeoff can a larger k introduce?
+        options:
+          - id: b
+            text: Guaranteed perfect classification
+          - id: c
+            text: Elimination of all reference data
+          - id: a
+            text: More smoothing but possible loss of local detail
+        answer: a
+        feedback: A larger neighborhood can reduce sensitivity while increasing smoothing bias.
+        retired: true
+      - id: nearest-neighbors.transfer.2
+        prompt: An approximate index returns a slightly different neighbor set. What should be evaluated?
+        options:
+          - id: c
+            text: A claim that approximation has no effect
+          - id: a
+            text: Both retrieval quality and downstream prediction
+          - id: b
+            text: Only index construction time
+        answer: a
+        feedback: Approximate retrieval can change the predictions built from its results.
+        retired: true
+  - id: nearest-neighbors.base.v2
+    objective_ref: objective.nearest-neighbors
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Find each distance as the square root of the summed squared differences, keep the k smallest, and average those neighbors' values.
+    remediation_scene: nearest-neighbors.s3
+    variants:
+      - id: nearest-neighbors.base.v2.1
+        prompt: 'Query at (0, 0). Stored points: P at (3, 4) with value 10, Q at (1, 1) with value 20, R at (0, 2) with value 30. Using Euclidean distance and k = 2, what does kNN predict?'
+        answer: 25
+        feedback: 'Distances: P = √(9 + 16) = 5, Q = √2 ≈ 1.41, R = 2. The two nearest are Q and R, so the prediction is (20 + 30)/2 = 25. Including P would mean picking by value or by listed order instead of distance.'
+      - id: nearest-neighbors.base.v2.2
+        prompt: 'Query at (5, 5). Stored points: P at (6, 5) with value 8, Q at (5, 8) with value 14, R at (9, 8) with value 20. Using Euclidean distance and k = 2, what does kNN predict?'
+        answer: 11
+        feedback: 'Distances: P = 1, Q = 3, R = √(16 + 9) = 5. The two nearest are P and Q, so the prediction is (8 + 14)/2 = 11.'
+      - id: nearest-neighbors.base.v2.3
+        prompt: 'Query at (2, 1). Stored points: P at (2, 4) with value 40, Q at (6, 4) with value 10, R at (0, 1) with value 70. Using Euclidean distance and k = 2, what does kNN predict?'
+        answer: 55
+        feedback: 'Distances: P = 3, Q = √(16 + 9) = 5, R = 2. The two nearest are R and P, so the prediction is (70 + 40)/2 = 55.'
+      - id: nearest-neighbors.base.v2.4
+        prompt: 'Query at (10, 0). Stored points: P at (13, 4) with value 6, Q at (10, 2) with value 9, R at (7, 0) with value 3, S at (16, 8) with value 30. Using Euclidean distance and k = 3, what does kNN predict?'
+        answer: 6
+        feedback: 'Distances: P = √(9 + 16) = 5, Q = 2, R = 3, S = √(36 + 64) = 10. The three nearest are Q, R, and P, so the prediction is (9 + 3 + 6)/3 = 6. S is far away, so its large value of 30 never enters.'
+    absolute_tolerance: 0.01
+  - id: nearest-neighbors.transfer.v2
+    objective_ref: objective.nearest-neighbors
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what "near" means in this system. Which feature dominates the distance, how many neighbors vote, and does nearness still mean anything with this many features?
+    remediation_scene: nearest-neighbors.s3
+    variants:
+      - id: nearest-neighbors.transfer.v2.1
+        prompt: A clinic's kNN model uses age in years (20 to 90) and a blood marker measured in mg/L (0.1 to 2.0). Its predictions barely change when the marker changes. What is the best first fix?
+        options:
+          - id: a
+            text: Raise k so that more patients get a vote on each prediction
+          - id: b
+            text: Rescale both features by their spread in the training data
+          - id: c
+            text: Drop age, since it is the feature crowding out the blood marker
+        answer: b
+        feedback: Age differences run into tens while marker differences stay below 2, so age dominates every distance. Scaling puts both on a comparable footing. More voters would still be chosen by age, and dropping age throws away a useful feature instead of fixing the units.
+      - id: nearest-neighbors.transfer.v2.2
+        prompt: On a plant-disease dataset, kNN with k = 1 scores 100% on its own stored examples but 70% on held-out leaves. With k = 15 it scores 82% on the held-out leaves. What best explains the gap?
+        options:
+          - id: a
+            text: With k = 15, the held-out leaves must have leaked into the stored set
+          - id: c
+            text: A larger k compares each leaf on more of its measured features at once
+          - id: b
+            text: Each stored leaf is its own nearest neighbor, so k = 1 copies noise
+        answer: b
+        feedback: Scored on its own examples, k = 1 finds each example itself at distance 0, so a perfect score is automatic. On new leaves, one neighbor passes on its quirks; 15 neighbors average them out. k sets how many neighbors vote, not how many features are compared.
+      - id: nearest-neighbors.transfer.v2.3
+        prompt: A news site finds similar articles with kNN on raw counts of 50,000 different words. For most articles, the nearest and farthest stored articles are almost equally distant. What is the most promising change?
+        options:
+          - id: c
+            text: Represent articles by compact embeddings, then search
+          - id: a
+            text: Use k = 1 so just the closest article counts
+          - id: b
+            text: Store many more articles so queries find close matches
+        answer: c
+        feedback: With 50,000 dimensions, distances bunch together, which is the curse of dimensionality. A short learned embedding makes distance meaningful again. Changing k doesn't fix distances that barely differ, and extra articles would need to be astronomically many to fill so many dimensions.
+      - id: nearest-neighbors.transfer.v2.4
+        prompt: An engineer standardizes features by computing each feature's mean and spread on the full dataset, then splits it into stored and test examples for kNN. What is wrong?
+        options:
+          - id: b
+            text: Standardizing is unneeded for kNN once k is chosen well
+          - id: a
+            text: The spreads should come from the test examples instead
+          - id: c
+            text: The test examples helped set the scaling the model uses
+        answer: c
+        feedback: Scaling numbers are part of the model, so computing them with test data lets test information leak into it. Compute them from the stored training examples and reuse them for every query. A good k can't rescue a feature that swamps the distance.
+      - id: nearest-neighbors.transfer.v2.5
+        prompt: A photo app keeps 50 million image embeddings, and exact nearest-neighbor search takes several seconds per query. What is the standard remedy?
+        options:
+          - id: c
+            text: Use k = 1, so each search finds one image instead of many
+          - id: a
+            text: Use an approximate index, spot-checked against exact search
+          - id: b
+            text: Raise k, so each search can finish after far fewer comparisons
+        answer: a
+        feedback: Approximate nearest-neighbor indexes skip most comparisons and return almost-the-nearest images quickly; spot-checks show how often they miss. Exact search compares the query with every stored image whatever k is, so changing k barely changes the time.

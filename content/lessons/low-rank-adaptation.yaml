@@ -1,208 +1,420 @@
 schema_version: 0.2-draft
 lesson:
   id: low-rank-adaptation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Adapt a model by learning a smaller parameter update
   state: draft
-  summary: Learn a small structured update beside a fixed model and count what memory the approach actually
-    saves.
+  summary: Full fine-tuning of a 7-billion-parameter model needs over 100 GB of memory. LoRA trains 0.06% of the numbers instead, and QLoRA squeezes the rest onto one GPU.
   slot: M20.3
   category: learning
   sources:
-  - title: LoRA
-    url: https://arxiv.org/abs/2106.09685
-  - title: QLoRA
-    url: https://arxiv.org/abs/2305.14314
+    - title: "LoRA: Low-Rank Adaptation of Large Language Models (Hu et al., 2021)"
+      url: https://arxiv.org/abs/2106.09685
+    - title: "QLoRA: Efficient Finetuning of Quantized LLMs (Dettmers et al., 2023)"
+      url: https://arxiv.org/abs/2305.14314
+    - title: Hugging Face PEFT documentation — LoRA
+      url: https://huggingface.co/docs/peft/main/en/conceptual_guides/lora
 objectives:
-- id: objective.low-rank-adaptation
-  version: 1-draft
-  statement: LoRA parameterizes selected weight updates as low-rank products; QLoRA combines adapter training
-    with a quantized frozen base, trading memory and flexibility under specific numerical rules.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - low-rank-adaptation.base
-  - low-rank-adaptation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.supervised-fine-tuning
-  - anyOf:
-    - objective.matrices-tensors
-  - anyOf:
-    - objective.mixed-precision-training
+  - id: objective.low-rank-adaptation
+    version: 2-draft
+    statement: LoRA trains a small low-rank update instead of full weight matrices; QLoRA does the same on top of a 4-bit frozen base to save memory.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - low-rank-adaptation.base.v2
+      - low-rank-adaptation.transfer.v2
+      - low-rank-adaptation.calculate
+    prerequisites:
+      - anyOf:
+          - objective.supervised-fine-tuning
+      - anyOf:
+          - objective.matrices-tensors
+      - anyOf:
+          - objective.mixed-precision-training
 scenes:
-- id: low-rank-adaptation.s1
-  title: Learn an update beside frozen weights
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.low-rank-adaptation
-  markdown: '**Low-rank adaptation**, or **LoRA**, trains a small, structured change to selected weight matrices.
-    The original matrix can remain **frozen**, meaning its values do not change during this training.
+  - id: low-rank-adaptation.s1
+    title: Freeze the model, train a thin side path
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.low-rank-adaptation
+    markdown: |-
+      Ferncliff Cycles has its 860 demonstrations and a 7-billion-parameter model. Full fine-tuning updates every weight, and training with Adam needs about 16 bytes per parameter (weights, gradients, and optimizer states, as the infrastructure module worked out): $7 \times 10^9 \times 16 \approx 112$ GB before activations. Ferncliff has one 24 GB graphics card.
 
+      **LoRA** (Hu et al., 2021) keeps every original weight **frozen**, meaning training never changes it. Next to a chosen weight matrix $W$ it adds a thin side path made of two small matrices, $A$ and $B$, and trains only those:
 
-    Call the original matrix W. LoRA represents its update using two smaller matrices, A and B: the effective
-    weights are W plus a scaled product BA. If W has d_out rows and d_in columns, B has shape d_out by r and
-    A has shape r by d_in. The chosen rank r controls the size and flexibility of this update.
+      $$h = Wx + \frac{\alpha}{r}\,BAx$$
 
+      $x$ is the layer's input and $h$ its output. For a $d \times d$ matrix $W$, $A$ is $r \times d$: it squeezes the input down to just $r$ numbers. $B$ is $d \times r$: it spreads those $r$ numbers back out to full size. The bottleneck size $r$ is the **rank**, which is where the name *low-rank adaptation* comes from. It is small, often 8 or 16, and $\alpha$ is a fixed scale you choose.
 
-    For a rank-one example, multiply column B = [1, 2] by row A = [3, 4]. The result has rows [3, 4] and [6,
-    8]. Training changes the factors; their product, with the chosen scale, supplies a change to W. The base
-    matrix still exists.'
-  text_mode: '**Low-rank adaptation**, or **LoRA**, trains a small, structured change to selected weight matrices.
-    The original matrix can remain **frozen**, meaning its values do not change during this training.
+      The side path starts silent. $A$ begins with small random values and $B$ begins at zero, so $BA = 0$ and the model on step one is exactly the base model. Training then grows $B$ and $A$ into a useful update. The learned change to the weights is $\Delta W = \frac{\alpha}{r}BA$.
+    diagram:
+      caption: A LoRA layer. The frozen weight and the trainable low-rank side path both read the input, and their outputs add.
+      description: The input x goes two ways. One path goes through the frozen weight matrix W. The other goes through A, which squeezes it to r numbers, then B, which expands it back to full size, scaled by alpha over r. The two results are added to give the output h. Only A and B are trained.
+      nodes:
+        - id: x
+          label: Input x
+          note: d numbers
+          col: 0
+          row: 1
+        - id: w
+          label: Frozen W
+          note: d × d, never updated
+          col: 2
+          row: 0
+          tone: muted
+        - id: a
+          label: A (trainable)
+          note: r × d, squeezes to r numbers
+          col: 1
+          row: 2
+          tone: accent
+        - id: b
+          label: B (trainable)
+          note: d × r, starts at zero
+          col: 2
+          row: 2
+          tone: accent
+        - id: add
+          label: Add
+          col: 3
+          row: 1
+        - id: h
+          label: Output h
+          note: d numbers
+          col: 4
+          row: 1
+      edges:
+        - from: x
+          to: w
+        - from: x
+          to: a
+        - from: a
+          to: b
+          label: r numbers
+        - from: w
+          to: add
+          label: Wx
+        - from: b
+          to: add
+          label: × α/r
+        - from: add
+          to: h
+    bridges: []
+  - id: low-rank-adaptation.s2
+    title: Count what you train
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.low-rank-adaptation
+    markdown: |-
+      Take one attention matrix in Ferncliff's model, with $d = 4096$ and $r = 8$.
 
+      | | Numbers trained |
+      | --- | ---: |
+      | Full update, $d \times d$ | $4096^2 = 16{,}777{,}216$ |
+      | LoRA, $B$ plus $A$: $2dr$ | $2 \times 4096 \times 8 = 65{,}536$ |
 
-    Call the original matrix W. LoRA represents its update using two smaller matrices, A and B: the effective
-    weights are W plus a scaled product BA. If W has d_out rows and d_in columns, B has shape d_out by r and
-    A has shape r by d_in. The chosen rank r controls the size and flexibility of this update.
+      That's 0.39% of the full matrix, 256 times fewer. The LoRA paper put adapters on two attention matrices per layer, the query and value projections. For a 32-layer model: $2 \times 32 \times 65{,}536 = 4{,}194{,}304$ trainable numbers, about 0.06% of 7 billion.
 
+      Why can so few numbers work? A product $BA$ passes through only $r$ numbers in the middle, so its rank, the number of independent directions it can change, is at most $r$. The LoRA authors' bet was that fine-tuning needs only a few such directions: teaching "answer like Ferncliff" is a small adjustment to a model that already knows language. The code checks both the count and the rank limit.
 
-    For a rank-one example, multiply column B = [1, 2] by row A = [3, 4]. The result has rows [3, 4] and [6,
-    8]. Training changes the factors; their product, with the chosen scale, supplies a change to W. The base
-    matrix still exists.'
-  bridges: []
-- id: low-rank-adaptation.s2
-  title: Count a toy saving
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.low-rank-adaptation
-  markdown: A 100 by 100 matrix has 10,000 entries. Rank-four factors contain 100×4 + 4×100 = 800 entries,
-    before any additional trainable components. This reduces adapter parameters, but the base matrix still
-    exists and forward/backward computation still requires the surrounding network.
-  text_mode: A 100 by 100 matrix has 10,000 entries. Rank-four factors contain 100×4 + 4×100 = 800 entries,
-    before any additional trainable components. This reduces adapter parameters, but the base matrix still
-    exists and forward/backward computation still requires the surrounding network.
-  bridges:
-  - matrices-tensors
-- id: low-rank-adaptation.s3
-  title: Add quantization carefully
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.low-rank-adaptation
-  markdown: '**QLoRA** combines LoRA with **quantization**: storing approximate base weights using fewer bits.
-    The base stays frozen while the low-rank adapters learn.
+      ```python run
+      import numpy as np
 
+      d, r, alpha = 4096, 8, 16
+      full, lora = d * d, d * r + r * d
+      print(f"full {d} x {d} update: {full:,} numbers")
+      print(f"LoRA B ({d} x {r}) + A ({r} x {d}): {lora:,} numbers = {100 * lora / full:.2f}%")
 
-    For computation, stored codes can be **dequantized**, or converted into values in a suitable calculation
-    format. QLoRA also uses specific numerical and memory-saving techniques. A four-bit base therefore does
-    not mean that every multiplication, activation, gradient, or optimizer value uses four bits.'
-  text_mode: '**QLoRA** combines LoRA with **quantization**: storing approximate base weights using fewer bits.
-    The base stays frozen while the low-rank adapters learn.
+      rng = np.random.default_rng(0)
+      d = 64                                    # a small matrix so the checks run fast
+      W = rng.normal(size=(d, d))               # frozen base weights
+      B = rng.normal(size=(d, r))               # (real LoRA starts B at zero; these are
+      A = rng.normal(size=(r, d))               #  stand-ins for trained values)
+      delta = (alpha / r) * B @ A
+      print("rank of W:", np.linalg.matrix_rank(W), "| rank of update:", np.linalg.matrix_rank(delta))
 
+      x = rng.normal(size=d)
+      side_path = W @ x + (alpha / r) * (B @ (A @ x))   # adapter kept separate
+      merged = (W + delta) @ x                           # adapter folded into W
+      print(f"largest difference, separate vs merged: {np.abs(side_path - merged).max():.1e}")
+      ```
 
-    For computation, stored codes can be **dequantized**, or converted into values in a suitable calculation
-    format. QLoRA also uses specific numerical and memory-saving techniques. A four-bit base therefore does
-    not mean that every multiplication, activation, gradient, or optimizer value uses four bits.'
-  bridges: []
-- id: low-rank-adaptation.s4
-  title: Choose targets and evaluate merging
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.low-rank-adaptation
-  markdown: Which layers receive adapters, the rank, scale, optimizer, and data all matter. Merging updates
-    into a base or re-quantizing can affect numerical behavior. Compare quality, memory, and deployment compatibility;
-    fewer trainable parameters do not guarantee equal quality or proportional total runtime savings.
-  text_mode: Which layers receive adapters, the rank, scale, optimizer, and data all matter. Merging updates
-    into a base or re-quantizing can affect numerical behavior. Compare quality, memory, and deployment compatibility;
-    fewer trainable parameters do not guarantee equal quality or proportional total runtime savings.
-  bridges: []
-- id: low-rank-adaptation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.low-rank-adaptation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: LoRA learns a small factored update beside frozen base weights. QLoRA also compresses the stored
-    base weights; the rest of training still needs memory and computation.
-- id: low-rank-adaptation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.low-rank-adaptation
-  markdown: LoRA learns a small factored update beside frozen base weights. QLoRA also compresses the stored
-    base weights; the rest of training still needs memory and computation.
-  text_mode: LoRA learns a small factored update beside frozen base weights. QLoRA also compresses the stored
-    base weights; the rest of training still needs memory and computation.
+      The update's rank prints as 8, even though the random base matrix has full rank 64. Change `r` to 3 and it prints 3. The last line is a tiny rounding error, around $10^{-13}$: the next scene explains why that matters.
+
+      :::predict Ferncliff raises r to 16. How many numbers does one 4096 × 4096 adapter train now?
+      $2 \times 4096 \times 16 = 131{,}072$, double the rank-8 count and still only 0.78% of the full matrix. LoRA's cost grows in a straight line with $r$.
+      :::
+    bridges:
+      - matrices-tensors
+  - id: low-rank-adaptation.s3
+    title: Squeeze the frozen base to 4 bits
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.low-rank-adaptation
+    markdown: |-
+      LoRA shrinks what you *train*, but the frozen base still has to sit in memory. In 16-bit numbers, 7 billion weights take $7 \times 10^9 \times 2 = 14$ GB.
+
+      **QLoRA** (Dettmers et al., 2023) stores the frozen base with **quantization**: each weight is replaced by a 4-bit code plus a shared scale for each small block of weights. At half a byte per weight, the base shrinks to about 3.5 GB, plus a little for the scales.
+
+      | Setup | Rough memory before activations |
+      | --- | ---: |
+      | Full fine-tuning with Adam (16 bytes per weight) | 112 GB |
+      | LoRA on a 16-bit base (2 bytes per frozen weight) | 14 GB + about 0.07 GB for the adapters |
+      | QLoRA: LoRA on a 4-bit base (half a byte per frozen weight) | 3.5 GB + adapters |
+
+      The adapter figure counts the 4.2 million adapter numbers on the query and value matrices at the full 16 bytes each, since they do get gradients and Adam states: about 67 MB.
+
+      QLoRA's 4-bit code is **NF4** (4-bit NormalFloat), whose 16 levels are spaced to suit weights that follow a bell curve. The paper added two memory savers: quantizing the scales themselves ("double quantization") and paging optimizer states out to CPU memory during spikes. With all three, the authors fine-tuned a 65-billion-parameter model on a single 48 GB GPU.
+
+      :::mixup "QLoRA trains a 4-bit model."
+      The 4-bit weights are frozen and are never trained. For each matrix multiply, the needed weights are converted back to 16-bit (BF16) numbers, the arithmetic runs in 16 bits, and gradients flow through to the LoRA adapters, which are kept in 16-bit precision throughout.
+      :::
+    bridges: []
+  - id: low-rank-adaptation.s4
+    title: Merge it, or keep it on the side
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.low-rank-adaptation
+    markdown: |-
+      After training, Ferncliff has two choices.
+
+      **Merge.** Compute $W' = W + \frac{\alpha}{r}BA$ once and replace $W$. The merged model has exactly the original shapes, so it runs at the original speed. The code above showed the separate and merged paths agree to rounding error. If the base was 4-bit, merge into a 16-bit copy of the weights; folding the update into 4-bit codes would round much of it away.
+
+      **Keep adapters separate.** Ferncliff builds a second adapter for its mechanics, trained on repair manuals. The two adapters are about 8 MB each in 16-bit, and one copy of the base can serve both, swapping the adapter per request.
+
+      Two knobs need care. The $\frac{\alpha}{r}$ scale keeps the update's size roughly steady when you change $r$, so you retune the learning rate less often. With $\alpha = 16$ and $r = 8$, the side path is multiplied by 2. And a small $r$ is a real limit: rank 8 can make many small adjustments, but a big change, such as teaching the model a new language, may need a higher rank, more target matrices, or full fine-tuning. Compare against a full fine-tune on a held-out set before you trust the smaller run.
+    bridges: []
+  - id: low-rank-adaptation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.low-rank-adaptation
+    markdown: Count LoRA parameters for a few matrix shapes, then decide how to fit, merge, and serve adapters for a translation app, a law firm, and a laptop GPU.
+    takeaway: |-
+      LoRA freezes the model and trains a side path BA of rank r, which costs 2dr numbers instead of d². QLoRA stores the frozen base in 4 bits, and a trained adapter can be merged in at no speed cost or kept separate to swap.
+  - id: low-rank-adaptation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.low-rank-adaptation
+    markdown: |-
+      LoRA learns a small factored update beside frozen base weights. QLoRA also compresses the stored base weights; the rest of training still needs memory and computation.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - low-rank-adaptation.s1
-    - low-rank-adaptation.s2
-    - low-rank-adaptation.s3
-    - low-rank-adaptation.s4
-    - low-rank-adaptation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - low-rank-adaptation.s1
+        - low-rank-adaptation.s2
+        - low-rank-adaptation.s3
+        - low-rank-adaptation.s4
+        - low-rank-adaptation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     low-rank-adaptation.recap: low-rank-adaptation.check
 assessment_families:
-- id: low-rank-adaptation.base
-  objective_ref: objective.low-rank-adaptation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Count a toy saving: trace the inputs, operation, and result before choosing.'
-  remediation_scene: low-rank-adaptation.s2
-  variants:
-  - id: low-rank-adaptation.base.1
-    prompt: What is trained in the simplest frozen-base LoRA setup?
-    options:
-    - id: b
-      text: Every base matrix by definition
-    - id: c
-      text: Only tokenizer token IDs
-    - id: a
-      text: The low-rank factors
-    answer: a
-    feedback: The learned product supplies an update to selected weights.
-  - id: low-rank-adaptation.base.2
-    prompt: 100 by 4 plus 4 by 100 factors contain how many entries?
-    options:
-    - id: c
-      text: 400 total
-    - id: a
-      text: '800'
-    - id: b
-      text: 10,000
-    answer: a
-    feedback: Both factor matrices contribute 400 entries.
-- id: low-rank-adaptation.transfer
-  objective_ref: objective.low-rank-adaptation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Choose targets and evaluate merging: trace the inputs, operation, and result before choosing.'
-  remediation_scene: low-rank-adaptation.s4
-  variants:
-  - id: low-rank-adaptation.transfer.1
-    prompt: Does QLoRA mean all base weights are directly updated in four-bit arithmetic?
-    options:
-    - id: c
-      text: Only for all attention layers
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: The quantized base is frozen while adapters learn under the specified recipe.
-  - id: low-rank-adaptation.transfer.2
-    prompt: Does reducing trainable parameter count remove base-model memory?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if rank is four
-    answer: a
-    feedback: The frozen base remains part of execution.
+  - id: low-rank-adaptation.base
+    objective_ref: objective.low-rank-adaptation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Count a toy saving: trace the inputs, operation, and result before choosing.'
+    remediation_scene: low-rank-adaptation.s2
+    variants:
+      - id: low-rank-adaptation.base.1
+        prompt: What is trained in the simplest frozen-base LoRA setup?
+        options:
+          - id: b
+            text: Every base matrix by definition
+          - id: c
+            text: Only tokenizer token IDs
+          - id: a
+            text: The low-rank factors
+        answer: a
+        feedback: The learned product supplies an update to selected weights.
+        retired: true
+      - id: low-rank-adaptation.base.2
+        prompt: 100 by 4 plus 4 by 100 factors contain how many entries?
+        options:
+          - id: c
+            text: 400 total
+          - id: a
+            text: '800'
+          - id: b
+            text: 10,000
+        answer: a
+        feedback: Both factor matrices contribute 400 entries.
+        retired: true
+  - id: low-rank-adaptation.transfer
+    objective_ref: objective.low-rank-adaptation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Choose targets and evaluate merging: trace the inputs, operation, and result before choosing.'
+    remediation_scene: low-rank-adaptation.s4
+    variants:
+      - id: low-rank-adaptation.transfer.1
+        prompt: Does QLoRA mean all base weights are directly updated in four-bit arithmetic?
+        options:
+          - id: c
+            text: Only for all attention layers
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: The quantized base is frozen while adapters learn under the specified recipe.
+        retired: true
+      - id: low-rank-adaptation.transfer.2
+        prompt: Does reducing trainable parameter count remove base-model memory?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if rank is four
+        answer: a
+        feedback: The frozen base remains part of execution.
+        retired: true
+  - id: low-rank-adaptation.base.v2
+    objective_ref: objective.low-rank-adaptation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Picture the side path: A squeezes the input to r numbers, B expands it back, and the frozen W never changes. Ask what that shape allows and what it costs."
+    remediation_scene: low-rank-adaptation.s1
+    variants:
+      - id: low-rank-adaptation.base.v2.1
+        prompt: "LoRA initializes A with small random values and B with zeros. What does this choice accomplish?"
+        options:
+          - id: b
+            text: It makes the update's rank start at r and shrink during training
+          - id: a
+            text: The adapted model starts out exactly equal to the base model
+          - id: c
+            text: It keeps the adapter's gradients at zero for the first steps
+        answer: a
+        feedback: With B = 0 the product BA is zero, so the first forward pass matches the base model exactly. The gradient for B isn't zero (it depends on A and the input), so training starts moving right away; the rank starts at 0, not r.
+      - id: low-rank-adaptation.base.v2.2
+        prompt: "A LoRA adapter with r = 8 is trained on a 4096 × 4096 matrix. What is the largest possible rank of the learned update BA?"
+        options:
+          - id: c
+            text: 4096, the same as the matrix it is added to
+          - id: b
+            text: 16, because two factor matrices each add rank 8
+          - id: a
+            text: 8, because everything passes through r numbers
+        answer: a
+        feedback: A product can't have higher rank than its narrowest middle dimension, which is r = 8. The ranks of A and B don't add; they cap each other. The full 4096 would need a full-rank update, which LoRA can't express.
+      - id: low-rank-adaptation.base.v2.3
+        prompt: "After training, a team merges the adapter by computing W + (α/r)BA and saving it in place of W. How does the merged model's speed compare with the base model's?"
+        options:
+          - id: a
+            text: Same speed, since the merged matrix has the original shape
+          - id: b
+            text: Slightly slower, since the adapter still runs as an extra step
+          - id: c
+            text: Faster, since the merged weights are lower rank than W
+        answer: a
+        feedback: Merging folds the update into one matrix of the same size, so no extra work is done at inference. The side path only costs extra time when adapters are kept separate, and W plus a low-rank update is generally still full rank.
+      - id: low-rank-adaptation.base.v2.4
+        prompt: "A team uses α = 32 with r = 16. What does the α/r factor do to the side path's output?"
+        options:
+          - id: c
+            text: It divides BAx by 2 to keep the update small
+          - id: a
+            text: It multiplies BAx by 2 before adding it to Wx
+          - id: b
+            text: It multiplies the rank by 2, giving an effective rank of 32
+        answer: a
+        feedback: α/r = 32/16 = 2 scales the side path's output. It doesn't change the rank, which is set by the shapes of A and B; the scale just keeps the update's size steady when r changes.
+  - id: low-rank-adaptation.transfer.v2
+    objective_ref: objective.low-rank-adaptation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Separate the three costs, frozen base in memory, trainable adapter, and inference speed, and ask which one the situation is really about.
+    remediation_scene: low-rank-adaptation.s3
+    variants:
+      - id: low-rank-adaptation.transfer.v2.1
+        prompt: "A researcher wants to fine-tune a 13-billion-parameter model on a laptop GPU with 12 GB of memory. The 16-bit weights alone take 26 GB. Which approach fits?"
+        options:
+          - id: b
+            text: LoRA on the 16-bit base, since it trains only a tiny fraction of weights
+          - id: a
+            text: QLoRA, storing the frozen base in 4 bits and training 16-bit adapters
+          - id: c
+            text: Full fine-tuning with a smaller learning rate to save memory
+        answer: a
+        feedback: LoRA cuts the trainable numbers, but the 26 GB frozen base still has to fit. In 4 bits it takes about 6.5 GB, leaving room for adapters and activations. The learning rate has no effect on memory.
+      - id: low-rank-adaptation.transfer.v2.2
+        prompt: "A law firm serves one base model to 40 client teams, each wanting its own writing style. Which deployment keeps memory lowest?"
+        options:
+          - id: c
+            text: Merge each team's adapter and keep 40 merged copies of the model
+          - id: b
+            text: Fully fine-tune one model on all 40 styles mixed together
+          - id: a
+            text: Keep one base copy and load each team's small adapter per request
+        answer: a
+        feedback: Adapters take megabytes and share one base copy, so 40 of them add little memory. Forty merged copies means forty full models, and one mixed model can't give each team its own style on request.
+      - id: low-rank-adaptation.transfer.v2.3
+        prompt: "A team adapts an English model to write Icelandic with rank-4 LoRA on two attention matrices. It improves a little, then stalls well below a full fine-tune. What should they try first?"
+        options:
+          - id: a
+            text: Raise the rank and add adapters to more matrices
+          - id: b
+            text: Lower the rank to 2 so the update generalizes better
+          - id: c
+            text: Merge the adapter into the base, then keep training it
+        answer: a
+        feedback: A new language is a big change, and rank 4 on two matrices can only move the weights in a few directions. More rank and more target matrices give the update room. Lower rank restricts it further, and merging doesn't change what the adapter can express.
+      - id: low-rank-adaptation.transfer.v2.4
+        prompt: "A team trained a QLoRA adapter on a 4-bit base and wants one merged model for serving. What is the safer way to merge?"
+        options:
+          - id: b
+            text: Add the update into the 4-bit codes so the file stays small
+          - id: a
+            text: Add the update to a 16-bit copy of the base weights
+          - id: c
+            text: Skip merging, since QLoRA adapters can't be merged at all
+        answer: a
+        feedback: The update is small, so rounding it into 4-bit codes can erase much of it; merging into 16-bit weights keeps it intact, and you can quantize again afterwards and test. QLoRA adapters can be merged; they just need a precise base to merge into.
+  - id: low-rank-adaptation.calculate
+    objective_ref: objective.low-rank-adaptation
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "A matrix with d_out rows and d_in columns gets B (d_out × r) and A (r × d_in), so one adapter trains r × (d_out + d_in) numbers. Multiply by the number of adapted matrices."
+    remediation_scene: low-rank-adaptation.s2
+    absolute_tolerance: 0.5
+    variants:
+      - id: low-rank-adaptation.calculate.1
+        prompt: A LoRA adapter with rank r = 8 is added to one 1024 × 1024 weight matrix. How many numbers does it train?
+        answer: 16384
+        feedback: 2 × 1024 × 8 = 16,384, compared with 1,048,576 for the full matrix (1.6%).
+      - id: low-rank-adaptation.calculate.2
+        prompt: A feed-forward matrix maps 11,008 inputs to 4,096 outputs. A rank-16 LoRA adapter is added to it. How many numbers does the adapter train?
+        answer: 241664
+        feedback: B is 4096 × 16 and A is 16 × 11008, so 16 × (4096 + 11008) = 16 × 15,104 = 241,664.
+      - id: low-rank-adaptation.calculate.3
+        prompt: A rank-32 LoRA adapter is added to one 2048 × 2048 matrix. How many numbers does it train?
+        answer: 131072
+        feedback: 2 × 2048 × 32 = 131,072, which is 3.1% of the 4,194,304 entries in the full matrix.
+      - id: low-rank-adaptation.calculate.4
+        prompt: A 32-layer model has d = 4096. A rank-8 adapter is added to the query and value matrices (each 4096 × 4096) in every layer. How many numbers are trained in total?
+        answer: 4194304
+        feedback: One adapter trains 2 × 4096 × 8 = 65,536. Two per layer across 32 layers gives 64 × 65,536 = 4,194,304.
+      - id: low-rank-adaptation.calculate.5
+        prompt: A rank-8 LoRA adapter is added to one 5120 × 5120 matrix. How many numbers does it train?
+        answer: 81920
+        feedback: 2 × 5120 × 8 = 81,920, against 26,214,400 for the full matrix.

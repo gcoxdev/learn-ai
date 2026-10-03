@@ -1,215 +1,428 @@
 schema_version: 0.2-draft
 lesson:
   id: convolution
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Slide a shared filter across an input
   state: draft
-  summary: Slide the same small weight pattern across three numbers, then change stride and padding to see
-    what each output can use.
+  summary: How does a phone find a letter anywhere in a photo without learning each spot separately? Slide one tiny grid of nine weights across it, and count exactly what comes out.
   slot: M12.2
   category: learning
   sources:
-  - title: Dive into Deep Learning — convolutions for images
-    url: https://d2l.ai/chapter_convolutional-neural-networks/conv-layer.html
-  - title: Dive into Deep Learning — padding and stride
-    url: https://d2l.ai/chapter_convolutional-neural-networks/padding-and-strides.html
+    - title: Dive into Deep Learning — convolutions for images
+      url: https://d2l.ai/chapter_convolutional-neural-networks/conv-layer.html
+    - title: Dive into Deep Learning — padding and stride
+      url: https://d2l.ai/chapter_convolutional-neural-networks/padding-and-strides.html
+    - title: Dive into Deep Learning — pooling
+      url: https://d2l.ai/chapter_convolutional-neural-networks/pooling.html
+    - title: "A guide to convolution arithmetic for deep learning (Dumoulin & Visin, 2016)"
+      url: https://arxiv.org/abs/1603.07285
 objectives:
-- id: objective.convolution
-  version: 1-draft
-  statement: Convolutional layers combine local values with shared weights; channels, stride, padding, pooling,
-    and receptive fields determine what information each output can use.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - convolution.base
-  - convolution.transfer
-  prerequisites:
-  - anyOf:
-    - objective.image-geometry
-  - anyOf:
-    - objective.neural-forward-pass
+  - id: objective.convolution
+    version: 2-draft
+    statement: Convolutional layers combine local values with shared weights; channels, stride, padding, pooling, and receptive fields determine what information each output can use.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - convolution.base.v2
+      - convolution.transfer.v2
+      - convolution.calculate
+    prerequisites:
+      - anyOf:
+          - objective.image-geometry
+      - anyOf:
+          - objective.neural-forward-pass
 scenes:
-- id: convolution.s1
-  title: Use the same filter at each position
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.convolution
-  markdown: 'A **filter**, also called a kernel here, is a small table of weights. Place it over part of the
-    input, multiply matching values and weights, and add the products. Then move it and reuse the same weights.
-    Different input values can give different outputs.
+  - id: convolution.s1
+    title: One small filter, reused everywhere
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.convolution
+    markdown: |-
+      The photo app's sign reader has to spot a letter's edge wherever it appears. An edge looks the same in every corner of a photo, so why learn a separate detector for each spot? Use one, and slide it around.
 
+      That detector is a **filter** (or **kernel**): a small grid of weights. Place it over part of the input, multiply each value by the weight on top of it, and add the products. Then slide it along and repeat with the *same* weights.
 
-    This **weight sharing** lets a convolutional layer look for local patterns using fewer independent parameters.
-    Many deep-learning libraries use the name convolution for an unflipped operation technically called **cross-correlation**.
-    Our worked example uses that convention. How the filter handles the boundaries also affects the result.'
-  text_mode: 'A **filter**, also called a kernel here, is a small table of weights. Place it over part of the
-    input, multiply matching values and weights, and add the products. Then move it and reuse the same weights.
-    Different input values can give different outputs.
+      Take the filter [1, −1] and the row [2, 5, 4]:
 
+      - First position covers 2 and 5: $1 \times 2 + (-1) \times 5 = -3$.
+      - Second position covers 5 and 4: $1 \times 5 + (-1) \times 4 = 1$.
 
-    This **weight sharing** lets a convolutional layer look for local patterns using fewer independent parameters.
-    Many deep-learning libraries use the name convolution for an unflipped operation technically called **cross-correlation**.
-    Our worked example uses that convention. How the filter handles the boundaries also affects the result.'
-  bridges: []
-- id: convolution.s2
-  title: Calculate a one-dimensional filter
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.convolution
-  markdown: Apply filter [1, −1] to input [2, 5, 4] with stride 1 (move one place at a time) and no padding
-    (add no boundary values). The two outputs are 2 − 5 = −3 and 5 − 4 = 1. This detects local differences.
-    A two-dimensional image filter similarly combines a patch, summing over spatial positions and input channels.
-  text_mode: Apply filter [1, −1] to input [2, 5, 4] with stride 1 (move one place at a time) and no padding
-    (add no boundary values). The two outputs are 2 − 5 = −3 and 5 − 4 = 1. This detects local differences.
-    A two-dimensional image filter similarly combines a patch, summing over spatial positions and input channels.
-  bridges:
-  - matrices-tensors
-- id: convolution.s3
-  title: Choose the positions the filter visits
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.convolution
-  markdown: '**Stride** is how far the filter moves each time. **Padding** adds values at the boundaries. With
-    three input values, a two-value filter, stride 1, and no padding, there are two valid starting positions.
-    Adding one zero at each end creates five padded input positions and four valid starts.
+      The output [−3, 1] measures change between neighbors, like the edge differences in the previous lesson. Reusing one set of weights everywhere is **weight sharing**, the core of a **convolutional layer**.
 
+      Strictly, this is **cross-correlation**; textbook convolution flips the filter first. Deep-learning libraries skip the flip but keep the name, which is harmless because the weights are learned anyway.
+    bridges: []
+  - id: convolution.s2
+    title: A 3 × 3 filter finds a letter's edge
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.convolution
+    markdown: |-
+      Here is a gray patch of a street sign, 4 rows by 5 columns: bright sign (9) on the left, a dark letter stroke (1) on the right, leaning one step left in the bottom row. The filter responds to "bright left, dark right":
 
-    **Pooling** summarizes a neighborhood. A max-pooling window over [2, 5] returns 5; average pooling returns
-    3.5. These operations reduce detail. When layers are stacked, their **receptive field** grows: a later
-    output can depend on a wider region of the original input. That describes possible influence, not equal
-    influence from every value.'
-  text_mode: '**Stride** is how far the filter moves each time. **Padding** adds values at the boundaries.
-    With three input values, a two-value filter, stride 1, and no padding, there are two valid starting positions.
-    Adding one zero at each end creates five padded input positions and four valid starts.
+      $$\text{patch} = \begin{bmatrix} 9&9&9&1&1\\ 9&9&9&1&1\\ 9&9&9&1&1\\ 9&9&1&1&1 \end{bmatrix} \qquad \text{filter} = \begin{bmatrix} 1&0&-1\\ 1&0&-1\\ 1&0&-1 \end{bmatrix}$$
 
+      Over the top-left 3 × 3 window, the left column adds $9 + 9 + 9 = 27$, the middle column counts 0, and the right column subtracts 27. The output is 0: flat sign, no edge.
 
-    **Pooling** summarizes a neighborhood. A max-pooling window over [2, 5] returns 5; average pooling returns
-    3.5. These operations reduce detail. When layers are stacked, their **receptive field** grows: a later
-    output can depend on a wider region of the original input. That describes possible influence, not equal
-    influence from every value.'
-  bridges: []
-  figure:
-    kind: convolution
-    caption: Select a filter position and predict its output before revealing the sum.
-    description: A shared two-value filter slides across [2, 5, 4]. Controls change one weight, stride, and
-      zero padding; the highlighted input pair, products, and sum explain each output.
-- id: convolution.s4
-  title: Check what the shared filter preserves
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.convolution
-  markdown: 'Convolution supports useful responses to translations, but boundaries, stride, pooling, and later
-    layers affect exact equivariance. Shared filters do not automatically make a model invariant to rotation
-    or give it information from the whole image.
+      :::predict Slide the window down one row (rows 2–4, columns 1–3). What does the filter output?
+      The left column still adds 27; the right column now holds 9, 9, and 1, so it subtracts 19. The output is 8, a weak response, because the stroke only reaches the window's corner.
+      :::
 
+      All six positions give the output grid, called a **feature map**:
 
-    **Downsampling** reduces the number of positions. It saves work but can lose small visual features. Choose
-    it with the required detail and output geometry in mind.'
-  text_mode: 'Convolution supports useful responses to translations, but boundaries, stride, pooling, and later
-    layers affect exact equivariance. Shared filters do not automatically make a model invariant to rotation
-    or give it information from the whole image.
+      $$\begin{bmatrix} 0&24&24\\ 8&24&16 \end{bmatrix}$$
 
+      The large values mark windows that straddle the bright-to-dark boundary.
 
-    **Downsampling** reduces the number of positions. It saves work but can lose small visual features. Choose
-    it with the required detail and output geometry in mind.'
-  bridges: []
-- id: convolution.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.convolution
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A convolutional layer reuses a local filter across the input. Stride and padding choose where it
-    operates; stacking and pooling change the detail and region available to later outputs.
-- id: convolution.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.convolution
-  markdown: A convolutional layer reuses a local filter across the input. Stride and padding choose where it
-    operates; stacking and pooling change the detail and region available to later outputs.
-  text_mode: A convolutional layer reuses a local filter across the input. Stride and padding choose where
-    it operates; stacking and pooling change the detail and region available to later outputs.
+      On a color photo, a 3 × 3 filter has $3 \times 3 \times 3 = 27$ weights and sums over all three channels. A layer learns many filters, each producing its own output channel.
+    bridges:
+      - matrices-tensors
+  - id: convolution.s3
+    title: Stride and padding decide the output size
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.convolution
+    markdown: |-
+      **Stride** is how many places the filter moves each step. **Padding** adds values (usually zeros) around the border so the filter can sit over the edges.
+
+      Back to [2, 5, 4] and a two-weight filter. Stride 1, no padding: 2 positions. One zero at each end, [0, 2, 5, 4, 0]: 4 positions. Stride 2, no padding: 1. Check each case in the figure, predicting every output before you reveal it.
+
+      :::papers The output-size formula
+      For an input of width $W$, a filter of width $K$, padding $P$ on each side, and stride $S$:
+
+      $$\text{output width} = \left\lfloor \frac{W - K + 2P}{S} \right\rfloor + 1$$
+
+      $\lfloor \cdot \rfloor$ means round down. For the row, $W = 3$ and $K = 2$: no padding gives $(3 - 2 + 0)/1 + 1 = 2$; padding 1 gives $(3 - 2 + 2)/1 + 1 = 4$; stride 2 gives $\lfloor (3 - 2 + 0)/2 \rfloor + 1 = 1$, or $\lfloor (3 - 2 + 2)/2 \rfloor + 1 = 2$ with padding 1. Height works the same way.
+      :::
+
+      On photos, a 3 × 3 filter with padding 1 and stride 1 keeps the size: $(224 - 3 + 2)/1 + 1 = 224$. ResNet's first layer, 7 × 7 with padding 3 and stride 2, halves it: $\lfloor (224 - 7 + 6)/2 \rfloor + 1 = 112$.
+
+      :::predict A 3 × 3 filter with padding 1 and stride 2 runs on a 224 × 224 photo. How wide is the output?
+      $\lfloor (224 - 3 + 2)/2 \rfloor + 1 = \lfloor 111.5 \rfloor + 1 = 112$. Stride 2 halves each side, leaving a quarter as many positions.
+      :::
+
+      Here is the same arithmetic in code, run on the street-sign patch from the previous page:
+
+      ```python run
+      import numpy as np
+
+      def conv2d(img, k, stride=1, pad=0):
+          """Cross-correlation, as deep-learning libraries compute it."""
+          img = np.pad(img, pad)                      # zeros around the border
+          K = k.shape[0]
+          H = (img.shape[0] - K) // stride + 1
+          W = (img.shape[1] - K) // stride + 1
+          out = np.zeros((H, W), dtype=int)
+          for i in range(H):
+              for j in range(W):
+                  window = img[i*stride:i*stride+K, j*stride:j*stride+K]
+                  out[i, j] = np.sum(window * k)      # multiply, then add up
+          return out
+
+      sign = np.array([[9, 9, 9, 1, 1],               # bright sign, dark letter stroke
+                       [9, 9, 9, 1, 1],
+                       [9, 9, 9, 1, 1],
+                       [9, 9, 1, 1, 1]])
+      edge = np.array([[1, 0, -1],
+                       [1, 0, -1],
+                       [1, 0, -1]])
+
+      print("output:\n", conv2d(sign, edge))
+      print("padding 1, output shape:", conv2d(sign, edge, pad=1).shape)
+      print("stride 2, padding 1:\n", conv2d(sign, edge, stride=2, pad=1))
+
+      def out_size(W, K, P, S):
+          return (W - K + 2 * P) // S + 1
+
+      print("224 photo, 3x3, P=1, S=1 ->", out_size(224, 3, 1, 1))
+      print("224 photo, 7x7, P=3, S=2 ->", out_size(224, 7, 3, 2))
+      ```
+
+      Padding 1 keeps the patch's 4 × 5 size, and stride 2 with padding 1 gives 2 × 3, as the formula predicts. In the stride-2 output, the −18 and −27 on the left come from the added zeros, which look like a dark edge that isn't there. Try `edge.T`, a horizontal-edge filter, in the first `print`: this patch has almost no horizontal edges, so the outputs drop to 0 and 8.
+    bridges: []
+    figure:
+      kind: convolution
+      caption: Select a filter position and predict its output before revealing the sum.
+      description: A shared two-value filter slides across [2, 5, 4]. Controls change one weight, stride, and zero padding; the highlighted input pair, products, and sum explain each output.
+  - id: convolution.s5
+    title: Pooling and the growing field of view
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.convolution
+    markdown: |-
+      **Pooling** shrinks a feature map by summarizing each small window with one number: **max pooling** keeps the largest, **average pooling** the mean. Here is 2 × 2 pooling, stride 2, on a 4 × 4 map:
+
+      | Window | Values | Max | Average |
+      | --- | --- | ---: | ---: |
+      | top-left | 1, 3, 4, 6 | 6 | 3.5 |
+      | top-right | 0, 2, 1, 0 | 2 | 0.75 |
+      | bottom-left | 0, 2, 1, 1 | 2 | 1 |
+      | bottom-right | 5, 7, 3, 2 | 7 | 4.25 |
+
+      Sixteen numbers became four. Max pooling says "an edge is somewhere in this window" and forgets exactly where, which tolerates small shifts.
+
+      The **receptive field** of an output is the patch of the original image that can affect it. One 3 × 3 layer sees 3 × 3 pixels; a second one combines 3 × 3 of *those* outputs, covering 5 × 5 pixels. Downsampling makes the field grow faster:
+
+      | Layer | Receptive field | Step between outputs (pixels) |
+      | --- | ---: | ---: |
+      | 3 × 3 conv, stride 1 | 3 | 1 |
+      | 2 × 2 max pool, stride 2 | 4 | 2 |
+      | 3 × 3 conv, stride 1 | 8 | 2 |
+      | 2 × 2 max pool, stride 2 | 10 | 4 |
+      | 3 × 3 conv, stride 1 | 18 | 4 |
+
+      Each layer adds $(K - 1) \times \text{step}$, where the step is the product of all earlier strides: the last conv adds $2 \times 4 = 8$.
+
+      :::predict Without the pooling layers, how wide is the receptive field after three stacked 3 × 3 convolutions with stride 1?
+      Each adds $2 \times 1 = 2$: $3 \to 5 \to 7$. With pooling, the same three convolutions reach 18.
+      :::
+    bridges: []
+  - id: convolution.s4
+    title: A shared filter follows the object
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.convolution
+    markdown: |-
+      Slide [1, −1] along [0, 0, 9, 0, 0] and you get [0, −9, 9, 0]. Move the bright pixel one place right and the output becomes [0, 0, −9, 9]: the same response, one place later. Convolution is **equivariant to shifts**, so a letter's edge gives the same feature wherever it sits.
+
+      :::mixup "Convolution makes a network ignore where things are, and turn, and grow."
+      Convolution *moves* its output with the input; it keeps position. Pooling adds tolerance to small shifts, but nothing here handles rotation or size: a filter tuned to vertical strokes won't fire on a sign tilted 45°. That tolerance has to come from training on tilted and resized examples.
+      :::
+
+      Downsampling has a price. After two stride-2 steps, the map keeps one position per 4 × 4 block of pixels, so a 4-pixel letter shrinks to a single value. When small details matter, downsample later or use a higher-resolution crop.
+    bridges: []
+  - id: convolution.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.convolution
+    markdown: Compute some filter outputs and output sizes by hand, then decide how a drone camera, a microscope, and a document scanner should set stride, padding, and pooling.
+    takeaway: |-
+      A convolutional layer slides one small set of weights across the whole image. Stride and padding set the output size, ⌊(W − K + 2P)/S⌋ + 1, and stacking and pooling widen what each output can see while dropping fine detail.
+  - id: convolution.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.convolution
+    markdown: |-
+      A convolutional layer reuses a local filter across the input. Stride and padding choose where it operates; stacking and pooling change the detail and region available to later outputs.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - convolution.s1
-    - convolution.s2
-    - convolution.s3
-    - convolution.s4
-    - convolution.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - convolution.s1
+        - convolution.s2
+        - convolution.s3
+        - convolution.s5
+        - convolution.s4
+        - convolution.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     convolution.recap: convolution.check
 assessment_families:
-- id: convolution.base
-  objective_ref: objective.convolution
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Calculate a one-dimensional filter: trace the inputs, operation, and result before choosing.'
-  remediation_scene: convolution.s2
-  variants:
-  - id: convolution.base.1
-    prompt: Filter [1, 1] on [2, 3, 5], stride 1 and no padding, gives what?
-    options:
-    - id: c
-      text: '[10]'
-    - id: a
-      text: '[5, 8]'
-    - id: b
-      text: '[2, 3, 5]'
-    answer: a
-    feedback: The filter sums each adjacent pair.
-  - id: convolution.base.2
-    prompt: What does stride control?
-    options:
-    - id: a
-      text: The spacing between filter application positions
-    - id: b
-      text: Only the learning rate
-    - id: c
-      text: The number of training epochs
-    answer: a
-    feedback: Stride changes output sampling and often its spatial size.
-- id: convolution.transfer
-  objective_ref: objective.convolution
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'State the useful limits: trace the inputs, operation, and result before choosing.'
-  remediation_scene: convolution.s4
-  variants:
-  - id: convolution.transfer.1
-    prompt: A model downsamples aggressively and misses tiny objects. What tradeoff matters?
-    options:
-    - id: a
-      text: Reduced spatial detail versus compute and coverage
-    - id: b
-      text: Only the model’s name
-    - id: c
-      text: A guarantee that pooling preserves every feature
-    answer: a
-    feedback: Downsampling can discard information needed for small targets.
-  - id: convolution.transfer.2
-    prompt: Does ordinary convolution automatically guarantee rotation invariance?
-    options:
-    - id: b
-      text: Yes, every shared filter is rotation-invariant
-    - id: c
-      text: Only when channels are three
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: The built-in spatial assumption is not a universal transformation guarantee.
+  - id: convolution.base
+    objective_ref: objective.convolution
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Calculate a one-dimensional filter: trace the inputs, operation, and result before choosing.'
+    remediation_scene: convolution.s2
+    variants:
+      - id: convolution.base.1
+        prompt: Filter [1, 1] on [2, 3, 5], stride 1 and no padding, gives what?
+        options:
+          - id: c
+            text: '[10]'
+          - id: a
+            text: '[5, 8]'
+          - id: b
+            text: '[2, 3, 5]'
+        answer: a
+        feedback: The filter sums each adjacent pair.
+        retired: true
+      - id: convolution.base.2
+        prompt: What does stride control?
+        options:
+          - id: a
+            text: The spacing between filter application positions
+          - id: b
+            text: Only the learning rate
+          - id: c
+            text: The number of training epochs
+        answer: a
+        feedback: Stride changes output sampling and often its spatial size.
+        retired: true
+  - id: convolution.transfer
+    objective_ref: objective.convolution
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'State the useful limits: trace the inputs, operation, and result before choosing.'
+    remediation_scene: convolution.s4
+    variants:
+      - id: convolution.transfer.1
+        prompt: A model downsamples aggressively and misses tiny objects. What tradeoff matters?
+        options:
+          - id: a
+            text: Reduced spatial detail versus compute and coverage
+          - id: b
+            text: Only the model’s name
+          - id: c
+            text: A guarantee that pooling preserves every feature
+        answer: a
+        feedback: Downsampling can discard information needed for small targets.
+        retired: true
+      - id: convolution.transfer.2
+        prompt: Does ordinary convolution automatically guarantee rotation invariance?
+        options:
+          - id: b
+            text: Yes, every shared filter is rotation-invariant
+          - id: c
+            text: Only when channels are three
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: The built-in spatial assumption is not a universal transformation guarantee.
+        retired: true
+  - id: convolution.base.v2
+    objective_ref: objective.convolution
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Place the filter over one window, multiply matching numbers, add them up, then slide by the stride and reuse the same weights.
+    remediation_scene: convolution.s2
+    variants:
+      - id: convolution.base.v2.1
+        prompt: The filter [1, −1] slides along [1, 4, 2, 7] with stride 1 and no padding. What is the output?
+        options:
+          - id: c
+            text: "[3, −2, 5], from each right value minus its left neighbor"
+          - id: a
+            text: "[−3, 2, −5], from each left value minus its right neighbor"
+          - id: b
+            text: "[−3, −5], from the pairs (1, 4) and (2, 7)"
+        answer: a
+        feedback: Each window multiplies its first value by 1 and its second by −1, giving 1 − 4, 4 − 2, and 2 − 7. Reversing the subtraction is the flipped-filter mistake, and skipping the pair (4, 2) moves the filter by 2 instead of 1.
+      - id: convolution.base.v2.2
+        prompt: Why does a convolutional layer need far fewer weights than a layer with a separate detector for every image position?
+        options:
+          - id: b
+            text: It only looks at the brightest pixels in each image
+          - id: a
+            text: It reuses one small set of weights at every position
+          - id: c
+            text: It shrinks every image to a few pixels before looking
+        answer: a
+        feedback: Weight sharing means one 3 × 3 filter's 9 weights (27 for RGB) serve every position. Looking only at bright pixels isn't how filters work, and shrinking is what pooling or stride does, not the source of the savings.
+      - id: convolution.base.v2.3
+        prompt: A 2 × 2 max-pooling window with stride 2 covers the values 3, 8, 5, and 0. What does it output, and what does it forget?
+        options:
+          - id: c
+            text: 4, the average, and it forgets which values were large
+          - id: b
+            text: 16, the sum, and it forgets how many values there were
+          - id: a
+            text: 8, the largest, and it forgets where in the window it was
+        answer: a
+        feedback: Max pooling keeps the largest value and throws away its exact position inside the window. The average (4) is what average pooling would return; pooling doesn't sum.
+      - id: convolution.base.v2.4
+        prompt: Three 3 × 3 convolutions with stride 1 are stacked. How wide is the patch of the original image that one final output can see?
+        options:
+          - id: a
+            text: 7 pixels, since each layer adds 2 to the field
+          - id: b
+            text: 9 pixels, since three layers times 3 pixels each is 9
+          - id: c
+            text: 27 pixels, since the field multiplies by 3 per layer
+        answer: a
+        feedback: Each extra 3 × 3 layer with stride 1 adds K − 1 = 2 pixels, so the field grows 3 → 5 → 7. The windows overlap, which is why simply adding or multiplying the filter sizes overcounts.
+  - id: convolution.transfer.v2
+    objective_ref: objective.convolution
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the task needs (fine detail, a wide view, or tolerance to movement) and which setting (stride, padding, pooling, depth) buys it.
+    remediation_scene: convolution.s4
+    variants:
+      - id: convolution.transfer.v2.1
+        prompt: A drone camera model downsamples by 32 early on and keeps missing people who are only 10 pixels tall. Which change most directly helps?
+        options:
+          - id: b
+            text: Add more filters to each layer while keeping the same early strides
+          - id: a
+            text: Downsample less before the layers that must find small people
+          - id: c
+            text: Switch every max-pooling layer to average pooling instead
+        answer: a
+        feedback: After a stride of 32, one map position stands for a 32 × 32 block, so a 10-pixel person can vanish into a single value. More filters still see the same coarse grid, and average pooling blurs small details just as much.
+      - id: convolution.transfer.v2.2
+        prompt: A microscope model is trained on cells in upright images, but slides are scanned at random angles. Accuracy drops on rotated scans. What explains this?
+        options:
+          - id: c
+            text: Padding adds zeros that confuse the model on rotated slides
+          - id: b
+            text: Convolution ignores position, so rotation is all that is left to vary
+          - id: a
+            text: Shared filters follow shifts, but a rotated cell needs different filters
+        answer: a
+        feedback: Weight sharing makes convolution equivariant to shifts, not rotations; a filter tuned to one orientation won't fire the same way on a turned cell. The usual fix is rotating the training images. Convolution doesn't ignore position, it moves its output with it.
+      - id: convolution.transfer.v2.3
+        prompt: A document scanner's edge detector fires strongly along the outer border of every page, even on blank margins. Which setting most likely causes this?
+        options:
+          - id: a
+            text: Zero padding makes the border look like a jump to black
+          - id: b
+            text: Stride 1 makes the filter visit the border too many times
+          - id: c
+            text: Max pooling copies the largest values out to the edges
+        answer: a
+        feedback: The zeros added outside a bright page form a sharp step, so an edge filter responds there. Stride controls spacing, not what the filter sees, and pooling doesn't move values to the border.
+      - id: convolution.transfer.v2.4
+        prompt: A satellite model must decide whether a whole 50-pixel-wide field is flooded, but its outputs only see 7-pixel patches. Which change fits best?
+        options:
+          - id: b
+            text: Use a larger stride in the final layer so it sees fewer positions
+          - id: c
+            text: Add padding so each 3 × 3 filter covers the image border
+          - id: a
+            text: Stack more layers with pooling so the receptive field grows
+        answer: a
+        feedback: A 7-pixel receptive field can't judge a 50-pixel field. More layers, especially after downsampling, widen what each output sees. A stride in the last layer only thins its outputs, and padding just lets filters reach the border.
+  - id: convolution.calculate
+    objective_ref: objective.convolution
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Use output = ⌊(W − K + 2P) / S⌋ + 1. Add both paddings, subtract the filter width, divide by the stride and round down, then add 1.
+    remediation_scene: convolution.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: convolution.calculate.1
+        prompt: A 32 × 32 image goes through a 5 × 5 filter with stride 1 and no padding. How wide is the output?
+        answer: 28
+        feedback: (32 − 5 + 0) / 1 + 1 = 28. Without padding, the filter can't center on the two outermost pixels on each side.
+      - id: convolution.calculate.2
+        prompt: A 64 × 64 feature map goes through a 3 × 3 filter with padding 1 and stride 2. How wide is the output?
+        answer: 32
+        feedback: ⌊(64 − 3 + 2) / 2⌋ + 1 = ⌊31.5⌋ + 1 = 32. Stride 2 halves the width.
+      - id: convolution.calculate.3
+        prompt: A 227 × 227 image goes through an 11 × 11 filter with stride 4 and no padding. How wide is the output?
+        answer: 55
+        feedback: (227 − 11 + 0) / 4 + 1 = 216 / 4 + 1 = 55.
+      - id: convolution.calculate.4
+        prompt: A 28 × 28 image goes through a 5 × 5 filter with padding 2 and stride 1. How wide is the output?
+        answer: 28
+        feedback: (28 − 5 + 4) / 1 + 1 = 28. Padding of (K − 1)/2 = 2 keeps the size the same.
+      - id: convolution.calculate.5
+        prompt: A 100-pixel-wide map goes through a 3-wide filter with stride 1 and no padding. How wide is the output?
+        answer: 98
+        feedback: (100 − 3 + 0) / 1 + 1 = 98. Each unpadded 3-wide filter trims one position from each side.

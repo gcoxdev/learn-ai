@@ -4,408 +4,567 @@ lesson:
   version: 0.3.0-draft
   title: Score experts and choose a small set
   state: draft
-  summary: Choose two expert networks, renormalize their scores, and mix their outputs by hand and in a playground.
+  summary: One small matrix decides which experts see each token. Compute its scores, keep the top two, rescale them, and mix the outputs, by hand and in code.
   slot: M18.2
   category: learning
   sources:
-  - title: Shazeer et al. — Sparsely-Gated Mixture-of-Experts
-    url: https://arxiv.org/abs/1701.06538
+    - title: "Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer (Shazeer et al., 2017)"
+      url: https://arxiv.org/abs/1701.06538
+    - title: "Switch Transformers (Fedus, Zoph & Shazeer, 2021)"
+      url: https://arxiv.org/abs/2101.03961
+    - title: "Mixtral of Experts (Jiang et al., 2024)"
+      url: https://arxiv.org/abs/2401.04088
+    - title: "DeepSeek-V3 Technical Report (DeepSeek-AI, 2024)"
+      url: https://arxiv.org/abs/2412.19437
   archetype: mechanism
 objectives:
-- id: objective.routers-and-top-k
-  version: 2-draft
-  statement: Trace top-k expert selection and weighted output combination under an explicitly stated normalization
-    rule.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - routers-and-top-k.base.v2
-  - routers-and-top-k.transfer.v2
-  prerequisites:
-  - anyOf:
-    - objective.conditional-computation
-  - anyOf:
-    - objective.softmax-attention
+  - id: objective.routers-and-top-k
+    version: 3-draft
+    statement: Trace how a router picks the top-k experts and weights their outputs, including whether the kept weights are renormalized.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - routers-and-top-k.base.v2
+      - routers-and-top-k.combine
+      - routers-and-top-k.transfer.v3
+    prerequisites:
+      - anyOf:
+          - objective.conditional-computation
+      - anyOf:
+          - objective.softmax-attention
 scenes:
-- id: routers-and-top-k.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.routers-and-top-k
-  title: A switchboard inside a layer
-  markdown: An **expert** here is a learned neural subnetwork, not a person or a guaranteed subject specialist.
-    A **router** scores these subnetworks using the current token’s hidden representation. That representation
-    is a list of numbers describing the token in context. A mixture-of-experts layer can run a selected subset
-    of experts for each token. The router itself requires computation, and the full collection of expert weights
-    still has to be stored somewhere.
-  text_mode: An **expert** here is a learned neural subnetwork, not a person or a guaranteed subject specialist.
-    A **router** scores these subnetworks using the current token’s hidden representation. That representation
-    is a list of numbers describing the token in context. A mixture-of-experts layer can run a selected subset
-    of experts for each token. The router itself requires computation, and the full collection of expert weights
-    still has to be stored somewhere.
-  bridges: []
-- id: routers-and-top-k.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.routers-and-top-k
-  title: Choose the two largest scores
-  markdown: 'Our toy router produces four positive probabilities: E1=0.55, E2=0.25, E3=0.15, E4=0.05. **Top-k**
-    means selecting the k largest entries; with k=2, we select E1 and E2. This is deterministic selection for
-    this example. It is not randomly drawing two experts from the distribution. In practice, a recipe specifies
-    its scoring transform, selection rule, tie handling, and any capacity restrictions. Here we use distinct
-    scores and unlimited toy capacity.'
-  text_mode: 'Our toy router produces four positive probabilities: E1=0.55, E2=0.25, E3=0.15, E4=0.05. **Top-k**
-    means selecting the k largest entries; with k=2, we select E1 and E2. This is deterministic selection for
-    this example. It is not randomly drawing two experts from the distribution. In practice, a recipe specifies
-    its scoring transform, selection rule, tie handling, and any capacity restrictions. Here we use distinct
-    scores and unlimited toy capacity.'
-  bridges: []
-- id: routers-and-top-k.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.routers-and-top-k
-  title: Rescale the selected pair
-  markdown: Our example renormalizes selected probabilities so they sum to one. Their total is 0.55 + 0.25
-    = 0.80. E1 receives weight 0.55/0.80 = 0.6875, and E2 receives 0.25/0.80 = 0.3125. Renormalization preserves
-    their ratio while discarding the other entries. Some model recipes use a different convention, including
-    retaining selected weights without this rescaling. State the convention before calculating the mixed output.
-  text_mode: Our example renormalizes selected probabilities so they sum to one. Their total is 0.55 + 0.25
-    = 0.80. E1 receives weight 0.55/0.80 = 0.6875, and E2 receives 0.25/0.80 = 0.3125. Renormalization preserves
-    their ratio while discarding the other entries. Some model recipes use a different convention, including
-    retaining selected weights without this rescaling. State the convention before calculating the mixed output.
-  bridges: []
-- id: routers-and-top-k.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.routers-and-top-k
-  title: Combine each coordinate
-  markdown: 'Let E1 output [2, 0] and E2 output [0, 4]. Multiply each vector by its routing weight, then add
-    matching coordinates: first coordinate = 0.6875 × 2 + 0.3125 × 0 = 1.375; second = 0.6875 × 0 + 0.3125
-    × 4 = 1.25. The mixture is [1.375, 1.25]. We do not concatenate these two outputs or select a word from
-    them. This is a hidden representation inside a network.'
-  text_mode: 'Let E1 output [2, 0] and E2 output [0, 4]. Multiply each vector by its routing weight, then add
-    matching coordinates: first coordinate = 0.6875 × 2 + 0.3125 × 0 = 1.375; second = 0.6875 × 0 + 0.3125
-    × 4 = 1.25. The mixture is [1.375, 1.25]. We do not concatenate these two outputs or select a word from
-    them. This is a hidden representation inside a network.'
-  bridges: []
-- id: routers-and-top-k.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.routers-and-top-k
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Score, select, rescale, combine. The routing recipe determines which experts run and how their
-    outputs contribute.
-- id: routers-and-top-k.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.routers-and-top-k
-  markdown: A router maps token representations to expert scores, selects a top-k set, and supplies combination
-    weights under an explicit normalization rule.
-  text_mode: A router maps token representations to expert scores, selects a top-k set, and supplies combination
-    weights under an explicit normalization rule.
-- id: routers-and-top-k.s5
-  type: simulation
-  depth: mechanics
-  objective_refs:
-  - objective.routers-and-top-k
-  title: Predict, then change the expert count
-  markdown: 'Before changing k, predict what happens at k=1: only E1 remains, its renormalized weight is one,
-    and the output is [2, 0]. Try the playground, then compare k=2 and k=4. It uses the same four probabilities
-    and explicit renormalization rule as our worked example. E3 outputs [-1, 1] and E4 outputs [3, -2]. Notice
-    that adding experts changes the mixture; more active experts does not by itself establish better task performance.'
-  text_mode: 'Before changing k, predict what happens at k=1: only E1 remains, its renormalized weight is one,
-    and the output is [2, 0]. Try the playground, then compare k=2 and k=4. It uses the same four probabilities
-    and explicit renormalization rule as our worked example. E3 outputs [-1, 1] and E4 outputs [3, -2]. Notice
-    that adding experts changes the mixture; more active experts does not by itself establish better task performance.'
-  bridges: []
-  simulation: moe
-- id: routers-and-top-k.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.routers-and-top-k
-  title: Keep the toy’s boundaries visible
-  markdown: Real systems must manage how many tokens reach each expert, communication between devices, and
-    training incentives that discourage overloaded routes. Those are additional mechanisms beyond this arithmetic.
-    Expert names do not establish topic specialization, and the router’s probability is not a calibrated statement
-    that an expert’s answer is correct. The memory cue “score, select, rescale, combine” describes this toy
-    route while keeping its assumptions visible.
-  text_mode: Real systems must manage how many tokens reach each expert, communication between devices, and
-    training incentives that discourage overloaded routes. Those are additional mechanisms beyond this arithmetic.
-    Expert names do not establish topic specialization, and the router’s probability is not a calibrated statement
-    that an expert’s answer is correct. The memory cue “score, select, rescale, combine” describes this toy
-    route while keeping its assumptions visible.
-  bridges: []
-- id: routers-and-top-k.s7
-  type: question
-  depth: mechanics
-  objective_refs:
-  - objective.routers-and-top-k
-  title: Choose the rescaling denominator
-  markdown: The selected expert probabilities are 0.6 and 0.2. Under our renormalization rule, what divides
-    each selected probability?
-  text_mode: The selected expert probabilities are 0.6 and 0.2. Under our renormalization rule, what divides
-    each selected probability?
-  bridges: []
-  question:
-    response_type: single_choice
-    options:
-    - id: a
-      text: '0.8'
-    - id: b
-      text: '1.0'
-    - id: c
-      text: '2.0'
-    answer: a
-    reveal_markdown: The selected mass is 0.6 + 0.2 = 0.8. The weights become 0.75 and 0.25, summing to one.
-    hint: Trace the example using the rule from the preceding pages.
-    id: routers-and-top-k.practice.v2.7
+  - id: routers-and-top-k.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.routers-and-top-k
+    title: The router is one small matrix
+    markdown: |-
+      A token arrives at an MoE layer with four experts. Which two should run? The router answers with a single matrix multiplication.
+
+      The router holds a weight matrix $W_r$ with one column per expert. Multiplying the token's vector $x$ by $W_r$ gives one score per expert, called a **logit** (a raw score that can be any real number). To keep the arithmetic visible, take a token vector with just two numbers, $x = [1, 2]$, and a router with four columns:
+
+      | | Expert 1 | Expert 2 | Expert 3 | Expert 4 |
+      | --- | ---: | ---: | ---: | ---: |
+      | Column of $W_r$ | [0.3979, 1.0] | [0.2094, 0.7] | [0.2986, 0.4] | [0.4, −0.2] |
+      | Logit $x \cdot w_i$ | 2.40 | 1.61 | 1.10 | 0.00 |
+
+      For expert 1: $1 \times 0.3979 + 2 \times 1.0 = 2.3979 \approx 2.40$. (We picked these weights so the next step gives round numbers.) In Mixtral, $x$ has 4,096 numbers and $W_r$ has 8 columns, but the operation is the same.
+
+      Because $x$ is the token's vector *after* the earlier layers have mixed in context, the same word can score differently in different sentences.
+    bridges: []
+  - id: routers-and-top-k.s2
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.routers-and-top-k
+    title: Softmax, then keep the two largest
+    markdown: |-
+      A softmax turns the logits into probabilities that sum to 1, exactly as in attention: exponentiate each logit, then divide by the total.
+
+      $$e^{2.40}, e^{1.61}, e^{1.10}, e^{0} \approx 11, 5, 3, 1 \quad\Rightarrow\quad p = [0.55,\ 0.25,\ 0.15,\ 0.05]$$
+
+      **Top-k** selection keeps the $k$ largest entries and drops the rest. With $k = 2$, experts 1 and 2 run; experts 3 and 4 do no work for this token.
+
+      :::mixup "Top-2 draws two experts at random, in proportion to their probabilities."
+      Selection is a plain sort: the two largest scores win, every time. Run the same token twice and you get the same experts. (Shazeer's 2017 router added random noise to the logits during training to spread tokens across experts, but even then it kept the largest $k$ of the noisy scores.)
+      :::
+    bridges: []
+  - id: routers-and-top-k.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.routers-and-top-k
+    title: Rescale the kept pair
+    markdown: |-
+      The two kept probabilities, 0.55 and 0.25, add up to only 0.80. Most routers **renormalize**: divide each kept probability by their sum so the weights add to 1.
+
+      $$g_1 = \frac{0.55}{0.80} = 0.6875, \qquad g_2 = \frac{0.25}{0.80} = 0.3125$$
+
+      The ratio 0.55 to 0.25 is unchanged; the dropped experts' share is simply spread over the kept ones. The code runs the whole route: logits, softmax, top-k, renormalize, combine.
+
+      ```python run
+      import numpy as np
+
+      x = np.array([1.0, 2.0])                  # one token's hidden vector (d = 2)
+      W_r = np.array([[0.3979, 0.2094, 0.2986, 0.4],   # router weights: d x N
+                      [1.0,    0.7,    0.4,   -0.2]])  # (N = 4 experts)
+      k = 2
+
+      logits = x @ W_r                          # one score per expert
+      probs = np.exp(logits) / np.exp(logits).sum()   # softmax over all 4
+      chosen = np.argsort(-probs)[:k]           # indices of the k largest
+      gates = probs[chosen] / probs[chosen].sum()     # renormalize kept weights
+
+      outputs = np.array([[2, 0], [0, 4], [-1, 1], [3, -2]])  # each expert's output
+      y = gates @ outputs[chosen]               # weighted sum of chosen outputs
+
+      print("logits:       ", logits.round(3))
+      print("probabilities:", probs.round(3))
+      print("chosen experts:", [f"E{i+1}" for i in chosen])
+      print("gate weights: ", gates.round(4))
+      print("output y:     ", y.round(3))
+      # Same gates straight from the kept logits (Shazeer 2017, Mixtral):
+      kept = np.exp(logits[chosen]) / np.exp(logits[chosen]).sum()
+      print("softmax of kept logits:", kept.round(4))
+      ```
+
+      The last line shows a useful fact: a softmax over only the kept logits gives exactly the renormalized weights. Try `k = 3`, or change `x` to `[2.0, 1.0]` and see which experts win.
+
+      :::papers Two ways to write the same gate
+      Shazeer et al. (2017) and Mixtral write the gate as
+
+      $$G(x) = \operatorname{Softmax}\big(\operatorname{TopK}(x \cdot W_r,\ k)\big)$$
+
+      where TopK keeps the $k$ largest logits and sets the rest to $-\infty$, so their gates become 0. Here that means a softmax over 2.40 and 1.61 alone, giving 0.6875 and 0.3125: the same as renormalizing $p$.
+      :::
+
+      :::predict With k = 1, what weight does expert 1 get?
+      Renormalized, it gets 0.55 / 0.55 = 1, and the output is just expert 1's. That's why Switch Transformer, which uses $k = 1$, *doesn't* renormalize: it multiplies the expert's output by $p = 0.55$. A weight fixed at 1 wouldn't change when the router's scores change, so the router would get no training signal through it.
+      :::
+    bridges: []
+  - id: routers-and-top-k.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.routers-and-top-k
+    title: Combine each coordinate
+    markdown: |-
+      Say expert 1 outputs $[2, 0]$ and expert 2 outputs $[0, 4]$. Scale each by its gate and add matching coordinates:
+
+      | | Coordinate 1 | Coordinate 2 |
+      | --- | ---: | ---: |
+      | $0.6875 \times [2, 0]$ | 1.375 | 0 |
+      | $0.3125 \times [0, 4]$ | 0 | 1.25 |
+      | Sum $y$ | 1.375 | 1.25 |
+
+      The result $[1.375, 1.25]$ has the same width as each expert's output, just as the code printed. It's a hidden vector that flows on through the network, not a word or an answer.
+    bridges: []
+  - id: routers-and-top-k.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.routers-and-top-k
+    markdown: Renormalize kept probabilities, mix two expert outputs by hand, and diagnose routers that skip a step or read too much into a gate weight.
+    takeaway: |-
+      Score, select, rescale, combine: logits from one matrix, keep the top k, divide the kept probabilities by their sum, and add the weighted expert outputs.
+  - id: routers-and-top-k.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.routers-and-top-k
+    markdown: |-
+      A router maps token representations to expert scores, selects a top-k set, and supplies combination weights under an explicit normalization rule.
+  - id: routers-and-top-k.s5
+    type: simulation
+    depth: mechanics
+    objective_refs:
+      - objective.routers-and-top-k
+    title: Predict, then change the expert count
+    markdown: |-
+      The playground uses our four probabilities (0.55, 0.25, 0.15, 0.05) and renormalizes whatever it keeps. Experts 3 and 4 output $[-1, 1]$ and $[3, -2]$.
+
+      Predict before you click. At top-1, only expert 1 runs with weight 1, so the output is $[2, 0]$. At top-3 the kept mass is 0.95, and the output becomes $(0.55[2, 0] + 0.25[0, 4] + 0.15[-1, 1]) / 0.95 \approx [1.0, 1.21]$. With all 4, no rescaling is needed: $[1.1, 1.05]$.
+
+      Each extra expert pulls the mixture toward its own output and costs one more expert's worth of compute. Real models settle $k$ by training and measuring; Switch uses 1, and Mixtral and GShard use 2.
+    bridges: []
+    simulation: moe
+  - id: routers-and-top-k.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.routers-and-top-k
+    title: Same recipe, different conventions
+    markdown: |-
+      Every MoE router follows score, select, rescale, combine, but real models differ in the details:
+
+      | Model | Scores | Kept per token | Rescaling |
+      | --- | --- | --- | --- |
+      | Shazeer et al. (2017) | Softmax, with noise added during training | $k$ (often 2 or 4) | Softmax over kept logits |
+      | Switch Transformer (2021) | Softmax | 1 | None: gate is $p$ |
+      | Mixtral (2023) | Softmax | 2 of 8 | Softmax over kept logits |
+      | DeepSeek-V3 (2024) | Sigmoid of each score | 8 of 256 | Divide by the kept scores' sum |
+
+      So before you compute a gate, check which convention the model uses.
+
+      A gate weight is a mixing weight, not a confidence score. A gate of 0.6875 means expert 1's output counts for 68.75% of the mixture. It doesn't mean the model is 69% sure that expert 1 is "right." There is no right expert, only a blend that training has made useful.
+    bridges: []
+  - id: routers-and-top-k.s7
+    type: question
+    depth: mechanics
+    objective_refs:
+      - objective.routers-and-top-k
+    title: Choose the rescaling denominator
+    markdown: |-
+      A different token's two kept expert probabilities are 0.6 and 0.2. Before you rescale them, what do you divide each one by?
+    bridges: []
+    question:
+      response_type: single_choice
+      options:
+        - id: a
+          text: '0.8'
+        - id: b
+          text: '1.0'
+        - id: c
+          text: '2.0'
+      answer: a
+      reveal_markdown: The kept mass is 0.6 + 0.2 = 0.8, so the weights become 0.6 / 0.8 = 0.75 and 0.2 / 0.8 = 0.25. They sum to 1 and keep the original 3-to-1 ratio. Dividing by 1.0 would leave them summing to 0.8, and dividing by 2 (the number of experts) would give 0.3 and 0.1.
+      hint: Add up only the probabilities of the experts you kept. That sum is what each kept probability gets divided by.
+      id: routers-and-top-k.practice.v2.7
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - routers-and-top-k.s1
-    - routers-and-top-k.s2
-    - routers-and-top-k.s3
-    - routers-and-top-k.s4
-    - routers-and-top-k.s5
-    - routers-and-top-k.s6
-    - routers-and-top-k.s7
-    - routers-and-top-k.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - routers-and-top-k.s1
+        - routers-and-top-k.s2
+        - routers-and-top-k.s3
+        - routers-and-top-k.s4
+        - routers-and-top-k.s5
+        - routers-and-top-k.s6
+        - routers-and-top-k.s7
+        - routers-and-top-k.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     routers-and-top-k.recap: routers-and-top-k.check
 assessment_families:
-- id: routers-and-top-k.base
-  objective_ref: objective.routers-and-top-k
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Select and normalize explicitly: trace the inputs, operation, and result before choosing.'
-  remediation_scene: routers-and-top-k.s2
-  variants:
-  - id: routers-and-top-k.base.1
-    prompt: Top-two selects from affinities 0.5, 0.3, 0.15, 0.05. Which pair?
-    options:
-    - id: a
-      text: The first and second experts
-    - id: b
-      text: The third and fourth
-    - id: c
-      text: All four equally
-    answer: a
-    feedback: Top-k chooses the highest-ranked candidates under the specified rule.
-    retired: true
-  - id: routers-and-top-k.base.2
-    prompt: Renormalizing selected weights 0.6 and 0.2 gives what?
-    options:
-    - id: b
-      text: 0.6 and 0.2
-    - id: c
-      text: 0.8 and 0.8
-    - id: a
-      text: 0.75 and 0.25
-    answer: a
-    feedback: Divide each selected affinity by their sum, 0.8.
-    retired: true
-- id: routers-and-top-k.transfer
-  objective_ref: objective.routers-and-top-k
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Keep decisions reproducible: trace the inputs, operation, and result before choosing.'
-  remediation_scene: routers-and-top-k.s4
-  variants:
-  - id: routers-and-top-k.transfer.1
-    prompt: Must one written token always select one fixed expert?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only capitalized tokens vary
-    - id: a
-      text: No; its contextual representation can change
-    answer: a
-    feedback: Routing depends on representations, not necessarily a static token table.
-    retired: true
-  - id: routers-and-top-k.transfer.2
-    prompt: Why state whether selected affinities are renormalized?
-    options:
-    - id: c
-      text: It has no computational effect
-    - id: a
-      text: It changes the scale and mixture of expert outputs
-    - id: b
-      text: It determines the corpus license
-    answer: a
-    feedback: Combination weights are part of the layer’s definition.
-    retired: true
-- id: routers-and-top-k.base.v2
-  objective_ref: objective.routers-and-top-k
-  task: base
-  response_type: numeric_fields_with_reason
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: routers-and-top-k.s3
-  variants:
-  - prompt: The already selected top-two probabilities are 0.6 and 0.2. Renormalize them; the remaining experts
-      are excluded.
-    answers:
-      total: 0.8
-      first: 0.7499999999999999
-      second: 0.25
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: Keep the selected probabilities unchanged despite the renormalization rule
-    - id: a
-      text: Divide each selected probability by their sum
-    - id: b
-      text: Divide each by the number of selected experts
-    feedback: Selected mass is the denominator; the two resulting weights sum to one.
-    id: routers-and-top-k.base.v2.1
-  - prompt: The already selected top-two probabilities are 0.45 and 0.3. Renormalize them; the remaining experts
-      are excluded.
-    answers:
-      total: 0.75
-      first: 0.6
-      second: 0.39999999999999997
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Divide each by the number of selected experts
-    - id: c
-      text: Keep the selected probabilities unchanged despite the renormalization rule
-    - id: a
-      text: Divide each selected probability by their sum
-    feedback: Selected mass is the denominator; the two resulting weights sum to one.
-    id: routers-and-top-k.base.v2.2
-  - prompt: The already selected top-two probabilities are 0.5 and 0.3. Renormalize them; the remaining experts
-      are excluded.
-    answers:
-      total: 0.8
-      first: 0.625
-      second: 0.37499999999999994
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: Keep the selected probabilities unchanged despite the renormalization rule
-    - id: a
-      text: Divide each selected probability by their sum
-    - id: b
-      text: Divide each by the number of selected experts
-    feedback: Selected mass is the denominator; the two resulting weights sum to one.
-    id: routers-and-top-k.base.v2.3
-  - prompt: The already selected top-two probabilities are 0.48 and 0.32. Renormalize them; the remaining experts
-      are excluded.
-    answers:
-      total: 0.8
-      first: 0.6
-      second: 0.39999999999999997
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Divide each selected probability by their sum
-    - id: b
-      text: Divide each by the number of selected experts
-    - id: c
-      text: Keep the selected probabilities unchanged despite the renormalization rule
-    feedback: Selected mass is the denominator; the two resulting weights sum to one.
-    id: routers-and-top-k.base.v2.4
-  numeric_fields:
-  - id: total
-    label: Selected probability mass
-  - id: first
-    label: First expert weight
-  - id: second
-    label: Second expert weight
-  absolute_tolerance: 1.0e-06
-- id: routers-and-top-k.transfer.v2
-  objective_ref: objective.routers-and-top-k
-  task: transfer
-  response_type: numeric_fields_with_reason
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: routers-and-top-k.s3
-  variants:
-  - prompt: Normalized weights are 0.75 and 0.25. E1 outputs [2, 0]; E2 outputs [0, 4]. Find the two coordinates
-      of the weighted sum.
-    answers:
-      first: 1.5
-      second: 1.0
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: Use only the output of the higher-weight expert
-    - id: b
-      text: Concatenate the two vectors into four coordinates
-    - id: a
-      text: Add weighted values within each matching coordinate
-    feedback: Both selected outputs contribute to each corresponding coordinate; a zero coordinate contributes
-      zero.
-    id: routers-and-top-k.transfer.v2.1
-  - prompt: Normalized weights are 0.6 and 0.4. E1 outputs [2, 0]; E2 outputs [0, 4]. Find the two coordinates
-      of the weighted sum.
-    answers:
-      first: 1.2
-      second: 1.6
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: Use only the output of the higher-weight expert
-    - id: a
-      text: Add weighted values within each matching coordinate
-    - id: b
-      text: Concatenate the two vectors into four coordinates
-    feedback: Both selected outputs contribute to each corresponding coordinate; a zero coordinate contributes
-      zero.
-    id: routers-and-top-k.transfer.v2.2
-  - prompt: Normalized weights are 0.8 and 0.2. E1 outputs [2, 0]; E2 outputs [0, 4]. Find the two coordinates
-      of the weighted sum.
-    answers:
-      first: 1.6
-      second: 0.7999999999999998
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Add weighted values within each matching coordinate
-    - id: c
-      text: Use only the output of the higher-weight expert
-    - id: b
-      text: Concatenate the two vectors into four coordinates
-    feedback: Both selected outputs contribute to each corresponding coordinate; a zero coordinate contributes
-      zero.
-    id: routers-and-top-k.transfer.v2.3
-  - prompt: Normalized weights are 0.625 and 0.375. E1 outputs [2, 0]; E2 outputs [0, 4]. Find the two coordinates
-      of the weighted sum.
-    answers:
-      first: 1.25
-      second: 1.5
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Concatenate the two vectors into four coordinates
-    - id: a
-      text: Add weighted values within each matching coordinate
-    - id: c
-      text: Use only the output of the higher-weight expert
-    feedback: Both selected outputs contribute to each corresponding coordinate; a zero coordinate contributes
-      zero.
-    id: routers-and-top-k.transfer.v2.4
-  numeric_fields:
-  - id: first
-    label: First coordinate
-  - id: second
-    label: Second coordinate
-  absolute_tolerance: 1.0e-06
+  - id: routers-and-top-k.base
+    objective_ref: objective.routers-and-top-k
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Select and normalize explicitly: trace the inputs, operation, and result before choosing.'
+    remediation_scene: routers-and-top-k.s2
+    variants:
+      - id: routers-and-top-k.base.1
+        prompt: Top-two selects from affinities 0.5, 0.3, 0.15, 0.05. Which pair?
+        options:
+          - id: a
+            text: The first and second experts
+          - id: b
+            text: The third and fourth
+          - id: c
+            text: All four equally
+        answer: a
+        feedback: Top-k chooses the highest-ranked candidates under the specified rule.
+        retired: true
+      - id: routers-and-top-k.base.2
+        prompt: Renormalizing selected weights 0.6 and 0.2 gives what?
+        options:
+          - id: b
+            text: 0.6 and 0.2
+          - id: c
+            text: 0.8 and 0.8
+          - id: a
+            text: 0.75 and 0.25
+        answer: a
+        feedback: Divide each selected affinity by their sum, 0.8.
+        retired: true
+  - id: routers-and-top-k.transfer
+    objective_ref: objective.routers-and-top-k
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Keep decisions reproducible: trace the inputs, operation, and result before choosing.'
+    remediation_scene: routers-and-top-k.s4
+    variants:
+      - id: routers-and-top-k.transfer.1
+        prompt: Must one written token always select one fixed expert?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only capitalized tokens vary
+          - id: a
+            text: No; its contextual representation can change
+        answer: a
+        feedback: Routing depends on representations, not necessarily a static token table.
+        retired: true
+      - id: routers-and-top-k.transfer.2
+        prompt: Why state whether selected affinities are renormalized?
+        options:
+          - id: c
+            text: It has no computational effect
+          - id: a
+            text: It changes the scale and mixture of expert outputs
+          - id: b
+            text: It determines the corpus license
+        answer: a
+        feedback: Combination weights are part of the layer’s definition.
+        retired: true
+  - id: routers-and-top-k.base.v2
+    objective_ref: objective.routers-and-top-k
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Add only the kept probabilities to get the denominator, then divide each kept probability by it. The new weights keep their ratio and sum to 1.
+    remediation_scene: routers-and-top-k.s3
+    variants:
+      - prompt: The already selected top-two probabilities are 0.6 and 0.2. Renormalize them; the remaining experts are excluded.
+        answers:
+          total: 0.8
+          first: 0.7499999999999999
+          second: 0.25
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: Keep the selected probabilities unchanged despite the renormalization rule
+          - id: a
+            text: Divide each selected probability by their sum
+          - id: b
+            text: Divide each by the number of selected experts
+        feedback: 0.6 + 0.2 = 0.8, so the weights are 0.6/0.8 = 0.75 and 0.2/0.8 = 0.25. Dividing by the number of experts (2) would give 0.3 and 0.1, which don't sum to 1.
+        id: routers-and-top-k.base.v2.1
+      - prompt: The already selected top-two probabilities are 0.45 and 0.3. Renormalize them; the remaining experts are excluded.
+        answers:
+          total: 0.75
+          first: 0.6
+          second: 0.39999999999999997
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Divide each by the number of selected experts
+          - id: c
+            text: Keep the selected probabilities unchanged despite the renormalization rule
+          - id: a
+            text: Divide each selected probability by their sum
+        feedback: 0.45 + 0.3 = 0.75, so the weights are 0.45/0.75 = 0.6 and 0.3/0.75 = 0.4. Leaving them unchanged would scale the layer's output by 0.75.
+        id: routers-and-top-k.base.v2.2
+      - prompt: The already selected top-two probabilities are 0.5 and 0.3. Renormalize them; the remaining experts are excluded.
+        answers:
+          total: 0.8
+          first: 0.625
+          second: 0.37499999999999994
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: Keep the selected probabilities unchanged despite the renormalization rule
+          - id: a
+            text: Divide each selected probability by their sum
+          - id: b
+            text: Divide each by the number of selected experts
+        feedback: 0.5 + 0.3 = 0.8, so the weights are 0.5/0.8 = 0.625 and 0.3/0.8 = 0.375. They keep the 5-to-3 ratio and now sum to 1.
+        id: routers-and-top-k.base.v2.3
+      - prompt: The already selected top-two probabilities are 0.48 and 0.32. Renormalize them; the remaining experts are excluded.
+        answers:
+          total: 0.8
+          first: 0.6
+          second: 0.39999999999999997
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Divide each selected probability by their sum
+          - id: b
+            text: Divide each by the number of selected experts
+          - id: c
+            text: Keep the selected probabilities unchanged despite the renormalization rule
+        feedback: 0.48 + 0.32 = 0.8, so the weights are 0.48/0.8 = 0.6 and 0.32/0.8 = 0.4. Dividing by 2 instead would give 0.24 and 0.16, losing the rescaling entirely.
+        id: routers-and-top-k.base.v2.4
+    numeric_fields:
+      - id: total
+        label: Selected probability mass
+      - id: first
+        label: First expert weight
+      - id: second
+        label: Second expert weight
+    absolute_tolerance: 1e-6
+  - id: routers-and-top-k.transfer.v2
+    objective_ref: objective.routers-and-top-k
+    task: transfer
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: routers-and-top-k.s3
+    variants:
+      - prompt: Normalized weights are 0.75 and 0.25. E1 outputs [2, 0]; E2 outputs [0, 4]. Find the two coordinates of the weighted sum.
+        answers:
+          first: 1.5
+          second: 1.0
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: Use only the output of the higher-weight expert
+          - id: b
+            text: Concatenate the two vectors into four coordinates
+          - id: a
+            text: Add weighted values within each matching coordinate
+        feedback: Both selected outputs contribute to each corresponding coordinate; a zero coordinate contributes zero.
+        id: routers-and-top-k.transfer.v2.1
+        retired: true
+      - prompt: Normalized weights are 0.6 and 0.4. E1 outputs [2, 0]; E2 outputs [0, 4]. Find the two coordinates of the weighted sum.
+        answers:
+          first: 1.2
+          second: 1.6
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: Use only the output of the higher-weight expert
+          - id: a
+            text: Add weighted values within each matching coordinate
+          - id: b
+            text: Concatenate the two vectors into four coordinates
+        feedback: Both selected outputs contribute to each corresponding coordinate; a zero coordinate contributes zero.
+        id: routers-and-top-k.transfer.v2.2
+        retired: true
+      - prompt: Normalized weights are 0.8 and 0.2. E1 outputs [2, 0]; E2 outputs [0, 4]. Find the two coordinates of the weighted sum.
+        answers:
+          first: 1.6
+          second: 0.7999999999999998
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Add weighted values within each matching coordinate
+          - id: c
+            text: Use only the output of the higher-weight expert
+          - id: b
+            text: Concatenate the two vectors into four coordinates
+        feedback: Both selected outputs contribute to each corresponding coordinate; a zero coordinate contributes zero.
+        id: routers-and-top-k.transfer.v2.3
+        retired: true
+      - prompt: Normalized weights are 0.625 and 0.375. E1 outputs [2, 0]; E2 outputs [0, 4]. Find the two coordinates of the weighted sum.
+        answers:
+          first: 1.25
+          second: 1.5
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Concatenate the two vectors into four coordinates
+          - id: a
+            text: Add weighted values within each matching coordinate
+          - id: c
+            text: Use only the output of the higher-weight expert
+        feedback: Both selected outputs contribute to each corresponding coordinate; a zero coordinate contributes zero.
+        id: routers-and-top-k.transfer.v2.4
+        retired: true
+    numeric_fields:
+      - id: first
+        label: First coordinate
+      - id: second
+        label: Second coordinate
+    absolute_tolerance: 1e-6
+  - id: routers-and-top-k.combine
+    objective_ref: objective.routers-and-top-k
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Multiply each expert's output vector by its gate weight, then add the first coordinates together and the second coordinates together.
+    remediation_scene: routers-and-top-k.s4
+    variants:
+      - id: routers-and-top-k.combine.1
+        prompt: Gate weights are 0.7 and 0.3. The first expert outputs [1, 3]; the second outputs [5, −1]. Find both coordinates of the layer's output.
+        answers:
+          first: 2.2
+          second: 1.8
+        reason_answer: b
+        reason_options:
+          - id: a
+            text: Keep only the output of the expert with the larger gate
+          - id: b
+            text: Add the weighted outputs coordinate by coordinate
+          - id: c
+            text: Average the two outputs, since both experts were chosen
+        feedback: 0.7 × 1 + 0.3 × 5 = 2.2 and 0.7 × 3 + 0.3 × (−1) = 1.8. A plain average would give [3, 1] and ignore that the router preferred the first expert.
+      - id: routers-and-top-k.combine.2
+        prompt: Gate weights are 0.6 and 0.4. The first expert outputs [4, 0]; the second outputs [−1, 2]. Find both coordinates of the layer's output.
+        answers:
+          first: 2.0
+          second: 0.8
+        reason_answer: c
+        reason_options:
+          - id: c
+            text: Add the weighted outputs coordinate by coordinate
+          - id: a
+            text: Average the two outputs, since both experts were chosen
+          - id: b
+            text: Keep only the output of the expert with the larger gate
+        feedback: 0.6 × 4 + 0.4 × (−1) = 2.0 and 0.6 × 0 + 0.4 × 2 = 0.8. Keeping only the first expert would give [4, 0] and waste the second expert's work.
+      - id: routers-and-top-k.combine.3
+        prompt: Gate weights are 0.8 and 0.2. The first expert outputs [0, 5]; the second outputs [3, 1]. Find both coordinates of the layer's output.
+        answers:
+          first: 0.6
+          second: 4.2
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Keep only the output of the expert with the larger gate
+          - id: a
+            text: Add the weighted outputs coordinate by coordinate
+          - id: c
+            text: Average the two outputs, since both experts were chosen
+        feedback: 0.8 × 0 + 0.2 × 3 = 0.6 and 0.8 × 5 + 0.2 × 1 = 4.2. Even a small gate adds its expert's contribution to every coordinate.
+      - id: routers-and-top-k.combine.4
+        prompt: Gate weights are 0.25 and 0.75. The first expert outputs [2, 2]; the second outputs [6, −2]. Find both coordinates of the layer's output.
+        answers:
+          first: 5.0
+          second: -1.0
+        reason_answer: b
+        reason_options:
+          - id: a
+            text: Average the two outputs, since both experts were chosen
+          - id: c
+            text: Keep only the output of the expert with the larger gate
+          - id: b
+            text: Add the weighted outputs coordinate by coordinate
+        feedback: 0.25 × 2 + 0.75 × 6 = 5.0 and 0.25 × 2 + 0.75 × (−2) = −1.0. A plain average would give [4, 0], treating the two experts as equally trusted.
+    numeric_fields:
+      - id: first
+        label: First coordinate
+      - id: second
+        label: Second coordinate
+    absolute_tolerance: 1e-6
+  - id: routers-and-top-k.transfer.v3
+    objective_ref: objective.routers-and-top-k
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Walk through score, select, rescale, combine, and ask which step the situation changes. Remember that a gate weight is a mixing weight inside one layer.
+    remediation_scene: routers-and-top-k.s6
+    variants:
+      - id: routers-and-top-k.transfer.v3.1
+        prompt: A model card says "top-2 routing, kept weights renormalized." An engineer reimplements the layer but forgets to renormalize. The router keeps probabilities 0.5 and 0.3. What changes?
+        options:
+          - id: b
+            text: The router now picks different experts, since the scores changed
+          - id: c
+            text: Nothing, since the two weights keep the same 5 to 3 ratio
+          - id: a
+            text: The mixed output shrinks to 0.8 times what it should be
+        answer: a
+        feedback: The same two experts are chosen, and the ratio is unchanged, but the gates sum to 0.8 instead of 1, so the layer's output is scaled down by 0.8. Selection happens before rescaling, so it isn't affected.
+      - id: routers-and-top-k.transfer.v3.2
+        prompt: 'The word "bank" appears in "river bank" and in "bank loan." In layer 10 of an MoE model, the two occurrences go to different experts. How is that possible?'
+        options:
+          - id: c
+            text: The router samples experts at random, so repeats can differ
+          - id: a
+            text: The router scores the token's vector, which carries its context
+          - id: b
+            text: The router has a fixed expert per word but retries when it is busy
+        answer: a
+        feedback: By layer 10, attention has mixed context into each token's vector, so the two "bank" vectors differ and get different logits. Top-k selection itself is deterministic, and routers don't keep a word-to-expert table.
+      - id: routers-and-top-k.transfer.v3.3
+        prompt: 'A dashboard shows a gate weight of 0.92 for expert 3 on one token. A product manager writes, "The model is 92% sure expert 3 is right." What is the best correction?'
+        options:
+          - id: b
+            text: It means expert 3 handled 92% of the tokens in that batch
+          - id: a
+            text: It means expert 3's output makes up 92% of this layer's mix
+          - id: c
+            text: The statement is fine, since gate weights are calibrated confidence
+        answer: a
+        feedback: A gate is a mixing weight inside one layer; there's no "right" expert to be sure about. Share of tokens per expert is a different number, the expert's load, which the balance lessons use.
+      - id: routers-and-top-k.transfer.v3.4
+        prompt: A team switches its MoE from top-2 to top-1 but keeps renormalizing the kept weight. Afterwards the router's weights barely change during training. What explains it?
+        options:
+          - id: c
+            text: Top-1 does half the compute, so each training step is slower
+          - id: b
+            text: Top-1 routing stores fewer experts, so there is less to learn
+          - id: a
+            text: A single renormalized weight is always 1, so it carries no signal
+        answer: a
+        feedback: With one kept expert, p / p = 1 whatever the logits are, so the loss can't push the router's scores through the gate. Switch Transformer avoids this by using the unnormalized probability p as the gate. Top-1 stores just as many experts, and it makes steps cheaper, not slower.

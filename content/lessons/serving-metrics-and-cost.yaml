@@ -1,208 +1,382 @@
 schema_version: 0.2-draft
 lesson:
   id: serving-metrics-and-cost
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Choose a deployment using quality and workload evidence
   state: draft
-  summary: Measure the speed, cost, and reliability that users actually experience.
+  summary: The average wait looks great, yet one customer in a hundred waits over three seconds. Measure what users actually feel, and work out what a million tokens really costs you.
   slot: M27.8
   category: learning
   sources:
-  - title: MLPerf Inference Benchmark
-    url: https://arxiv.org/abs/1911.02549
-  - title: PagedAttention and vLLM
-    url: https://arxiv.org/abs/2309.06180
+    - title: "DistServe: Disaggregating Prefill and Decoding for Goodput-optimized Large Language Model Serving (Zhong et al., 2024)"
+      url: https://arxiv.org/abs/2401.09670
+    - title: MLPerf Inference Benchmark (Reddi et al., 2019)
+      url: https://arxiv.org/abs/1911.02549
+    - title: Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., 2023)
+      url: https://arxiv.org/abs/2309.06180
+    - title: "The Tail at Scale (Dean & Barroso, Communications of the ACM, 2013)"
+      url: https://doi.org/10.1145/2408776.2408794
 objectives:
-- id: objective.serving-metrics-and-cost
-  version: 1-draft
-  statement: Serving evaluation measures latency distributions, throughput, memory, reliability, and cost under
-    a specified workload; compare systems at useful quality thresholds and include all relevant resource boundaries.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - serving-metrics-and-cost.base
-  - serving-metrics-and-cost.transfer
-  prerequisites:
-  - anyOf:
-    - objective.distributed-and-edge-serving
-  - anyOf:
-    - objective.batching-streaming-and-cache-management
-  - anyOf:
-    - objective.speculative-decoding
+  - id: objective.serving-metrics-and-cost
+    version: 2-draft
+    statement: Measure serving by latency percentiles, throughput, memory, reliability, and cost under a stated workload, and compare systems at the quality level users actually need.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - serving-metrics-and-cost.base.v2
+      - serving-metrics-and-cost.transfer.v2
+      - serving-metrics-and-cost.cost
+    prerequisites:
+      - anyOf:
+          - objective.distributed-and-edge-serving
+      - anyOf:
+          - objective.batching-streaming-and-cache-management
+      - anyOf:
+          - objective.speculative-decoding
 scenes:
-- id: serving-metrics-and-cost.s1
-  title: Define user-visible latency
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.serving-metrics-and-cost
-  markdown: '**Time to first token** measures the wait before output starts. Depending on where measurement
-    begins, it includes request preparation, queuing, and prompt processing. **Inter-token latency** measures
-    the gaps between later output tokens; **total completion time** covers the full answer.
+  - id: serving-metrics-and-cost.s1
+    title: Three numbers on the customer's stopwatch
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.serving-metrics-and-cost
+    markdown: |-
+      Fernly's dashboard says Fern's average wait before the first word is 0.38 seconds. Yet the support inbox has complaints: "It froze for ages before answering." Both are true. To see how, first name what a customer's stopwatch measures for one reply:
 
+      | Metric | What it measures | One Fern reply |
+      | --- | --- | --- |
+      | **Time to first token (TTFT)** | From sending the message to the first token appearing | 0.25 s |
+      | **Time per output token (TPOT)** | The average gap between later tokens | 15.9 ms |
+      | **End-to-end latency** | From sending to the last token | 5.0 s for 300 tokens |
 
-    If the first token arrives after one second and nine more arrive at 0.1-second intervals, the tenth arrives
-    at 1 + 9 × 0.1 = 1.9 seconds. There are nine gaps after the first token.
+      TPOT is the time after the first token divided by the number of gaps: $(5.0 - 0.25) / 299 \approx 15.9$ ms. Each individual gap is an **inter-token latency (ITL)**. Their average is the TPOT, but a single long gap, such as a freeze while someone else's long prompt is prefilled, shows up only in the ITLs.
 
+      :::predict A reply's first token arrives at 1.0 s and nine more follow at even 0.1 s gaps. When does the tenth token arrive, and what's the TPOT?
+      Ten tokens have nine gaps, so the tenth arrives at 1.0 + 9 × 0.1 = 1.9 s, and TPOT = 0.9 s ÷ 9 = 0.1 s. Dividing by ten tokens instead of nine gaps is the classic off-by-one.
+      :::
+    bridges: []
+  - id: serving-metrics-and-cost.tail
+    title: The average hides the slowest customers
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.serving-metrics-and-cost
+    markdown: |-
+      Latencies aren't one number; they're a distribution. The **p95** is the value that 95% of requests beat, and p50 is the median. Here are 1,000 simulated Fern TTFTs, where 3% of requests happen to queue behind a long prefill:
 
-    Report the measurement boundary and the distribution of delays. Tail percentiles help reveal long waits
-    that an average can hide.'
-  text_mode: '**Time to first token** measures the wait before output starts. Depending on where measurement
-    begins, it includes request preparation, queuing, and prompt processing. **Inter-token latency** measures
-    the gaps between later output tokens; **total completion time** covers the full answer.
+      ```python run
+      import numpy as np
 
+      rng = np.random.default_rng(7)
+      ttft = rng.lognormal(np.log(0.3), 0.3, size=1000)   # most waits are around 0.3 s
+      unlucky = rng.random(1000) < 0.03                   # 3% queue behind a long prefill
+      ttft[unlucky] += rng.uniform(2, 4, unlucky.sum())
 
-    If the first token arrives after one second and nine more arrive at 0.1-second intervals, the tenth arrives
-    at 1 + 9 × 0.1 = 1.9 seconds. There are nine gaps after the first token.
+      print(f"mean {ttft.mean():.2f} s")
+      for p in [50, 95, 99]:
+          print(f"p{p}  {np.percentile(ttft, p):.2f} s")
+      print(f"requests over 1 s: {(ttft > 1).sum()} of {len(ttft)}")
+      ```
 
+      The mean is 0.38 s and the p95 is 0.53 s, both fine. The p99 is 3.36 s: one customer in a hundred waits more than three seconds. Those 26 customers wrote the complaints. Change `0.03` to `0.06` and see which numbers move.
 
-    Report the measurement boundary and the distribution of delays. Tail percentiles help reveal long waits
-    that an average can hide.'
-  bridges: []
-- id: serving-metrics-and-cost.s2
-  title: Count useful throughput
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.serving-metrics-and-cost
-  markdown: Tokens per second depends on input/output lengths, concurrency, batching, and which tokens are
-    counted. A high-throughput configuration can increase waiting time. Report requests completed within a
-    quality and latency target as well as raw token throughput when that matches the product goal.
-  text_mode: Tokens per second depends on input/output lengths, concurrency, batching, and which tokens are
-    counted. A high-throughput configuration can increase waiting time. Report requests completed within a
-    quality and latency target as well as raw token throughput when that matches the product goal.
-  bridges: []
-- id: serving-metrics-and-cost.s3
-  title: Build a scoped cost model
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.serving-metrics-and-cost
-  markdown: 'A useful cost model includes the resources needed to complete the task: hardware or service charges,
-    utilization, prompt and output work, retries, tools, storage, and relevant operating overhead. Doubling
-    idle hardware can double its cost without doubling useful work. Energy estimates also need power and duration
-    assumptions.
+      Tails matter more than they look. A customer who sends 20 messages has a 1 − 0.99²⁰ ≈ 18% chance of hitting at least one p99 wait, and Dean and Barroso's "The Tail at Scale" (2013) showed how rare slow events come to dominate once one user action depends on many requests. So Fernly writes its targets as percentiles, in a **service-level objective (SLO)**: TTFT under 1 s and TPOT under 25 ms, for 95% of requests.
+    bridges: []
+  - id: serving-metrics-and-cost.s2
+    title: Throughput, goodput, and the batch-size dial
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.serving-metrics-and-cost
+    markdown: |-
+      The batching lesson found the central trade: a bigger batch makes more tokens in total, but each customer's tokens come more slowly. With Fern's 2,000-token conversations, each step reads the 16 GB of weights plus 0.262 GB of cache per request:
 
+      | Batch | ms per step (TPOT) | Tokens/s per customer | Tokens/s total |
+      | ---: | ---: | ---: | ---: |
+      | 1 | 8.1 | 123 | 123 |
+      | 8 | 9.0 | 111 | 884 |
+      | 32 | 12.2 | 82 | 2,625 |
+      | 64 | 16.4 | 61 | 3,906 |
+      | 128 | 24.8 | 40 | 5,168 |
 
-    If a toy batch costs 10 units and completes eight useful tasks, the cost is 10/8 = 1.25 units per useful
-    completion. Include failed attempts in the cost. Counting them as successful tasks would make the service
-    appear cheaper than it is.'
-  text_mode: 'A useful cost model includes the resources needed to complete the task: hardware or service charges,
-    utilization, prompt and output work, retries, tools, storage, and relevant operating overhead. Doubling
-    idle hardware can double its cost without doubling useful work. Energy estimates also need power and duration
-    assumptions.
+      This simple model counts only memory reads, and very large batches also approach the compute limit, but the shape is right. **Throughput**, total tokens or requests per second, keeps climbing. The TPOT target of 25 ms is met, barely, even at 128.
 
+      Throughput counts requests that break the SLO too. **Goodput** counts only the requests that meet every target; the DistServe paper (Zhong et al., 2024) made it the number to maximize. Suppose setting A completes 10 requests per second with 97% inside the SLO, and setting B, with a bigger batch and more queueing, completes 14 per second with only 60% inside. B has more throughput, but A has more goodput: 9.7 against 8.4 requests per second.
+    bridges: []
+  - id: serving-metrics-and-cost.s3
+    title: What a million tokens costs
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.serving-metrics-and-cost
+    markdown: |-
+      Everything so far turns into money with one division:
 
-    If a toy batch costs 10 units and completes eight useful tasks, the cost is 10/8 = 1.25 units per useful
-    completion. Include failed attempts in the cost. Counting them as successful tasks would make the service
-    appear cheaper than it is.'
-  bridges: []
-- id: serving-metrics-and-cost.s4
-  title: Select and monitor an operating point
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.serving-metrics-and-cost
-  markdown: Choose a deployment that meets required quality, latency, memory, and reliability constraints.
-    Monitor failures, queue growth, cache pressure, and changing traffic. Re-evaluate after model, runtime,
-    or workload changes instead of treating a one-time benchmark as a permanent property.
-  text_mode: Choose a deployment that meets required quality, latency, memory, and reliability constraints.
-    Monitor failures, queue growth, cache pressure, and changing traffic. Re-evaluate after model, runtime,
-    or workload changes instead of treating a one-time benchmark as a permanent property.
-  bridges: []
-- id: serving-metrics-and-cost.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.serving-metrics-and-cost
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Compare deployments on useful completed work at an acceptable quality level. Report waiting-time
-    distributions, throughput, memory, reliability, and total cost under the same workload.
-- id: serving-metrics-and-cost.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.serving-metrics-and-cost
-  markdown: Compare deployments on useful completed work at an acceptable quality level. Report waiting-time
-    distributions, throughput, memory, reliability, and total cost under the same workload.
-  text_mode: Compare deployments on useful completed work at an acceptable quality level. Report waiting-time
-    distributions, throughput, memory, reliability, and total cost under the same workload.
+      $$\text{cost per million tokens} = \frac{\text{GPU price per hour}}{\text{tokens per hour}} \times 10^6$$
+
+      Say Fernly rents its A100 for \$2.00 an hour (an assumed price; rates vary widely). At batch 1, it makes 123 tokens per second, 442,800 per hour, so a million tokens cost \$2.00 ÷ 442,800 × 10⁶ ≈ \$4.52. At batch 64, the same GPU makes 3,906 per second, and the price falls to about \$0.14.
+
+      ```python run
+      GPU_PER_HOUR = 2.00            # assumed rental price of one A100, in dollars
+      WEIGHTS_GB, BW = 16, 2000      # Fern's 8B model; GB/s of memory bandwidth
+      KV_GB = 0.262                  # one 2,000-token conversation's cache
+
+      print("batch  ms/step  tokens/s each  tokens/s total  $ per million tokens")
+      for batch in [1, 8, 32, 64, 128]:
+          step = (WEIGHTS_GB + batch * KV_GB) / BW          # seconds per decode step
+          total = batch / step                              # output tokens per second
+          cost = GPU_PER_HOUR / (total * 3600) * 1e6
+          print(f"{batch:5}  {step * 1e3:7.1f}  {1 / step:13.0f}  {total:14,.0f}  {cost:8.2f}")
+      ```
+
+      Try `GPU_PER_HOUR = 1.00`, or halve `WEIGHTS_GB` to see what int8 weights would save.
+
+      :::mixup "Our benchmark gives \$0.14 per million tokens, so that's our cost."
+      You pay for the GPU every hour, busy or not. If traffic keeps it at batch 64 only 40% of the time, the real cost is \$0.14 ÷ 0.4 = \$0.35. Retries, failed requests, prompt tokens, and a spare GPU for peaks all add more. Divide the whole bill by the tokens customers actually received.
+      :::
+    bridges: []
+  - id: serving-metrics-and-cost.s4
+    title: Pick the operating point, then watch it
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.serving-metrics-and-cost
+    markdown: |-
+      Fern's team now makes the decision this module has been building toward. Their SLO is p95 TTFT under 1 s and p95 TPOT under 25 ms. They load-test with a recording of a real Monday morning, not with identical synthetic prompts, and find:
+
+      - A batch cap of 128 has the lowest cost per token, but p95 TPOT reaches 30 ms under real traffic, and p95 TTFT breaks 1 s when long prompts arrive together.
+      - A cap of 64 meets both targets with a little room to spare, at about \$0.14 per million tokens while busy.
+
+      They pick 64, and handle growth by adding replicas rather than squeezing more into each batch. Then they put five numbers on the dashboard and alert when any drifts: p95 TTFT, p95 TPOT, goodput, KV-cache usage and preemptions, and cost per million delivered tokens. Any change covered in this module, such as a new model, int4 weights, speculative decoding, or a different GPU, means rerunning the same load test before trusting the old numbers.
+    bridges: []
+  - id: serving-metrics-and-cost.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.serving-metrics-and-cost
+    markdown: Costs per million tokens to compute, then a TPOT reading, a hidden tail, a goodput comparison, a voice assistant, and a batch-size decision test whether you can measure a deployment the way customers experience it.
+    takeaway: |-
+      Measure TTFT and TPOT as percentiles against an SLO, and maximize goodput, not raw throughput. Cost per million tokens is the GPU's hourly price divided by the tokens it actually delivers per hour.
+  - id: serving-metrics-and-cost.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.serving-metrics-and-cost
+    markdown: |-
+      Compare deployments on useful completed work at an acceptable quality level. Report waiting-time distributions, throughput, memory, reliability, and total cost under the same workload.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - serving-metrics-and-cost.s1
-    - serving-metrics-and-cost.s2
-    - serving-metrics-and-cost.s3
-    - serving-metrics-and-cost.s4
-    - serving-metrics-and-cost.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - serving-metrics-and-cost.s1
+        - serving-metrics-and-cost.tail
+        - serving-metrics-and-cost.s2
+        - serving-metrics-and-cost.s3
+        - serving-metrics-and-cost.s4
+        - serving-metrics-and-cost.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     serving-metrics-and-cost.recap: serving-metrics-and-cost.check
 assessment_families:
-- id: serving-metrics-and-cost.base
-  objective_ref: objective.serving-metrics-and-cost
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Count useful throughput: trace the inputs, operation, and result before choosing.'
-  remediation_scene: serving-metrics-and-cost.s2
-  variants:
-  - id: serving-metrics-and-cost.base.1
-    prompt: What can a latency average hide?
-    options:
-    - id: a
-      text: A slow tail of user requests
-    - id: b
-      text: Every model parameter
-    - id: c
-      text: Only the prompt language
-    answer: a
-    feedback: Distribution percentiles expose uneven experience.
-  - id: serving-metrics-and-cost.base.2
-    prompt: Does maximum tokens per second necessarily minimize waiting time?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if output is streamed
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Batching can trade throughput against latency.
-- id: serving-metrics-and-cost.transfer
-  objective_ref: objective.serving-metrics-and-cost
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Select and monitor an operating point: trace the inputs, operation, and result before choosing.'
-  remediation_scene: serving-metrics-and-cost.s4
-  variants:
-  - id: serving-metrics-and-cost.transfer.1
-    prompt: Why state whether reported tokens include prompts or outputs?
-    options:
-    - id: b
-      text: All token counts are automatically equivalent
-    - id: c
-      text: Only prices depend on words
-    - id: a
-      text: Counting conventions change the metric
-    answer: a
-    feedback: Throughput needs a clear denominator and numerator.
-  - id: serving-metrics-and-cost.transfer.2
-    prompt: What warrants re-evaluating a serving decision?
-    options:
-    - id: c
-      text: Nothing after one benchmark
-    - id: a
-      text: A material model, runtime, or workload change
-    - id: b
-      text: Only a new logo
-    answer: a
-    feedback: Performance is conditional on system and traffic conditions.
+  - id: serving-metrics-and-cost.base
+    objective_ref: objective.serving-metrics-and-cost
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Count useful throughput: trace the inputs, operation, and result before choosing.'
+    remediation_scene: serving-metrics-and-cost.s2
+    variants:
+      - id: serving-metrics-and-cost.base.1
+        retired: true
+        prompt: What can a latency average hide?
+        options:
+          - id: a
+            text: A slow tail of user requests
+          - id: b
+            text: Every model parameter
+          - id: c
+            text: Only the prompt language
+        answer: a
+        feedback: Distribution percentiles expose uneven experience.
+      - id: serving-metrics-and-cost.base.2
+        retired: true
+        prompt: Does maximum tokens per second necessarily minimize waiting time?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if output is streamed
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Batching can trade throughput against latency.
+  - id: serving-metrics-and-cost.transfer
+    objective_ref: objective.serving-metrics-and-cost
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Select and monitor an operating point: trace the inputs, operation, and result before choosing.'
+    remediation_scene: serving-metrics-and-cost.s4
+    variants:
+      - id: serving-metrics-and-cost.transfer.1
+        retired: true
+        prompt: Why state whether reported tokens include prompts or outputs?
+        options:
+          - id: b
+            text: All token counts are automatically equivalent
+          - id: c
+            text: Only prices depend on words
+          - id: a
+            text: Counting conventions change the metric
+        answer: a
+        feedback: Throughput needs a clear denominator and numerator.
+      - id: serving-metrics-and-cost.transfer.2
+        retired: true
+        prompt: What warrants re-evaluating a serving decision?
+        options:
+          - id: c
+            text: Nothing after one benchmark
+          - id: a
+            text: A material model, runtime, or workload change
+          - id: b
+            text: Only a new logo
+        answer: a
+        feedback: Performance is conditional on system and traffic conditions.
+  - id: serving-metrics-and-cost.base.v2
+    objective_ref: objective.serving-metrics-and-cost
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: TTFT is the wait for the first token, TPOT is the time after it divided by the number of gaps, and goodput counts only requests that meet every target.
+    remediation_scene: serving-metrics-and-cost.s1
+    variants:
+      - id: serving-metrics-and-cost.base.v2.1
+        prompt: A reply's first token arrives at 0.5 s, and its 201st and last token arrives at 4.5 s. What is its time per output token?
+        options:
+          - id: b
+            text: 22.4 ms, from 4.5 s spread over 201 tokens
+          - id: a
+            text: 20 ms, from 4.0 s spread over 200 gaps
+          - id: c
+            text: 22.5 ms, from 4.5 s spread over 200 gaps
+        answer: a
+        feedback: TPOT leaves out the wait for the first token and divides by the gaps between tokens. (4.5 − 0.5) ÷ 200 = 0.02 s. Including the first-token wait mixes TTFT into TPOT.
+      - id: serving-metrics-and-cost.base.v2.2
+        prompt: A chat service's mean TTFT is 0.4 s, yet customers complain about long freezes before replies start. Which number should the team look at?
+        options:
+          - id: a
+            text: The p95 and p99 TTFT, which show how slow the slowest requests are
+          - id: b
+            text: The median TTFT, which is less affected by a few unusual requests
+          - id: c
+            text: The mean time per output token, which shows how fast tokens stream
+        answer: a
+        feedback: A few multi-second waits barely move the mean, and the median ignores them on purpose. High percentiles expose the tail that the complaints come from. TPOT measures a different wait, after the reply has started.
+      - id: serving-metrics-and-cost.base.v2.3
+        prompt: A memory-bound server raises its batch size from 8 to 64. What happens?
+        options:
+          - id: c
+            text: Total tokens per second stay flat, since the GPU was already busy
+          - id: b
+            text: Each customer's tokens arrive faster, since the GPU works harder
+          - id: a
+            text: Total tokens per second rise, while each customer's tokens slow down
+        answer: a
+        feedback: Each step still reads the weights once for the whole batch, so total output rises steeply, but every step takes longer because it also reads more KV caches. In Fern's numbers, total rises from 884 to 3,906 tokens per second while each customer drops from 111 to 61.
+      - id: serving-metrics-and-cost.base.v2.4
+        prompt: A team's SLO sets targets for p95 TTFT and p95 TPOT. Which requests count toward goodput?
+        options:
+          - id: b
+            text: Every request the server finished, however long it took
+          - id: a
+            text: The requests that finished within each of the SLO's targets
+          - id: c
+            text: The tokens per second measured at the largest batch that fits
+        answer: a
+        feedback: Goodput counts useful work, meaning requests that met the targets. Counting everything finished is plain throughput, and a peak-batch token rate is throughput again, measured in tokens.
+  - id: serving-metrics-and-cost.transfer.v2
+    objective_ref: objective.serving-metrics-and-cost
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Start from what users feel and what the SLO says, then compare options by goodput and by the cost of tokens actually delivered.
+    remediation_scene: serving-metrics-and-cost.s4
+    variants:
+      - id: serving-metrics-and-cost.transfer.v2.1
+        prompt: Setting A completes 10 requests per second, with 97% inside the SLO. Setting B completes 14 per second, with 60% inside. Which has more goodput?
+        options:
+          - id: a
+            text: A, with 9.7 good requests per second against B's 8.4
+          - id: b
+            text: B, because it completes more requests every second
+          - id: c
+            text: Neither, since both settings keep the GPU fully busy
+        answer: a
+        feedback: Goodput is throughput times the share that meets the SLO, so 10 × 0.97 = 9.7 against 14 × 0.6 = 8.4. B's extra requests are mostly ones that missed their targets.
+      - id: serving-metrics-and-cost.transfer.v2.2
+        prompt: A startup estimated its cost by dividing its GPU's hourly price by peak benchmark throughput. Its real cost per delivered token turns out 2.5 times higher. What did the estimate most likely leave out?
+        options:
+          - id: c
+            text: Bigger batches make each rented GPU hour cost more
+          - id: a
+            text: The GPU is paid for every hour, even when traffic is light
+          - id: b
+            text: Tokens were counted after streaming instead of before
+        answer: a
+        feedback: A benchmark runs the GPU flat out, but real traffic has quiet hours, and you pay for them anyway. At 40% average utilization, the cost is 2.5 times the peak figure. The hourly price doesn't depend on batch size, and streaming doesn't change the token count.
+      - id: serving-metrics-and-cost.transfer.v2.3
+        prompt: A voice assistant speaks its replies aloud. Users mind the silence before speech starts but can't tell how fast later words are generated, since speech is slower than generation anyway. Which metric should its SLO emphasize?
+        options:
+          - id: b
+            text: Total tokens per second across all users
+          - id: a
+            text: TTFT at a high percentile, such as p95
+          - id: c
+            text: Mean time per output token for each reply
+        answer: a
+        feedback: The silence users notice is the time to first token, and the slow tail of it is what they complain about. Once speech starts, generation stays ahead of the voice, so TPOT and total throughput matter far less here.
+      - id: serving-metrics-and-cost.transfer.v2.4
+        prompt: 'A coding assistant''s SLO is p95 TPOT at most 25 ms. Load tests with real traffic give p95 TPOT of 18 ms at batch cap 64 and 30 ms at batch cap 128, where cost per token is lowest. What should the team choose?'
+        options:
+          - id: a
+            text: Cap 64, then add replicas when traffic grows
+          - id: b
+            text: Cap 128, since it has the lowest cost per token
+          - id: c
+            text: Cap 1, since it gives each user the fastest tokens
+        answer: a
+        feedback: The largest batch that still meets the SLO gives the most goodput per GPU; beyond it, requests fail the target. Batch 1 meets the SLO too, but at many times the cost per token.
+  - id: serving-metrics-and-cost.cost
+    objective_ref: objective.serving-metrics-and-cost
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Tokens per hour = tokens per second × 3,600. Cost per million tokens = price per hour ÷ tokens per hour × 1,000,000. Use the average rate the GPU actually delivers.
+    remediation_scene: serving-metrics-and-cost.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: serving-metrics-and-cost.cost.1
+        prompt: A GPU rents for $2.00 an hour and serves one user at 125 tokens per second. What does a million output tokens cost, in dollars?
+        answer: 4.4444
+        feedback: 125 × 3,600 = 450,000 tokens per hour, and $2.00 ÷ 450,000 × 1,000,000 ≈ $4.44.
+      - id: serving-metrics-and-cost.cost.2
+        prompt: The same $2.00-an-hour GPU runs a big batch that produces 4,000 tokens per second in total. What does a million tokens cost, in dollars?
+        answer: 0.1389
+        feedback: 4,000 × 3,600 = 14.4 million tokens per hour, and $2.00 ÷ 14.4 ≈ $0.14 per million.
+      - id: serving-metrics-and-cost.cost.3
+        prompt: A GPU rents for $3.60 an hour and delivers 1,000 tokens per second. What does a million tokens cost, in dollars?
+        answer: 1
+        feedback: 1,000 × 3,600 = 3.6 million tokens per hour, and $3.60 ÷ 3.6 = $1.00 per million.
+      - id: serving-metrics-and-cost.cost.4
+        prompt: A $2.00-an-hour GPU produces 2,000 tokens per second while busy, but traffic keeps it busy only half of each hour. What does a million delivered tokens cost, in dollars?
+        answer: 0.5556
+        feedback: Averaged over the hour it delivers 1,000 tokens per second, or 3.6 million per hour, so $2.00 ÷ 3.6 ≈ $0.56 per million. The busy-time figure, $0.28, leaves out the idle half hour you still pay for.
+      - id: serving-metrics-and-cost.cost.5
+        prompt: A smaller GPU rents for $1.20 an hour and delivers 500 tokens per second. What does a million tokens cost, in dollars?
+        answer: 0.6667
+        feedback: 500 × 3,600 = 1.8 million tokens per hour, and $1.20 ÷ 1.8 ≈ $0.67 per million.

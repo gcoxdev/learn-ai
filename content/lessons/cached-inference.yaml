@@ -1,300 +1,516 @@
 schema_version: 0.2-draft
 lesson:
   id: cached-inference
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: From a prompt to a stream of tokens
   state: draft
-  summary: Explain prefill and cached decoding, including how request-specific key/value activations differ
-    from learned model weights.
+  summary: Why does a chatbot pause, then type fast? Time the two phases of generation, count the bytes of the cache between them, and reuse the work on a shared prompt.
   slot: M27.2
   category: destination
   sources:
-  - title: Hugging Face — how caching works
-    url: https://huggingface.co/docs/transformers/cache_explanation
+    - title: Hugging Face Transformers documentation, caching (how the KV cache works)
+      url: https://huggingface.co/docs/transformers/cache_explanation
+    - title: "Efficiently Scaling Transformer Inference (Pope et al., 2022): prefill vs decode costs and memory-bound decoding"
+      url: https://arxiv.org/abs/2211.05102
+    - title: "SGLang: Efficient Execution of Structured Language Model Programs (Zheng et al., 2023): RadixAttention prefix caching"
+      url: https://arxiv.org/abs/2312.07104
+    - title: The Llama 3 Herd of Models (Llama Team, Meta, 2024)
+      url: https://arxiv.org/abs/2407.21783
 objectives:
-- id: objective.cached-inference
-  version: 1-draft
-  statement: Explain prefill and cached decoding, including how request-specific key/value activations differ
-    from learned model weights.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - cached-inference.base
-  - cached-inference.transfer
-  prerequisites:
-  - anyOf:
-    - objective.transformer-trace
-  - anyOf:
-    - objective.inside-a-system
+  - id: objective.cached-inference
+    version: 2-draft
+    statement: Explain prefill and cached decoding, including how request-specific key/value activations differ from learned model weights.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - cached-inference.base.v2
+      - cached-inference.transfer.v2
+      - cached-inference.decode-speed
+      - cached-inference.kv-bytes
+    prerequisites:
+      - anyOf:
+          - objective.transformer-trace
+      - anyOf:
+          - objective.inside-a-system
 scenes:
-- title: Process the prompt before the first new token
-  markdown: 'Suppose the prompt has three tokens. Prefill runs the model on that prompt, respecting its attention
-    pattern, and computes the information needed to begin generation. The last prompt position supplies the
-    first next-token distribution.
+  - title: A pause, then a steady stream
+    markdown: |-
+      A customer asks Fern why her fiddle-leaf fig is dropping leaves. With her watering log and some care-guide notes, the prompt is 2,000 tokens. The reply appears after a pause of about a fifth of a second, then streams at one token every 8 milliseconds. Two different kinds of work make those two phases.
 
+      **Prefill** runs the model over the whole prompt at once: all 2,000 positions pass through each layer together, with the causal mask hiding later positions. The last position's logits give the first reply token.
 
-    The program can process prompt positions in parallel within a layer where dependencies permit, but later
-    layers still depend on earlier layers’ outputs. Prefill is a forward computation, not an optimizer update.'
-  id: cached-inference.s1
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.cached-inference
-  text_mode: 'Suppose the prompt has three tokens. Prefill runs the model on that prompt, respecting its attention
-    pattern, and computes the information needed to begin generation. The last prompt position supplies the
-    first next-token distribution.
+      **Decode** produces every later token, one per step. Each step feeds in only the newest token, but still runs it through all 32 layers, and it can't run ahead, because step 5 needs the token chosen at step 4.
 
+      The **KV cache** connects them: the keys and values of every position in every layer, kept in GPU memory so decode steps can attend to them without recomputing them. As the transformer trace lesson showed, appending a token never changes earlier tokens' keys and values, so saving them loses nothing.
+    id: cached-inference.s1
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.cached-inference
+    diagram:
+      caption: Prefill fills the cache once; every decode step reads all of it and appends one position.
+      description: The prompt goes into prefill, which processes all positions in parallel. Prefill writes keys and values for every prompt position into the KV cache and produces the first new token. Each new token is fed back into a decode step. The decode step reads the whole KV cache, appends the new token's keys and values to it, and samples the next token. Every new token is also streamed to the customer.
+      nodes:
+        - id: prompt
+          label: Prompt
+          note: 2,000 tokens
+          col: 0
+          row: 0
+          tone: data
+        - id: prefill
+          label: Prefill
+          note: all positions at once
+          col: 1
+          row: 0
+          tone: accent
+        - id: token
+          label: New token
+          col: 2
+          row: 0
+        - id: stream
+          label: Stream to customer
+          col: 3
+          row: 0
+          tone: muted
+        - id: cache
+          label: KV cache
+          note: keys + values, every layer
+          col: 1
+          row: 1
+          tone: data
+        - id: decode
+          label: Decode step
+          note: one token at a time
+          col: 2
+          row: 1
+          tone: accent
+      edges:
+        - from: prompt
+          to: prefill
+        - from: prefill
+          to: cache
+          label: write K, V
+        - from: prefill
+          to: token
+        - from: token
+          to: stream
+        - from: token
+          to: decode
+          label: feed back
+          bend: 1
+        - from: decode
+          to: token
+          label: next token
+          bend: 1
+        - from: cache
+          to: decode
+          label: read
+          bend: 1
+        - from: decode
+          to: cache
+          label: append
+          bend: 1
+  - title: The cache holds activations, not knowledge
+    markdown: |-
+      Two very different things share the GPU's memory:
 
-    The program can process prompt positions in parallel within a layer where dependencies permit, but later
-    layers still depend on earlier layers’ outputs. Prefill is a forward computation, not an optimizer update.'
-- title: Cache the past computations that stay useful
-  markdown: 'In a standard causal transformer, past positions’ key and value vectors at each attention layer
-    can be reused when the prefix is extended. A KV cache stores those computed activations.
+      | | Weights | KV cache |
+      | --- | --- | --- |
+      | What it is | Learned parameters | Keys and values computed from this request's tokens |
+      | Made by | Training | Prefill and decode, during the request |
+      | Used by | Every request | One request |
+      | Size | Fixed: 16 GB | Grows by one position per token |
+      | Lifetime | Until the model is replaced | Freed when the request ends |
 
+      Keys and values are **activations**: this conversation's hidden vectors multiplied by the learned $W_K$ and $W_V$ matrices. The cache holds no weights and learns nothing.
 
-    These vectors depend on the request’s tokens, positions, and the model computation. They are different
-    from the learned projection weights that produced them. A cache does not contain an independent copy of
-    all model parameters, and it is not a general external knowledge database.'
-  id: cached-inference.s2
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.cached-inference
-  text_mode: 'In a standard causal transformer, past positions’ key and value vectors at each attention layer
-    can be reused when the prefix is extended. A KV cache stores those computed activations.
+      :::mixup "The KV cache is how the model remembers earlier customers."
+      Each request's cache holds only that request's tokens and is freed when the request finishes. Memory across conversations comes from text the server puts back into the prompt, as in the agent memory lesson.
+      :::
+    id: cached-inference.s2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.cached-inference
+  - title: Trace three steps
+    markdown: |-
+      Shrink the prompt to three tokens. Prefill writes three positions into the cache; each decode step feeds in one new token, attends to every cached position plus itself, and appends one more. The input stays one token wide however long the chat gets. Only the cache grows.
+    type: table
+    columns:
+      - Moment
+      - New model input
+      - What is reused
+    rows:
+      - - Prefill
+        - All three prompt tokens
+        - No prior prefix cache in this example
+      - - First decode step
+        - First selected output token
+        - Prompt keys and values
+      - - Second decode step
+        - Next selected output token
+        - Prompt and earlier generated keys and values
+    id: cached-inference.s3
+    depth: mechanics
+    objective_refs:
+      - objective.cached-inference
+  - id: cached-inference.decode-speed
+    title: Decode speed is a memory-bandwidth sum
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.cached-inference
+    markdown: |-
+      Why 8 ms per token? Use the roofline from the lesson on compute and bandwidth. At batch 1, a decode step multiplies one token's vector by every weight matrix: about 2 FLOPs per weight, and 2 bytes read per weight. An arithmetic intensity near 1 FLOP per byte is deep in memory-bound territory, so the step takes as long as reading the weights:
 
+      $$t_{\text{token}} \approx \frac{\text{bytes of weights}}{\text{memory bandwidth}} = \frac{16 \text{ GB}}{2 \text{ TB/s}} = 8 \text{ ms}$$
 
-    These vectors depend on the request’s tokens, positions, and the model computation. They are different
-    from the learned projection weights that produced them. A cache does not contain an independent copy of
-    all model parameters, and it is not a general external knowledge database.'
-- title: Append one token, then compute its new contribution
-  markdown: 'After selecting a token from prefill’s final distribution, the next decode step processes that
-    token. Its query attends to eligible cached keys and its own new key/value information. Its output helps
-    predict the following token.
+      That's about 125 tokens per second for one customer, however fast the tensor cores are.
 
+      Prefill is the opposite. The 2,000-token prompt needs about $2 \times 8 \text{ billion} \times 2{,}000 = 32$ trillion FLOPs but reads the weights only once. At the A100's peak of 312 trillion FLOPs per second that's 0.10 s, and real kernels reach roughly half of peak, so about 0.2 s. Prefill is compute-bound.
 
-    The new keys and values join the cache for later steps. The program saves repeated computation on the past,
-    but each newly generated token still needs a forward calculation. This dependency is why ordinary autoregressive
-    output is generated sequentially.'
-  type: table
-  columns:
-  - Moment
-  - New model input
-  - What is reused
-  rows:
-  - - Prefill
-    - All three prompt tokens
-    - No prior prefix cache in this example
-  - - First decode step
-    - First selected output token
-    - Prompt keys and values
-  - - Second decode step
-    - Next selected output token
-    - Prompt and earlier generated keys and values
-  id: cached-inference.s3
-  depth: mechanics
-  objective_refs:
-  - objective.cached-inference
-  text_mode: 'After selecting a token from prefill’s final distribution, the next decode step processes that
-    token. Its query attends to eligible cached keys and its own new key/value information. Its output helps
-    predict the following token.
+      ```python run
+      PARAMS = 8.0e9          # Llama 3 8B
+      BYTES_PER_WEIGHT = 2    # bf16
+      BANDWIDTH = 2.0e12      # A100 80 GB: about 2 TB/s
+      PEAK = 312e12           # A100 bf16 tensor-core peak, FLOP/s
+      KV_PER_TOKEN = 2 * 32 * 8 * 128 * 2   # bytes per cached token
 
+      prompt = 2000
+      weight_bytes = PARAMS * BYTES_PER_WEIGHT
+      prefill = 2 * PARAMS * prompt / PEAK                 # compute-bound
+      decode = weight_bytes / BANDWIDTH                    # memory-bound
+      decode_kv = (weight_bytes + KV_PER_TOKEN * prompt) / BANDWIDTH
 
-    The new keys and values join the cache for later steps. The program saves repeated computation on the past,
-    but each newly generated token still needs a forward calculation. This dependency is why ordinary autoregressive
-    output is generated sequentially.'
-- title: Caching changes work and memory, not the objective
-  markdown: 'With matching arithmetic and settings, cached and uncached implementations aim to compute the
-    same model result. Small numerical differences can arise in practical implementations. Caching does not
-    train the model or add facts to its parameters.
+      print(f"prefill at peak:      {prefill * 1e3:5.0f} ms")
+      print(f"decode, weights only: {decode * 1e3:5.2f} ms/token = {1 / decode:3.0f} tokens/s")
+      print(f"decode, + KV reads:   {decode_kv * 1e3:5.2f} ms/token = {1 / decode_kv:3.0f} tokens/s")
+      ```
 
+      Each step also reads the cache: 2,000 positions add 0.13 ms, so 123 tokens per second instead of 125. Set `BANDWIDTH = 3.35e12`, an H100's bandwidth, and watch decode speed up while prefill, which depends only on `PEAK`, stays put.
 
-    Memory grows because each retained position contributes new key and value vectors. In the lab, one sequence
-    has four layers, two KV heads per layer, and 16 numbers per head in each vector. At two bytes per number,
-    each position adds 2 × 4 × 2 × 16 × 2 = 512 bytes. The leading 2 counts keys and values. Sixteen retained
-    positions use 8 KiB of vector payload.
+      :::predict Fernly shrinks the weights to 4 bits each, about 4 GB in total (a later lesson shows how). What is the new ceiling on decode speed?
+      4 GB ÷ 2 TB/s = 2 ms per step, so up to about 500 tokens per second, four times faster. Prefill barely changes, because its limit was arithmetic, not bytes.
+      :::
+  - title: Count the cache, byte by byte
+    markdown: |-
+      Every cached position stores one key vector and one value vector for each KV head in each layer:
 
+      $$\text{KV bytes per token} = 2 \times \text{layers} \times \text{KV heads} \times \text{head dim} \times \text{bytes per number}$$
 
-    Before revealing the comparison, predict what doubling the retained length does while every other setting
-    stays fixed. Then change KV heads or precision. Count the heads that actually store keys and values; grouped-query
-    attention can have more query heads than KV heads.
+      The lab below uses a tiny model: 4 layers, 2 KV heads, 16 numbers per head, 2 bytes each. That's $2 \times 4 \times 2 \times 16 \times 2 = 512$ bytes per position, so 16 positions take 8 KiB. Predict what doubling the length does before you reveal it, then change the KV heads or the precision.
 
+      Fern's model has 32 layers, 8 KV heads of 128 numbers, and 16-bit values: $2 \times 32 \times 8 \times 128 \times 2 = 131{,}072$ bytes, or 128 KiB per token. It has 32 query heads but only 8 KV heads, thanks to grouped-query attention from the lesson on shared keys and values; with 32 KV heads the cache would be four times larger.
 
-    This formula describes a dense cache payload. It excludes model weights, temporary buffers, and allocation
-    or quantization metadata. Sliding-window and compressed caches need different accounting. Use the stated
-    architecture and cache policy before turning token counts into byte counts.'
-  id: cached-inference.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.cached-inference
-  text_mode: 'With matching arithmetic and settings, cached and uncached implementations aim to compute the
-    same model result. Small numerical differences can arise in practical implementations. Caching does not
-    train the model or add facts to its parameters.
+      ```python run
+      def kv_bytes_per_token(layers, kv_heads, head_dim, bytes_per_number=2):
+          return 2 * layers * kv_heads * head_dim * bytes_per_number   # 2 = key + value
 
+      KiB, MiB = 2**10, 2**20
+      lab = kv_bytes_per_token(4, 2, 16)
+      fern = kv_bytes_per_token(32, 8, 128)       # Llama 3 8B
+      print(f"lab model:  {lab} bytes/token; 16 tokens = {16 * lab / KiB:.0f} KiB")
+      print(f"Llama 3 8B: {fern / KiB:.0f} KiB/token")
+      for tokens in [2000, 4096, 8192]:
+          print(f"  {tokens:5,} tokens: {tokens * fern / MiB:5.0f} MiB")
+      print(f"if all 32 heads kept keys and values: {kv_bytes_per_token(32, 32, 128) / KiB:.0f} KiB/token")
+      ```
 
-    Memory grows because each retained position contributes new key and value vectors. In the lab, one sequence
-    has four layers, two KV heads per layer, and 16 numbers per head in each vector. At two bytes per number,
-    each position adds 2 × 4 × 2 × 16 × 2 = 512 bytes. The leading 2 counts keys and values. Sixteen retained
-    positions use 8 KiB of vector payload.
+      A 4,096-token conversation holds 512 MiB. If about 60 GiB of the card is left after the weights and working buffers, that's room for 120 such conversations at once.
+    id: cached-inference.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.cached-inference
+    figure:
+      kind: kv-cache
+      caption: Append tokens and predict cache growth under explicit layer, KV-head, dimension, and precision settings.
+      description: A dense cache payload contains both keys and values for each retained token at each layer. The example fixes batch one, four layers, and head dimension 16; changing token count, KV heads, or bytes per value changes the displayed payload.
+  - title: Reuse a prefix only when every token matches
+    markdown: |-
+      Every Fern request begins with the same 606 tokens: the start token and the 605-token system prompt. Their keys and values come out identical every time: same tokens, same positions, same weights. So the server can compute them once, keep them, and start each new request's prefill at position 607. This is **prefix caching**, and serving engines such as vLLM and SGLang do it automatically by matching the exact token IDs at the start of each prompt. On turn 3 of the earlier five-turn chat, only 609 of the 1,215 prompt tokens now need computing, fewer if the server still holds this customer's earlier turns.
 
+      The match must be exact from the very first token. Change one early token and every later position's keys and values change too, because from the second layer on, each position's keys mix in information from the tokens before it.
 
-    Before revealing the comparison, predict what doubling the retained length does while every other setting
-    stays fixed. Then change KV heads or precision. Count the heads that actually store keys and values; grouped-query
-    attention can have more query heads than KV heads.
+      :::predict Fern's system prompt begins "Today is {date}. You are helping {customer name}." How much of it can be reused from one customer to the next?
+      Almost nothing. The name differs between customers a few tokens in, so every request has a new prefix from that point on. Move the fixed instructions to the top and put the date and name at the end, and nearly all 606 tokens become shareable again.
+      :::
+    id: cached-inference.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.cached-inference
+  - title: Two waits the customer feels
+    markdown: |-
+      The customer feels the two phases as two waits. **Time to first token (TTFT)** covers queueing, request preparation, and prefill; after that, each token costs one decode step. For Fern's 2,000-token prompt and a 300-token reply at batch 1:
 
+      - TTFT: about 0.2 s of prefill, plus any time in the queue;
+      - the other 299 tokens: 299 × 8 ms ≈ 2.4 s;
+      - total: about 2.6 s.
 
-    This formula describes a dense cache payload. It excludes model weights, temporary buffers, and allocation
-    or quantization metadata. Sliding-window and compressed caches need different accounting. Use the stated
-    architecture and cache policy before turning token counts into byte counts.'
-  figure:
-    kind: kv-cache
-    caption: Append tokens and predict cache growth under explicit layer, KV-head, dimension, and precision
-      settings.
-    description: A dense cache payload contains both keys and values for each retained token at each layer.
-      The example fixes batch one, four layers, and head dimension 16; changing token count, KV heads, or bytes
-      per value changes the displayed payload.
-- title: A cache belongs to a compatible prefix
-  markdown: 'Imagine editing the first prompt token while retaining a cache from the old prompt. Later cached
-    representations may depend on that changed prefix, so blindly reusing them is incorrect. Prefix reuse requires
-    compatible tokenization, positions, model state, and cache conventions.
+      Streaming sends each token as soon as it's chosen, so the customer starts reading after 0.2 s instead of watching a spinner for 2.6 s, for the same total work.
 
-
-    A new request’s prompt also does not automatically train the model. Distinguish request state, reusable
-    compatible prefix computation, and persistent parameter updates.'
-  id: cached-inference.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.cached-inference
-  text_mode: 'Imagine editing the first prompt token while retaining a cache from the old prompt. Later cached
-    representations may depend on that changed prefix, so blindly reusing them is incorrect. Prefix reuse requires
-    compatible tokenization, positions, model state, and cache conventions.
-
-
-    A new request’s prompt also does not automatically train the model. Distinguish request state, reusable
-    compatible prefix computation, and persistent parameter updates.'
-- title: Latency has several parts
-  markdown: 'Time to the first output token includes request preparation, scheduling, and prefill. Time between
-    later output tokens includes decode work and scheduling. Streaming exposes selected tokens as they become
-    available; it does not remove the computation.
-
-
-    To assess a serving change, measure quality, time to first token, later token latency, throughput, and
-    memory under a stated workload. A faster toy run alone is not a universal performance claim.'
-  id: cached-inference.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.cached-inference
-  text_mode: 'Time to the first output token includes request preparation, scheduling, and prefill. Time between
-    later output tokens includes decode work and scheduling. Streaming exposes selected tokens as they become
-    available; it does not remove the computation.
-
-
-    To assess a serving change, measure quality, time to first token, later token latency, throughput, and
-    memory under a stated workload. A faster toy run alone is not a universal performance claim.'
-- id: cached-inference.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.cached-inference
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Prefill processes the prompt; decoding extends it. A KV cache reuses computed keys and values for
-    a compatible prefix without changing the trained weights.
-- id: cached-inference.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.cached-inference
-  markdown: Prefill processes the prompt; decoding extends it. A KV cache reuses computed keys and values for
-    a compatible prefix without changing the trained weights.
-  text_mode: Prefill processes the prompt; decoding extends it. A KV cache reuses computed keys and values
-    for a compatible prefix without changing the trained weights.
+      The two waits have different fixes: a shorter prompt or a prefix-cache hit cuts TTFT, and fewer bytes per decode step cut the time per token.
+    id: cached-inference.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.cached-inference
+  - id: cached-inference.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.cached-inference
+    markdown: Decode speeds and cache sizes to compute, plus a code assistant, a timestamped system prompt, and a faster GPU, test whether you can tell prefill from decode and predict what each costs.
+    takeaway: |-
+      Prefill processes the whole prompt at once and is limited by arithmetic; decode makes one token per step and is limited by reading the weights and the KV cache. The cache holds this request's keys and values, not the model's knowledge.
+  - id: cached-inference.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.cached-inference
+    markdown: |-
+      Prefill processes the prompt; decoding extends it. A KV cache reuses computed keys and values for a compatible prefix without changing the trained weights.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - cached-inference.s1
-    - cached-inference.s2
-    - cached-inference.s3
-    - cached-inference.s4
-    - cached-inference.s5
-    - cached-inference.s6
-    - cached-inference.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - cached-inference.s1
+        - cached-inference.s2
+        - cached-inference.s3
+        - cached-inference.decode-speed
+        - cached-inference.s4
+        - cached-inference.s5
+        - cached-inference.s6
+        - cached-inference.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     cached-inference.recap: cached-inference.check
 assessment_families:
-- response_type: single_choice
-  hint: Prefill handles the available prompt; decoding extends it using prior compatible activations.
-  variants:
-  - prompt: For a fresh prompt with no reusable cache, where does the first output-token distribution come
-      from?
-    options:
-    - id: a
-      text: An obligatory optimizer update on the user’s message.
-    - id: b
-      text: A KV cache that already contains every possible answer.
-    - id: answer
-      text: The model’s prefill computation over the prompt.
-    answer: answer
-    feedback: Prefill computes the prompt representations and the final prompt position’s next-token scores.
-      No training update is required.
-    id: cached-inference.base.1
-  - prompt: What does a KV cache primarily retain in a standard causal transformer?
-    options:
-    - id: b
-      text: A certified factual database of all earlier answers.
-    - id: answer
-      text: Previously computed key and value activations for a compatible prefix.
-    - id: a
-      text: The optimizer’s gradients for future training.
-    answer: answer
-    feedback: The cache retains forward-computation activations for attention reuse. It is neither an optimizer
-      buffer nor an independently verified knowledge source.
-    id: cached-inference.base.2
-  id: cached-inference.base
-  objective_ref: objective.cached-inference
-  task: base
-  points: 1
-  remediation_scene: cached-inference.s1
-- response_type: single_choice
-  hint: Past cached vectors may depend on the exact prefix and model that produced them.
-  variants:
-  - prompt: A user edits an early prompt token. Can all later cached vectors from the old prompt be blindly
-      reused?
-    options:
-    - id: b
-      text: Yes; editing text automatically retrains every cached vector.
-    - id: answer
-      text: No; those vectors may depend on the changed prefix.
-    - id: a
-      text: Yes; caches depend only on the number of tokens.
-    answer: answer
-    feedback: Cache reuse requires compatible computation. Prefix content, positions, and model state can affect
-      the values being reused.
-    id: cached-inference.transfer.1
-  - prompt: A serving system adds a correct KV cache and becomes faster. What changed conceptually?
-    options:
-    - id: answer
-      text: It reused compatible past activations instead of recomputing all of them.
-    - id: a
-      text: It necessarily learned new model weights from the request.
-    - id: b
-      text: It removed the need to compute each new token.
-    answer: answer
-    feedback: Caching saves work on the prefix. Each new token still needs computation, and ordinary cached
-      inference leaves the learned parameters fixed.
-    id: cached-inference.transfer.2
-  id: cached-inference.transfer
-  objective_ref: objective.cached-inference
-  task: transfer
-  points: 1
-  remediation_scene: cached-inference.s1
+  - response_type: single_choice
+    hint: Prefill handles the available prompt; decoding extends it using prior compatible activations.
+    variants:
+      - prompt: For a fresh prompt with no reusable cache, where does the first output-token distribution come from?
+        options:
+          - id: a
+            text: An obligatory optimizer update on the user’s message.
+          - id: b
+            text: A KV cache that already contains every possible answer.
+          - id: answer
+            text: The model’s prefill computation over the prompt.
+        answer: answer
+        feedback: Prefill computes the prompt representations and the final prompt position’s next-token scores. No training update is required.
+        id: cached-inference.base.1
+        retired: true
+      - prompt: What does a KV cache primarily retain in a standard causal transformer?
+        options:
+          - id: b
+            text: A certified factual database of all earlier answers.
+          - id: answer
+            text: Previously computed key and value activations for a compatible prefix.
+          - id: a
+            text: The optimizer’s gradients for future training.
+        answer: answer
+        feedback: The cache retains forward-computation activations for attention reuse. It is neither an optimizer buffer nor an independently verified knowledge source.
+        id: cached-inference.base.2
+        retired: true
+    id: cached-inference.base
+    objective_ref: objective.cached-inference
+    task: base
+    points: 1
+    remediation_scene: cached-inference.s1
+  - response_type: single_choice
+    hint: Past cached vectors may depend on the exact prefix and model that produced them.
+    variants:
+      - prompt: A user edits an early prompt token. Can all later cached vectors from the old prompt be blindly reused?
+        options:
+          - id: b
+            text: Yes; editing text automatically retrains every cached vector.
+          - id: answer
+            text: No; those vectors may depend on the changed prefix.
+          - id: a
+            text: Yes; caches depend only on the number of tokens.
+        answer: answer
+        feedback: Cache reuse requires compatible computation. Prefix content, positions, and model state can affect the values being reused.
+        id: cached-inference.transfer.1
+        retired: true
+      - prompt: A serving system adds a correct KV cache and becomes faster. What changed conceptually?
+        options:
+          - id: answer
+            text: It reused compatible past activations instead of recomputing all of them.
+          - id: a
+            text: It necessarily learned new model weights from the request.
+          - id: b
+            text: It removed the need to compute each new token.
+        answer: answer
+        feedback: Caching saves work on the prefix. Each new token still needs computation, and ordinary cached inference leaves the learned parameters fixed.
+        id: cached-inference.transfer.2
+        retired: true
+    id: cached-inference.transfer
+    objective_ref: objective.cached-inference
+    task: transfer
+    points: 1
+    remediation_scene: cached-inference.s1
+  - id: cached-inference.base.v2
+    objective_ref: objective.cached-inference
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Prefill handles the whole prompt in one pass and is limited by arithmetic; each decode step handles one token and is limited by the bytes it reads.
+    remediation_scene: cached-inference.s1
+    variants:
+      - id: cached-inference.base.v2.1
+        prompt: Fern's reply to a 2,000-token prompt starts after 0.2 s, then arrives at one token every 8 ms. Which work mostly decides the 0.2 s?
+        options:
+          - id: b
+            text: The first decode step reading the whole KV cache
+          - id: a
+            text: Prefill running all 2,000 prompt positions through the model
+          - id: c
+            text: Copying the weights from disk into GPU memory for the request
+        answer: a
+        feedback: Before the first token, the model must process every prompt position, and that compute-bound pass takes about 0.2 s. A single decode step takes about 8 ms, and the weights are loaded once when the server starts, not per request.
+      - id: cached-inference.base.v2.2
+        prompt: Why is a decode step at batch 1 limited by memory bandwidth rather than by arithmetic?
+        options:
+          - id: c
+            text: Softmax over the whole vocabulary needs more arithmetic than the matrix multiplies
+          - id: a
+            text: Each weight is read from memory and then used for just one token's multiply
+          - id: b
+            text: The KV cache must be recomputed from scratch at the start of every step
+        answer: a
+        feedback: With one token, each fetched weight does about 2 FLOPs per 2 bytes, so the cores wait on memory. The cache is reused, not recomputed, and the vocabulary softmax is tiny next to reading 16 GB of weights.
+      - id: cached-inference.base.v2.3
+        prompt: What does the KV cache hold for one chat request?
+        options:
+          - id: a
+            text: Keys and values computed from this request's tokens, for every layer
+          - id: b
+            text: A compressed copy of the model's weights, kept close for fast decoding
+          - id: c
+            text: Facts the model picked up from earlier customers' conversations
+        answer: a
+        feedback: The cache stores activations made by applying the fixed weights to this conversation's tokens. It holds no weights, and it's freed when the request ends, so nothing carries over between customers.
+      - id: cached-inference.base.v2.4
+        prompt: A server changes token 5 of a 1,000-token prompt whose keys and values are cached. Which cached entries can it still reuse?
+        options:
+          - id: b
+            text: Every position except position 5, which is recomputed
+          - id: c
+            text: All of them, since a key depends only on its token and position
+          - id: a
+            text: Only positions 1 to 4, which come before the change
+        answer: a
+        feedback: From the second layer on, each position's keys and values mix in the tokens before it, so everything from position 5 onward changes. Only the first layer's keys depend on the token and position alone, which is why answer c is tempting.
+  - id: cached-inference.transfer.v2
+    objective_ref: objective.cached-inference
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide whether the problem is the wait before the first token (prefill and prefixes) or the time per later token (bytes read per step).
+    remediation_scene: cached-inference.s6
+    variants:
+      - id: cached-inference.transfer.v2.1
+        prompt: A code assistant sends the same 30,000-token repository snapshot before each short question. Replies take 4 s to start, then stream quickly. Which change targets this complaint?
+        options:
+          - id: b
+            text: Quantize the weights so that each decode step reads fewer bytes
+          - id: c
+            text: Send the streamed tokens in larger chunks to cut network overhead
+          - id: a
+            text: Cache the repository prefix so repeat prompts skip most of the prefill
+        answer: a
+        feedback: The slow part is the time to first token, which is prefill over 30,000 tokens that repeat on every request. Reusing their cached keys and values removes most of that work. Faster decode steps or chunked streaming affect only what happens after the first token.
+      - id: cached-inference.transfer.v2.2
+        prompt: A bank's chatbot starts every system prompt with the current time, to the second. Its prefix cache almost never gets a hit. Why?
+        options:
+          - id: a
+            text: Every request's tokens differ within the first few positions
+          - id: b
+            text: Timestamps become special tokens, which the cache is built to skip
+          - id: c
+            text: A prefix cache can store only prompts shorter than 100 tokens
+        answer: a
+        feedback: A prefix is reusable only up to the first differing token, and the timestamp changes every second right at the start. Putting the fixed instructions first and the time at the end restores the hits.
+      - id: cached-inference.transfer.v2.3
+        prompt: A team moves its 8B chat model from a GPU with 2 TB/s of memory bandwidth to one with the same compute speed but 4 TB/s. What changes for a single user?
+        options:
+          - id: c
+            text: Both phases get about twice as fast, since the whole model runs faster
+          - id: a
+            text: Decode steps get about twice as fast, while prefill barely changes
+          - id: b
+            text: Prefill gets about twice as fast, while decode steps barely change
+        answer: a
+        feedback: Decode is memory-bound, so its step time is roughly weight bytes divided by bandwidth, which halves. Prefill is compute-bound, and compute didn't change.
+      - id: cached-inference.transfer.v2.4
+        prompt: A document summarizer turns off its KV cache to save memory. Each new token now takes much longer than before. What work is it repeating?
+        options:
+          - id: b
+            text: Reading the model's weights from disk again at every step
+          - id: a
+            text: Computing keys and values for every earlier position at every step
+          - id: c
+            text: Tokenizing the whole document again at every step
+        answer: a
+        feedback: Without the cache, each step must rebuild the keys and values of all earlier positions before the new token can attend to them. The weights stay in GPU memory either way, and tokenizing is a one-time job.
+  - id: cached-inference.decode-speed
+    objective_ref: objective.cached-inference
+    task: base
+    response_type: numeric
+    points: 1
+    hint: At batch 1, each decode step reads every weight once, so time per token ≈ weight bytes ÷ memory bandwidth, and tokens per second is 1 divided by that time.
+    remediation_scene: cached-inference.decode-speed
+    absolute_tolerance: 1
+    variants:
+      - id: cached-inference.decode-speed.1
+        prompt: A model has 16 GB of weights on a GPU with 2 TB/s of memory bandwidth. Counting only weight reads, about how many tokens per second can one user get from decoding?
+        answer: 125
+        feedback: 16 GB ÷ 2,000 GB/s = 0.008 s = 8 ms per token, and 1 ÷ 0.008 = 125 tokens per second.
+      - id: cached-inference.decode-speed.2
+        prompt: A 7B model stored in 16-bit takes 14 GB. On a GPU with 3.5 TB/s of memory bandwidth, counting only weight reads, how many tokens per second can one user get?
+        answer: 250
+        feedback: 14 GB ÷ 3,500 GB/s = 4 ms per token, so 250 tokens per second.
+      - id: cached-inference.decode-speed.3
+        prompt: An 8B model is compressed to 4 GB of weights and runs on a 2 TB/s GPU. Counting only weight reads, how many tokens per second can one user get?
+        answer: 500
+        feedback: 4 GB ÷ 2,000 GB/s = 2 ms per token, so 500 tokens per second, four times the 16-bit speed.
+      - id: cached-inference.decode-speed.4
+        prompt: A model has 16 GB of weights on a cheaper card with 0.8 TB/s of memory bandwidth. Counting only weight reads, how many tokens per second can one user get?
+        answer: 50
+        feedback: 16 GB ÷ 800 GB/s = 20 ms per token, so 50 tokens per second.
+  - id: cached-inference.kv-bytes
+    objective_ref: objective.cached-inference
+    task: base
+    response_type: numeric
+    points: 1
+    hint: 'Bytes per token = 2 (key and value) × layers × KV heads × head dim × bytes per number. Then multiply by the number of tokens, and divide by 1,024 for KiB or 1,048,576 for MiB.'
+    remediation_scene: cached-inference.s4
+    absolute_tolerance: 0.5
+    variants:
+      - id: cached-inference.kv-bytes.1
+        prompt: A model has 32 layers, 8 KV heads, head dimension 128, and 2-byte values. How many KiB does its KV cache need per token?
+        answer: 128
+        feedback: 2 × 32 × 8 × 128 × 2 = 131,072 bytes, and 131,072 ÷ 1,024 = 128 KiB.
+      - id: cached-inference.kv-bytes.2
+        prompt: The same model (32 layers, 8 KV heads, head dimension 128, 2 bytes) holds a 2,048-token conversation. How many MiB is its KV cache?
+        answer: 256
+        feedback: 128 KiB per token × 2,048 tokens = 262,144 KiB, which is 256 MiB.
+      - id: cached-inference.kv-bytes.3
+        prompt: A tiny model has 4 layers, 4 KV heads, 16 numbers per head, and 2-byte values. How many KiB does a 32-token cache need?
+        answer: 32
+        feedback: 2 × 4 × 4 × 16 × 2 = 1,024 bytes per token, and 32 tokens × 1 KiB = 32 KiB.
+      - id: cached-inference.kv-bytes.4
+        prompt: An older 7B model uses full multi-head attention, so all 32 of its heads keep keys and values. It has 32 layers, head dimension 128, and 2-byte values. How many KiB per token is its KV cache?
+        answer: 512
+        feedback: 2 × 32 × 32 × 128 × 2 = 524,288 bytes = 512 KiB, four times a model with 8 KV heads.
+      - id: cached-inference.kv-bytes.5
+        prompt: A model with 32 layers, 8 KV heads, and head dimension 128 stores its cache in 8-bit numbers (1 byte each). How many MiB does a 4,096-token conversation need?
+        answer: 256
+        feedback: 2 × 32 × 8 × 128 × 1 = 65,536 bytes = 64 KiB per token, and 64 KiB × 4,096 = 256 MiB, half the 16-bit size.

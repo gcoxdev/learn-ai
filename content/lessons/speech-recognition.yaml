@@ -1,213 +1,441 @@
 schema_version: 0.2-draft
 lesson:
   id: speech-recognition
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Map sound into words with an alignment model
   state: draft
-  summary: Turn sound into text while keeping alignment, word errors, and speaker-related tasks distinct.
+  summary: A voice note has 120 frames and the transcript has 12 characters, but nobody said which frame goes with which. See how CTC and Whisper solve that, and score the result with word error rate.
   slot: M13.6
   category: learning
   sources:
-  - title: Speech and Language Processing — authors’ draft
-    url: https://web.stanford.edu/~jurafsky/slp3/
-  - title: Robust Speech Recognition via Large-Scale Weak Supervision
-    url: https://arxiv.org/abs/2212.04356
-  - title: Graves et al. — Connectionist Temporal Classification (2006)
-    url: https://www.cs.toronto.edu/~graves/icml_2006.pdf
+    - title: "Connectionist Temporal Classification: Labelling Unsegmented Sequence Data with Recurrent Neural Networks (Graves et al., 2006)"
+      url: https://doi.org/10.1145/1143844.1143891
+    - title: "Robust Speech Recognition via Large-Scale Weak Supervision (Radford et al., 2022)"
+      url: https://arxiv.org/abs/2212.04356
+    - title: "Sequence Transduction with Recurrent Neural Networks (Graves, 2012)"
+      url: https://arxiv.org/abs/1211.3711
+    - title: "Listen, Attend and Spell (Chan et al., 2015)"
+      url: https://arxiv.org/abs/1508.01211
+    - title: "wav2vec 2.0: A Framework for Self-Supervised Learning of Speech Representations (Baevski et al., 2020)"
+      url: https://arxiv.org/abs/2006.11477
+    - title: Speech and Language Processing, 3rd edition draft (Jurafsky & Martin)
+      url: https://web.stanford.edu/~jurafsky/slp3/
 objectives:
-- id: objective.speech-recognition
-  version: 1-draft
-  statement: Speech recognition combines acoustic evidence with sequence modeling and decoding; alignment assumptions,
-    text normalization, and error metrics affect what performance means.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - speech-recognition.base
-  - speech-recognition.transfer
-  prerequisites:
-  - anyOf:
-    - objective.audio-representations
-  - anyOf:
-    - objective.sequence-to-sequence
+  - id: objective.speech-recognition
+    version: 2-draft
+    statement: Speech recognition combines acoustic evidence with sequence modeling and decoding; alignment assumptions, text normalization, and error metrics affect what performance means.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - speech-recognition.base.v2
+      - speech-recognition.transfer.v2
+      - speech-recognition.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.audio-representations
+      - anyOf:
+          - objective.sequence-to-sequence
 scenes:
-- id: speech-recognition.s1
-  title: Speech is not already divided into words
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.speech-recognition
-  markdown: A waveform contains overlapping acoustic cues, pauses, noise, and variable speaking rates. A recognizer
-    must connect that signal to a text sequence. Traditional systems separated acoustic and language models;
-    modern systems can learn more of the mapping jointly while still requiring a defined output representation.
-  text_mode: A waveform contains overlapping acoustic cues, pauses, noise, and variable speaking rates. A recognizer
-    must connect that signal to a text sequence. Traditional systems separated acoustic and language models;
-    modern systems can learn more of the mapping jointly while still requiring a defined output representation.
-  bridges: []
-- id: speech-recognition.s2
-  title: Connect audio frames to text labels
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speech-recognition
-  markdown: 'The transcript does not tell us which audio frame belongs to each letter or token. **Connectionist
-    temporal classification (CTC)** handles this by considering permitted frame-to-label paths and combining
-    those that produce the same transcript.
+  - id: speech-recognition.s1
+    title: Where does "oat" start?
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.speech-recognition
+    markdown: |-
+      Jot, the voice-notes app from the last lesson, turns "buy oat milk" into a log-mel spectrogram: 1.2 seconds of speech gives 120 frames of 80 numbers. The transcript has 12 characters, counting spaces. To train a recognizer, you have thousands of hours of recordings paired with transcripts like this one, and not one of them says which frames belong to which letter. The "b" might last 3 frames, the "oa" 15, and the pause before "milk" 10. Speakers stretch and squeeze sounds differently every time.
 
+      That missing frame-to-letter map is the **alignment problem**, and it's the heart of **automatic speech recognition (ASR)**. Older systems handled it with separately built parts: an acoustic model for sounds, a hand-written pronunciation dictionary, and a language model for likely word sequences. Modern end-to-end systems learn the whole mapping, in one of three designs:
 
-    A CTC **blank** means no output label at that step. To collapse a path, merge consecutive repeated labels,
-    then remove blanks. The path a, a, blank, a becomes “aa”: the blank separates the two output a labels.
-    Training sums the probabilities of compatible paths under the CTC model.
+      | Design | How it handles alignment | Examples |
+      | --- | --- | --- |
+      | **CTC** | A label (or "nothing") for every frame, summed over all alignments | Baidu's Deep Speech (2014); wav2vec 2.0 fine-tuning (2020) |
+      | **Attention encoder–decoder** | The decoder attends over frames and writes tokens, like the translator in the seq2seq lesson | Listen, Attend and Spell (2015); Whisper (2022) |
+      | **Transducer** (RNN-T) | Like CTC, plus a network that sees the tokens written so far | Graves (2012); Google's on-device dictation (2019) |
 
+      CTC and transducers can write text while you're still talking. An attention decoder normally waits for a whole chunk of audio, because it may attend anywhere in it.
+    bridges: []
+  - id: speech-recognition.s2
+    title: "CTC: many paths, one transcript"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speech-recognition
+    markdown: |-
+      **Connectionist temporal classification (CTC)**, introduced by Alex Graves and colleagues in 2006, lets the network output one symbol per frame and then tidies up. Its alphabet has one extra symbol, the **blank** (written _), meaning "no new letter here." A frame-by-frame output is called a **path**, and it's turned into text by one rule:
 
-    Encoder-decoder systems use a different approach, generating text from audio representations. Their alignment
-    and dependence assumptions differ, so a transcript is not automatically a label for every frame.'
-  text_mode: 'The transcript does not tell us which audio frame belongs to each letter or token. **Connectionist
-    temporal classification (CTC)** handles this by considering permitted frame-to-label paths and combining
-    those that produce the same transcript.
+      1. Merge runs of the same symbol: `hh_ii` → `h_i`.
+      2. Delete the blanks: `h_i` → `hi`.
 
+      So `hh_ii`, `_h_i_`, and `hhiii` all spell "hi". Many paths give one transcript, and that's the point: CTC never has to decide *the* alignment. Its probability for "hi" is the sum over every path that collapses to it.
 
-    A CTC **blank** means no output label at that step. To collapse a path, merge consecutive repeated labels,
-    then remove blanks. The path a, a, blank, a becomes “aa”: the blank separates the two output a labels.
-    Training sums the probabilities of compatible paths under the CTC model.
+      :::predict How can a CTC path spell "moon", with its double "o"?
+      Put a blank between the two o's: `mmoo_oonn` → `mo_on` → "moon". Without a blank, `mmoooonn` merges into a single o and spells "mon". The blank is how CTC writes the same letter twice in a row.
+      :::
 
+      The program applies the rule, then adds up the probability of every 4-frame path that spells "hi".
 
-    Encoder-decoder systems use a different approach, generating text from audio representations. Their alignment
-    and dependence assumptions differ, so a transcript is not automatically a label for every frame.'
-  bridges:
-  - arithmetic
-- id: speech-recognition.s3
-  title: Calculate word error rate
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speech-recognition
-  markdown: Word error rate is (substitutions + deletions + insertions) divided by the number of reference
-    words. With 10 reference words, 1 substitution, 1 deletion, and 1 insertion give WER 0.3. Insertions mean
-    WER can exceed 1. Tokenization and text normalization conventions affect the counts.
-  text_mode: Word error rate is (substitutions + deletions + insertions) divided by the number of reference
-    words. With 10 reference words, 1 substitution, 1 deletion, and 1 insertion give WER 0.3. Insertions mean
-    WER can exceed 1. Tokenization and text normalization conventions affect the counts.
-  bridges: []
-- id: speech-recognition.s4
-  title: Evaluate beyond an average transcript score
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speech-recognition
-  markdown: 'Check accents, languages, noise conditions, speaker overlap, and rare names. A fluent transcript
-    can contain invented words when audio is unclear. Streaming systems also need latency and partial-result
-    stability measures. Separate transcription, translation, diarization, and speaker identification when stating
-    capabilities.
+      ```python run
+      import itertools
+      import numpy as np
 
+      def collapse(path):
+          """CTC rule: merge repeated symbols, then delete blanks (_)."""
+          merged = [s for i, s in enumerate(path) if i == 0 or s != path[i - 1]]
+          return "".join(s for s in merged if s != "_")
 
-    **Transcription** writes the spoken words. **Translation** changes language. **Diarization** marks who
-    spoke when without necessarily knowing their name; **speaker identification** tries to identify the person.
-    **Streaming** produces output while audio is still arriving. A system may do one of these jobs well and
-    another poorly.'
-  text_mode: 'Check accents, languages, noise conditions, speaker overlap, and rare names. A fluent transcript
-    can contain invented words when audio is unclear. Streaming systems also need latency and partial-result
-    stability measures. Separate transcription, translation, diarization, and speaker identification when stating
-    capabilities.
+      for path in ["hh_ii", "_h_i_", "hhiii", "h_hi_"]:
+          print(f"{path} -> {collapse(path)}")
 
+      symbols = "_hi"
+      probs = np.array([[0.2, 0.7, 0.1],     # frame 1: P(_), P(h), P(i)
+                        [0.3, 0.5, 0.2],     # frame 2
+                        [0.4, 0.1, 0.5],     # frame 3
+                        [0.6, 0.1, 0.3]])    # frame 4
+      total, count = 0.0, 0
+      for idx in itertools.product(range(3), repeat=len(probs)):
+          if collapse("".join(symbols[i] for i in idx)) == "hi":
+              total += np.prod([probs[t, i] for t, i in enumerate(idx)])
+              count += 1
+      print(f"{count} of {3 ** len(probs)} paths give 'hi'; P('hi') = {total:.3f}")
+      best = "".join(symbols[i] for i in probs.argmax(axis=1))
+      print(f"best symbol per frame: {best} -> {collapse(best)}")
+      ```
 
-    **Transcription** writes the spoken words. **Translation** changes language. **Diarization** marks who
-    spoke when without necessarily knowing their name; **speaker identification** tries to identify the person.
-    **Streaming** produces output while audio is still arriving. A system may do one of these jobs well and
-    another poorly.'
-  bridges: []
-- id: speech-recognition.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.speech-recognition
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Speech recognition must connect a changing audio signal to a text sequence. Evaluate both the transcript
-    errors and the conditions—such as noise, accent, and streaming delay—under which it is produced.
-- id: speech-recognition.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.speech-recognition
-  markdown: Speech recognition must connect a changing audio signal to a text sequence. Evaluate both the transcript
-    errors and the conditions—such as noise, accent, and streaming delay—under which it is produced.
-  text_mode: Speech recognition must connect a changing audio signal to a text sequence. Evaluate both the
-    transcript errors and the conditions—such as noise, accent, and streaming delay—under which it is produced.
+      15 of the 81 possible paths spell "hi", with total probability 0.488. Training raises that total. Real systems can't list every path (a 120-frame note has astronomically many), so they compute the same sum with dynamic programming, much like the table in the WER program below.
+
+      :::papers The CTC objective
+      $$P(\mathbf{y} \mid \mathbf{x}) = \sum_{\pi \in \mathcal{B}^{-1}(\mathbf{y})} \; \prod_{t=1}^{T} p(\pi_t \mid \mathbf{x})$$
+      $\mathbf{x}$ is the audio, $\mathbf{y}$ the transcript ("hi"), $\pi$ one path, and $\mathcal{B}$ the collapse function, so $\mathcal{B}^{-1}(\mathbf{y})$ is the set of 15 paths. Each path's probability is the product of its per-frame probabilities, and training minimizes $-\log P(\mathbf{y} \mid \mathbf{x})$.
+      :::
+    bridges:
+      - arithmetic
+    diagram:
+      caption: The CTC collapse rule turns one frame-by-frame path into text.
+      description: Audio frames go into the network, which outputs one symbol per frame, for example h h blank i i. Merging repeated symbols gives h blank i. Deleting blanks gives the text hi.
+      nodes:
+        - id: frames
+          label: Audio frames
+          note: 100 per second
+          col: 0
+          row: 0
+          tone: data
+        - id: path
+          label: "One symbol per frame: hh_ii"
+          col: 1
+          row: 0
+        - id: merge
+          label: "Merge repeats: h_i"
+          col: 2
+          row: 0
+        - id: text
+          label: "Delete blanks: hi"
+          col: 3
+          row: 0
+          tone: accent
+      edges:
+        - from: frames
+          to: path
+          label: network
+        - from: path
+          to: merge
+        - from: merge
+          to: text
+  - id: speech-recognition.s3
+    title: "Whisper: a recognizer that also knows language"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speech-recognition
+    markdown: |-
+      CTC predicts each frame's symbol without looking at the letters it has already written, so on its own it can happily spell "by oat milk". An **attention encoder–decoder** works like the translator from the seq2seq lesson: the encoder reads the frames, and the decoder writes tokens one at a time, attending to the frames it needs and conditioning on the words it has already written. The decoder is effectively a language model, so it prefers "buy oat milk".
+
+      OpenAI's **Whisper** (Radford et al., 2022) is the best-known example. Its training set is what made it notable: about 680,000 hours of audio paired with transcripts found on the web. Those transcripts weren't checked by hand, which is what **weak supervision** means: lots of noisy labels instead of a few careful ones. Whisper reads 30-second log-mel chunks, and short special tokens at the start of the decoder's output tell it what job to do: which language, whether to transcribe or translate into English, and whether to add timestamps. Trained on that much varied audio, it handles accents, background noise, and recording equipment it was never tuned for far better than models trained on one clean data set.
+
+      The language-model decoder has a cost. Given silence or noise, it can write fluent words that nobody said, because fluent text is what it learned to produce. So Jot runs a small voice-activity detector first and sends only stretches that contain speech.
+    bridges: []
+  - id: speech-recognition.s4
+    title: Word error rate, computed
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speech-recognition
+    markdown: |-
+      You say "remind me to call the dentist on friday", and Jot writes "remind me to fall the dentist friday please". How wrong is that? Line the two up and count the three kinds of error:
+
+      - **Substitution (S):** a wrong word in place of a right one ("call" → "fall").
+      - **Deletion (D):** a reference word that's missing ("on").
+      - **Insertion (I):** an extra word that nobody said ("please").
+
+      The **word error rate** divides the total by $N$, the number of words in the reference:
+
+      $$\text{WER} = \frac{S + D + I}{N} = \frac{1 + 1 + 1}{8} = 0.375$$
+
+      Finding the smallest set of edits is an **edit distance** problem, solved with a table of best partial answers:
+
+      ```python run
+      import numpy as np
+
+      ref = "remind me to call the dentist on friday".split()
+      hyp = "remind me to fall the dentist friday please".split()
+
+      # d[i, j] = fewest edits turning the first i reference words into the first j hypothesis words
+      d = np.zeros((len(ref) + 1, len(hyp) + 1), dtype=int)
+      d[:, 0] = range(len(ref) + 1)          # delete everything
+      d[0, :] = range(len(hyp) + 1)          # insert everything
+      for i in range(1, len(ref) + 1):
+          for j in range(1, len(hyp) + 1):
+              same = ref[i - 1] == hyp[j - 1]
+              d[i, j] = min(d[i - 1, j - 1] + (0 if same else 1),   # match or substitute
+                            d[i - 1, j] + 1,                        # delete a reference word
+                            d[i, j - 1] + 1)                        # insert an extra word
+
+      # Walk back through the table to count each kind of error.
+      i, j, S, D, I = len(ref), len(hyp), 0, 0, 0
+      while i > 0 or j > 0:
+          if i and j and ref[i - 1] == hyp[j - 1] and d[i, j] == d[i - 1, j - 1]:
+              i, j = i - 1, j - 1                       # match
+          elif i and d[i, j] == d[i - 1, j] + 1:
+              D, i = D + 1, i - 1                       # deletion
+          elif j and d[i, j] == d[i, j - 1] + 1:
+              I, j = I + 1, j - 1                       # insertion
+          else:
+              S, i, j = S + 1, i - 1, j - 1             # substitution
+      print(f"S={S} D={D} I={I}  N={len(ref)}")
+      print(f"WER = ({S}+{D}+{I}) / {len(ref)} = {(S + D + I) / len(ref):.3f}")
+      ```
+
+      Try `hyp = "remind me to call dentist on friday"`: one deletion, WER 0.125.
+
+      :::mixup "WER is a percentage of words wrong, so it can't go above 100%."
+      Insertions have no ceiling. A two-word reference, "yes please", transcribed as "yes yes please please thank you" has four insertions: WER = 4/2 = 2.0, or 200%. WER counts edits relative to the reference, not the share of words wrong.
+      :::
+
+      For languages written without spaces between words, such as Chinese and Japanese, the same formula runs on characters instead: **character error rate (CER)**. Either way, decide before scoring whether "Friday" and "friday", or "5" and "five", count as the same word; the evaluation lesson returns to that.
+    bridges: []
+  - id: speech-recognition.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.speech-recognition
+    markdown: A few CTC paths to collapse and error rates to compute, plus lecture captions, medical dictation, and a silent recording, test whether you can read a recognizer's output critically.
+    takeaway: |-
+      Recognizers must align many audio frames to a few letters: CTC sums over every path that collapses to the transcript, while encoder–decoders like Whisper attend and write. Score them with WER, (S + D + I) / N.
+  - id: speech-recognition.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.speech-recognition
+    markdown: |-
+      Speech recognition must connect a changing audio signal to a text sequence. Evaluate both the transcript errors and the conditions—such as noise, accent, and streaming delay—under which it is produced.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - speech-recognition.s1
-    - speech-recognition.s2
-    - speech-recognition.s3
-    - speech-recognition.s4
-    - speech-recognition.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - speech-recognition.s1
+        - speech-recognition.s2
+        - speech-recognition.s3
+        - speech-recognition.s4
+        - speech-recognition.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     speech-recognition.recap: speech-recognition.check
 assessment_families:
-- id: speech-recognition.base
-  objective_ref: objective.speech-recognition
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Handle unknown alignment: trace the inputs, operation, and result before choosing.'
-  remediation_scene: speech-recognition.s2
-  variants:
-  - id: speech-recognition.base.1
-    prompt: Reference length 20 with 2 substitutions and 1 deletion gives what WER?
-    options:
-    - id: a
-      text: '0.15'
-    - id: b
-      text: '0.3'
-    - id: c
-      text: '0.85'
-    answer: a
-    feedback: Three word errors divided by twenty reference words equals 0.15.
-  - id: speech-recognition.base.2
-    prompt: Can WER exceed 100%?
-    options:
-    - id: b
-      text: No, by definition
-    - id: c
-      text: Only if the audio is stereo
-    - id: a
-      text: Yes, with enough insertions
-    answer: a
-    feedback: The numerator is not bounded by reference length when insertions occur.
-- id: speech-recognition.transfer
-  objective_ref: objective.speech-recognition
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate beyond an average transcript score: trace the inputs, operation, and result before choosing.'
-  remediation_scene: speech-recognition.s4
-  variants:
-  - id: speech-recognition.transfer.1
-    prompt: A transcript is fluent during a noisy segment. What should be checked?
-    options:
-    - id: b
-      text: Only grammatical style
-    - id: c
-      text: A claim that noise cannot matter
-    - id: a
-      text: Whether its words are actually supported by the audio
-    answer: a
-    feedback: Fluency does not establish acoustic fidelity.
-  - id: speech-recognition.transfer.2
-    prompt: Two recognizers use different text normalization before scoring. What is needed for fair comparison?
-    options:
-    - id: c
-      text: An assumption that all transcripts tokenize identically
-    - id: a
-      text: A matched or explicitly documented scoring convention
-    - id: b
-      text: Only their model sizes
-    answer: a
-    feedback: Normalization changes alignment and error counts.
+  - id: speech-recognition.base
+    objective_ref: objective.speech-recognition
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Handle unknown alignment: trace the inputs, operation, and result before choosing.'
+    remediation_scene: speech-recognition.s2
+    variants:
+      - id: speech-recognition.base.1
+        prompt: Reference length 20 with 2 substitutions and 1 deletion gives what WER?
+        options:
+          - id: a
+            text: '0.15'
+          - id: b
+            text: '0.3'
+          - id: c
+            text: '0.85'
+        answer: a
+        feedback: Three word errors divided by twenty reference words equals 0.15.
+        retired: true
+      - id: speech-recognition.base.2
+        prompt: Can WER exceed 100%?
+        options:
+          - id: b
+            text: No, by definition
+          - id: c
+            text: Only if the audio is stereo
+          - id: a
+            text: Yes, with enough insertions
+        answer: a
+        feedback: The numerator is not bounded by reference length when insertions occur.
+        retired: true
+  - id: speech-recognition.transfer
+    objective_ref: objective.speech-recognition
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate beyond an average transcript score: trace the inputs, operation, and result before choosing.'
+    remediation_scene: speech-recognition.s4
+    variants:
+      - id: speech-recognition.transfer.1
+        prompt: A transcript is fluent during a noisy segment. What should be checked?
+        options:
+          - id: b
+            text: Only grammatical style
+          - id: c
+            text: A claim that noise cannot matter
+          - id: a
+            text: Whether its words are actually supported by the audio
+        answer: a
+        feedback: Fluency does not establish acoustic fidelity.
+        retired: true
+      - id: speech-recognition.transfer.2
+        prompt: Two recognizers use different text normalization before scoring. What is needed for fair comparison?
+        options:
+          - id: c
+            text: An assumption that all transcripts tokenize identically
+          - id: a
+            text: A matched or explicitly documented scoring convention
+          - id: b
+            text: Only their model sizes
+        answer: a
+        feedback: Normalization changes alignment and error counts.
+        retired: true
+  - id: speech-recognition.base.v2
+    objective_ref: objective.speech-recognition
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "CTC: merge repeated symbols first, then delete blanks. WER: count substitutions, deletions, and insertions against the reference, then divide by the reference length."
+    remediation_scene: speech-recognition.s2
+    variants:
+      - id: speech-recognition.base.v2.1
+        prompt: A CTC model outputs the frame-by-frame path "bb_ee_ee". What text does it spell?
+        options:
+          - id: b
+            text: '"be", because repeated letters merge into a single letter'
+          - id: a
+            text: '"bee", because the blank keeps the two e runs apart'
+          - id: c
+            text: '"bbeeee", because just the blanks are deleted from it'
+        answer: a
+        feedback: Merging runs gives b, _, e, _, e; deleting blanks gives "bee". Merging happens only within a run, and a blank ends the run, so the two e's survive. Skipping the merge step would leave "bbeeee".
+      - id: speech-recognition.base.v2.2
+        prompt: Which CTC path spells "moon"?
+        options:
+          - id: c
+            text: _mmoonn_
+          - id: b
+            text: mmoooonn
+          - id: a
+            text: mmoo_oonn
+        answer: a
+        feedback: "\"mmoo_oonn\" merges to m, o, _, o, n and then loses the blank: \"moon\". The other two have one unbroken run of o's, which merges into a single o and spells \"mon\"; blanks at the ends don't separate anything."
+      - id: speech-recognition.base.v2.3
+        prompt: A recognizer's WER on one clip is 1.25. How is that possible?
+        options:
+          - id: a
+            text: It inserted extra words, and insertions have no upper limit
+          - id: b
+            text: Each substitution counts as both a deletion and an insertion
+          - id: c
+            text: WER divides by the length of the recognizer's own output
+        answer: a
+        feedback: A 4-word reference with 5 inserted words gives 5/4 = 1.25. A substitution counts once, and the denominator is the reference length, which is exactly why extra words can push WER past 1.
+      - id: speech-recognition.base.v2.4
+        prompt: Why can an attention encoder–decoder like Whisper write a fluent sentence during a stretch of pure silence?
+        options:
+          - id: c
+            text: Its CTC blank symbol misfires when a whole chunk has no speech
+          - id: b
+            text: Its log-mel features amplify quiet noise until it resembles speech
+          - id: a
+            text: Its decoder predicts likely next words from the text it has written
+        answer: a
+        feedback: The decoder is effectively a language model, so it can keep producing plausible text with weak audio evidence. Whisper doesn't use CTC blanks, and a log compresses loudness rather than inventing words.
+  - id: speech-recognition.transfer.v2
+    objective_ref: objective.speech-recognition
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the users need (speed, rare words, silence handling, a fair comparison), then pick the design or measurement that serves that need.
+    remediation_scene: speech-recognition.s3
+    variants:
+      - id: speech-recognition.transfer.v2.1
+        prompt: A university wants live captions that appear within a second of each word being spoken. Which recognizer design fits best?
+        options:
+          - id: b
+            text: An attention encoder–decoder reading 30-second chunks of audio
+          - id: a
+            text: A CTC or transducer model that emits text as the frames arrive
+          - id: c
+            text: Any design, provided that it decodes with a wider beam search
+        answer: a
+        feedback: CTC and transducer models can output text frame by frame, so words appear quickly. An attention decoder over 30-second chunks waits for the chunk, and a wider beam makes decoding slower, not faster.
+      - id: speech-recognition.transfer.v2.2
+        prompt: A medical dictation system has a 5% WER overall, but doctors complain it garbles drug names. What should the team do next?
+        options:
+          - id: c
+            text: Ship it, since a 5% WER shows the system is already accurate
+          - id: a
+            text: Measure errors on drug names separately and train on that vocabulary
+          - id: b
+            text: Switch to character error rate, which counts names more fairly
+        answer: a
+        feedback: A drug name is one word among many, so WER barely moves when it's wrong, yet those errors matter most. Measure them directly and target them. CER spreads the same errors across more characters without separating the ones that matter.
+      - id: speech-recognition.transfer.v2.3
+        prompt: Vendor A reports 8% WER after removing punctuation and capitals. Vendor B reports 11% WER on raw text. How should you compare them?
+        options:
+          - id: b
+            text: Choose vendor A, since 8% is lower than 11%
+          - id: c
+            text: Average the two numbers to cancel out the scoring differences
+          - id: a
+            text: Rescore both on the same audio with the same text normalization
+        answer: a
+        feedback: Removing punctuation and capitals turns many "errors" into matches, so the two numbers measure different things. Only the same test audio and the same normalization rules give comparable WERs.
+      - id: speech-recognition.transfer.v2.4
+        prompt: A user accidentally records ten seconds of silence in Jot, and the transcript reads "Thanks for watching!" What change fixes this at the source?
+        options:
+          - id: a
+            text: Detect speech first and skip audio with no voice in it
+          - id: b
+            text: Use greedy decoding instead of beam search for quiet clips
+          - id: c
+            text: Record at 48 kHz so quiet sounds are captured in more detail
+        answer: a
+        feedback: The decoder invented text because it was asked to transcribe audio with no speech. A voice-activity detector stops that audio from reaching it. Any decoding method can still invent words, and a higher sample rate doesn't add speech.
+  - id: speech-recognition.calc.v2
+    objective_ref: objective.speech-recognition
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Line up the reference and the output, count substitutions, deletions, and insertions, then divide by the number of reference words (or characters, for CER).
+    remediation_scene: speech-recognition.s4
+    absolute_tolerance: 0.01
+    variants:
+      - id: speech-recognition.calc.v2.1
+        prompt: A 12-word reference is transcribed with 1 substitution, 1 deletion, and 1 insertion. What is the WER?
+        answer: 0.25
+        feedback: (1 + 1 + 1) / 12 = 3/12 = 0.25.
+      - id: speech-recognition.calc.v2.2
+        prompt: 'The reference is "turn the kitchen lights off now" and the output is "turn kitchen light off now please". What is the WER?'
+        answer: 0.5
+        feedback: '"the" is deleted, "lights" becomes "light" (a substitution), and "please" is inserted: 3 errors over 6 reference words = 0.5.'
+      - id: speech-recognition.calc.v2.3
+        prompt: A 5-word reference is transcribed with all 5 words correct plus 6 extra words. What is the WER?
+        answer: 1.2
+        feedback: Six insertions over 5 reference words gives 6/5 = 1.2, above 1 even though every spoken word was recognized.
+      - id: speech-recognition.calc.v2.4
+        prompt: 'The reference "oat milk" (8 characters, counting the space) is transcribed as "oak milk". What is the character error rate?'
+        answer: 0.125
+        feedback: One substitution (t → k) over 8 reference characters gives 1/8 = 0.125. As a word error rate, the same mistake would be 1/2 = 0.5.

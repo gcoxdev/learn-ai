@@ -1,208 +1,428 @@
 schema_version: 0.2-draft
 lesson:
   id: sampling-and-shift
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Who is represented by the data?
   state: draft
-  summary: Check whether your examples represent the people and conditions you want to serve.
+  summary: In 1936 a magazine polled 2.4 million people and called the election for the wrong man. Learn why size can't fix a skewed sample, and how the world shifts under a model.
   slot: M03.6
   category: learning
   sources:
-  - title: An Introduction to Statistical Learning — authors’ materials
-    url: https://www.statlearning.com/
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: An Introduction to Statistical Learning — authors’ materials
+      url: https://www.statlearning.com/
+    - title: Dive into Deep Learning — environment and distribution shift
+      url: https://d2l.ai/chapter_linear-classification/environment-and-distribution-shift.html
+    - title: "Why the 1936 Literary Digest Poll Failed (Squire, 1988)"
+      url: https://doi.org/10.1086/269085
+    - title: "The Parable of Google Flu: Traps in Big Data Analysis (Lazer et al., 2014)"
+      url: https://doi.org/10.1126/science.1248506
 objectives:
-- id: objective.sampling-and-shift
-  version: 1-draft
-  statement: Sampling and deployment conditions determine which population a model’s results describe; distribution
-    shift can change inputs, labels, or their relationships.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - sampling-and-shift.base
-  - sampling-and-shift.transfer
-  prerequisites:
-  - anyOf:
-    - objective.data
-  - anyOf:
-    - objective.random-variables
+  - id: objective.sampling-and-shift
+    version: 2-draft
+    statement: Sampling and deployment conditions determine which population a model’s results describe; distribution shift can change inputs, labels, or their relationships.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - sampling-and-shift.base.v2
+      - sampling-and-shift.transfer.v2
+      - sampling-and-shift.weights.v2
+    prerequisites:
+      - anyOf:
+          - objective.data
+      - anyOf:
+          - objective.random-variables
 scenes:
-- id: sampling-and-shift.s1
-  title: Who do your examples describe?
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.sampling-and-shift
-  markdown: 'A **population** is the full group you want to describe, such as all visitors to a museum. A **sample**
-    is the smaller group you actually observe.
+  - id: sampling-and-shift.s1
+    title: The poll with 2.4 million answers
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.sampling-and-shift
+    markdown: |-
+      In 1936, the *Literary Digest*, a popular American magazine, ran one of the biggest election polls ever. It mailed about 10 million ballots and got about 2.4 million back. Its verdict: Alf Landon would beat President Franklin Roosevelt, who would get only about 43% of the vote.
 
+      Roosevelt won about 61% of the vote and 46 of the 48 states. A young pollster named George Gallup, asking only about 50,000 people, had called Roosevelt the winner.
 
-    Suppose 80 of 100 visitors who answer a website survey prefer audio guides. That is 80% of respondents.
-    It may not be 80% of all visitors: people interested in audio guides could be more likely to answer. Before
-    training on these responses, compare who answered with the people the model is meant to serve.'
-  text_mode: 'A **population** is the full group you want to describe, such as all visitors to a museum. A
-    **sample** is the smaller group you actually observe.
+      The **population** is the whole group you want to learn about: every voter. The **sample** is the part you actually observe: the 2.4 million returned ballots. When the way a sample is chosen makes it systematically different from the population, that's **sampling bias**. Every training set faces this risk: a model learns about whoever made it into the data.
 
+      :::story How the biggest poll went wrong
+      The Digest built its mailing list largely from telephone directories, car registrations, and its own subscribers. In the Great Depression, people with phones and cars were better off than average, and better-off voters leaned toward Landon. Only about a quarter of the ballots came back, and later analysis (Squire, 1988) suggests Landon's supporters were keener to return them. Two filters, tilted the same way. Gallup's much smaller sample was chosen to mirror the whole electorate, so it came far closer. The Digest folded within two years.
+      :::
+    diagram:
+      caption: Two filters stood between the voters and the Digest's prediction, and both tilted toward Landon.
+      description: All voters pass through the mailing list, which kept mostly people with phones, cars, or subscriptions. The mailing list then passes through a second filter, the voters who chose to mail ballots back. Those returned ballots produced the prediction that Landon would win.
+      nodes:
+        - id: voters
+          label: All voters
+          note: the population
+          col: 0
+          row: 0
+          tone: data
+        - id: list
+          label: Mailing list
+          note: phones, cars, readers
+          col: 2
+          row: 0
+          tone: warn
+        - id: returned
+          label: Returned ballots
+          note: the sample, 2.4 million
+          col: 2
+          row: 1
+          tone: warn
+        - id: result
+          label: Landon wins
+          note: the Digest's forecast
+          col: 0
+          row: 1
+          tone: accent
+      edges:
+        - from: voters
+          to: list
+          label: who got a ballot
+        - from: list
+          to: returned
+          label: who mailed it back
+        - from: returned
+          to: result
+  - id: sampling-and-shift.s5
+    title: A bigger biased sample is still biased
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sampling-and-shift
+    markdown: |-
+      :::predict If the Digest had mailed 20 million ballots instead of 10 million, would its prediction have been closer?
+      No. Twice the ballots, sent through the same two filters, gives twice as many answers with the same tilt. More data shrinks random wobble, not bias.
+      :::
 
-    Suppose 80 of 100 visitors who answer a website survey prefer audio guides. That is 80% of respondents.
-    It may not be 80% of all visitors: people interested in audio guides could be more likely to answer. Before
-    training on these responses, compare who answered with the people the model is meant to serve.'
-  bridges: []
-- id: sampling-and-shift.s2
-  title: Three ways the data can change
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sampling-and-shift
-  markdown: 'A **distribution** describes possible values and how often they occur. The data a model encounters
-    can change in several ways. For a delivery model:
+      Check it yourself. In this town of 200,000 voters, 61% back candidate R. The mail poll uses two tilted filters like the Digest's; the other poll picks 1,000 voters at random.
 
+      ```python run
+      import random
+      random.seed(1936)
 
-    - More long-distance trips change the mix of inputs.
+      # A town where 61% of voters back candidate R.
+      voters = ["R" if random.random() < 0.61 else "L" for _ in range(200_000)]
 
-    - More late deliveries change how common the target category is.
+      def share_R(sample):
+          return 100 * sample.count("R") / len(sample)
 
-    - A road closure changes how long a given trip takes, so the relationship between input and outcome changes.
+      # Biased poll: L voters are more likely to be on the mailing list
+      # (40% vs 30%) and more likely to mail the ballot back (30% vs 20%).
+      listed = {"R": 0.30, "L": 0.40}
+      replies = {"R": 0.20, "L": 0.30}
+      mail_poll = [v for v in voters if random.random() < listed[v] * replies[v]]
 
+      # Small poll: 1,000 voters picked completely at random.
+      random_poll = random.sample(voters, 1000)
 
-    Several changes can happen together. Identifying them helps you decide what to investigate; it does not
-    guarantee that one simple adjustment will fix the model.'
-  text_mode: 'A **distribution** describes possible values and how often they occur. The data a model encounters
-    can change in several ways. For a delivery model:
+      print(f"truth:        R has {share_R(voters):.1f}%")
+      print(f"mail poll:    R has {share_R(mail_poll):.1f}%   ({len(mail_poll):,} replies)")
+      print(f"random poll:  R has {share_R(random_poll):.1f}%   (1,000 replies)")
+      ```
 
+      The mail poll's 16,625 replies say R has 44.1%. The random poll's 1,000 replies say 63.0%, within two points of the true 61.1%. Change `200_000` to `2_000_000`: the mail poll grows to about 167,000 replies and still says about 44%. Then make both `listed` values 0.30 and both `replies` values 0.20, and the mail poll snaps back to the truth.
+  - id: sampling-and-shift.s6
+    title: Reweighting fixes some skews, not all
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sampling-and-shift
+    markdown: |-
+      Sometimes you can repair a skewed sample. A museum's website survey asks, "Would you use an audio guide?" Of 100 replies, 80 come from visitors under 40, yet ticket sales show visitors are split 50/50 by age.
 
-    - More long-distance trips change the mix of inputs.
+      | Group | Replies | Say yes | Share of real visitors |
+      | --- | ---: | ---: | ---: |
+      | Under 40 | 80 | 72 (90%) | 50% |
+      | 40 and over | 20 | 8 (40%) | 50% |
 
-    - More late deliveries change how common the target category is.
+      The raw answer is (72 + 8) ÷ 100 = 80%, but younger visitors are over-represented. **Reweighting** counts each group by its share of the real population, not its share of the replies:
 
-    - A road closure changes how long a given trip takes, so the relationship between input and outcome changes.
+      $$\text{estimate} = 0.5 \times 90\% + 0.5 \times 40\% = 65\%$$
 
+      Machine learning calls this **importance weighting**: each example's weight is how common its kind is in real use divided by how common it is in the data (here 0.5 ÷ 0.8 = 0.625 per under-40 reply and 0.5 ÷ 0.2 = 2.5 per older one).
 
-    Several changes can happen together. Identifying them helps you decide what to investigate; it does not
-    guarantee that one simple adjustment will fix the model.'
-  bridges: []
-- id: sampling-and-shift.s3
-  title: Consider a changing camera
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sampling-and-shift
-  markdown: A vision model trained on clear daytime images is evaluated at night. Lower light, motion blur,
-    and different object frequencies can all change its inputs. More confidence on those images is not evidence
-    of correctness. Collect representative evaluation cases and inspect errors by condition.
-  text_mode: A vision model trained on clear daytime images is evaluated at night. Lower light, motion blur,
-    and different object frequencies can all change its inputs. More confidence on those images is not evidence
-    of correctness. Collect representative evaluation cases and inspect errors by condition.
-  bridges: []
-- id: sampling-and-shift.s4
-  title: Measure coverage before claiming universality
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sampling-and-shift
-  markdown: Weighting or adaptation can help when their assumptions hold, but cannot recover information about
-    groups absent from the data without additional evidence. Document sample selection, missing populations,
-    and uncertainty. A model’s good average score can coexist with poor service to a smaller or newly encountered
-    group.
-  text_mode: Weighting or adaptation can help when their assumptions hold, but cannot recover information about
-    groups absent from the data without additional evidence. Document sample selection, missing populations,
-    and uncertainty. A model’s good average score can coexist with poor service to a smaller or newly encountered
-    group.
-  bridges: []
-- id: sampling-and-shift.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.sampling-and-shift
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Ask who and what your examples cover. When the conditions of use change, check whether the model
-    still works for the people and situations it needs to serve.
-- id: sampling-and-shift.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.sampling-and-shift
-  markdown: Ask who and what your examples cover. When the conditions of use change, check whether the model
-    still works for the people and situations it needs to serve.
-  text_mode: Ask who and what your examples cover. When the conditions of use change, check whether the model
-    still works for the people and situations it needs to serve.
+      But reweighting only stretches the answers you have. If school groups never visit the website, they have zero replies, and no weight times zero tells you what they think. For them, collect new responses, perhaps with paper forms at the door.
+  - id: sampling-and-shift.s2
+    title: Three ways the world can move
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sampling-and-shift
+    markdown: |-
+      Even a perfect sample describes the world *when it was collected*. When the data a model meets in use differs from its training data, that's **distribution shift**, which you met in the first module. It comes in three main kinds, shown here for Priya's leaf app and a flu clinic:
+
+      | Kind | What changes | Leaf app | Flu clinic |
+      | --- | --- | --- | --- |
+      | **Covariate shift** | The mix of inputs | More photos taken at dusk | A new branch near a retirement village |
+      | **Label shift** | How common each outcome is | Wet summer: blight rises from 5% to 30% of photos | Flu season: flu rises from 2% to 30% of visits |
+      | **Concept shift** | What a given input means | A new disease whose spots look like early blight | A new virus: fever and cough may not mean flu |
+
+      Covariate shift sends a model into territory it rarely saw, though each input's right answer hasn't changed. Label shift (also called prior shift) keeps each outcome looking the same but makes the model's sense of "how likely" out of date. Concept shift is the worst: the old answers are now wrong, and only fresh labeled data can teach the new ones.
+
+      :::predict Scammers start writing polite, typo-free emails that look just like the ones a spam filter learned to trust. Which kind of shift is that?
+      Concept shift: the inputs look like the old safe emails, but their right label has changed. Google Flu Trends, which estimated flu levels from searches, hit a version of this in 2012–13: it badly overestimated flu, partly because news coverage and changes to Google's own search tools shifted what people searched for (Lazer et al., 2014).
+      :::
+  - id: sampling-and-shift.s3
+    title: The night-shift camera
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sampling-and-shift
+    markdown: |-
+      A parking-lot camera learned to read license plates from daytime photos, and now runs around the clock. A test split by condition shows:
+
+      | Test photos | Share of real traffic | Read correctly |
+      | --- | ---: | ---: |
+      | Daytime | 80% | 96% |
+      | Night | 20% | 71% |
+      | **Overall** | 100% | 0.8 × 96 + 0.2 × 71 = 91% |
+
+      A 91% average sounds fine. But more than one plate in four is misread at night, exactly when the lot's owner most needs the camera. Only splitting the results by condition revealed it.
+
+      :::mixup "The model is still confident on night photos, so it must be doing fine."
+      Confidence is the model's own opinion, and under shift it's often badly off: a model can be 99% sure of a plate it misread. Only labeled examples from the new condition show how it's really doing.
+      :::
+  - id: sampling-and-shift.s4
+    title: The delivery company goes to the suburbs
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sampling-and-shift
+    markdown: |-
+      A delivery company's time estimates were trained on city trips. Next month it adds suburban routes, about a quarter of all deliveries. Here's what its data team does:
+
+      1. **Name the shift.** More long trips is covariate shift. Highway routes may also change how distance turns into minutes: possible concept shift.
+      2. **Check coverage.** Only 40 of 20,000 training trips are over 15 km. Reweighting 40 trips can't stand in for thousands of new routes.
+      3. **Collect and test.** Drivers run 300 suburban deliveries. The model's average error there is 9 minutes, against 3 in the city.
+      4. **Decide.** Retrain with the suburban data; until then, show suburban customers a wider arrival window.
+      5. **Keep watching.** Report city and suburban error separately every week, so the next shift shows up in a chart, not in complaints.
+  - id: sampling-and-shift.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.sampling-and-shift
+    markdown: Reweight four skewed surveys by hand, then name the shift and the fix for house prices, flu season, card fraud, a drought, and a voice assistant.
+    takeaway: |-
+      A sample describes the people and conditions that got into it, and a bigger sample from the same skewed source is still skewed. When the world moves, name the kind of shift, test on data from the new conditions, and collect what's missing.
+  - id: sampling-and-shift.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.sampling-and-shift
+    markdown: |-
+      Ask who and what your examples cover. When the conditions of use change, check whether the model still works for the people and situations it needs to serve.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - sampling-and-shift.s1
-    - sampling-and-shift.s2
-    - sampling-and-shift.s3
-    - sampling-and-shift.s4
-    - sampling-and-shift.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - sampling-and-shift.s1
+        - sampling-and-shift.s5
+        - sampling-and-shift.s6
+        - sampling-and-shift.s2
+        - sampling-and-shift.s3
+        - sampling-and-shift.s4
+        - sampling-and-shift.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     sampling-and-shift.recap: sampling-and-shift.check
 assessment_families:
-- id: sampling-and-shift.base
-  objective_ref: objective.sampling-and-shift
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Separate kinds of change: trace the inputs, operation, and result before choosing.'
-  remediation_scene: sampling-and-shift.s2
-  variants:
-  - id: sampling-and-shift.base.1
-    prompt: A voluntary online poll directly describes which observed group?
-    options:
-    - id: c
-      text: Only people who disagreed
-    - id: a
-      text: People who responded under that collection process
-    - id: b
-      text: Every person in the country automatically
-    answer: a
-    feedback: Selection affects the population represented by observed data.
-  - id: sampling-and-shift.base.2
-    prompt: A rise in the frequency of positive labels is a change in what?
-    options:
-    - id: a
-      text: Class prevalence
-    - id: b
-      text: The spelling of the model name
-    - id: c
-      text: Necessarily the processor type
-    answer: a
-    feedback: Label proportions can shift even without changing every conditional relationship.
-- id: sampling-and-shift.transfer
-  objective_ref: objective.sampling-and-shift
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Measure coverage before claiming universality: trace the inputs, operation, and result before choosing.'
-  remediation_scene: sampling-and-shift.s4
-  variants:
-  - id: sampling-and-shift.transfer.1
-    prompt: A daytime camera model moves to nighttime use. What should evaluation include?
-    options:
-    - id: a
-      text: Representative nighttime conditions and error analysis
-    - id: b
-      text: Only the original daytime score
-    - id: c
-      text: Only a larger confidence threshold with no data
-    answer: a
-    feedback: The new conditions require evidence rather than an assumption of transfer.
-  - id: sampling-and-shift.transfer.2
-    prompt: Can reweighting fully establish performance on a population with no observed coverage?
-    options:
-    - id: b
-      text: Yes; any missing group can be invented by weights
-    - id: c
-      text: Only if weights sum to one
-    - id: a
-      text: No; absent information limits what weighting can support
-    answer: a
-    feedback: Weighting changes emphasis on available information, not the existence of missing observations.
+  - id: sampling-and-shift.base
+    objective_ref: objective.sampling-and-shift
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Separate kinds of change: trace the inputs, operation, and result before choosing.'
+    remediation_scene: sampling-and-shift.s2
+    variants:
+      - id: sampling-and-shift.base.1
+        prompt: A voluntary online poll directly describes which observed group?
+        options:
+          - id: c
+            text: Only people who disagreed
+          - id: a
+            text: People who responded under that collection process
+          - id: b
+            text: Every person in the country automatically
+        answer: a
+        feedback: Selection affects the population represented by observed data.
+        retired: true
+      - id: sampling-and-shift.base.2
+        prompt: A rise in the frequency of positive labels is a change in what?
+        options:
+          - id: a
+            text: Class prevalence
+          - id: b
+            text: The spelling of the model name
+          - id: c
+            text: Necessarily the processor type
+        answer: a
+        feedback: Label proportions can shift even without changing every conditional relationship.
+        retired: true
+  - id: sampling-and-shift.transfer
+    objective_ref: objective.sampling-and-shift
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Measure coverage before claiming universality: trace the inputs, operation, and result before choosing.'
+    remediation_scene: sampling-and-shift.s4
+    variants:
+      - id: sampling-and-shift.transfer.1
+        prompt: A daytime camera model moves to nighttime use. What should evaluation include?
+        options:
+          - id: a
+            text: Representative nighttime conditions and error analysis
+          - id: b
+            text: Only the original daytime score
+          - id: c
+            text: Only a larger confidence threshold with no data
+        answer: a
+        feedback: The new conditions require evidence rather than an assumption of transfer.
+        retired: true
+      - id: sampling-and-shift.transfer.2
+        prompt: Can reweighting fully establish performance on a population with no observed coverage?
+        options:
+          - id: b
+            text: Yes; any missing group can be invented by weights
+          - id: c
+            text: Only if weights sum to one
+          - id: a
+            text: No; absent information limits what weighting can support
+        answer: a
+        feedback: Weighting changes emphasis on available information, not the existence of missing observations.
+        retired: true
+  - id: sampling-and-shift.base.v2
+    objective_ref: objective.sampling-and-shift
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Ask what changed: who got into the sample, the mix of inputs, how common each outcome is, or what a given input now means."
+    remediation_scene: sampling-and-shift.s2
+    variants:
+      - id: sampling-and-shift.base.v2.1
+        prompt: A magazine's reader poll gets 2 million replies; a pollster's random sample gets 50,000. Their predictions disagree, and the small poll turns out right. Why?
+        options:
+          - id: b
+            text: Big polls collect more careless answers, which adds noise
+          - id: a
+            text: The magazine's sample was tilted, and more replies can't undo a tilt
+          - id: c
+            text: The small poll was lucky; it would usually lose to 2 million replies
+        answer: a
+        feedback: Who ends up in a sample matters more than how many. A larger sample shrinks random wobble, but every extra reply from the same tilted source carries the same tilt. Luck can't explain a gap this large with 50,000 random replies.
+      - id: sampling-and-shift.base.v2.2
+        prompt: A house-price model trained on city apartments is used in the suburbs, where homes are much larger. Price per square meter follows the same pattern as before. Which shift is this?
+        options:
+          - id: c
+            text: Concept shift, because the model now sees different houses
+          - id: b
+            text: Label shift, because suburban prices are higher on average
+          - id: a
+            text: Covariate shift, because the mix of inputs has changed
+        answer: a
+        feedback: The inputs (house sizes) moved into a new range, but the link between size and price held, which is covariate shift. Concept shift would mean the same house now sells for a different price.
+      - id: sampling-and-shift.base.v2.3
+        prompt: In flu season, flu jumps from 2% of a clinic's visits to 30%, though flu patients show the same symptoms as ever. Which shift is this?
+        options:
+          - id: a
+            text: Label shift, because how common each diagnosis is has changed
+          - id: b
+            text: Concept shift, because the right diagnosis for symptoms changed
+          - id: c
+            text: Covariate shift, because the patients are older in the winter
+        answer: a
+        feedback: The share of each outcome changed while each outcome looks the same, which is label (prior) shift. Nothing says the meaning of the symptoms changed, which concept shift would require, and nothing says the patients got older.
+      - id: sampling-and-shift.base.v2.4
+        prompt: Fraudsters start copying the exact shopping habits of real customers, so purchases that used to mean "safe" now often mean "fraud." Which shift is this?
+        options:
+          - id: b
+            text: Covariate shift, because customers are buying different things
+          - id: a
+            text: Concept shift, because the same inputs now call for a new label
+          - id: c
+            text: Label shift, because fraud is now slightly more common
+        answer: a
+        feedback: The inputs look the same as before, but the correct answer for them has changed, which is concept shift. That's the hardest kind to fix, because only freshly labeled examples can teach the new meaning.
+  - id: sampling-and-shift.transfer.v2
+    objective_ref: objective.sampling-and-shift
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name who or what is missing or has changed, then choose the action that brings real evidence about that group into view. Averages and reweighting can't show you what isn't there.
+    remediation_scene: sampling-and-shift.s4
+    variants:
+      - id: sampling-and-shift.transfer.v2.1
+        prompt: A restaurant app surveys people who open it every day and concludes that most diners want late-night delivery. It wants to know about all its diners. What's the main problem?
+        options:
+          - id: c
+            text: The survey is too small, so it needs twice as many replies
+          - id: b
+            text: Daily users differ from occasional ones, so the sample is tilted
+          - id: a
+            text: The question was worded as yes or no, so the answers are vague
+        answer: b
+        feedback: Heavy users are a special slice of diners, so their answers can't stand in for everyone. Doubling the replies from the same slice would keep the same tilt; the fix is to reach occasional users too.
+      - id: sampling-and-shift.transfer.v2.2
+        prompt: A crop-yield model was trained on ten years that were all wet. This year is a severe drought. Before trusting its forecast, what should the team do?
+        options:
+          - id: b
+            text: Rely on its confidence, since the model is sure about this year
+          - id: c
+            text: Reweight the wet years so that drier ones count for more
+          - id: a
+            text: Test it on yields from past droughts, or collect drought data
+        answer: a
+        feedback: A drought is far outside anything the model trained on, so only evidence from dry years can show how it behaves. Its confidence isn't evidence, and reweighting wet years can't create drought examples that don't exist.
+      - id: sampling-and-shift.transfer.v2.3
+        prompt: A voice assistant is 95% accurate overall but 70% accurate for speakers with a strong regional accent, who make up 5% of users. What should the team report?
+        options:
+          - id: a
+            text: Accuracy for each group of speakers, alongside the overall figure
+          - id: b
+            text: The 95% overall figure, since it covers the full set of users
+          - id: c
+            text: The 95% figure, with the accent group removed as an outlier
+        answer: a
+        feedback: An average weighted toward the majority hides the 70%, and those users are real customers, not outliers. Reporting by group makes the gap visible so it can be fixed.
+      - id: sampling-and-shift.transfer.v2.4
+        prompt: An online health survey has plenty of replies from people under 70 but none from anyone older. The team wants results for all adults. What should it do?
+        options:
+          - id: c
+            text: Give the oldest respondents in the sample much larger weights
+          - id: a
+            text: Collect new responses from people over 70, perhaps by phone or mail
+          - id: b
+            text: Assume people over 70 answer like people in their sixties
+        answer: a
+        feedback: Reweighting stretches answers you have; with zero replies from a group, there's nothing to stretch. Weighting up the 69-year-olds or assuming they speak for older adults is a guess. New responses are the only real evidence.
+  - id: sampling-and-shift.weights.v2
+    objective_ref: objective.sampling-and-shift
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Weight each group's "yes" rate by that group's share of the real population, not by its share of the replies. Then add the weighted rates.
+    remediation_scene: sampling-and-shift.s6
+    absolute_tolerance: 0.5
+    variants:
+      - id: sampling-and-shift.weights.v2.1
+        prompt: A survey gets 60 replies from city residents (70% say yes) and 40 from rural residents (30% say yes). The real population is 30% city and 70% rural. What is the reweighted "yes" percentage?
+        answer: 42
+        feedback: 0.3 × 70 + 0.7 × 30 = 21 + 21 = 42%. The raw sample would give 0.6 × 70 + 0.4 × 30 = 54%, because city residents are over-represented.
+      - id: sampling-and-shift.weights.v2.2
+        prompt: A campus survey gets 50 replies from students (80% like the new menu) and 50 from staff (20% like it). The campus is 90% students and 10% staff. What is the reweighted percentage who like the menu?
+        answer: 74
+        feedback: 0.9 × 80 + 0.1 × 20 = 72 + 2 = 74%. The raw 50/50 sample gives 50%, which gives staff far more say than their share of the campus.
+      - id: sampling-and-shift.weights.v2.3
+        prompt: A gym survey gets 25 replies from weekday members (60% want longer hours) and 75 from weekend members (20% want them). Members are really split 50/50. What is the reweighted percentage?
+        answer: 40
+        feedback: 0.5 × 60 + 0.5 × 20 = 30 + 10 = 40%. The raw sample says 0.25 × 60 + 0.75 × 20 = 30%, because weekend members replied more.
+      - id: sampling-and-shift.weights.v2.4
+        prompt: A museum survey gets 90 replies from visitors under 40 (80% want an audio guide) and 10 from visitors 40 and over (50% want one). Visitors are really 60% under 40 and 40% older. What is the reweighted percentage?
+        answer: 68
+        feedback: 0.6 × 80 + 0.4 × 50 = 48 + 20 = 68%. The raw sample gives 0.9 × 80 + 0.1 × 50 = 77%, because younger visitors are over-represented.

@@ -1,208 +1,445 @@
 schema_version: 0.2-draft
 lesson:
   id: convolutional-networks
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Build visual features from local operations
   state: draft
-  summary: Build a picture classifier from repeated local filters, nonlinear steps, and a final summary.
+  summary: Stack a few convolution layers and you can tell a beagle from a cat with under 100,000 weights. Trace one network layer by layer, from LeNet to ResNet.
   slot: M12.3
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: "Gradient-Based Learning Applied to Document Recognition (LeCun, Bottou, Bengio & Haffner, 1998)"
+      url: https://ieeexplore.ieee.org/document/726791
+    - title: "ImageNet Classification with Deep Convolutional Neural Networks (Krizhevsky, Sutskever & Hinton, 2012)"
+      url: https://papers.nips.cc/paper/2012/hash/c399862d3b9d6b76c8436e924a68c45b-Abstract.html
+    - title: "Very Deep Convolutional Networks for Large-Scale Image Recognition (Simonyan & Zisserman, 2014)"
+      url: https://arxiv.org/abs/1409.1556
+    - title: "Deep Residual Learning for Image Recognition (He, Zhang, Ren & Sun, 2015)"
+      url: https://arxiv.org/abs/1512.03385
+    - title: Dive into Deep Learning — modern convolutional neural networks
+      url: https://d2l.ai/chapter_convolutional-modern/index.html
 objectives:
-- id: objective.convolutional-networks
-  version: 1-draft
-  statement: Convolutional networks stack shared filters and nonlinear transformations; residual designs support
-    deeper computation, while classification still depends on data and evaluation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - convolutional-networks.base
-  - convolutional-networks.transfer
-  prerequisites:
-  - anyOf:
-    - objective.convolution
-  - anyOf:
-    - objective.residuals-normalization-dropout
+  - id: objective.convolutional-networks
+    version: 2-draft
+    statement: Convolutional networks stack shared filters and nonlinear transformations; residual designs support deeper computation, while classification still depends on data and evaluation.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - convolutional-networks.base.v2
+      - convolutional-networks.transfer.v2
+      - convolutional-networks.calculate
+    prerequisites:
+      - anyOf:
+          - objective.convolution
+      - anyOf:
+          - objective.residuals-normalization-dropout
 scenes:
-- id: convolutional-networks.s1
-  title: Combine local responses across layers
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.convolutional-networks
-  markdown: 'A **convolutional neural network (CNN)** stacks shared filters and other operations. Each layer
-    can produce several **channels**, or feature maps: grids of responses from different filters.
+  - id: convolutional-networks.s1
+    title: From edges to beagles in a few layers
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.convolutional-networks
+    markdown: |-
+      One edge filter can't tell Biscuit from a cat. Pet search needs a whole stack. A **convolutional neural network (CNN)** repeats a simple recipe: convolution, then a nonlinearity such as ReLU (which turns negatives into 0), sometimes pooling, and repeat.
 
+      Each filter in a layer produces one **channel** of the output, its own feature map. Early channels tend to respond to edges and color blobs; deeper ones combine those into textures, then fur, ears, and eyes. Nobody programs these roles; they emerge from training on labeled photos.
 
-    Early filters can respond to local patterns, and later layers combine those responses over wider regions.
-    Nonlinear activations let these combinations represent more varied patterns. A channel is not automatically
-    a human concept such as “wheel”; its role is learned through the task. Both channel count and spatial resolution
-    can change between layers.'
-  text_mode: 'A **convolutional neural network (CNN)** stacks shared filters and other operations. Each layer
-    can produce several **channels**, or feature maps: grids of responses from different filters.
+      Here is a small pet-search CNN, traced with the output-size formula from the last lesson (3 × 3 filters with padding 1 keep the size; 2 × 2 pooling halves it):
 
+      | Layer | Output shape (H × W × C) |
+      | --- | --- |
+      | Input photo | 224 × 224 × 3 |
+      | Conv 3 × 3, 32 filters | 224 × 224 × 32 |
+      | Max pool 2 × 2 | 112 × 112 × 32 |
+      | Conv 3 × 3, 64 filters | 112 × 112 × 64 |
+      | Max pool 2 × 2 | 56 × 56 × 64 |
+      | Conv 3 × 3, 128 filters | 56 × 56 × 128 |
+      | Global average pool | 128 |
+      | Dense layer | 3 scores: dog, cat, no pet |
 
-    Early filters can respond to local patterns, and later layers combine those responses over wider regions.
-    Nonlinear activations let these combinations represent more varied patterns. A channel is not automatically
-    a human concept such as “wheel”; its role is learned through the task. Both channel count and spatial resolution
-    can change between layers.'
-  bridges: []
-- id: convolutional-networks.s2
-  title: Reach a classification output
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.convolutional-networks
-  markdown: 'A classifier may aggregate spatial features with pooling, then project to class scores. Softmax
-    can turn those scores into a distribution over mutually exclusive classes. The classifier predicts a label
-    for the image; it does not necessarily identify every object’s location or segment its pixels.
+      The last two rows turn the grid into three class scores; we'll unpack them shortly. Notice the pattern nearly every CNN follows: the grid shrinks while the channels grow. The network trades *where* for *what*.
 
+      :::story Four networks that set the course
+      | Year | Network | What it showed |
+      | --- | --- | --- |
+      | 1998 | LeNet-5 (LeCun et al.) | Convolution plus pooling reads handwritten digits; about 60,000 weights. Similar networks read bank checks. |
+      | 2012 | AlexNet (Krizhevsky, Sutskever & Hinton) | Trained on two GPUs, it won the ImageNet challenge (1,000 classes) with 15.3% top-5 error; the runner-up had 26.2%. |
+      | 2014 | VGG (Simonyan & Zisserman) | Just stack 3 × 3 filters, 16 to 19 layers deep. |
+      | 2015 | ResNet (He et al.) | Residual connections made 152 layers trainable; it won ImageNet 2015. |
+      :::
+    bridges: []
+  - id: convolutional-networks.s5
+    title: Count the weights, and see why sharing wins
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.convolutional-networks
+    markdown: |-
+      Each filter has $K \times K \times C_{\text{in}}$ weights plus one bias, and a layer has one filter per output channel:
 
-    For one feature map with values [2, 4, 6, 8], global average pooling gives 20/4 = 5. A final learned layer
-    combines pooled features into class **scores**. Softmax converts these scores into nonnegative numbers
-    summing to one. These are the model''s class probabilities, whose reliability still needs evaluation.'
-  text_mode: 'A classifier may aggregate spatial features with pooling, then project to class scores. Softmax
-    can turn those scores into a distribution over mutually exclusive classes. The classifier predicts a label
-    for the image; it does not necessarily identify every object’s location or segment its pixels.
+      $$\text{parameters} = (K \cdot K \cdot C_{\text{in}} + 1) \cdot C_{\text{out}}$$
 
+      For the first layer: $(3 \cdot 3 \cdot 3 + 1) \cdot 32 = 28 \cdot 32 = 896$. The layer's size doesn't depend on the photo's size at all. The same 896 numbers work on a 224 × 224 photo or a 4,000 × 3,000 one.
 
-    For one feature map with values [2, 4, 6, 8], global average pooling gives 20/4 = 5. A final learned layer
-    combines pooled features into class **scores**. Softmax converts these scores into nonnegative numbers
-    summing to one. These are the model''s class probabilities, whose reliability still needs evaluation.'
-  bridges: []
-- id: convolutional-networks.s3
-  title: Keep a residual route
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.convolutional-networks
-  markdown: 'Residual networks add block updates to compatible incoming representations. This supports signal
-    and gradient flow in deeper networks. A block that changes channel count or resolution may use a projection
-    on the skip path. The exact design determines which operations and normalization occur before the addition.
+      :::predict How many parameters does the second conv layer have (3 × 3 filters, 32 channels in, 64 out)?
+      $(3 \cdot 3 \cdot 32 + 1) \cdot 64 = 289 \cdot 64 = 18{,}496$. Each filter now reads all 32 channels of the layer below.
+      :::
 
+      Compare an ordinary **dense layer**, where every input connects to every output with its own weight. Flatten the photo into 150,528 numbers and connect it to just 1,000 hidden units: $150{,}528 \times 1{,}000 + 1{,}000 = 150{,}529{,}000$ parameters. That's about 1,600 times the whole pet-search CNN (93,635 parameters, as the code confirms), before the dense network has even learned that an edge on the left looks like an edge on the right.
 
-    A **projection** on a skip path is an extra learned transformation that makes its shape match the other
-    branch. You cannot add a 16-channel grid to a 32-channel grid entry by entry without defining how they
-    correspond. The residual addition combines matching entries; it is not joining the lists end to end.'
-  text_mode: 'Residual networks add block updates to compatible incoming representations. This supports signal
-    and gradient flow in deeper networks. A block that changes channel count or resolution may use a projection
-    on the skip path. The exact design determines which operations and normalization occur before the addition.
+      ```python run
+      def out_size(W, K, P, S):
+          return (W - K + 2 * P) // S + 1
 
+      # (kind, K, filters, P, S) for a small pet-search network
+      layers = [("conv", 3, 32, 1, 1), ("pool", 2, None, 0, 2),
+                ("conv", 3, 64, 1, 1), ("pool", 2, None, 0, 2),
+                ("conv", 3, 128, 1, 1)]
+      H = W = 224; C = 3; total = 0
+      print(f"{'input':6} {H}x{W}x{C}")
+      for kind, K, F, P, S in layers:
+          H, W = out_size(H, K, P, S), out_size(W, K, P, S)
+          params = (K * K * C + 1) * F if kind == "conv" else 0
+          C = F if kind == "conv" else C
+          total += params
+          shape = f"{H}x{W}x{C}"
+          print(f"{kind:6} {shape:12} params {params:>7,}")
+      head = C * 3 + 3                     # global average pool -> 3 classes
+      total += head
+      print(f"{'head':6} {f'{C} -> 3':12} params {head:>7,}")
+      print(f"total CNN parameters: {total:,}")
+      print(f"one dense layer, 1,000 units: {224*224*3*1000 + 1000:,}")
+      ```
 
-    A **projection** on a skip path is an extra learned transformation that makes its shape match the other
-    branch. You cannot add a 16-channel grid to a 32-channel grid entry by entry without defining how they
-    correspond. The residual addition combines matching entries; it is not joining the lists end to end.'
-  bridges: []
-- id: convolutional-networks.s4
-  title: Evaluate the trained visual system
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.convolutional-networks
-  markdown: Use representative images, suitable splits, and task metrics. Check calibration, subgroup or condition
-    performance, and sensitivity to background shortcuts. More depth or a familiar architecture name does not
-    establish robustness. Compare training recipe, augmentation, and compute when attributing improvement.
-  text_mode: Use representative images, suitable splits, and task metrics. Check calibration, subgroup or condition
-    performance, and sensitivity to background shortcuts. More depth or a familiar architecture name does not
-    establish robustness. Compare training recipe, augmentation, and compute when attributing improvement.
-  bridges: []
-- id: convolutional-networks.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.convolutional-networks
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: CNNs combine local filter responses into later features. Follow how the resolution, channels, and
-    final output change, then test whether the trained system uses the right visual clues.
-- id: convolutional-networks.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.convolutional-networks
-  markdown: CNNs combine local filter responses into later features. Follow how the resolution, channels, and
-    final output change, then test whether the trained system uses the right visual clues.
-  text_mode: CNNs combine local filter responses into later features. Follow how the resolution, channels,
-    and final output change, then test whether the trained system uses the right visual clues.
+      Try changing the last conv to 256 filters, or adding a stride-2 conv. Pooling layers add no parameters; notice which layers do.
+
+      VGG's case for small filters is the same arithmetic. Two stacked 3 × 3 layers see a 5 × 5 patch, like one 5 × 5 filter, but use $2 \times 9 = 18$ weights per channel pair instead of 25, with an extra ReLU in between.
+    bridges: []
+  - id: convolutional-networks.s2
+    title: From 128 channels to "dog"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.convolutional-networks
+    markdown: |-
+      The last conv layer produces 56 × 56 × 128 numbers, but pet search needs one answer. **Global average pooling** collapses each channel to its mean. A channel with values [2, 4, 6, 8] becomes $20 / 4 = 5$. Now the photo is summarized by 128 numbers, one per learned feature, no matter where Biscuit sat.
+
+      A dense layer turns those 128 numbers into one **score** per class ($128 \times 3 + 3 = 387$ parameters). **Softmax** turns scores into probabilities that sum to 1: raise $e$ to each score and divide by the total.
+
+      | Class | Score | $e^{\text{score}}$ | Probability |
+      | --- | ---: | ---: | ---: |
+      | dog | 2.0 | 7.389 | 0.659 |
+      | cat | 1.0 | 2.718 | 0.242 |
+      | no pet | 0.1 | 1.105 | 0.099 |
+
+      The total is 11.212, so "dog" gets $7.389 / 11.212 = 0.659$. The output is one label for the whole photo. It says nothing about *where* the dog is, or whether there are two. That's the next lesson's job.
+    bridges: []
+  - id: convolutional-networks.s3
+    title: "Residual connections: y = F(x) + x"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.convolutional-networks
+    markdown: |-
+      If 20 layers are good, are 56 better? You met the answer in the lesson on residual connections: in 2015, He and colleagues trained plain stacks of both depths on the CIFAR-10 image set, and the 56-layer network had *higher* error, even on its own training data. It wasn't overfitting: the extra layers made the network harder to optimize. Here is how their fix looks inside a CNN.
+
+      :::mixup "A deeper network can only be at least as good, since extra layers could just pass their input through."
+      In principle they could, but gradient descent finds "copy the input exactly" surprisingly hard to reach through a stack of convolutions and ReLUs. Depth paid off once copying became the easy default.
+      :::
+
+      ResNet's fix is the residual block. Two conv layers compute a correction $F(x)$, and a skip connection adds the block's input back:
+
+      $$y = F(x) + x$$
+
+      Suppose two channels of a feature map hold $x = [2.0, -1.0]$ and the conv branch outputs $F(x) = [0.3, 0.5]$. Then $y = [2.3, -0.5]$. If the branch learns $F(x) = [0, 0]$, the block passes $x$ through unchanged, so extra blocks are cheap to add. Backpropagation benefits too: $\partial y / \partial x = \partial F / \partial x + 1$, and that "+1" gives the gradient a direct route back to early layers.
+
+      The addition needs matching shapes. When a block halves the grid and doubles channels (say 56 × 56 × 64 to 28 × 28 × 128), the skip path uses a **projection**: a 1 × 1 convolution with stride 2 that reshapes $x$ so the two branches can be added entry by entry.
+    diagram:
+      caption: A residual block. The conv branch learns a correction F(x); the skip path carries x around it unchanged.
+      description: The input x goes two ways. Along the top it passes through a 3 × 3 convolution, a ReLU, and a second 3 × 3 convolution, producing F(x). Along the bottom, the skip path carries x directly to an addition node, which computes F(x) + x. The sum passes through a ReLU to give the block's output y.
+      nodes:
+        - id: x
+          label: Input x
+          note: 56 × 56 × 64
+          col: 0
+          row: 1
+          tone: data
+        - id: conv1
+          label: 3 × 3 conv
+          note: then ReLU
+          col: 1
+          row: 0
+        - id: conv2
+          label: 3 × 3 conv
+          note: output F(x)
+          col: 2
+          row: 0
+        - id: add
+          label: Add
+          note: F(x) + x
+          col: 3
+          row: 1
+          tone: accent
+        - id: y
+          label: Output y
+          note: after ReLU
+          col: 4
+          row: 1
+          tone: data
+      edges:
+        - from: x
+          to: conv1
+        - from: conv1
+          to: conv2
+        - from: conv2
+          to: add
+          label: F(x)
+        - from: x
+          to: add
+          label: skip connection
+        - from: add
+          to: y
+          label: ReLU
+  - id: convolutional-networks.s4
+    title: A better score isn't always a better network
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.convolutional-networks
+    markdown: |-
+      Two pet-search models are tested on the same 2,000 held-out photos. Model A, a ResNet-50, scores 93%; model B, a smaller ResNet-18, scores 95%. But B trained twice as long with heavier augmentation (random crops, color changes). Any of those could explain the 2 points.
+
+      A fair comparison changes one thing at a time: same data, augmentation, and training budget, different network. Then split the score by condition (indoor and outdoor, day and night), because a strong average can hide a weak slice. The module's last lesson hunts for those slices on purpose.
+    bridges: []
+  - id: convolutional-networks.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.convolutional-networks
+    markdown: Count parameters and trace shapes by hand, then judge a bird-watching model, a skin-lesion classifier, and a benchmark comparison between two networks.
+    takeaway: |-
+      A CNN stacks shared filters, so the grid shrinks as the channels grow, and each layer needs only (K·K·C_in + 1)·C_out weights. Residual connections (y = F(x) + x) let those stacks go deep.
+  - id: convolutional-networks.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.convolutional-networks
+    markdown: |-
+      CNNs combine local filter responses into later features. Follow how the resolution, channels, and final output change, then test whether the trained system uses the right visual clues.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - convolutional-networks.s1
-    - convolutional-networks.s2
-    - convolutional-networks.s3
-    - convolutional-networks.s4
-    - convolutional-networks.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - convolutional-networks.s1
+        - convolutional-networks.s5
+        - convolutional-networks.s2
+        - convolutional-networks.s3
+        - convolutional-networks.s4
+        - convolutional-networks.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     convolutional-networks.recap: convolutional-networks.check
 assessment_families:
-- id: convolutional-networks.base
-  objective_ref: objective.convolutional-networks
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Reach a classification output: trace the inputs, operation, and result before choosing.'
-  remediation_scene: convolutional-networks.s2
-  variants:
-  - id: convolutional-networks.base.1
-    prompt: What does an image classifier normally output?
-    options:
-    - id: c
-      text: The original camera settings exactly
-    - id: a
-      text: Scores or probabilities for image-level labels
-    - id: b
-      text: A guaranteed pixel mask for every object
-    answer: a
-    feedback: Classification and localization are different tasks.
-  - id: convolutional-networks.base.2
-    prompt: Why might a residual skip path need a projection?
-    options:
-    - id: a
-      text: To match changed feature dimensions
-    - id: b
-      text: To remove all input information by definition
-    - id: c
-      text: Only to add a file dependency
-    answer: a
-    feedback: Residual addition requires compatible shapes.
-- id: convolutional-networks.transfer
-  objective_ref: objective.convolutional-networks
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate the trained visual system: trace the inputs, operation, and result before choosing.'
-  remediation_scene: convolutional-networks.s4
-  variants:
-  - id: convolutional-networks.transfer.1
-    prompt: Two CNNs differ in augmentation and data as well as depth. What limits a depth-only explanation
-      of their score difference?
-    options:
-    - id: a
-      text: The changed conditions confound attribution
-    - id: b
-      text: Nothing; depth gets all credit
-    - id: c
-      text: Only the chart resolution
-    answer: a
-    feedback: Architecture comparisons require controlled or clearly reported training conditions.
-  - id: convolutional-networks.transfer.2
-    prompt: A network’s later channel responds to faces in some examples. Is a universal face-neuron interpretation
-      established?
-    options:
-    - id: b
-      text: Yes; one visualization proves it
-    - id: c
-      text: Only if the channel is numbered one
-    - id: a
-      text: No; broader tests and interventions are needed
-    answer: a
-    feedback: Representations can be distributed and context-dependent.
+  - id: convolutional-networks.base
+    objective_ref: objective.convolutional-networks
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Reach a classification output: trace the inputs, operation, and result before choosing.'
+    remediation_scene: convolutional-networks.s2
+    variants:
+      - id: convolutional-networks.base.1
+        prompt: What does an image classifier normally output?
+        options:
+          - id: c
+            text: The original camera settings exactly
+          - id: a
+            text: Scores or probabilities for image-level labels
+          - id: b
+            text: A guaranteed pixel mask for every object
+        answer: a
+        feedback: Classification and localization are different tasks.
+        retired: true
+      - id: convolutional-networks.base.2
+        prompt: Why might a residual skip path need a projection?
+        options:
+          - id: a
+            text: To match changed feature dimensions
+          - id: b
+            text: To remove all input information by definition
+          - id: c
+            text: Only to add a file dependency
+        answer: a
+        feedback: Residual addition requires compatible shapes.
+        retired: true
+  - id: convolutional-networks.transfer
+    objective_ref: objective.convolutional-networks
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate the trained visual system: trace the inputs, operation, and result before choosing.'
+    remediation_scene: convolutional-networks.s4
+    variants:
+      - id: convolutional-networks.transfer.1
+        prompt: Two CNNs differ in augmentation and data as well as depth. What limits a depth-only explanation of their score difference?
+        options:
+          - id: a
+            text: The changed conditions confound attribution
+          - id: b
+            text: Nothing; depth gets all credit
+          - id: c
+            text: Only the chart resolution
+        answer: a
+        feedback: Architecture comparisons require controlled or clearly reported training conditions.
+        retired: true
+      - id: convolutional-networks.transfer.2
+        prompt: A network’s later channel responds to faces in some examples. Is a universal face-neuron interpretation established?
+        options:
+          - id: b
+            text: Yes; one visualization proves it
+          - id: c
+            text: Only if the channel is numbered one
+          - id: a
+            text: No; broader tests and interventions are needed
+        answer: a
+        feedback: Representations can be distributed and context-dependent.
+        retired: true
+  - id: convolutional-networks.base.v2
+    objective_ref: objective.convolutional-networks
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Follow one photo through the stack. Which shapes change, what does each layer's output mean, and what does the skip connection add?
+    remediation_scene: convolutional-networks.s3
+    variants:
+      - id: convolutional-networks.base.v2.1
+        prompt: In a residual block, the input is x = [1.0, 3.0] and the conv branch outputs F(x) = [0.2, −0.4]. What does the block pass on (before its final ReLU)?
+        options:
+          - id: b
+            text: "[0.2, −0.4], the branch output, since the skip only helps gradients"
+          - id: a
+            text: "[1.2, 2.6], the branch output added to the input"
+          - id: c
+            text: "[1.0, 3.0, 0.2, −0.4], the input and branch joined end to end"
+        answer: a
+        feedback: A residual block computes y = F(x) + x entry by entry, giving 1.0 + 0.2 and 3.0 − 0.4. Joining the lists end to end is concatenation, a different operation, and the skip carries x forward as well as helping gradients.
+      - id: convolutional-networks.base.v2.2
+        prompt: A block halves the grid from 56 × 56 to 28 × 28 and doubles channels from 64 to 128. Why does its skip path need a 1 × 1 convolution with stride 2?
+        options:
+          - id: c
+            text: To add extra depth so the block learns more detailed features
+          - id: b
+            text: To remove the input so the block learns only the correction
+          - id: a
+            text: To reshape x to 28 × 28 × 128 so it can be added to F(x)
+        answer: a
+        feedback: Residual addition works entry by entry, so both branches need the same shape; the projection supplies it. It isn't there to add capacity, and removing x would undo the whole point of the skip.
+      - id: convolutional-networks.base.v2.3
+        prompt: Pet search ends with global average pooling, a dense layer, and softmax, and outputs 0.66 for "dog". What does this output tell you?
+        options:
+          - id: a
+            text: The model's probability that the photo as a whole shows a dog
+          - id: b
+            text: The fraction of the photo's pixels that belong to a dog
+          - id: c
+            text: How far the dog is from the center of the photo
+        answer: a
+        feedback: A classifier gives one probability per label for the whole photo. Global average pooling has already discarded where features were, so it can't report pixel fractions or positions; those need detection or segmentation.
+      - id: convolutional-networks.base.v2.4
+        prompt: In the 2015 ResNet paper, a plain 56-layer network had higher training error than a 20-layer one. What does that show?
+        options:
+          - id: b
+            text: The deeper network overfit, memorizing its training photos
+          - id: a
+            text: The deeper plain stack was harder to optimize, not too flexible
+          - id: c
+            text: Networks with more than 20 layers can't represent more functions
+        answer: a
+        feedback: Overfitting would give low training error and high test error; here even training error was worse, so optimization was the problem. A deeper network can represent at least as much, and residual connections made that depth usable.
+  - id: convolutional-networks.transfer.v2
+    objective_ref: objective.convolutional-networks
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name what the task needs (a label, a location, a fair comparison, or a trainable deep stack), then pick the design or test that supplies it.
+    remediation_scene: convolutional-networks.s4
+    variants:
+      - id: convolutional-networks.transfer.v2.1
+        prompt: A bird-watching app's CNN classifier says "robin 0.91" for a photo with three robins. The team wants to count the birds. What is the problem?
+        options:
+          - id: c
+            text: The softmax should be replaced so its outputs sum to 3
+          - id: a
+            text: A classifier gives one label per photo and discards where things are
+          - id: b
+            text: The network needs more channels so each robin gets its own
+        answer: a
+        feedback: Global pooling and softmax summarize the whole photo into one distribution, so counting needs a model that outputs one result per object, such as a detector. Changing softmax or adding channels still leaves a single photo-level answer.
+      - id: convolutional-networks.transfer.v2.2
+        prompt: Network B beats network A by 3 points on a skin-lesion test set, but B also trained twice as long with stronger augmentation. What should the team conclude first?
+        options:
+          - id: a
+            text: The gap can't be credited to B's design until the recipes match
+          - id: b
+            text: B's design is better, since both were scored on the same test set
+          - id: c
+            text: A is better, since B needed extra training to catch up with it
+        answer: a
+        feedback: A shared test set is necessary but not enough; the training recipes differ, so design, epochs, and augmentation are tangled together. Retrain both with the same recipe and compare again.
+      - id: convolutional-networks.transfer.v2.3
+        prompt: An engineer adds 30 plain conv layers to a working 20-layer network, and training loss gets worse. Which change most directly addresses this?
+        options:
+          - id: b
+            text: Replace the 3 × 3 filters with 7 × 7 filters in the new layers
+          - id: c
+            text: Remove the ReLUs so the new layers are purely linear
+          - id: a
+            text: Wrap the new layers in residual blocks with skip connections
+        answer: a
+        feedback: Skip connections make "pass the input through" the easy default and give gradients a direct path, which is what ResNet used to train very deep stacks. Bigger filters add parameters without fixing optimization, and removing ReLUs makes the stack collapse to one linear map.
+      - id: convolutional-networks.transfer.v2.4
+        prompt: A factory camera needs a defect classifier on a small chip with little memory. Why is a CNN a better fit than a dense network on raw pixels?
+        options:
+          - id: c
+            text: A CNN runs without any weights, so the memory use is zero
+          - id: b
+            text: A dense network cannot process images larger than 32 × 32
+          - id: a
+            text: Shared filters need far fewer weights than one per pixel pair
+        answer: a
+        feedback: A 3 × 3 filter's weights are reused across the whole image, so a CNN can be thousands of times smaller than a dense layer with a weight for every input–output pair. Dense networks can take any size input, just at huge cost, and CNNs certainly have weights.
+  - id: convolutional-networks.calculate
+    objective_ref: objective.convolutional-networks
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Parameters = (K × K × C_in + 1) × C_out: each filter has one weight per position per input channel, plus a bias, and there is one filter per output channel."
+    remediation_scene: convolutional-networks.s5
+    absolute_tolerance: 0.01
+    variants:
+      - id: convolutional-networks.calculate.1
+        prompt: LeNet-5's first layer applies 6 filters of size 5 × 5 to a 1-channel grayscale image. How many parameters, including biases?
+        answer: 156
+        feedback: (5 × 5 × 1 + 1) × 6 = 26 × 6 = 156.
+      - id: convolutional-networks.calculate.2
+        prompt: A conv layer uses 3 × 3 filters, takes 64 input channels, and produces 128 output channels. How many parameters, including biases?
+        answer: 73856
+        feedback: (3 × 3 × 64 + 1) × 128 = 577 × 128 = 73,856.
+      - id: convolutional-networks.calculate.3
+        prompt: A 1 × 1 projection on a skip path maps 64 channels to 128. How many parameters, including biases?
+        answer: 8320
+        feedback: (1 × 1 × 64 + 1) × 128 = 65 × 128 = 8,320. A 1 × 1 filter mixes channels without looking at neighbors.
+      - id: convolutional-networks.calculate.4
+        prompt: A first layer applies 16 filters of size 3 × 3 to an RGB photo. How many parameters, including biases?
+        answer: 448
+        feedback: (3 × 3 × 3 + 1) × 16 = 28 × 16 = 448. The photo's height and width don't enter the count.
+      - id: convolutional-networks.calculate.5
+        prompt: A first layer applies 64 filters of size 7 × 7 to an RGB photo (the size of ResNet's first layer), with a bias per filter. How many parameters?
+        answer: 9472
+        feedback: (7 × 7 × 3 + 1) × 64 = 148 × 64 = 9,472.

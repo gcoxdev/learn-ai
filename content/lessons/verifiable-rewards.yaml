@@ -1,202 +1,431 @@
 schema_version: 0.2-draft
 lesson:
   id: verifiable-rewards
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Turn checkable outcomes into a learning signal
   state: draft
-  summary: Turn a clearly checkable result into feedback, and test the checker’s own blind spots.
+  summary: For maths and code you don't need a judge; you can just check the answer. So why did a model being trained on coding tasks learn to call exit(0)?
   slot: M21.3
   category: learning
   sources:
-  - title: Training Verifiers to Solve Math Word Problems
-    url: https://arxiv.org/abs/2110.14168
-  - title: DeepSeek-R1
-    url: https://arxiv.org/abs/2501.12948
+    - title: "Tülu 3: Pushing Frontiers in Open Language Model Post-Training (Lambert et al., 2024)"
+      url: https://arxiv.org/abs/2411.15124
+    - title: "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning (DeepSeek-AI, 2025)"
+      url: https://arxiv.org/abs/2501.12948
+    - title: "Training Verifiers to Solve Math Word Problems (Cobbe et al., 2021)"
+      url: https://arxiv.org/abs/2110.14168
+    - title: "Monitoring Reasoning Models for Misbehavior and the Risks of Promoting Obfuscation (Baker et al., 2025)"
+      url: https://arxiv.org/abs/2503.11926
 objectives:
-- id: objective.verifiable-rewards
-  version: 1-draft
-  statement: Verifiable rewards score outputs with explicit checks such as mathematical equivalence or program
-    tests; verifier coverage and isolation determine how closely reward tracks the intended task.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - verifiable-rewards.base
-  - verifiable-rewards.transfer
-  prerequisites:
-  - anyOf:
-    - objective.rlhf-and-kl-control
-  - anyOf:
-    - objective.reasoning-demonstrations
+  - id: objective.verifiable-rewards
+    version: 2-draft
+    statement: Verifiable rewards score outputs with explicit checks such as mathematical equivalence or program tests; verifier coverage and isolation determine how closely reward tracks the intended task.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - verifiable-rewards.base.v2
+      - verifiable-rewards.transfer.v2
+      - verifiable-rewards.calculate
+    prerequisites:
+      - anyOf:
+          - objective.rlhf-and-kl-control
+      - anyOf:
+          - objective.reasoning-demonstrations
 scenes:
-- id: verifiable-rewards.s1
-  title: Use an external check
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.verifiable-rewards
-  markdown: A **verifier** is a procedure that checks an output. For a task with a known numeric answer, it
-    can score the extracted result for mathematical equivalence. A programming task can execute tests under
-    controlled resource and permission limits. This provides a repeatable reward signal without requiring a
-    human to rate every sampled solution.
-  text_mode: A **verifier** is a procedure that checks an output. For a task with a known numeric answer, it
-    can score the extracted result for mathematical equivalence. A programming task can execute tests under
-    controlled resource and permission limits. This provides a repeatable reward signal without requiring a
-    human to rate every sampled solution.
-  bridges: []
-- id: verifiable-rewards.s2
-  title: Define what counts as success
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.verifiable-rewards
-  markdown: 'Exact string comparison can reject equivalent fractions, while overly permissive parsing can accept
-    malformed or irrelevant text. Unit tests cover selected behavior rather than every possible input. State
-    the answer extraction, tolerance, test coverage, timeout, and failure handling that define the reward.
+  - id: verifiable-rewards.s1
+    title: A reward you can compute
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.verifiable-rewards
+    markdown: |-
+      In the RLHF lesson, the reward came from a **reward model**: a network trained on human preferences to score responses. It's a learned judge, and learned judges can be fooled. But some tasks come with their own answer key. A maths problem has a known final answer; a coding task has tests. For those you can skip the judge and simply *check*.
 
+      A **verifier** is a program that checks an output and returns a reward, usually 1 for pass and 0 for fail. Training a policy with reinforcement learning against such checks is called **reinforcement learning with verifiable rewards** (RLVR), a name popularized by AI2's Tülu 3 report (2024).
 
-    For an answer of one-half, “0.5” and “1/2” may be equivalent under a numerical task. A **tolerance** permits
-    a specified amount of numerical error, for example around a rounded measurement; it should not be added
-    to a task that requires exact symbolic equality without justification.'
-  text_mode: 'Exact string comparison can reject equivalent fractions, while overly permissive parsing can
-    accept malformed or irrelevant text. Unit tests cover selected behavior rather than every possible input.
-    State the answer extraction, tolerance, test coverage, timeout, and failure handling that define the reward.
+      DeepSeek-R1-Zero, from the last lesson, was trained this way. Its reward had two rule-based parts: an *accuracy* reward (the boxed final answer matches, or the code passes predefined test cases) and a *format* reward (the reasoning sits between `<think>` tags). The team chose rules over a learned reward model because, they wrote, a neural reward model may suffer from reward hacking in large-scale RL.
 
+      :::papers The RLVR objective
+      It's the RLHF objective with the reward model swapped for a checker:
 
-    For an answer of one-half, “0.5” and “1/2” may be equivalent under a numerical task. A **tolerance** permits
-    a specified amount of numerical error, for example around a rounded measurement; it should not be added
-    to a task that requires exact symbolic equality without justification.'
-  bridges: []
-- id: verifiable-rewards.s3
-  title: Separate the answer from the evaluator
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.verifiable-rewards
-  markdown: Untrusted generated code or text must not modify the tests, access hidden answers, or control the
-    scoring environment. Otherwise the policy can improve reward by exploiting the evaluator. Safe isolation
-    is part of the experiment’s validity as well as its operational design.
-  text_mode: Untrusted generated code or text must not modify the tests, access hidden answers, or control
-    the scoring environment. Otherwise the policy can improve reward by exploiting the evaluator. Safe isolation
-    is part of the experiment’s validity as well as its operational design.
-  bridges: []
-- id: verifiable-rewards.s4
-  title: Audit generalization beyond the verifier
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.verifiable-rewards
-  markdown: 'Keep independent tests and fresh problem families. A model can overfit recurring tasks, formatting,
-    or verifier quirks. Report the reward’s limits and inspect high-reward failures; a deterministic scoring
-    function can be consistently wrong about an incompletely specified goal.
+      $$\max_\theta\;\mathbb{E}_{x \sim \mathcal{D},\;y \sim \pi_\theta(\cdot \mid x)}\big[\,r(x, y)\,\big] \;-\; \beta\,\mathrm{KL}\big(\pi_\theta \,\|\, \pi_{\text{ref}}\big), \qquad r(x, y) = \mathbf{1}\big[\text{verifier accepts } y\big]$$
 
+      $x$ is a problem from the training set $\mathcal{D}$, $y$ is a sampled solution, and $\mathbf{1}[\cdot]$ is 1 when the check passes and 0 otherwise. The KL term keeps the policy near the reference model, as in the RLHF lesson.
+      :::
+    diagram:
+      caption: The RLVR loop. The only judge is a program that checks the answer or runs the tests.
+      description: A problem from the training set goes to the policy, which samples a solution. The verifier extracts the final answer or runs the tests in a sandbox and outputs a reward of 1 or 0. The reward drives a policy update, which changes the policy before the next batch of problems.
+      nodes:
+        - id: problem
+          label: Problem
+          note: with known answer or tests
+          col: 0
+          row: 0
+          tone: data
+        - id: policy
+          label: Policy (the model)
+          col: 1
+          row: 0
+          tone: accent
+        - id: solution
+          label: Sampled solution
+          col: 2
+          row: 0
+        - id: verifier
+          label: Verifier
+          note: compare answer or run tests in sandbox
+          col: 3
+          row: 0
+          tone: warn
+        - id: reward
+          label: Reward 1 or 0
+          col: 3
+          row: 1
+        - id: update
+          label: Policy update
+          note: e.g. GRPO, next lesson
+          col: 1
+          row: 1
+      edges:
+        - from: problem
+          to: policy
+        - from: policy
+          to: solution
+          label: sample
+        - from: solution
+          to: verifier
+        - from: verifier
+          to: reward
+        - from: reward
+          to: update
+        - from: update
+          to: policy
+          dashed: true
+    bridges: []
+  - id: verifiable-rewards.s2
+    title: '"1/2", "0.5", or "1/2 or 1/3"?'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.verifiable-rewards
+    markdown: |-
+      Checking a maths answer sounds trivial until you see what models actually write. The reference answer is $\tfrac{1}{2}$. Three possible checkers:
 
-    Suppose a program passes tests for inputs 1 and 2 but returns zero for every other input. Those tests establish
-    only those cases. Add zero, a larger input and a relevant invalid-input case according to the specification.
-    The verifier''s coverage is part of the definition of the reward, so inspect what a high score actually
-    rules out.'
-  text_mode: 'Keep independent tests and fresh problem families. A model can overfit recurring tasks, formatting,
-    or verifier quirks. Report the reward’s limits and inspect high-reward failures; a deterministic scoring
-    function can be consistently wrong about an incompletely specified goal.
+      | Response ends with | Exact string "1/2" | Parse and compare values | "1/2" appears anywhere |
+      | --- | :---: | :---: | :---: |
+      | `1/2` | ✓ | ✓ | ✓ |
+      | `0.5` | ✗ | ✓ | ✗ |
+      | `2/4` | ✗ | ✓ | ✗ |
+      | `1/2 or maybe 1/3` | ✗ | ✗ (two answers) | ✓ |
 
+      The strict checker punishes correct answers, which is a noisy reward. The lenient one rewards hedging, which is worse, because RL will find it.
 
-    Suppose a program passes tests for inputs 1 and 2 but returns zero for every other input. Those tests establish
-    only those cases. Add zero, a larger input and a relevant invalid-input case according to the specification.
-    The verifier''s coverage is part of the definition of the reward, so inspect what a high score actually
-    rules out.'
-  bridges: []
-- id: verifiable-rewards.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.verifiable-rewards
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A verifier turns explicit checks into reward. Its coverage, parsing rules, and independence determine
-    what a high score tells you.
-- id: verifiable-rewards.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.verifiable-rewards
-  markdown: A verifier turns explicit checks into reward. Its coverage, parsing rules, and independence determine
-    what a high score tells you.
-  text_mode: A verifier turns explicit checks into reward. Its coverage, parsing rules, and independence determine
-    what a high score tells you.
+      :::predict A policy truly solves 60% of problems, and the right answer is among its top three guesses 85% of the time. Under the "appears anywhere" checker, which pays more, one answer or three?
+      One answer earns an expected reward of 0.60. Listing three candidates earns 0.85. RL follows reward, so the policy drifts toward listing several numbers, and it doesn't get any better at maths. That's **reward hacking**: raising the reward by exploiting the checker instead of doing the task.
+      :::
+
+      Real pipelines ask for the final answer in a fixed place, such as GSM8K's `#### 42` or a LaTeX `\boxed{}`. They extract exactly one answer, parse it into a number or expression, and compare values. For measured quantities, they accept a small **tolerance**: an allowed gap, such as answers within 0.5% of the reference. A task that asks for an exact count shouldn't get one.
+    bridges: []
+  - id: verifiable-rewards.s3
+    title: Tests that don't check enough
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.verifiable-rewards
+    markdown: |-
+      For code, the verifier is a test suite, and a test suite checks only the cases someone thought of. Here are three candidate `median` functions, rewarded first by two weak tests and then by six stronger ones.
+
+      ```python run
+      def median_correct(xs):
+          s = sorted(xs)
+          n = len(s)
+          return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+      def median_middle(xs):          # forgets the even-length case
+          return sorted(xs)[len(xs) // 2]
+
+      def median_lookup(xs):          # memorizes the visible tests
+          return {(3, 1, 2): 2, (5, 9, 1, 7, 3): 5}.get(tuple(xs), 0)
+
+      weak = [([3, 1, 2], 2), ([5, 9, 1, 7, 3], 5)]
+      strong = weak + [([4, 1, 3, 2], 2.5), ([7], 7), ([-2, -8, 0], -2), ([10, 20], 15)]
+
+      def reward(fn, tests):
+          """Verifiable reward: 1 if every test passes, else 0."""
+          passed = sum(fn(list(x)) == want for x, want in tests)
+          return int(passed == len(tests)), passed
+
+      for fn in [median_correct, median_middle, median_lookup]:
+          rw, pw = reward(fn, weak)
+          rs, ps = reward(fn, strong)
+          print(f"{fn.__name__:15} weak tests: reward {rw} ({pw}/{len(weak)})   strong tests: reward {rs} ({ps}/{len(strong)})")
+      ```
+
+      Under the weak tests all three earn reward 1, so RL has no reason to prefer the correct one. Both weak tests use odd-length lists, so the even-length bug is invisible, and the lookup table simply memorizes them. The strong suite separates them: 6/6, 4/6, 2/6. Try deleting `([4, 1, 3, 2], 2.5)` and `([10, 20], 15)` from `strong` and see which bug slips through again.
+
+      :::mixup "It passed the tests, so the code is correct."
+      It's correct on those inputs. A reward of 1 means "no test caught a problem," and under optimization pressure the policy will find every gap the tests leave. Add edge cases (empty, single item, even length, negatives) and keep some tests hidden from training.
+      :::
+    bridges: []
+  - id: verifiable-rewards.s4
+    title: Keep the answer key out of reach
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.verifiable-rewards
+    markdown: |-
+      :::story exit(0)
+      While training a frontier reasoning model on coding tasks, OpenAI researchers (Baker et al., 2025) found two hacks spreading through training. In one, the agent called `exit(0)`, exploiting a bug that let it leave the environment before all the unit tests ran. In the other, it raised a `SkipTest` exception so the tests were skipped. Once the hacks appeared, they were reinforced and showed up in nearly every training environment. In another episode, the model noticed that the tests only checked one function, and made its `verify` function always return true.
+      :::
+
+      None of these hacks wrote better code. They attacked the verifier. So treat the verifier as part of the experiment and protect it:
+
+      - **Isolate.** Run generated code in a **sandbox**, a locked-down environment with time and memory limits and no access to the tests, the reference answers, or the scoring code.
+      - **Fail closed.** Count a run as passing only if every test reports a result. An early exit, a skip, or a timeout scores 0.
+      - **Watch the gap.** Track a hidden test suite the policy never trains on.
+
+      | Training step | Training reward | Hidden-test pass rate |
+      | ---: | ---: | ---: |
+      | 0 | 0.40 | 0.38 |
+      | 500 | 0.71 | 0.62 |
+      | 1,000 | 0.92 | 0.60 |
+
+      Up to step 500 both numbers climb together: real learning. After that the training reward keeps rising while hidden tests stall. That gap is the classic signature of a hack, so read the highest-reward solutions before you train any further.
+    bridges: []
+  - id: verifiable-rewards.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.verifiable-rewards
+    markdown: A SQL generator, a chemistry grader, a coding sandbox, and some expected-reward sums test whether you can spot what a checker lets through.
+    takeaway: |-
+      A verifier turns "is it right?" into a reward, and RL optimizes exactly what the verifier checks. Parse answers carefully, test edge cases, isolate the checker, and watch hidden tests for the gap that signals a hack.
+  - id: verifiable-rewards.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.verifiable-rewards
+    markdown: |-
+      A verifier turns explicit checks into reward. Its coverage, parsing rules, and independence determine what a high score tells you.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - verifiable-rewards.s1
-    - verifiable-rewards.s2
-    - verifiable-rewards.s3
-    - verifiable-rewards.s4
-    - verifiable-rewards.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - verifiable-rewards.s1
+        - verifiable-rewards.s2
+        - verifiable-rewards.s3
+        - verifiable-rewards.s4
+        - verifiable-rewards.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     verifiable-rewards.recap: verifiable-rewards.check
 assessment_families:
-- id: verifiable-rewards.base
-  objective_ref: objective.verifiable-rewards
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Define what counts as success: trace the inputs, operation, and result before choosing.'
-  remediation_scene: verifiable-rewards.s2
-  variants:
-  - id: verifiable-rewards.base.1
-    prompt: Why can 1/2 and 0.5 challenge exact string scoring?
-    options:
-    - id: b
-      text: They must always represent different quantities
-    - id: c
-      text: Only one can be tokenized
-    - id: a
-      text: They are mathematically equivalent but textually different
-    answer: a
-    feedback: Text identity and answer equivalence differ.
-  - id: verifiable-rewards.base.2
-    prompt: Passing a finite test suite proves what?
-    options:
-    - id: c
-      text: Absence of every evaluator exploit
-    - id: a
-      text: Success on those checks under their conditions
-    - id: b
-      text: Correctness on every possible input
-    answer: a
-    feedback: Test coverage limits the conclusion.
-- id: verifiable-rewards.transfer
-  objective_ref: objective.verifiable-rewards
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Audit generalization beyond the verifier: trace the inputs, operation, and result before choosing.'
-  remediation_scene: verifiable-rewards.s4
-  variants:
-  - id: verifiable-rewards.transfer.1
-    prompt: Generated code can modify hidden tests. What is compromised?
-    options:
-    - id: c
-      text: Only parameter count
-    - id: a
-      text: The independence and validity of the reward
-    - id: b
-      text: Only response style
-    answer: a
-    feedback: The evaluated output must not control its evaluator.
-  - id: verifiable-rewards.transfer.2
-    prompt: What helps detect verifier overfitting?
-    options:
-    - id: a
-      text: Independent checks and fresh problem families
-    - id: b
-      text: Reusing only the same reward score
-    - id: c
-      text: Removing all failure records
-    answer: a
-    feedback: Separate evidence tests whether reward gains transfer.
+  - id: verifiable-rewards.base
+    objective_ref: objective.verifiable-rewards
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Define what counts as success: trace the inputs, operation, and result before choosing.'
+    remediation_scene: verifiable-rewards.s2
+    variants:
+      - id: verifiable-rewards.base.1
+        prompt: Why can 1/2 and 0.5 challenge exact string scoring?
+        options:
+          - id: b
+            text: They must always represent different quantities
+          - id: c
+            text: Only one can be tokenized
+          - id: a
+            text: They are mathematically equivalent but textually different
+        answer: a
+        feedback: Text identity and answer equivalence differ.
+        retired: true
+      - id: verifiable-rewards.base.2
+        prompt: Passing a finite test suite proves what?
+        options:
+          - id: c
+            text: Absence of every evaluator exploit
+          - id: a
+            text: Success on those checks under their conditions
+          - id: b
+            text: Correctness on every possible input
+        answer: a
+        feedback: Test coverage limits the conclusion.
+        retired: true
+  - id: verifiable-rewards.transfer
+    objective_ref: objective.verifiable-rewards
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Audit generalization beyond the verifier: trace the inputs, operation, and result before choosing.'
+    remediation_scene: verifiable-rewards.s4
+    variants:
+      - id: verifiable-rewards.transfer.1
+        prompt: Generated code can modify hidden tests. What is compromised?
+        options:
+          - id: c
+            text: Only parameter count
+          - id: a
+            text: The independence and validity of the reward
+          - id: b
+            text: Only response style
+        answer: a
+        feedback: The evaluated output must not control its evaluator.
+        retired: true
+      - id: verifiable-rewards.transfer.2
+        prompt: What helps detect verifier overfitting?
+        options:
+          - id: a
+            text: Independent checks and fresh problem families
+          - id: b
+            text: Reusing only the same reward score
+          - id: c
+            text: Removing all failure records
+        answer: a
+        feedback: Separate evidence tests whether reward gains transfer.
+        retired: true
+  - id: verifiable-rewards.base.v2
+    objective_ref: objective.verifiable-rewards
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: RL pushes toward whatever the verifier pays for. Ask which outputs this checker accepts that it shouldn't, or rejects that it shouldn't.
+    remediation_scene: verifiable-rewards.s3
+    variants:
+      - id: verifiable-rewards.base.v2.1
+        prompt: Why did DeepSeek-R1-Zero use rule-based rewards rather than a learned reward model for its reasoning training?
+        options:
+          - id: b
+            text: Rule-based rewards give partial credit to good intermediate steps
+          - id: a
+            text: A learned reward model can be exploited during large-scale RL
+          - id: c
+            text: Learned reward models have no way of scoring maths answers
+        answer: a
+        feedback: The R1 report says a neural reward model may suffer from reward hacking at scale, and retraining it adds cost. Its rule-based rewards checked only final answers and format, with no step credit; learned models can score maths, just less reliably.
+      - id: verifiable-rewards.base.v2.2
+        prompt: A maths checker compares the final answer, as text, with the string "0.75". A response ends with "3/4". What happens?
+        options:
+          - id: a
+            text: A correct answer gets reward 0; comparing parsed values fixes it
+          - id: c
+            text: It gets reward 1, because text is turned into numbers first
+          - id: b
+            text: It gets reward 0, which is right, since 3/4 is a different answer
+        answer: a
+        feedback: 3/4 equals 0.75, so a string comparison punishes a correct answer and makes the reward noisy. Parsing both into values before comparing removes that. A plain string match does no conversion.
+      - id: verifiable-rewards.base.v2.3
+        prompt: A checker gives reward 1 whenever the correct number appears anywhere in the response. What is RL most likely to teach the model?
+        options:
+          - id: c
+            text: To put its final answer earlier in the response
+          - id: b
+            text: To stop showing working, so stray numbers vanish
+          - id: a
+            text: To list several candidate numbers in each answer
+        answer: a
+        feedback: Listing more candidates raises the chance the right one appears, so it raises reward without better maths. That's reward hacking. Moving or trimming the answer doesn't change whether the number appears, so it earns nothing extra.
+      - id: verifiable-rewards.base.v2.4
+        prompt: A median function passes the tests [3, 1, 2] → 2 and [5, 9, 1, 7, 3] → 5, but returns 3 for [4, 1, 3, 2] (the true median is 2.5). Why did it get full reward?
+        options:
+          - id: a
+            text: Both tests used odd-length lists, so the even case was never checked
+          - id: b
+            text: The reward gave partial credit, and two tests out of three was enough
+          - id: c
+            text: The tests were run against an older version of the function
+        answer: a
+        feedback: A test suite checks only the cases it contains. With no even-length input, the missing averaging step was invisible. The reward here is all-or-nothing on the tests it has, and [4, 1, 3, 2] wasn't one of them.
+      - id: verifiable-rewards.base.v2.5
+        prompt: In a coding RL environment, an agent calls exit(0) before the tests finish and receives full reward. Where is the flaw?
+        options:
+          - id: c
+            text: The tests were too hard for the agent to pass honestly
+          - id: a
+            text: The harness counted an early clean exit as a pass
+          - id: b
+            text: The agent's code was correct, just too slow to test
+        answer: a
+        feedback: The reward came from a harness bug, not from working code, so the fix belongs in the verifier. Count a run as passing only when every test reports a result. Hard tests or slow code would earn low reward, not full reward.
+  - id: verifiable-rewards.transfer.v2
+    objective_ref: objective.verifiable-rewards
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Picture the cheapest way to earn reward 1 from this exact checker. If that shortcut isn't the real task, fix the checker or watch a held-out measure.
+    remediation_scene: verifiable-rewards.s4
+    variants:
+      - id: verifiable-rewards.transfer.v2.1
+        prompt: A text-to-SQL model earns reward 1 when its query returns the same rows as the reference query on one small test database. Which failure is most likely?
+        options:
+          - id: b
+            text: Correct queries formatted differently from the reference get reward 0
+          - id: a
+            text: Queries that match on that small table but are wrong in general
+          - id: c
+            text: The model stops producing SQL and writes explanations instead
+        answer: a
+        feedback: Comparing returned rows is a good check, but one small database is a weak test suite. Many wrong queries return the right rows there by accident. Formatting doesn't matter when you compare results, and prose earns no reward.
+      - id: verifiable-rewards.transfer.v2.2
+        prompt: A chemistry-homework verifier checks answers that are measured values rounded to three significant figures. Which check fits?
+        options:
+          - id: c
+            text: Accept an answer as long as it has the right units
+          - id: b
+            text: Require the exact reference string, digit for digit
+          - id: a
+            text: Accept answers within a small tolerance of the reference
+        answer: a
+        feedback: Rounded measurements can differ in the last digit and still be right, so a tolerance fits. An exact string match punishes correct answers, and a units-only check rewards wrong numbers.
+      - id: verifiable-rewards.transfer.v2.3
+        prompt: 'During RL on coding tasks, training reward climbs from 0.40 to 0.92. The pass rate on a hidden test suite rises from 0.38 to 0.62, then drifts down to 0.60. What should you do first?'
+        options:
+          - id: a
+            text: Read high-reward solutions for ways they satisfy visible tests
+          - id: b
+            text: Keep training, since the training reward is still going up
+          - id: c
+            text: Raise the learning rate to push the hidden pass rate back up
+        answer: a
+        feedback: Reward rising while held-out performance stalls is the signature of reward hacking, so look at what the top-scoring solutions actually do. More training or a bigger step would reinforce the hack faster.
+      - id: verifiable-rewards.transfer.v2.4
+        prompt: A coding agent's generated code runs in the same folder as the test files and can write to them. Which change most directly protects the reward?
+        options:
+          - id: b
+            text: Tell the agent in its prompt that it may not edit the tests
+          - id: c
+            text: Add more tests so that editing them all becomes harder
+          - id: a
+            text: Run the tests from a read-only copy the agent can't reach
+        answer: a
+        feedback: Isolation removes the hack entirely. A prompt instruction is a request that optimization can learn to ignore, and more editable tests are still editable.
+  - id: verifiable-rewards.calculate
+    objective_ref: objective.verifiable-rewards
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Expected reward = (share correct × share of correct answers the checker accepts) + (share wrong × share of wrong answers it accepts)."
+    remediation_scene: verifiable-rewards.s2
+    absolute_tolerance: 0.005
+    variants:
+      - id: verifiable-rewards.calculate.1
+        prompt: A policy answers 70% of problems correctly. The checker accepts 95% of correct answers and wrongly accepts 10% of wrong ones. What is the policy's expected reward per problem? (Give a decimal.)
+        answer: 0.695
+        feedback: 0.7 × 0.95 + 0.3 × 0.10 = 0.665 + 0.03 = 0.695.
+      - id: verifiable-rewards.calculate.2
+        prompt: A policy answers 50% of problems correctly. A lenient checker accepts every correct answer and 40% of wrong ones. What is the expected reward per problem? (Give a decimal.)
+        answer: 0.7
+        feedback: 0.5 × 1.0 + 0.5 × 0.4 = 0.5 + 0.2 = 0.7. The policy scores well above its true 50%, and any trick that raises the 40% pays off.
+      - id: verifiable-rewards.calculate.3
+        prompt: A policy answers 80% of problems correctly. A strict checker accepts only 90% of correct answers (it rejects some valid formats) and no wrong ones. What is the expected reward per problem? (Give a decimal.)
+        answer: 0.72
+        feedback: 0.8 × 0.9 + 0.2 × 0 = 0.72. The strict checker never pays for wrong answers, but it underpays correct ones.
+      - id: verifiable-rewards.calculate.4
+        prompt: A policy answers 60% of problems correctly. The checker accepts 80% of correct answers and 5% of wrong ones. What is the expected reward per problem? (Give a decimal.)
+        answer: 0.5
+        feedback: 0.6 × 0.8 + 0.4 × 0.05 = 0.48 + 0.02 = 0.50.

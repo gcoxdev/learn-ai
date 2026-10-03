@@ -1,207 +1,394 @@
 schema_version: 0.2-draft
 lesson:
   id: numerical-computing
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: When the computer cannot store the exact number
   state: draft
-  summary: Understand rounding and keep numerical approximations under control.
+  summary: "In Python, 0.1 + 0.2 isn't 0.3, and in 16-bit numbers 2048 + 1 is 2048. See where a computer's numbers run out, and the tricks that keep softmax and training finite."
   slot: B18
   category: bridge
   sources:
-  - title: Deep Learning — numerical computation
-    url: https://www.deeplearningbook.org/contents/numerical.html
+    - title: Deep Learning — numerical computation
+      url: https://www.deeplearningbook.org/contents/numerical.html
 objectives:
-- id: objective.numerical-computing
-  version: 1-draft
-  statement: Floating-point formats trade range and precision; stable formulations, accumulation choices, and
-    error checks keep approximate computation useful.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - numerical-computing.base
-  - numerical-computing.transfer
-  prerequisites:
-  - anyOf:
-    - objective.powers-logs
+  - id: objective.numerical-computing
+    version: 2-draft
+    statement: Explain rounding, overflow, and underflow in floating-point formats, compute a softmax stably by subtracting the largest score, and compare approximate results with a tolerance.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - numerical-computing.base.v2
+      - numerical-computing.transfer.v2
+      - numerical-computing.calculate
+    prerequisites:
+      - anyOf:
+          - objective.powers-logs
 scenes:
-- id: numerical-computing.s1
-  title: Represent a finite approximation
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.numerical-computing
-  markdown: 'Floating-point numbers store a sign, a significand, and an exponent in a finite number of bits.
-    Range describes how large or small representable magnitudes can be; precision describes distinguishable
-    values near a scale. More exponent range does not automatically mean more precise nearby numbers.
+  - id: numerical-computing.s1
+    title: Why 0.1 + 0.2 isn't 0.3
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.numerical-computing
+    markdown: |-
+      Type `0.1 + 0.2` into Python and it answers `0.30000000000000004`. Nothing is broken. The computer simply can't store 0.1 exactly.
 
+      **Why AI needs this:** models train in 16-bit numbers to save memory and time, softmax exponentiates scores that can be huge, and gradient checks compare numbers that never match exactly. Each one depends on where a computer's numbers run out.
 
-    The decimal example 3.14 × 10² has significand 3.14 and exponent 2. Computer formats usually use powers
-    of two instead of ten. A finite format cannot store every real number exactly. Overflow means a result
-    is too large in magnitude for the format; underflow concerns values too small to retain with normal precision,
-    possibly rounding to zero. NaN means “not a number,” a marker used for invalid numerical results such as
-    0/0.'
-  text_mode: 'Floating-point numbers store a sign, a significand, and an exponent in a finite number of bits.
-    Range describes how large or small representable magnitudes can be; precision describes distinguishable
-    values near a scale. More exponent range does not automatically mean more precise nearby numbers.
+      A **floating-point** number is scientific notation in binary: a sign, a **significand** that holds the digits, and an **exponent** that says where the point goes (3.14 × 10² has significand 3.14 and exponent 2). With a fixed number of bits, only some numbers fit. One tenth in binary repeats forever, the way 1/3 = 0.333… does in decimal, so 0.1 and 0.2 are each stored slightly off, and their sum lands one step above the stored 0.3.
 
+      | Format | Bits | Largest value | Gap just above 1 |
+      | --- | ---: | ---: | ---: |
+      | float32 | 32 | about 3.4 × 10³⁸ | about 1.2 × 10⁻⁷ |
+      | float16 | 16 | 65,504 | about 0.001 |
+      | bfloat16 | 16 | about 3.4 × 10³⁸ | about 0.008 |
 
-    The decimal example 3.14 × 10² has significand 3.14 and exponent 2. Computer formats usually use powers
-    of two instead of ten. A finite format cannot store every real number exactly. Overflow means a result
-    is too large in magnitude for the format; underflow concerns values too small to retain with normal precision,
-    possibly rounding to zero. NaN means “not a number,” a marker used for invalid numerical results such as
-    0/0.'
-  bridges: []
-- id: numerical-computing.s2
-  title: Rounding can change an operation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.numerical-computing
-  markdown: In decimal arithmetic with only three significant digits, 1000 + 1 may round back to 1000. Adding
-    many small values before combining them with a large value can give a different result from another order.
-    Real floating-point formats differ, but the example explains why algebraically equivalent evaluation orders
-    may disagree numerically.
-  text_mode: In decimal arithmetic with only three significant digits, 1000 + 1 may round back to 1000. Adding
-    many small values before combining them with a large value can give a different result from another order.
-    Real floating-point formats differ, but the example explains why algebraically equivalent evaluation orders
-    may disagree numerically.
-  bridges:
-  - powers-logs
-- id: numerical-computing.s3
-  title: Keep softmax within a useful range
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.numerical-computing
-  markdown: Softmax exponentiates scores and divides by their total. Scores [1000, 1001] can overflow when
-    exponentiated directly. Subtract the largest score first, obtaining [−1, 0]. Both numerator and denominator
-    are scaled by the same factor, preserving the mathematical distribution while keeping exponentials manageable.
-    Related log-sum-exp formulas stabilize log probabilities.
-  text_mode: Softmax exponentiates scores and divides by their total. Scores [1000, 1001] can overflow when
-    exponentiated directly. Subtract the largest score first, obtaining [−1, 0]. Both numerator and denominator
-    are scaled by the same factor, preserving the mathematical distribution while keeping exponentials manageable.
-    Related log-sum-exp formulas stabilize log probabilities.
-  bridges: []
-- id: numerical-computing.s4
-  title: Trace where accuracy is needed
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.numerical-computing
-  markdown: 'Mixed-precision training may store or multiply some values in a small format while accumulating
-    sums or keeping optimizer state in a wider format. Loss scaling can keep some gradients away from underflow,
-    but cannot fix a wrong objective. Compare tolerances, reference calculations, gradients, and finite outputs
-    rather than demanding exact decimal equality everywhere.
+      Exponent bits buy **range** (how big or tiny a value can be); significand bits buy **precision** (how close neighboring values sit). A result past the largest value **overflows** to infinity. One too close to zero **underflows** to 0. Invalid results like ∞ − ∞ or 0 ÷ 0 become **NaN** ("not a number"), which spreads through every calculation it touches.
+    bridges: []
+  - id: numerical-computing.s2
+    title: Big numbers swallow small ones
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.numerical-computing
+    markdown: |-
+      The gaps between neighboring floats grow with size. In float16, neighbors near 1 sit about 0.001 apart, but neighbors near 2048 sit 2 apart: 2048, 2050, 2052…
 
+      So 2048 + 1 = 2049 has nowhere to go. It sits exactly halfway between two neighbors and rounds to 2048 (ties go to the "even" neighbor). A float16 counter that adds 1 at every step climbs to 2048 and stops there forever.
 
-    A tolerance is an allowed numerical difference. If a reference value is 1.0000 and an approximation is
-    1.0001, their absolute error is 0.0001. Whether that is acceptable depends on the task and scale. Check
-    both small worked values and representative workloads; approximate arithmetic is expected, but missing
-    a factor or using the wrong target is a different kind of error.'
-  text_mode: 'Mixed-precision training may store or multiply some values in a small format while accumulating
-    sums or keeping optimizer state in a wider format. Loss scaling can keep some gradients away from underflow,
-    but cannot fix a wrong objective. Compare tolerances, reference calculations, gradients, and finite outputs
-    rather than demanding exact decimal equality everywhere.
+      :::predict In float16, what is 2048 + 1 + 1 + 1 + 1, added left to right? And 2048 + (1 + 1 + 1 + 1)?
+      Left to right, every + 1 rounds back to 2048, so the answer is 2048. Grouping the small ones first makes 4, which is on the grid: 2052. Same numbers, different order, different answer. Floating-point addition isn't associative.
+      :::
 
+      This is why two GPUs summing the same gradients in different orders can disagree in the last digits. It also bites training: in float16 a weight of 1.0 plus an update of 0.0001 is still 1.0, since the update is less than half the gap. Mixed-precision training therefore keeps a float32 master copy of the weights and adds up long sums in float32.
 
-    A tolerance is an allowed numerical difference. If a reference value is 1.0000 and an approximation is
-    1.0001, their absolute error is 0.0001. Whether that is acceptable depends on the task and scale. Check
-    both small worked values and representative workloads; approximate arithmetic is expected, but missing
-    a factor or using the wrong target is a different kind of error.'
-  bridges: []
-- id: numerical-computing.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.numerical-computing
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Floating-point formats trade range and precision; stable formulations, accumulation choices, and
-    error checks keep approximate computation useful.
-- id: numerical-computing.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.numerical-computing
-  markdown: Floating-point formats trade range and precision; stable formulations, accumulation choices, and
-    error checks keep approximate computation useful.
-  text_mode: Floating-point formats trade range and precision; stable formulations, accumulation choices, and
-    error checks keep approximate computation useful.
+      ```python run
+      import numpy as np
+
+      print("0.1 + 0.2 =", 0.1 + 0.2)
+
+      total16, total32 = np.float16(0), np.float32(0)
+      for step in range(3000):                  # add 1.0 three thousand times
+          total16 += np.float16(1)
+          total32 += np.float32(1)
+      print("float16 running total:", float(total16))
+      print("float32 running total:", float(total32))
+
+      big, one = np.float16(2048), np.float16(1)
+      print("2048 + 1 + 1 + 1 + 1, left to right:", float(big + one + one + one + one))
+      print("2048 + (1 + 1 + 1 + 1):            ", float(big + (one + one + one + one)))
+      print("weight 1.0 + update 0.0001 in float16:", float(np.float16(1) + np.float16(0.0001)))
+      ```
+
+      The float16 total stalls at 2048.0 while float32 reaches 3000.0. Change `range(3000)` to `range(1000)` and both agree, because the trouble starts only past 2048.
+    bridges:
+      - powers-logs
+  - id: numerical-computing.s3
+    title: Subtract the largest score before softmax
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.numerical-computing
+    markdown: |-
+      Softmax turns scores into probabilities: exponentiate each score, then divide by the total, $p_i = e^{z_i} / \sum_j e^{z_j}$. Take scores [1000, 1001]:
+
+      1. **Naively**, e^1000 is about 10⁴³⁴, far past even float64's largest value (about 1.8 × 10³⁰⁸). Both exponentials overflow to ∞, and ∞ ÷ ∞ = NaN.
+      2. **Stably**, subtract the largest score, 1001, first: the scores become [−1, 0].
+      3. e^−1 ≈ 0.368 and e^0 = 1, so the total is 1.368.
+      4. The probabilities are 0.368 ÷ 1.368 ≈ **0.269** and 1 ÷ 1.368 ≈ **0.731**.
+
+      :::predict Subtracting 1001 changed the scores. Did it change the probabilities?
+      No. e^(z − m) = e^z ÷ e^m, so every term, top and bottom, is divided by the same e^m, and it cancels. The shift changes only which numbers the computer has to hold.
+      :::
+
+      Float16 runs out much sooner: e^12 ≈ 163,000 is already past 65,504, so scores of just 10 and 12 break a naive softmax.
+
+      ```python run
+      import numpy as np
+
+      def softmax_naive(z):
+          e = np.exp(z)
+          return e / e.sum()
+
+      def softmax_stable(z):
+          e = np.exp(z - z.max())       # the largest score becomes 0, and e**0 = 1
+          return e / e.sum()
+
+      for z in [np.array([1000.0, 1001.0]),              # float64 scores
+                np.array([10, 12], dtype=np.float16)]:   # float16 scores
+          with np.errstate(over="ignore", invalid="ignore"):
+              naive = softmax_naive(z)
+          print(f"scores {z}  ({z.dtype})")
+          print("  naive: ", naive)
+          print("  stable:", softmax_stable(z))
+
+      z = np.array([1000.0, 1001.0])
+      m = z.max()
+      print("log of sum of exp:", m + np.log(np.sum(np.exp(z - m))))
+      ```
+
+      The same trick gives the **log-sum-exp**, $\log \sum_j e^{z_j} = m + \log \sum_j e^{z_j - m}$, here 1001 + ln 1.368 ≈ 1001.313. Cross-entropy losses use it, which is why library loss functions take raw scores (logits) rather than probabilities.
+    bridges: []
+  - id: numerical-computing.s4
+    title: Compare with a tolerance, not ==
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.numerical-computing
+    markdown: |-
+      Since rounding is everywhere, test "close enough," not "equal." A **tolerance** is the difference you're willing to accept.
+
+      :::mixup "0.1 + 0.2 == 0.3 is False, so something is wrong with my code."
+      The rounding is correct and expected. Write `abs(a - b) < 1e-9`, or use `math.isclose(a, b)` or NumPy's `np.allclose`.
+      :::
+
+      Size matters, so compare the **relative error**, |a − b| ÷ the larger of |a| and |b|:
+
+      | Reference | Your result | Absolute error | Relative error |
+      | ---: | ---: | ---: | ---: |
+      | 1.0000 | 1.0001 | 0.0001 | 0.0001 |
+      | 0.0002 | 0.0003 | 0.0001 | 0.33 |
+
+      The same absolute error is harmless in the first row and a 33% miss in the second. The lesson on gradient checks uses exactly this ratio: a relative error near 10⁻⁷ in float64 is rounding, while something like 0.5 means a real bug, such as a dropped factor of 2. The lessons on stable training and mixed-precision training pick up from here.
+    bridges: []
+  - id: numerical-computing.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.numerical-computing
+    markdown: Round numbers in float16, run stable softmax on new scores, and diagnose a stalled counter, a frozen weight, and two GPUs that disagree.
+    takeaway: |-
+      Floats are rounded to a grid whose gaps grow with size, and each format has a largest and smallest value. Subtract the largest score before exponentiating, keep long sums in wider formats, and compare results with a tolerance.
+  - id: numerical-computing.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.numerical-computing
+    markdown: |-
+      Floating-point formats trade range and precision; stable formulations, accumulation choices, and error checks keep approximate computation useful.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - numerical-computing.s1
-    - numerical-computing.s2
-    - numerical-computing.s3
-    - numerical-computing.s4
-    - numerical-computing.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - numerical-computing.s1
+        - numerical-computing.s2
+        - numerical-computing.s3
+        - numerical-computing.s4
+        - numerical-computing.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     numerical-computing.recap: numerical-computing.check
 assessment_families:
-- id: numerical-computing.base
-  objective_ref: objective.numerical-computing
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Rounding can change an operation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: numerical-computing.s2
-  variants:
-  - id: numerical-computing.base.1
-    prompt: Which property describes the spacing of representable nearby values?
-    options:
-    - id: c
-      text: File size alone
-    - id: a
-      text: Precision
-    - id: b
-      text: Only exponent range
-    answer: a
-    feedback: Precision limits how finely values can be distinguished at a given scale.
-  - id: numerical-computing.base.2
-    prompt: Why subtract the maximum score before softmax?
-    options:
-    - id: a
-      text: To reduce overflow risk while preserving relative weights
-    - id: b
-      text: To force all outcomes equally likely
-    - id: c
-      text: To make every masked score positive
-    answer: a
-    feedback: A common score shift cancels between the numerator and denominator.
-- id: numerical-computing.transfer
-  objective_ref: objective.numerical-computing
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Trace where accuracy is needed: trace the inputs, operation, and result before choosing.'
-  remediation_scene: numerical-computing.s4
-  variants:
-  - id: numerical-computing.transfer.1
-    prompt: Two parallel reductions differ in their last digits. What is a plausible cause?
-    options:
-    - id: a
-      text: Different rounding from addition order
-    - id: b
-      text: Proof that the mathematical sum is undefined
-    - id: c
-      text: A necessary change in training labels
-    answer: a
-    feedback: Floating-point addition is not perfectly associative.
-  - id: numerical-computing.transfer.2
-    prompt: A small gradient becomes zero in a narrow format. What problem may be occurring?
-    options:
-    - id: b
-      text: Guaranteed convergence
-    - id: c
-      text: A new symbolic rule
-    - id: a
-      text: Underflow or insufficient representable precision
-    answer: a
-    feedback: A stored zero can result from numerical representation rather than a true zero derivative.
+  - id: numerical-computing.base
+    objective_ref: objective.numerical-computing
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask whether the number fits the format's grid of values, and whether a shift or a wider format keeps it there.
+    remediation_scene: numerical-computing.s2
+    variants:
+      - id: numerical-computing.base.1
+        prompt: Which property describes the spacing of representable nearby values?
+        options:
+          - id: c
+            text: File size alone
+          - id: a
+            text: Precision
+          - id: b
+            text: Only exponent range
+        answer: a
+        feedback: Precision limits how finely values can be distinguished at a given scale.
+        retired: true
+      - id: numerical-computing.base.2
+        prompt: Why subtract the maximum score before softmax?
+        options:
+          - id: a
+            text: To reduce overflow risk while preserving relative weights
+          - id: b
+            text: To force all outcomes equally likely
+          - id: c
+            text: To make every masked score positive
+        answer: a
+        feedback: A common score shift cancels between the numerator and denominator.
+        retired: true
+  - id: numerical-computing.transfer
+    objective_ref: objective.numerical-computing
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask whether a small value is being lost to rounding or underflow, and where a wider format would keep it.
+    remediation_scene: numerical-computing.s4
+    variants:
+      - id: numerical-computing.transfer.1
+        prompt: Two parallel reductions differ in their last digits. What is a plausible cause?
+        options:
+          - id: a
+            text: Different rounding from addition order
+          - id: b
+            text: Proof that the mathematical sum is undefined
+          - id: c
+            text: A necessary change in training labels
+        answer: a
+        feedback: Floating-point addition is not perfectly associative.
+        retired: true
+      - id: numerical-computing.transfer.2
+        prompt: A small gradient becomes zero in a narrow format. What problem may be occurring?
+        options:
+          - id: b
+            text: Guaranteed convergence
+          - id: c
+            text: A new symbolic rule
+          - id: a
+            text: Underflow or insufficient representable precision
+        answer: a
+        feedback: A stored zero can result from numerical representation rather than a true zero derivative.
+        retired: true
+  - id: numerical-computing.base.v2
+    objective_ref: objective.numerical-computing
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Picture the grid of values the format can hold: how far apart the neighbors are at this size, and where the largest value is."
+    remediation_scene: numerical-computing.s2
+    variants:
+      - id: numerical-computing.base.v2.1
+        prompt: In float16, 2048 + 1 gives 2048. What causes this?
+        options:
+          - id: b
+            text: 2049 is larger than the biggest value float16 can hold
+          - id: c
+            text: The 1 underflows to zero before it is added
+          - id: a
+            text: Near 2048, neighboring float16 values are 2 apart
+        answer: a
+        feedback: At this size float16's neighbors are 2048, 2050, 2052…, so 2049 rounds back to 2048. It isn't overflow (float16 goes up to 65,504), and 1 is stored exactly.
+      - id: numerical-computing.base.v2.2
+        prompt: Why does a stable softmax subtract the largest score from every score first?
+        options:
+          - id: c
+            text: So the largest score's probability becomes exactly 1
+          - id: a
+            text: So no exponential overflows, with the same probabilities
+          - id: b
+            text: So the probabilities change a little but stay finite
+        answer: a
+        feedback: e^(z − m) = e^z ÷ e^m, and the common factor e^m cancels between top and bottom, so the probabilities are unchanged. The largest score becomes 0 and its exponential 1, but its probability is still that 1 divided by the total.
+      - id: numerical-computing.base.v2.3
+        prompt: A layer's activations sometimes reach 100,000. Which 16-bit format can store that value without overflowing?
+        options:
+          - id: b
+            text: float16, because it has more significand bits
+          - id: a
+            text: bfloat16, because it keeps float32's exponent range
+          - id: c
+            text: Either one, because both formats use 16 bits
+        answer: a
+        feedback: float16's largest value is 65,504, so 100,000 overflows to infinity. bfloat16 spends more bits on the exponent and reaches about 3.4 × 10³⁸. float16's extra significand bits buy precision, not range.
+      - id: numerical-computing.base.v2.4
+        prompt: A unit test adds 0.1 and 0.2, then checks total == 0.3, and fails. What is the best fix?
+        options:
+          - id: c
+            text: Add them in the other order, 0.2 + 0.1, before comparing
+          - id: b
+            text: Store both in float16 so there are fewer digits to disagree
+          - id: a
+            text: Compare with a tolerance, such as math.isclose(total, 0.3)
+        answer: a
+        feedback: Neither 0.1 nor 0.2 is stored exactly, so exact equality is the wrong test. Changing the order gives the same rounded result here, and float16 rounds even more coarsely.
+      - id: numerical-computing.base.v2.5
+        prompt: A naive softmax on scores [900, 905] returns [nan, nan]. What happened?
+        options:
+          - id: a
+            text: Both exponentials overflowed to infinity, and ∞ ÷ ∞ is NaN
+          - id: b
+            text: Both exponentials underflowed to zero, and 0 ÷ 0 is NaN
+          - id: c
+            text: The scores differ by 5, which is too much for softmax
+        answer: a
+        feedback: e^900 is far beyond float64's largest value, about 1.8 × 10³⁰⁸, so both terms become ∞, and ∞ ÷ ∞ is undefined. Subtracting 905 first gives scores [−5, 0], which are easy to exponentiate.
+  - id: numerical-computing.transfer.v2
+    objective_ref: objective.numerical-computing
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Find the step where a value leaves the format's grid (too big, too small, or smaller than the gap to its neighbor), then choose the fix aimed at that step.
+    remediation_scene: numerical-computing.s4
+    variants:
+      - id: numerical-computing.transfer.v2.1
+        prompt: A float16 model's weights stop changing, although its updates are about 0.0001 and the weights are about 1.0. What is the standard fix?
+        options:
+          - id: b
+            text: Switch the weights to bfloat16 so they can hold a bigger range
+          - id: c
+            text: Raise the learning rate until the updates show up in float16
+          - id: a
+            text: Keep a float32 master copy of the weights and apply updates to it
+        answer: a
+        feedback: Near 1.0, float16's neighbors are about 0.001 apart, so an update of 0.0001 rounds away. A float32 copy has gaps near 10⁻⁷ and keeps every update. bfloat16's gaps are even wider, and a bigger learning rate changes the training itself.
+      - id: numerical-computing.transfer.v2.2
+        prompt: A program scores a 200-word sentence by multiplying its words' probabilities, each about 0.01, and gets exactly 0.0. What should it do instead?
+        options:
+          - id: c
+            text: Use float16, which is designed for small numbers
+          - id: a
+            text: Add the words' log probabilities instead
+          - id: b
+            text: Round each probability up to 0.1 first
+        answer: a
+        feedback: 0.01²⁰⁰ = 10⁻⁴⁰⁰, which underflows even in float64, whose smallest values are around 10⁻³²⁴. Log probabilities add to about −921 (natural log), which is easy to store. float16 underflows far sooner, and rounding changes the answer.
+      - id: numerical-computing.transfer.v2.3
+        prompt: Two GPUs sum the same million gradient values and disagree in the seventh significant digit. What is the most likely cause?
+        options:
+          - id: a
+            text: They added the values in different orders, so rounding differed
+          - id: b
+            text: One GPU has a hardware fault that corrupts its results
+          - id: c
+            text: One GPU skipped some values that were too small to add
+        answer: a
+        feedback: Floating-point addition isn't associative, so a different order rounds differently, and float32 keeps only about 7 significant digits. A hardware fault or skipped values would usually cause much larger or random differences.
+      - id: numerical-computing.transfer.v2.4
+        prompt: A logging script keeps a float16 count of training steps. The dashboard shows the count stuck at 2048 for hours. What is the fix?
+        options:
+          - id: b
+            text: Reset the counter to 0 each time it reaches 2048
+          - id: a
+            text: Keep the counter as an integer or in float32
+          - id: c
+            text: Add 2 per step, then divide the count by 2 when printing
+        answer: a
+        feedback: Past 2048, float16's neighbors are 2 apart, so adding 1 rounds back to 2048. An integer or float32 has room for exact counts. Resetting loses the count, and adding 2 per step stalls at 4096, where the gap is 4 and 4096 + 2 rounds back to 4096. That is still after 2048 steps.
+  - id: numerical-computing.calculate
+    objective_ref: objective.numerical-computing
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Subtract the largest score from every score, exponentiate (e⁰ = 1, e⁻¹ ≈ 0.368, e⁻² ≈ 0.135, e⁻³ ≈ 0.050), then divide by the total.
+    remediation_scene: numerical-computing.s3
+    absolute_tolerance: 0.005
+    variants:
+      - id: numerical-computing.calculate.1
+        prompt: Scores are [1000, 1001]. Using a stable softmax, what probability goes to the score 1001? (e⁻¹ ≈ 0.368; give three decimals.)
+        answer: 0.731
+        feedback: Subtract 1001 to get [−1, 0], exponentiate to [0.368, 1], and divide by the total 1.368. The 1001 score gets 1 ÷ 1.368 ≈ 0.731.
+      - id: numerical-computing.calculate.2
+        prompt: Scores are [500, 502]. Using a stable softmax, what probability goes to the score 502? (e⁻² ≈ 0.135; give three decimals.)
+        answer: 0.881
+        feedback: Subtract 502 to get [−2, 0], exponentiate to [0.135, 1], and divide by 1.135. The 502 score gets 1 ÷ 1.135 ≈ 0.881.
+      - id: numerical-computing.calculate.3
+        prompt: Scores are [30, 30, 29]. Using a stable softmax, what probability goes to the score 29? (e⁻¹ ≈ 0.368; give three decimals.)
+        answer: 0.155
+        feedback: Subtract 30 to get [0, 0, −1], exponentiate to [1, 1, 0.368], and divide by 2.368. The 29 score gets 0.368 ÷ 2.368 ≈ 0.155.
+      - id: numerical-computing.calculate.4
+        prompt: Scores are [−1000, −1003]. A naive softmax gives NaN, because both exponentials underflow to 0. Using a stable softmax, what probability goes to the score −1000? (e⁻³ ≈ 0.050; give three decimals.)
+        answer: 0.953
+        feedback: The largest score is −1000, so subtracting it gives [0, −3], which exponentiate to [1, 0.050]. The −1000 score gets 1 ÷ 1.050 ≈ 0.952 (0.953 with an unrounded e⁻³). The naive version fails only because of the format, not the math.
+      - id: numerical-computing.calculate.5
+        prompt: Scores are [700, 698, 698]. Using a stable softmax, what probability goes to the score 700? (e⁻² ≈ 0.135; give three decimals.)
+        answer: 0.787
+        feedback: Subtract 700 to get [0, −2, −2], exponentiate to [1, 0.135, 0.135], and divide by 1.27. The 700 score gets 1 ÷ 1.27 ≈ 0.787.

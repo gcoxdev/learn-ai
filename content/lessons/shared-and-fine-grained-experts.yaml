@@ -4,203 +4,378 @@ lesson:
   version: 0.3.0-draft
   title: Separate always-on experts from routed specialists
   state: draft
-  summary: Compare one wide expert with several narrow ones, including any branch that every token always uses.
+  summary: DeepSeek-V3 gives each token 1 always-on expert plus 8 picked from 256. See why many small experts beat a few big ones, and how a tiny bias keeps them all busy.
   slot: M18.6
   category: learning
   sources:
-  - title: DeepSeekMoE
-    url: https://arxiv.org/abs/2401.06066
+    - title: "DeepSeekMoE: Towards Ultimate Expert Specialization in Mixture-of-Experts Language Models (Dai et al., 2024)"
+      url: https://arxiv.org/abs/2401.06066
+    - title: "DeepSeek-V3 Technical Report (DeepSeek-AI, 2024)"
+      url: https://arxiv.org/abs/2412.19437
+    - title: "Auxiliary-Loss-Free Load Balancing Strategy for Mixture-of-Experts (Wang et al., 2024)"
+      url: https://arxiv.org/abs/2408.15664
 objectives:
-- id: objective.shared-and-fine-grained-experts
-  version: 1-draft
-  statement: MoE designs can combine shared experts with routed experts and vary expert granularity; compare
-    their aggregate widths, active selections, and communication instead of expert count alone.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - shared-and-fine-grained-experts.base
-  - shared-and-fine-grained-experts.transfer
-  prerequisites:
-  - anyOf:
-    - objective.moe-parameter-accounting
-  - anyOf:
-    - objective.expert-capacity-and-balance
+  - id: objective.shared-and-fine-grained-experts
+    version: 2-draft
+    statement: MoE designs can combine shared experts with routed experts and vary expert granularity; compare their aggregate widths, active selections, and communication instead of expert count alone.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - shared-and-fine-grained-experts.base.v2
+      - shared-and-fine-grained-experts.transfer.v2
+      - shared-and-fine-grained-experts.calculate
+    prerequisites:
+      - anyOf:
+          - objective.moe-parameter-accounting
+      - anyOf:
+          - objective.expert-capacity-and-balance
 scenes:
-- id: shared-and-fine-grained-experts.s1
-  title: Always-on and selected branches
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.shared-and-fine-grained-experts
-  markdown: 'A shared expert processes every token in the relevant layer, while routed experts process selected
-    assignments. Their outputs are combined according to the architecture. Shared experts are distinct from
-    the shared attention and normalization components that may already exist outside the MoE block.
+  - id: shared-and-fine-grained-experts.s1
+    title: One expert that every token uses
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.shared-and-fine-grained-experts
+    markdown: |-
+      Mixtral's layers have 8 experts, and each token uses 2. DeepSeek-V3's layers look very different: 1 **shared expert** that runs on every token, plus 256 **routed experts**, of which the router picks 8. That's 9 experts per token, each far smaller than Mixtral's.
 
+      These two ideas come from DeepSeekMoE (Dai et al., January 2024). The shared expert is a plain feed-forward network with no gate: it always runs and its output is always added. The authors' reasoning: some knowledge is useful to almost every token. Without a shared expert, many routed experts each learn their own copy of it; with one, routed experts can spend their weights on rarer patterns.
 
-    Imagine one shared branch and four routed branches. A top-one token runs the shared branch plus one selected
-    branch, not just one branch overall. The formula says how their outputs combine. Do not accidentally omit
-    always-on computation when reporting active parameters or work.'
-  text_mode: 'A shared expert processes every token in the relevant layer, while routed experts process selected
-    assignments. Their outputs are combined according to the architecture. Shared experts are distinct from
-    the shared attention and normalization components that may already exist outside the MoE block.
+      :::papers A layer with shared and routed experts
+      $$h' = h + \sum_{i=1}^{N_s} \text{FFN}^{(s)}_i(h) + \sum_{i=1}^{N_r} g_i\, \text{FFN}^{(r)}_i(h)$$
 
+      $N_s$ shared experts are simply added. $N_r$ routed experts are weighted by gates $g_i$, which are zero except for the $K_r$ chosen ones. In DeepSeek-V3, $N_s = 1$, $N_r = 256$, and $K_r = 8$.
+      :::
 
-    Imagine one shared branch and four routed branches. A top-one token runs the shared branch plus one selected
-    branch, not just one branch overall. The formula says how their outputs combine. Do not accidentally omit
-    always-on computation when reporting active parameters or work.'
-  bridges: []
-- id: shared-and-fine-grained-experts.s2
-  title: Use more experts with smaller internal widths
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.shared-and-fine-grained-experts
-  markdown: '**Granularity** describes the size of the individual expert pieces. Instead of four wide experts,
-    a model might use more narrow ones and select several for each token. **Intermediate width** is the number
-    of internal feature coordinates in a feed-forward expert.
+      :::mixup "Each token uses 8 experts, so count 8 when working out active parameters."
+      Count the shared expert too: it runs for every token. DeepSeek-V3 tokens use 9 experts per MoE layer, and that ninth one is never skipped.
+      :::
+    bridges: []
+  - id: shared-and-fine-grained-experts.s2
+    title: Cut each expert into smaller pieces
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.shared-and-fine-grained-experts
+    markdown: |-
+      DeepSeekMoE's second idea is **fine-grained experts**: split each expert into $m$ narrower ones and pick $m$ times as many. The expert's **intermediate width** (the number of hidden units inside its feed-forward network) shrinks by $m$, so parameters and compute don't change.
 
+      Start from a Mixtral-sized layer, width 4,096, with 16 experts and top-2. Split each into $m = 4$ pieces:
 
-    Smaller pieces allow more combinations, but also change routing overhead, operation sizes, and load patterns.
-    Dividing one wide expert into several narrow ones does not automatically preserve its function. Expert
-    count alone therefore tells us little about capacity or efficiency.'
-  text_mode: '**Granularity** describes the size of the individual expert pieces. Instead of four wide experts,
-    a model might use more narrow ones and select several for each token. **Intermediate width** is the number
-    of internal feature coordinates in a feed-forward expert.
+      | | 16 coarse experts, top-2 | 64 fine experts, top-8 |
+      | --- | ---: | ---: |
+      | Intermediate width per expert | 14,336 | 3,584 |
+      | Parameters per expert ($3 \times 4{,}096 \times$ width) | 176M | 44M |
+      | Parameters used per token | 2 × 176M = 352M | 8 × 44M = 352M |
+      | Stored expert parameters | 16 × 176M = 2.8B | 64 × 44M = 2.8B |
+      | Possible expert combinations | 120 | 4,426,165,368 |
 
+      Same storage, same compute, but 37 million times as many ways to mix experts. The DeepSeekMoE paper uses exactly this 120 versus 4,426,165,368 example. More combinations let each small expert specialize narrowly while a token still assembles what it needs.
 
-    Smaller pieces allow more combinations, but also change routing overhead, operation sizes, and load patterns.
-    Dividing one wide expert into several narrow ones does not automatically preserve its function. Expert
-    count alone therefore tells us little about capacity or efficiency.'
-  bridges: []
-- id: shared-and-fine-grained-experts.s3
-  title: Compare a toy active-width budget
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.shared-and-fine-grained-experts
-  markdown: 'One selected width-16 expert and two selected width-8 experts have the same summed intermediate
-    width in a simplified feed-forward count. They are not automatically equivalent functions: their parameters,
-    routing combinations, nonlinearities, and shared branches can differ. Count actual matrix shapes and operations.
+      :::predict Why not split every expert into 100 pieces?
+      Each piece's matrix multiplication gets smaller, and small matrix multiplications use a GPU poorly. The router also has more scores to compute, and each token's vector is sent to more experts. Real designs stop well short of that: DeepSeekMoE 16B uses quarter-size experts.
+      :::
 
+      So expert count alone hides a lot: DeepSeek-V3's 256 experts each have a width of 2,048, a seventh of Mixtral's 14,336.
+    bridges: []
+  - id: shared-and-fine-grained-experts.bias
+    title: Balance by nudging, not by penalty
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.shared-and-fine-grained-experts
+    markdown: |-
+      The last lesson's auxiliary loss balances load, but a strong one also pulls the router away from the task. DeepSeek-V3 mostly replaced it with **auxiliary-loss-free balancing** (Wang et al., 2024): each expert gets a bias $b_i$ that is added to its score *only to choose the top-k*. The gate values still come from the original scores.
 
-    In the simplified comparison, 1 × 16 = 2 × 8 = 16 units of active intermediate width. Yet the two width-8
-    experts can have separate weights and gates. Equal arithmetic in one count is a fair comparison condition,
-    not evidence that the models make equal predictions.'
-  text_mode: 'One selected width-16 expert and two selected width-8 experts have the same summed intermediate
-    width in a simplified feed-forward count. They are not automatically equivalent functions: their parameters,
-    routing combinations, nonlinearities, and shared branches can differ. Count actual matrix shapes and operations.
+      After each training step, every overloaded expert's bias goes down by a small step $\gamma$ and every underloaded expert's bias goes up by $\gamma$. (DeepSeek-V3 used $\gamma = 0.001$ for most of training, plus a very small sequence-level balance loss as a backstop.)
 
+      Work one token. DeepSeek-V3 scores experts with a sigmoid, so each score lies between 0 and 1:
 
-    In the simplified comparison, 1 × 16 = 2 × 8 = 16 units of active intermediate width. Yet the two width-8
-    experts can have separate weights and gates. Equal arithmetic in one count is a fair comparison condition,
-    not evidence that the models make equal predictions.'
-  bridges: []
-- id: shared-and-fine-grained-experts.s4
-  title: Test the architectural hypothesis
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.shared-and-fine-grained-experts
-  markdown: A design may hope shared computation captures recurring features while routing adds differentiated
-    capacity. That is a hypothesis to evaluate with ablations, routing statistics, and task results. Human
-    labels such as generalist and specialist should not substitute for measurements of learned behavior.
-  text_mode: A design may hope shared computation captures recurring features while routing adds differentiated
-    capacity. That is a hypothesis to evaluate with ablations, routing statistics, and task results. Human
-    labels such as generalist and specialist should not substitute for measurements of learned behavior.
-  bridges: []
-- id: shared-and-fine-grained-experts.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.shared-and-fine-grained-experts
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Include always-on experts as well as selected ones. Compare their widths, operations, and routing
-    combinations; more expert names do not by themselves imply more useful computation.
-- id: shared-and-fine-grained-experts.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.shared-and-fine-grained-experts
-  markdown: Include always-on experts as well as selected ones. Compare their widths, operations, and routing
-    combinations; more expert names do not by themselves imply more useful computation.
-  text_mode: Include always-on experts as well as selected ones. Compare their widths, operations, and routing
-    combinations; more expert names do not by themselves imply more useful computation.
+      | Expert | E1 | E2 | E3 | E4 |
+      | --- | ---: | ---: | ---: | ---: |
+      | Score $s_i$ | 0.90 | 0.75 | 0.70 | 0.30 |
+      | Bias $b_i$ (E1 has been overloaded) | −0.20 | −0.10 | +0.10 | +0.20 |
+      | $s_i + b_i$, used to choose top-2 | 0.70 | 0.65 | **0.80** | 0.50 |
+
+      Without biases the token would go to E1 and E2. With them it goes to E3 and E1. The gates use the original scores, normalized over the chosen pair: $0.70 / (0.70 + 0.90) = 0.4375$ for E3 and $0.90 / 1.60 = 0.5625$ for E1.
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(0)
+      N, k, T, gamma = 4, 2, 400, 0.05
+      skew = np.array([1.0, 0.5, 0.0, -0.5])            # router favors E1, neglects E4
+      b = np.zeros(N)                                    # one bias per expert
+
+      for step in range(1, 13):
+          s = 1 / (1 + np.exp(-(rng.normal(size=(T, N)) + skew)))   # sigmoid scores
+          top = np.argsort(-(s + b), axis=1)[:, :k]      # bias used only to SELECT
+          load = np.bincount(top.ravel(), minlength=N)
+          b -= gamma * np.sign(load - T * k / N)         # overloaded down, underloaded up
+          if step in (1, 2, 4, 8, 12):
+              print(f"step {step:2}: loads {load}  biases {b.round(2)}")
+
+      g = np.take_along_axis(s, top, axis=1)             # gates use ORIGINAL scores
+      g = g / g.sum(axis=1, keepdims=True)
+      print("first token's experts:", top[0] + 1, " gates:", g[0].round(3))
+      ```
+
+      The loads start at 322 versus 99 (a fair share is 200) By step 4 all four are within 15 of it, and after that they hover nearby, without any extra loss term. Try `gamma = 0.005`: the loads creep toward even far more slowly, because each nudge is ten times smaller.
+    bridges: []
+  - id: shared-and-fine-grained-experts.s3
+    title: Match the active width before comparing
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.shared-and-fine-grained-experts
+    markdown: |-
+      When you compare two MoE designs, add up the intermediate widths a token actually uses, shared experts included. One routed expert of width 16 and two routed experts of width 8 both give an active width of 16. Put a shared expert of width 8 in the second design and its active width becomes 24, so it now does 50% more feed-forward work per token.
+
+      DeepSeekMoE 16B shows the bookkeeping. Each layer has 2 shared and 64 routed experts, each a quarter the size of a standard feed-forward block, and each token uses the 2 shared plus 6 routed. That's 8 quarter-size experts, or twice a standard block's work. The model has about 16.4B parameters in total, with about 2.8B active.
+
+      Matching the active width makes a comparison fair on compute. It doesn't mean the two designs will behave the same, because the small experts can be combined in many more ways.
+    bridges: []
+  - id: shared-and-fine-grained-experts.s4
+    title: Test the design, don't trust the labels
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.shared-and-fine-grained-experts
+    markdown: |-
+      "The shared expert holds common knowledge" is a hypothesis, and the DeepSeekMoE authors tested it the way you should: with **ablations**, training matched models with a piece removed or changed and comparing them. They reported that DeepSeekMoE 2B matched GShard 2.9B, a model with 1.5 times its expert parameters and computation, and that DeepSeekMoE 16B roughly matched LLaMA2 7B with about 40% of its computation.
+
+      Suppose your team adds a shared expert and quality improves. Before crediting "common knowledge," train a model with one extra routed expert per token instead, at the same compute. If it does just as well, the gain came from extra width, not the shared design.
+
+      A quick count shows where DeepSeek-V3's size lives. Each expert has $3 \times 7{,}168 \times 2{,}048 \approx 44$M weights, and there are 257 per layer in 58 MoE layers. That's about 657B of the model's 671B. Each token touches 9 × 58 of them, about 23B; attention, embeddings, and three dense layers make up the rest of its 37B active.
+    bridges: []
+  - id: shared-and-fine-grained-experts.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.shared-and-fine-grained-experts
+    markdown: Count active experts with shared ones included, split experts without changing the budget, and pick experts and gates when biases are in play.
+    takeaway: |-
+      Shared experts run for every token; routed experts are picked. Splitting experts finer keeps the cost but multiplies the combinations, and a selection-only bias keeps many small experts evenly loaded.
+  - id: shared-and-fine-grained-experts.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.shared-and-fine-grained-experts
+    markdown: |-
+      Include always-on experts as well as selected ones. Compare their widths, operations, and routing combinations; more expert names do not by themselves imply more useful computation.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - shared-and-fine-grained-experts.s1
-    - shared-and-fine-grained-experts.s2
-    - shared-and-fine-grained-experts.s3
-    - shared-and-fine-grained-experts.s4
-    - shared-and-fine-grained-experts.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - shared-and-fine-grained-experts.s1
+        - shared-and-fine-grained-experts.s2
+        - shared-and-fine-grained-experts.bias
+        - shared-and-fine-grained-experts.s3
+        - shared-and-fine-grained-experts.s4
+        - shared-and-fine-grained-experts.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     shared-and-fine-grained-experts.recap: shared-and-fine-grained-experts.check
 assessment_families:
-- id: shared-and-fine-grained-experts.base
-  objective_ref: objective.shared-and-fine-grained-experts
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Split capacity into smaller experts: trace the inputs, operation, and result before choosing.'
-  remediation_scene: shared-and-fine-grained-experts.s2
-  variants:
-  - id: shared-and-fine-grained-experts.base.1
-    prompt: Which tokens use a shared expert in its layer?
-    options:
-    - id: b
-      text: Only one permanently chosen word
-    - id: c
-      text: Only tokens with unknown spelling
-    - id: a
-      text: Every token under the stated architecture
-    answer: a
-    feedback: Shared experts are always-on branches.
-  - id: shared-and-fine-grained-experts.base.2
-    prompt: Does a larger expert count always mean more parameters?
-    options:
-    - id: c
-      text: Only total vocabulary matters
-    - id: a
-      text: No; expert widths and other components matter
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Granularity changes what one expert contains.
-- id: shared-and-fine-grained-experts.transfer
-  objective_ref: objective.shared-and-fine-grained-experts
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Test the architectural hypothesis: trace the inputs, operation, and result before choosing.'
-  remediation_scene: shared-and-fine-grained-experts.s4
-  variants:
-  - id: shared-and-fine-grained-experts.transfer.1
-    prompt: 'Two selected width-8 experts versus one width-16 expert: what is equal in the toy count?'
-    options:
-    - id: c
-      text: Every communication pattern
-    - id: a
-      text: Summed selected intermediate width
-    - id: b
-      text: The complete learned function
-    answer: a
-    feedback: Matching one resource measure does not imply identical models.
-  - id: shared-and-fine-grained-experts.transfer.2
-    prompt: How should claimed shared-versus-specialized behavior be checked?
-    options:
-    - id: a
-      text: With ablations and measured routing or behavior
-    - id: b
-      text: By the expert names alone
-    - id: c
-      text: By parameter file ordering
-    answer: a
-    feedback: Architectural intent requires empirical evidence.
+  - id: shared-and-fine-grained-experts.base
+    objective_ref: objective.shared-and-fine-grained-experts
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Split capacity into smaller experts: trace the inputs, operation, and result before choosing.'
+    remediation_scene: shared-and-fine-grained-experts.s2
+    variants:
+      - id: shared-and-fine-grained-experts.base.1
+        prompt: Which tokens use a shared expert in its layer?
+        options:
+          - id: b
+            text: Only one permanently chosen word
+          - id: c
+            text: Only tokens with unknown spelling
+          - id: a
+            text: Every token under the stated architecture
+        answer: a
+        feedback: Shared experts are always-on branches.
+        retired: true
+      - id: shared-and-fine-grained-experts.base.2
+        prompt: Does a larger expert count always mean more parameters?
+        options:
+          - id: c
+            text: Only total vocabulary matters
+          - id: a
+            text: No; expert widths and other components matter
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Granularity changes what one expert contains.
+        retired: true
+  - id: shared-and-fine-grained-experts.transfer
+    objective_ref: objective.shared-and-fine-grained-experts
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Test the architectural hypothesis: trace the inputs, operation, and result before choosing.'
+    remediation_scene: shared-and-fine-grained-experts.s4
+    variants:
+      - id: shared-and-fine-grained-experts.transfer.1
+        prompt: 'Two selected width-8 experts versus one width-16 expert: what is equal in the toy count?'
+        options:
+          - id: c
+            text: Every communication pattern
+          - id: a
+            text: Summed selected intermediate width
+          - id: b
+            text: The complete learned function
+        answer: a
+        feedback: Matching one resource measure does not imply identical models.
+        retired: true
+      - id: shared-and-fine-grained-experts.transfer.2
+        prompt: How should claimed shared-versus-specialized behavior be checked?
+        options:
+          - id: a
+            text: With ablations and measured routing or behavior
+          - id: b
+            text: By the expert names alone
+          - id: c
+            text: By parameter file ordering
+        answer: a
+        feedback: Architectural intent requires empirical evidence.
+        retired: true
+  - id: shared-and-fine-grained-experts.base.v2
+    objective_ref: objective.shared-and-fine-grained-experts
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Keep three things apart. Shared experts always run, splitting experts changes their number and size but not the budget, and a balancing bias changes only which experts are chosen.
+    remediation_scene: shared-and-fine-grained-experts.s1
+    variants:
+      - id: shared-and-fine-grained-experts.base.v2.1
+        prompt: In a DeepSeekMoE-style layer, what distinguishes a shared expert from a routed one?
+        options:
+          - id: b
+            text: It runs when the router scores it highest, and its gate is set to 1
+          - id: a
+            text: It runs on each token, and its output is added with no router gate
+          - id: c
+            text: It is one expert's weights reused in each layer to save memory
+        answer: a
+        feedback: A shared expert bypasses the router entirely; it always runs and is simply added. It isn't chosen by score, and each layer has its own shared expert with its own weights.
+      - id: shared-and-fine-grained-experts.base.v2.2
+        prompt: A layer's 16 experts are each split into 4 quarter-width experts, and routing changes from top-2 to top-8. What stays the same?
+        options:
+          - id: c
+            text: Stored parameters stay the same, but active ones grow fourfold
+          - id: b
+            text: Active parameters stay the same, but stored ones grow fourfold
+          - id: a
+            text: Both the stored and the active expert parameters stay the same
+        answer: a
+        feedback: 64 quarter-size experts store as much as 16 full ones, and 8 quarter-size experts do as much work as 2 full ones. What changes is the number of possible combinations, from 120 to about 4.4 billion.
+      - id: shared-and-fine-grained-experts.base.v2.3
+        prompt: In DeepSeek-V3's auxiliary-loss-free balancing, what does an expert's bias bᵢ change?
+        options:
+          - id: a
+            text: Which experts are chosen, while gates use the original scores
+          - id: b
+            text: The gate weight of that expert whenever the expert is chosen
+          - id: c
+            text: The size of a penalty term added to the model's training loss
+        answer: a
+        feedback: The bias is added to scores only for the top-k choice; the gates are then computed from the unbiased scores. That's what makes it loss-free, unlike the Switch balance loss.
+      - id: shared-and-fine-grained-experts.base.v2.4
+        prompt: According to the DeepSeekMoE authors, what is the main benefit of fine-grained experts?
+        options:
+          - id: b
+            text: They cut the compute per token by using narrower experts
+          - id: c
+            text: They shrink the total model by removing duplicate experts
+          - id: a
+            text: Far more expert combinations, so pieces can specialize narrowly
+        answer: a
+        feedback: Splitting keeps both compute and storage the same; it multiplies the ways a token can combine experts. Removing duplicated knowledge is the shared expert's job, not the split's.
+  - id: shared-and-fine-grained-experts.transfer.v2
+    objective_ref: objective.shared-and-fine-grained-experts
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Compare designs by the widths a token actually uses, shared experts included, and remember that a balancing bias moves selection, not gate values.
+    remediation_scene: shared-and-fine-grained-experts.s3
+    variants:
+      - id: shared-and-fine-grained-experts.transfer.v2.1
+        prompt: 'A slide says: "Model B has 32 experts per layer and Model A has 8, so B is 4 times as big." A uses width-16 experts with top-2; B uses width-4 experts with top-8. What is the best correction?'
+        options:
+          - id: b
+            text: B is 4 times as big but does the same work per token as A
+          - id: a
+            text: The two store and use the same total expert width per token
+          - id: c
+            text: B is smaller, because each of its experts is a quarter as wide
+        answer: a
+        feedback: A stores 8 × 16 = 128 units of width and B stores 32 × 4 = 128; per token A uses 2 × 16 = 32 and B uses 8 × 4 = 32. Expert count alone says nothing about size.
+      - id: shared-and-fine-grained-experts.transfer.v2.2
+        prompt: Under DeepSeek-V3-style balancing, expert 7 is overloaded for several training steps in a row. What happens?
+        options:
+          - id: c
+            text: Expert 7's gate weights are scaled down whenever it is chosen
+          - id: a
+            text: Its bias drops by γ each step, so it is chosen less often
+          - id: b
+            text: Its bias rises by γ each step, so its scores are trusted more
+        answer: a
+        feedback: Overloaded experts have their bias lowered, which pushes them out of more tokens' top-k lists. Gates still use the original scores, so a token that does choose expert 7 weights it as before.
+      - id: shared-and-fine-grained-experts.transfer.v2.3
+        prompt: An engineer reports the active expert parameters of a layer with 2 shared and 64 routed experts, top-6, by counting 6 experts. What did the count miss?
+        options:
+          - id: a
+            text: The 2 shared experts, which run on each token as well
+          - id: b
+            text: The 58 routed experts that the router did not choose
+          - id: c
+            text: The per-expert biases used to balance the expert loads
+        answer: a
+        feedback: Each token uses 2 shared + 6 routed = 8 experts. Unchosen routed experts do no work for the token, and biases are single numbers, not parameters that multiply the token.
+      - id: shared-and-fine-grained-experts.transfer.v2.4
+        prompt: A team adds a shared expert and quality improves. They want to know whether the shared design itself helped. Which test answers that?
+        options:
+          - id: b
+            text: Delete the shared expert from the trained model and measure the drop
+          - id: c
+            text: Check that the shared expert has the largest weights in the layer
+          - id: a
+            text: Train a matched model with an extra routed expert per token instead
+        answer: a
+        feedback: A model given the same extra width as routed experts separates "shared design" from "more compute." Deleting a part from a trained model hurts because the rest learned to rely on it, and weight size says nothing about function.
+  - id: shared-and-fine-grained-experts.calculate
+    objective_ref: objective.shared-and-fine-grained-experts
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Count shared experts plus chosen routed experts. When biases are present, add them to the scores to choose, then compute gates from the original scores of the chosen experts.
+    remediation_scene: shared-and-fine-grained-experts.bias
+    absolute_tolerance: 0.001
+    variants:
+      - id: shared-and-fine-grained-experts.calculate.1
+        prompt: A layer has 2 shared experts and 64 routed experts, and each token uses the top 6 routed experts. Every expert has 44 million parameters. How many million expert parameters does one token use in this layer?
+        answer: 352
+        feedback: The token uses 2 shared + 6 routed = 8 experts, and 8 × 44M = 352M.
+      - id: shared-and-fine-grained-experts.calculate.2
+        prompt: A DeepSeek-V3 MoE layer has 1 shared expert and 256 routed experts, with 8 routed experts chosen per token. Each expert has 44 million parameters. How many million expert parameters does one token use in this layer?
+        answer: 396
+        feedback: 1 shared + 8 routed = 9 experts, and 9 × 44M = 396M. Forgetting the shared expert gives 352M.
+      - id: shared-and-fine-grained-experts.calculate.3
+        prompt: A token's sigmoid scores for four experts are [0.90, 0.75, 0.70, 0.30] and the biases are [−0.20, −0.10, +0.10, +0.20]. Top-2 is chosen from score + bias, and gates are the chosen experts' original scores normalized to sum to 1. What is expert 1's gate?
+        answer: 0.5625
+        feedback: Score + bias is [0.70, 0.65, 0.80, 0.50], so experts 3 and 1 are chosen. Expert 1's gate is 0.90 / (0.90 + 0.70) = 0.5625, from the original scores.
+      - id: shared-and-fine-grained-experts.calculate.4
+        prompt: A token's sigmoid scores for four experts are [0.80, 0.60, 0.50, 0.40] and the biases are [0, 0, +0.20, 0]. Top-2 is chosen from score + bias, and gates are the chosen experts' original scores normalized to sum to 1. What is expert 3's gate?
+        answer: 0.3846
+        feedback: Score + bias is [0.80, 0.60, 0.70, 0.40], so experts 1 and 3 are chosen. Expert 3's gate is 0.50 / (0.80 + 0.50) ≈ 0.3846, using its original score of 0.50, not 0.70.
+      - id: shared-and-fine-grained-experts.calculate.5
+        prompt: Each of 16 experts with 200 million parameters is split into 4 equal fine-grained experts. How many million parameters does each new expert have?
+        answer: 50
+        feedback: 200M ÷ 4 = 50M per piece. There are now 64 experts, still 3.2 billion parameters in total.

@@ -1,209 +1,464 @@
 schema_version: 0.2-draft
 lesson:
   id: ablation-and-reproduction-project
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: 'Project: reproduce a result and audit an ablation'
   state: draft
-  summary: Repeat a small result, change one choice, and explain both the gain and the failure.
+  summary: A paper credits ridge regression with a six-point gain. Rerun it, pull the recipe apart with a seeded 2×2 ablation, and find out which ingredient really did the work.
   slot: M36.7
   category: learning
   minutes: 50
   sources:
-  - title: Introduction to Information Retrieval — authors’ online edition
-    url: https://nlp.stanford.edu/IR-book/
-  - title: An Introduction to Statistical Learning — authors’ materials
-    url: https://www.statlearning.com/
+    - title: Deep Reinforcement Learning that Matters (Henderson et al., 2018)
+      url: https://arxiv.org/abs/1709.06560
+    - title: An Introduction to Statistical Learning — authors’ materials
+      url: https://www.statlearning.com/
 objectives:
-- id: objective.ablation-and-reproduction-project
-  version: 1-draft
-  statement: Reproduce a small specified result, isolate an ablation, and report uncertainty and deviations
-    before claiming a mechanism caused an improvement.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - ablation-and-reproduction-project.base
-  - ablation-and-reproduction-project.transfer
-  prerequisites:
-  - anyOf:
-    - objective.controlled-experiments
-  - anyOf:
-    - objective.research-reporting
-  - anyOf:
-    - objective.tiny-language-model-project
+  - id: objective.ablation-and-reproduction-project
+    version: 2-draft
+    statement: Preregister a reproduction, run a seeded 2×2 ablation, and report each effect and their interaction with confidence intervals before crediting any one component.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - ablation-and-reproduction-project.base.v2
+      - ablation-and-reproduction-project.transfer.v2
+      - ablation-and-reproduction-project.effects.v2
+    prerequisites:
+      - anyOf:
+          - objective.controlled-experiments
+      - anyOf:
+          - objective.research-reporting
+      - anyOf:
+          - objective.tiny-language-model-project
 scenes:
-- id: ablation-and-reproduction-project.s1
-  title: Reproduce a fully specified baseline
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.ablation-and-reproduction-project
-  markdown: 'An **ablation** changes or removes one component to study its contribution. First reproduce a
-    baseline using the three-sentence corpus, vocabulary, and C1 counts from the tiny language-model project.
+  - id: ablation-and-reproduction-project.s1
+    title: A paper says ridge adds six points
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.ablation-and-reproduction-project
+    markdown: |-
+      Your team is about to adopt a trick from a short workshop paper (made up for this project, but typical of real ones). Its abstract reads:
 
+      > *On the Sensor-20 task, with only 30 training examples, ridge regression (λ = 10) raises test accuracy from 77.1 ± 2.0% to 83.2 ± 1.5%, a gain of 6.1 ± 1.9 points (95% intervals over 20 random seeds). Features were standardized.*
 
-    Evaluate the reserved transitions red→cat and red→dog with equal weight. With add-one smoothing, both probabilities
-    are 2/7. Mean **negative log likelihood**, the score −ln(p) averaged over the targets, is about 1.253 **nats**.
-    A nat is the unit used with the natural logarithm.
+      Your lead asks one question: "Is it the ridge?" Read the last sentence again. The paper changed **two** things at once, ridge and standardizing, just like the math tutor in the lesson on controlled experiments that switched prompt and model together.
 
+      **Your brief**
 
-    Record this protocol before changing anything. Paper calculations or a local script are sufficient, and
-    you may use the supplied decimals. The key is to understand why a zero-probability target receives an unbounded
-    penalty, rather than to calculate logarithms by hand.'
-  text_mode: 'An **ablation** changes or removes one component to study its contribution. First reproduce a
-    baseline using the three-sentence corpus, vocabulary, and C1 counts from the tiny language-model project.
+      | | |
+      | --- | --- |
+      | Goal | Reproduce the paper's two headline numbers, then find out which change caused the gain |
+      | Audience | A teammate deciding whether to switch on ridge in their own pipeline |
+      | Done looks like | A one-page note: your written plan, a 2×2 table of means with 95% intervals, the effect of each change, and a two-sentence recommendation |
+      | Time | About 50 minutes, with or without code |
 
+      A **reproduction** reruns someone else's experiment and checks that you get the same result within its stated uncertainty. An **ablation** removes or adds one component while holding everything else fixed. You'll do both, in that order: first make sure you can get the paper's numbers, then take its recipe apart.
+  - id: ablation-and-reproduction-project.plan
+    title: Write the plan before you run anything
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.ablation-and-reproduction-project
+    markdown: |-
+      **Milestone 1: preregister.** (Revisit *Change one thing and measure what follows* for why.) Before any result exists, write down what you'll compare and how you'll decide. Here is a complete plan; copy it into your note and adjust it if you change anything.
 
-    Evaluate the reserved transitions red→cat and red→dog with equal weight. With add-one smoothing, both probabilities
-    are 2/7. Mean **negative log likelihood**, the score −ln(p) averaged over the targets, is about 1.253 **nats**.
-    A nat is the unit used with the natural logarithm.
+      > **Question.** Does ridge improve accuracy, and does its effect depend on standardizing?
+      > **Design.** All four combinations of standardize (off/on) × ridge (λ = 0 / λ = 10), trained on the *same* training set within each seed.
+      > **Seeds.** 0 to 19, matching the paper.
+      > **Metric.** Accuracy on 2,000 fresh test examples per seed.
+      > **Analysis.** For each comparison, the per-seed difference, its mean, and a 95% t-interval. An effect counts as supported if its interval excludes zero.
+      > **Reproduced** if our baseline mean, full-recipe mean and gain all fall inside the paper's intervals.
 
+      **The data.** Sensor-20 is synthetic, so you can generate it exactly. Each example has 20 readings and a label of 0 or 1:
 
-    Record this protocol before changing anything. Paper calculations or a local script are sufficient, and
-    you may use the supplied decimals. The key is to understand why a zero-probability target receives an unbounded
-    penalty, rather than to calculate logarithms by hand.'
-  bridges: []
-- id: ablation-and-reproduction-project.s2
-  title: Ablate one choice
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.ablation-and-reproduction-project
-  markdown: 'Remove smoothing while keeping corpus, vocabulary, and evaluation fixed. Both held-out probabilities
-    become 1/2, so mean negative log likelihood is about 0.693. This is a valid result for this restricted
-    test. Now define a separate stress test red→blue: the unsmoothed model assigns zero, giving infinite negative
-    log likelihood, while smoothing gives 1/7, about 1.946 nats.'
-  text_mode: 'Remove smoothing while keeping corpus, vocabulary, and evaluation fixed. Both held-out probabilities
-    become 1/2, so mean negative log likelihood is about 0.693. This is a valid result for this restricted
-    test. Now define a separate stress test red→blue: the unsmoothed model assigns zero, giving infinite negative
-    log likelihood, while smoothing gives 1/7, about 1.946 nats.'
-  bridges:
-  - powers-logs
-  - statistics-evidence
-- id: ablation-and-reproduction-project.s3
-  title: Interpret without moving the goalposts
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.ablation-and-reproduction-project
-  markdown: The ablation improves the first metric yet fails on the unseen-transition stress case. Report both
-    test definitions and why they differ; do not silently replace the original metric after seeing a favorable
-    result. This deterministic toy needs no invented seed variance. For a stochastic neural reproduction, repeat
-    independent runs and report variability, compute limits, and deviations from the paper.
-  text_mode: The ablation improves the first metric yet fails on the unseen-transition stress case. Report
-    both test definitions and why they differ; do not silently replace the original metric after seeing a favorable
-    result. This deterministic toy needs no invented seed variance. For a stochastic neural reproduction, repeat
-    independent runs and report variability, compute limits, and deviations from the paper.
-  bridges: []
-- id: ablation-and-reproduction-project.s4
-  title: Write the reproduction note
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.ablation-and-reproduction-project
-  markdown: Save protocol, expected and observed calculations, ablation, stress test, and one conclusion with
-    limits. Score reproducibility, one-variable control, complete outcome reporting, and defensible interpretation
-    0–2 each. A reviewer should be able to repeat the arithmetic without guessing. Quiz success checks concepts,
-    not your report; a surprising or negative result can still be a successful reproduction exercise.
-  text_mode: Save protocol, expected and observed calculations, ablation, stress test, and one conclusion with
-    limits. Score reproducibility, one-variable control, complete outcome reporting, and defensible interpretation
-    0–2 each. A reviewer should be able to repeat the arithmetic without guessing. Quiz success checks concepts,
-    not your report; a surprising or negative result can still be a successful reproduction exercise.
-  bridges: []
-- id: ablation-and-reproduction-project.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.ablation-and-reproduction-project
-  markdown: Try these questions to check the ideas behind your project. Use the lesson’s rubric for self or
-    peer review of your work; the app does not grade the project artifact.
-  text_mode: Try these questions to check the ideas behind your project. Use the lesson’s rubric for self or
-    peer review of your work; the app does not grade the project artifact.
-  takeaway: Reproduce the baseline, change one choice, and report both the original comparison and any separate
-    stress tests. An improvement on one test can coexist with a new failure.
-- id: ablation-and-reproduction-project.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.ablation-and-reproduction-project
-  markdown: Reproduce the baseline, change one choice, and report both the original comparison and any separate
-    stress tests. An improvement on one test can coexist with a new failure.
-  text_mode: Reproduce the baseline, change one choice, and report both the original comparison and any separate
-    stress tests. An improvement on one test can coexist with a new failure.
+      | Reading | How it's made | Carries signal? |
+      | --- | --- | --- |
+      | 0 | (standard normal + 1.5 × sign) × 0.01, where sign is +1 for label 1 and −1 for label 0 | Strong, but in tiny units |
+      | 1 | standard normal + 0.5 × sign | Weak |
+      | 2–19 | standard normal | None |
+
+      Reading 0 behaves like a length recorded in kilometers when everything else is in meters: a strong clue written in very small numbers. Each seed draws 30 training examples and 2,000 test examples with NumPy's `default_rng(seed)`.
+
+      The model is a least-squares classifier: fit weights $w$ so that $Zw$ is close to the labels written as ±1, and predict label 1 when $Zw > 0$. Here $Z$ is the readings after subtracting each column's mean, and, when standardizing, dividing by each column's standard deviation. Ridge adds a penalty $\lambda \lVert w \rVert^2$ that pulls weights toward zero, the regularizer from the lesson *Why a simpler model can predict better*.
+  - id: ablation-and-reproduction-project.s2
+    title: Reproduce the headline, then fill the 2×2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.ablation-and-reproduction-project
+    markdown: |-
+      **Milestone 2: reproduce.** Run the baseline (no standardizing, no ridge) and the full recipe (both). **Milestone 3: ablate.** Add the two single-change cells. The reference solution does all four at once:
+
+      ```python run
+      import numpy as np
+
+      SEEDS = 20                                      # preregistered: the paper's 20 seeds
+      T95 = {5: 2.776, 10: 2.262, 20: 2.093}[SEEDS]   # t value for a 95% interval
+
+      def make_data(rng, n):
+          """20 readings per example. Reading 0 is informative but recorded in tiny units."""
+          y = rng.integers(0, 2, n)
+          sign = 2 * y - 1
+          X = rng.normal(0, 1, (n, 20))
+          X[:, 0] = 0.01 * (X[:, 0] + 1.5 * sign)    # strong signal, tiny numbers
+          X[:, 1] += 0.5 * sign                       # weak signal; readings 2-19 are noise
+          return X, y
+
+      def fit(X, y, standardize, lam):
+          mu, sd = X.mean(0), X.std(0) if standardize else np.ones(20)
+          Z = (X - mu) / sd
+          w = np.linalg.solve(Z.T @ Z + lam * np.eye(20), Z.T @ (2 * y - 1.0))  # lam = 0: least squares
+          return lambda Xn: ((Xn - mu) / sd @ w > 0).astype(int)
+
+      cells = {"baseline": (False, 0), "+ standardize": (True, 0),
+               "+ ridge": (False, 10), "+ both (paper)": (True, 10)}
+      acc = {name: [] for name in cells}
+      for seed in range(SEEDS):
+          rng = np.random.default_rng(seed)
+          X_train, y_train = make_data(rng, 30)
+          X_test, y_test = make_data(rng, 2000)
+          for name, (std, lam) in cells.items():
+              acc[name].append(100 * np.mean(fit(X_train, y_train, std, lam)(X_test) == y_test))
+      acc = {name: np.array(v) for name, v in acc.items()}
+
+      def ci(v, sign=""):
+          half = T95 * v.std(ddof=1) / np.sqrt(len(v))    # 95% t-interval over seeds
+          return f"{v.mean():{sign}5.1f} ± {half:.1f}"
+
+      for name, v in acc.items():
+          print(f"{name:15s} {ci(v)}   vs baseline {ci(v - acc['baseline'], '+')}")
+      ridge_with = acc["+ both (paper)"] - acc["+ standardize"]
+      ridge_without = acc["+ ridge"] - acc["baseline"]
+      print(f"ridge effect: {ci(ridge_with, '+')} with standardizing, {ci(ridge_without, '+')} without")
+      ```
+
+      **Expected output** (check yours against it):
+
+      | Cell | Accuracy (%) | Change vs baseline (points) |
+      | --- | ---: | ---: |
+      | Baseline | 76.9 ± 2.1 | +0.0 ± 0.0 |
+      | + standardize | 76.9 ± 2.1 | +0.0 ± 0.0 |
+      | + ridge | 59.4 ± 1.1 | −17.5 ± 2.3 |
+      | + both (paper) | 82.9 ± 1.4 | +6.0 ± 1.8 |
+
+      The last line adds: ridge's effect is +6.0 ± 1.8 with standardizing and −17.5 ± 2.3 without.
+
+      The reproduction succeeds. The paper reported 77.1 → 83.2 (+6.1); you got 76.9 → 82.9 (+6.0), and all three of your numbers sit inside the paper's intervals. Your numbers won't match to the decimal, and they shouldn't have to: a different random-number library draws different training sets. What must match is the result within its uncertainty.
+
+      :::predict Suppose you had only run 5 seeds. Set `SEEDS = 5`. Does the paper's gain still count as supported under your plan?
+      No. The five-seed gain is +4.8 ± 6.7 points, an interval from −1.9 to +11.5 that includes zero. The per-seed gains were 12.40, 2.75, 6.05, −2.45, and 5.30: mostly positive, but spread widely, and one seed went the other way. Five seeds couldn't tell a real gain from luck. Twenty narrowed the interval to ±1.8, enough to decide.
+      :::
+  - id: ablation-and-reproduction-project.s3
+    title: Standardizing alone does exactly nothing
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.ablation-and-reproduction-project
+    markdown: |-
+      **Milestone 4: interpret.** (The lesson *Make conclusions match the strength of the experiment* is the guide here.) Read the table one comparison at a time.
+
+      - **Standardizing alone: +0.0 ± 0.0, on every seed.** Plain least squares doesn't care about units. Divide a reading by 100 and the fitted weight for it grows 100-fold, so every prediction stays identical. A result of *exactly* zero is a clue about the mechanism, not bad luck.
+      - **Ridge alone: −17.5 points.** Ridge charges for large weights. Reading 0 is written in tiny numbers, so using it needs a very large weight, which ridge makes expensive. The model gives up its best clue and leans on the weak reading and the noise.
+      - **Both: +6.0 points.** Once every reading is on the same scale, ridge's charge is fair to all of them. It now shrinks the 18 noise readings, which is exactly what helps with only 30 training examples.
+
+      So the honest answer to "Is it the ridge?" is: *ridge helps only with standardized readings*. The effect of one change depends on the other, which is an **interaction**. Measure it as a difference of differences: +6.0 − (−17.5) = 23.5 points. The paper's one comparison, baseline against both, could never have shown this.
+
+      :::papers The two formulas in this project
+      Ridge picks the weights
+
+      $$\hat w = \arg\min_w \lVert y - Zw \rVert^2 + \lambda \lVert w \rVert^2 = (Z^\top Z + \lambda I)^{-1} Z^\top y$$
+
+      with $y$ the labels as ±1, $Z$ the centered (and maybe standardized) readings, and $\lambda = 10$. The code's `np.linalg.solve` line computes exactly this; $\lambda = 0$ is plain least squares.
+
+      The 95% interval for a mean of $n$ paired seed differences $d_i$ is
+
+      $$\bar d \pm t_{0.975,\,n-1}\,\frac{s_d}{\sqrt n}$$
+
+      For the five-seed gain: $\bar d = 4.81$, $s_d = 5.39$, $t_{0.975,4} = 2.776$, so $4.81 \pm 2.776 \times 5.39 / \sqrt 5 = 4.81 \pm 6.69$.
+      :::
+
+      :::mixup "Standardizing added nothing on its own, so the paper was right to credit ridge."
+      Ridge on its own made things 17.5 points *worse*. Neither change gets the credit alone; the gain belongs to the combination. When a single-change cell looks like zero, check whether the other change depends on it before calling that component useless.
+      :::
+
+      Your recommendation to the teammate can now be concrete: "Switch on ridge only after standardizing. Without it, ridge cost 17.5 points in our runs."
+  - id: ablation-and-reproduction-project.mistakes
+    title: Five ways this project goes wrong
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.ablation-and-reproduction-project
+    markdown: |-
+      Each of these produces a table that looks fine. Here's how to catch them.
+
+      | Mistake | How to spot it | Fix |
+      | --- | --- | --- |
+      | Different training sets in different cells | Your "+ standardize" row isn't exactly equal to baseline | Draw the data once per seed, then fit all four cells on it |
+      | Unpaired intervals | Two cells' intervals overlap, so you call the difference noise | Build the interval on the per-seed *differences*, as the lesson on controlled experiments showed |
+      | Standardizing with test statistics | The code computes means from the test set | Take `mu` and `sd` from training data only |
+      | Changing the plan after seeing results | Your note names a new metric or drops a seed | Keep the preregistered analysis as primary; label anything added later as exploratory |
+      | Reporting only the paper's comparison | Your table has two rows, not four | Fill the whole 2×2, or the interaction stays invisible |
+
+      :::try Break it on purpose
+      In the code, move `X_train, y_train = make_data(rng, 30)` inside the inner loop, so each cell draws its own training set. Rerun. The standardize row stops matching baseline exactly, and the change intervals widen. That's what an unpaired ablation costs.
+      :::
+  - id: ablation-and-reproduction-project.s4
+    title: Write the note and score it
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.ablation-and-reproduction-project
+    markdown: |-
+      **Milestone 5: report.** Your note has five parts, following the lesson *Make the result possible to inspect*: the preregistered plan, the reproduction check (paper's numbers beside yours), the 2×2 table, the interaction, and a recommendation with one limitation a reader can act on, such as "Tested only with λ = 10 and 30 training examples; retune λ before using ridge on larger data."
+
+      **No-code option.** Use this five-seed table and a calculator or spreadsheet. Compute each row's mean, the per-seed difference from baseline, and a 95% interval with $t = 2.776$. Your results should match the five-seed answer in the predict question of milestone 3.
+
+      | Seed | Baseline | + standardize | + ridge | + both |
+      | ---: | ---: | ---: | ---: | ---: |
+      | 0 | 78.80 | 78.80 | 62.75 | 91.20 |
+      | 1 | 80.80 | 80.80 | 62.45 | 83.55 |
+      | 2 | 79.90 | 79.90 | 54.30 | 85.95 |
+      | 3 | 86.10 | 86.10 | 59.15 | 83.65 |
+      | 4 | 77.25 | 77.25 | 57.75 | 82.55 |
+
+      **Rubric.** Score your note, or swap with a friend and score each other's.
+
+      | Criterion | Not yet | Solid | Excellent |
+      | --- | --- | --- | --- |
+      | Plan | Written after the results | Written first, names metric and seeds | Also states the decision rule and what counts as reproduced |
+      | Reproduction | Paper's numbers missing | Both headline numbers compared | Compared within stated intervals, differences in setup listed |
+      | Ablation | One or two cells | All four cells on the same seeds | Paired differences, and the zero-change row explained |
+      | Uncertainty | Means only | Interval for each comparison | Shows how the five-seed and twenty-seed conclusions differ |
+      | Conclusion | "Ridge helps" | Names the interaction | Actionable recommendation plus one concrete limitation |
+
+      The questions below check the concepts; the rubric is how you judge the project itself.
+  - id: ablation-and-reproduction-project.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.ablation-and-reproduction-project
+    markdown: |-
+      Read the Sensor-20 table again, compute a few interactions from new 2×2 grids, then advise teams reproducing papers and ablating their own tricks.
+    takeaway: |-
+      Write the plan first, change one thing at a time on the same seeds, and put an interval on every difference. A gain that belongs to a combination belongs to neither part alone.
+  - id: ablation-and-reproduction-project.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.ablation-and-reproduction-project
+    markdown: |-
+      Reproduce the baseline, change one choice, and report both the original comparison and any separate stress tests. An improvement on one test can coexist with a new failure.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - ablation-and-reproduction-project.s1
-    - ablation-and-reproduction-project.s2
-    - ablation-and-reproduction-project.s3
-    - ablation-and-reproduction-project.s4
-    - ablation-and-reproduction-project.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - ablation-and-reproduction-project.s1
+        - ablation-and-reproduction-project.plan
+        - ablation-and-reproduction-project.s2
+        - ablation-and-reproduction-project.s3
+        - ablation-and-reproduction-project.mistakes
+        - ablation-and-reproduction-project.s4
+        - ablation-and-reproduction-project.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     ablation-and-reproduction-project.recap: ablation-and-reproduction-project.check
 assessment_families:
-- id: ablation-and-reproduction-project.base
-  objective_ref: objective.ablation-and-reproduction-project
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Ablate one choice: trace the inputs, operation, and result before choosing.'
-  remediation_scene: ablation-and-reproduction-project.s2
-  variants:
-  - id: ablation-and-reproduction-project.base.1
-    prompt: What is the unsmoothed C1 probability of cat after red?
-    options:
-    - id: a
-      text: 1/2
-    - id: b
-      text: 2/7
-    - id: c
-      text: '0'
-    answer: a
-    feedback: Its observed count is one of two red transitions.
-  - id: ablation-and-reproduction-project.base.2
-    prompt: What happens to unsmoothed log loss on red→blue?
-    options:
-    - id: b
-      text: It is zero
-    - id: c
-      text: It is always 0.693
-    - id: a
-      text: It is infinite because predicted probability is zero
-    answer: a
-    feedback: Negative log probability diverges at zero.
-- id: ablation-and-reproduction-project.transfer
-  objective_ref: objective.ablation-and-reproduction-project
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Write the reproduction note: trace the inputs, operation, and result before choosing.'
-  remediation_scene: ablation-and-reproduction-project.s4
-  variants:
-  - id: ablation-and-reproduction-project.transfer.1
-    prompt: Should the stress-test result replace the original test silently?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if it favors your hypothesis
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Different evaluations must be reported as distinct protocols.
-  - id: ablation-and-reproduction-project.transfer.2
-    prompt: Is a negative ablation result automatically a failed research exercise?
-    options:
-    - id: c
-      text: Only if the experiment is small
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: A controlled, reproducible result can correct the hypothesis.
+  - id: ablation-and-reproduction-project.base
+    objective_ref: objective.ablation-and-reproduction-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Ablate one choice: trace the inputs, operation, and result before choosing.'
+    remediation_scene: ablation-and-reproduction-project.s2
+    variants:
+      - id: ablation-and-reproduction-project.base.1
+        prompt: What is the unsmoothed C1 probability of cat after red?
+        options:
+          - id: a
+            text: 1/2
+          - id: b
+            text: 2/7
+          - id: c
+            text: '0'
+        answer: a
+        feedback: Its observed count is one of two red transitions.
+        retired: true
+      - id: ablation-and-reproduction-project.base.2
+        prompt: What happens to unsmoothed log loss on red→blue?
+        options:
+          - id: b
+            text: It is zero
+          - id: c
+            text: It is always 0.693
+          - id: a
+            text: It is infinite because predicted probability is zero
+        answer: a
+        feedback: Negative log probability diverges at zero.
+        retired: true
+  - id: ablation-and-reproduction-project.transfer
+    objective_ref: objective.ablation-and-reproduction-project
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Write the reproduction note: trace the inputs, operation, and result before choosing.'
+    remediation_scene: ablation-and-reproduction-project.s4
+    variants:
+      - id: ablation-and-reproduction-project.transfer.1
+        prompt: Should the stress-test result replace the original test silently?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if it favors your hypothesis
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Different evaluations must be reported as distinct protocols.
+        retired: true
+      - id: ablation-and-reproduction-project.transfer.2
+        prompt: Is a negative ablation result automatically a failed research exercise?
+        options:
+          - id: c
+            text: Only if the experiment is small
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: A controlled, reproducible result can correct the hypothesis.
+        retired: true
+  - id: ablation-and-reproduction-project.base.v2
+    objective_ref: objective.ablation-and-reproduction-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Compare only cells that differ by one change, and use the per-seed differences, not two separate averages.
+    remediation_scene: ablation-and-reproduction-project.s3
+    variants:
+      - id: ablation-and-reproduction-project.base.v2.1
+        prompt: In the Sensor-20 ablation, standardizing alone changed accuracy by exactly 0.0 points on every one of the 20 seeds. What is the best explanation?
+        options:
+          - id: b
+            text: The standardizing step was skipped by mistake, so the code has a bug
+          - id: a
+            text: Rescaling a reading rescales its least-squares weight, so predictions stay identical
+          - id: c
+            text: Twenty seeds are too few to detect a small standardizing effect
+        answer: a
+        feedback: Plain least squares is unit-free, so dividing a reading by 100 multiplies its weight by 100 and leaves every prediction unchanged. A small real effect would still show some seed-to-seed wobble, not exactly zero on all 20 seeds.
+      - id: ablation-and-reproduction-project.base.v2.2
+        prompt: 'The Sensor-20 paper compared baseline (76.9%) with ridge plus standardizing (82.9%) and credited ridge. The 2×2 adds: standardize only 76.9%, ridge only 59.4%. What do the four cells show?'
+        options:
+          - id: c
+            text: Ridge causes the whole gain, since standardizing alone added nothing
+          - id: b
+            text: Standardizing causes the whole gain, since ridge alone did harm
+          - id: a
+            text: Ridge helps only on standardized readings; alone it costs 17.5 points
+        answer: a
+        feedback: Ridge's effect is +6.0 with standardizing and −17.5 without, so the gain belongs to the combination. Crediting either change alone ignores that its effect depends on the other.
+      - id: ablation-and-reproduction-project.base.v2.3
+        prompt: 'With 5 seeds, the full recipe beats baseline by +4.8 ± 6.7 points (95% interval). The plan said an effect is supported if its interval excludes zero. What should the note say?'
+        options:
+          - id: a
+            text: Five seeds can't separate this gain from luck; more seeds are needed
+          - id: b
+            text: The paper failed to reproduce, because the gain is 1.3 points smaller
+          - id: c
+            text: The gain is confirmed, because four of the five seeds were positive
+        answer: a
+        feedback: The interval runs from −1.9 to +11.5, so it includes zero, and by the plan's rule the five-seed run can't decide. That's too little data, not a failed reproduction; with 20 seeds the interval shrinks to ±1.8.
+      - id: ablation-and-reproduction-project.base.v2.4
+        prompt: Why does the reference solution fit all four cells on the same training set within each seed?
+        options:
+          - id: b
+            text: It makes each cell's own accuracy interval narrower
+          - id: c
+            text: It lets you drop the seed where a method did worst
+          - id: a
+            text: Differences within a seed cancel the luck of which data were drawn
+        answer: a
+        feedback: Pairing means the per-seed difference compares the cells on identical data, so an easy or hard draw affects both sides equally. Each cell's own interval stays just as wide; only the interval for the difference shrinks.
+  - id: ablation-and-reproduction-project.transfer.v2
+    objective_ref: objective.ablation-and-reproduction-project
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what changed between the two runs being compared, and whether the analysis was fixed before the results came in.
+    remediation_scene: ablation-and-reproduction-project.mistakes
+    variants:
+      - id: ablation-and-reproduction-project.transfer.v2.1
+        prompt: A team adds data augmentation and doubles the learning rate in the same run, and accuracy rises 3 points on one seed. What experiment should come next?
+        options:
+          - id: a
+            text: Run all four combinations of the two changes on the same set of seeds
+          - id: b
+            text: Rerun the combined version on ten more seeds to tighten its interval
+          - id: c
+            text: Remove augmentation, and credit whatever gain remains to the learning rate
+        answer: a
+        feedback: Only the full 2×2 on shared seeds separates the two changes and reveals an interaction. More seeds of the combined run tighten the interval but still can't say which change mattered, and removing one change assumes the effects simply add.
+      - id: ablation-and-reproduction-project.transfer.v2.2
+        prompt: A preregistered comparison of overall accuracy shows no clear gain. Afterwards, the researcher finds a clear gain on long documents. How should the report treat it?
+        options:
+          - id: c
+            text: Make long-document accuracy the primary result, since that's where the effect is
+          - id: a
+            text: Keep the overall result primary and label the long-document gain as exploratory
+          - id: b
+            text: Leave the long-document finding out, since it wasn't in the written plan
+        answer: a
+        feedback: A slice found after looking may be a chance hit, so it's reported as exploratory and retested on fresh data. Promoting it quietly changes the plan after seeing results; hiding it throws away a lead worth testing.
+      - id: ablation-and-reproduction-project.transfer.v2.3
+        prompt: Rerunning a paper's released code, you get 71.2 ± 1.5 over 10 seeds; the paper reports 74.0 ± 0.8. What is the best next step?
+        options:
+          - id: b
+            text: Report that the paper's result is wrong, since the intervals don't overlap
+          - id: c
+            text: Tune your hyperparameters until you reach 74.0, then report a reproduction
+          - id: a
+            text: List every setup difference, such as data version and settings, then rerun matched
+        answer: a
+        feedback: A gap usually comes from an unmatched detail such as a data version, a library, or a default setting, so find and match those first. Tuning until the number matches hides the cause, and calling the paper wrong skips the most likely explanation.
+      - id: ablation-and-reproduction-project.transfer.v2.4
+        prompt: In a speech model, dropout alone and label smoothing alone each lower accuracy by about 1 point, but together they raise it by 4. How should the report describe this?
+        options:
+          - id: a
+            text: As an interaction, where each change's effect depends on the other
+          - id: b
+            text: As a sign that both single-change runs must contain a bug
+          - id: c
+            text: As two independent effects that add up to the combined gain
+        answer: a
+        feedback: If the effects simply added, together they'd cost about 2 points, not gain 4. The difference of differences is large, which is what an interaction means. A bug is possible, but unexpected combinations like this are common and worth reporting.
+  - id: ablation-and-reproduction-project.effects.v2
+    objective_ref: objective.ablation-and-reproduction-project
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Interaction = (both − A only) − (B only − neither). That is B's effect with A switched on, minus B's effect with A switched off.
+    remediation_scene: ablation-and-reproduction-project.s3
+    absolute_tolerance: 0.05
+    variants:
+      - id: ablation-and-reproduction-project.effects.v2.1
+        prompt: 'A 2×2 ablation, averaged over the same seeds, gives accuracy (%): neither change 70, A only 72, B only 71, both 78. How many points larger is B''s effect with A on than with A off? (Enter a negative number if smaller.)'
+        answer: 5
+        feedback: B with A on is 78 − 72 = 6; B with A off is 71 − 70 = 1. The interaction is 6 − 1 = 5 points.
+      - id: ablation-and-reproduction-project.effects.v2.2
+        prompt: 'A 2×2 ablation, averaged over the same seeds, gives accuracy (%): neither change 80, A only 80, B only 62, both 86. How many points larger is B''s effect with A on than with A off? (Enter a negative number if smaller.)'
+        answer: 24
+        feedback: B with A on is 86 − 80 = 6; B with A off is 62 − 80 = −18. The interaction is 6 − (−18) = 24 points, the same pattern as ridge and standardizing.
+      - id: ablation-and-reproduction-project.effects.v2.3
+        prompt: 'A 2×2 ablation, averaged over the same seeds, gives accuracy (%): neither change 65, A only 70, B only 68, both 73. How many points larger is B''s effect with A on than with A off? (Enter a negative number if smaller.)'
+        answer: 0
+        feedback: B with A on is 73 − 70 = 3; B with A off is 68 − 65 = 3. The interaction is 0, so the two effects simply add.
+      - id: ablation-and-reproduction-project.effects.v2.4
+        prompt: 'A 2×2 ablation, averaged over the same seeds, gives accuracy (%): neither change 50, A only 58, B only 55, both 57. How many points larger is B''s effect with A on than with A off? (Enter a negative number if smaller.)'
+        answer: -6
+        feedback: B with A on is 57 − 58 = −1; B with A off is 55 − 50 = 5. The interaction is −1 − 5 = −6 points, so B helps only when A is off.

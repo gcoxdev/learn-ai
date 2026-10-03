@@ -1,217 +1,459 @@
 schema_version: 0.2-draft
 lesson:
   id: inference-time-search
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Spend extra generation on candidates, checks, and search
   state: draft
-  summary: Spend extra generation on alternative solutions, then judge whether the selection method earns its
-    cost.
+  summary: A model that's right 60% of the time can be right 68% of the time if it answers five times and votes, or 99% with a good checker. Here's the arithmetic, and the catch.
   slot: M21.6
   category: learning
   sources:
-  - title: Self-Consistency
-    url: https://arxiv.org/abs/2203.11171
-  - title: Tree of Thoughts
-    url: https://arxiv.org/abs/2305.10601
+    - title: "Self-Consistency Improves Chain of Thought Reasoning in Language Models (Wang et al., 2022)"
+      url: https://arxiv.org/abs/2203.11171
+    - title: "Tree of Thoughts: Deliberate Problem Solving with Large Language Models (Yao et al., 2023)"
+      url: https://arxiv.org/abs/2305.10601
+    - title: "Training Verifiers to Solve Math Word Problems (Cobbe et al., 2021)"
+      url: https://arxiv.org/abs/2110.14168
+    - title: "Scaling LLM Test-Time Compute Optimally can be More Effective than Scaling Model Parameters (Snell et al., 2024)"
+      url: https://arxiv.org/abs/2408.03314
+    - title: "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning (DeepSeek-AI, 2025)"
+      url: https://arxiv.org/abs/2501.12948
 objectives:
-- id: objective.inference-time-search
-  version: 1-draft
-  statement: Self-consistency, best-of-n selection, and tree search use inference compute to explore or select
-    outputs; benefits depend on candidate diversity, evaluator quality, and the total budget.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - inference-time-search.base
-  - inference-time-search.transfer
-  prerequisites:
-  - anyOf:
-    - objective.reasoning-and-explanations
-  - anyOf:
-    - objective.game-search
+  - id: objective.inference-time-search
+    version: 2-draft
+    statement: Self-consistency, best-of-n selection, and tree search use inference compute to explore or select outputs; benefits depend on candidate diversity, evaluator quality, and the total budget.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - inference-time-search.base.v2
+      - inference-time-search.transfer.v2
+      - inference-time-search.calculate
+      - inference-time-search.vote
+    prerequisites:
+      - anyOf:
+          - objective.reasoning-and-explanations
+      - anyOf:
+          - objective.game-search
 scenes:
-- id: inference-time-search.s1
-  title: Generate several candidate solutions
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.inference-time-search
-  markdown: 'Generating several solutions gives a system more candidates to choose from. Two common selection
-    rules are:
+  - id: inference-time-search.s1
+    title: Ask five times, take a vote
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.inference-time-search
+    markdown: |-
+      Everything so far in this module changed the model's weights. This lesson leaves the weights alone and spends more computation when the question arrives, which is called **inference-time** (or test-time) compute.
 
+      The simplest version: sample several chains of thought at a nonzero temperature, so they differ, and return the final answer that appears most often. Wang et al. (2022) called this **self-consistency**. Different valid routes tend to reach the same right answer, while mistakes tend to scatter. On GSM8K it raised chain-of-thought accuracy by 17.9 percentage points. DeepSeek-R1-Zero's AIME 2024 score went from 71.0% with one sample to 86.7% with a majority vote over 64.
 
-    - **Self-consistency:** group equivalent final answers and choose the most frequent one.
+      How much can a vote help? Treat each sample as independently right with probability $p$, and wrong with one shared wrong answer otherwise. The vote is right when more than half the samples are:
 
-    - **Best-of-n:** generate n candidate responses and use a scorer to select one.
+      $$P(\text{majority right}) = \sum_{k > n/2} \binom{n}{k}\, p^k (1-p)^{n-k}$$
 
+      ```python run
+      from math import comb
 
-    Both spend extra computation during inference without necessarily changing model weights. Their benefit
-    depends on the candidates and the selection rule. If many candidates repeat the same mistake, a majority
-    vote can still select a wrong answer.'
-  text_mode: 'Generating several solutions gives a system more candidates to choose from. Two common selection
-    rules are:
+      def majority_right(p, n):
+          """Chance that more than half of n independent samples are right (right vs one wrong answer)."""
+          return sum(comb(n, k) * p**k * (1 - p)**(n - k) for k in range(n // 2 + 1, n + 1))
 
+      for p in [0.6, 0.4]:
+          for n in [1, 5, 11, 25]:
+              print(f"p = {p}, n = {n:2d} votes: majority is right {majority_right(p, n):.3f}")
 
-    - **Self-consistency:** group equivalent final answers and choose the most frequent one.
+      # Same 0.6 average accuracy, but split into easy and hard problems
+      easy, hard = 0.9, 0.3
+      single = (easy + hard) / 2
+      vote5 = (majority_right(easy, 5) + majority_right(hard, 5)) / 2
+      print(f"mixed set: one sample {single:.3f}, 5-vote majority {vote5:.3f}")
+      ```
 
-    - **Best-of-n:** generate n candidate responses and use a scorer to select one.
+      :::predict At p = 0.6, five votes give 0.683. What happens at p = 0.4?
+      Voting makes it *worse*: 0.317 with five votes, and 0.154 with 25. When the right answer is the minority, more votes make the wrong answer win more reliably. In real problems the wrong answers often scatter across many different values, so the right answer can win with less than half the votes; this two-answer calculation is the pessimistic case.
+      :::
 
+      :::mixup "Five samples are five independent opinions."
+      They come from the same model, so they share its blind spots. Ask the pen-and-notebook question from the first lesson and many samples may say "40 cents" together. The last line of the program shows a milder version of the problem. Accuracy that averages 0.6 but is really 0.9 on easy problems and 0.3 on hard ones *drops* to 0.577 with a five-vote majority, because voting helps where the model already does well and hurts where it doesn't. Measure the gain on your own problems before you count on the formula.
+      :::
+    bridges: []
+  - id: inference-time-search.s2
+    title: Best-of-n needs a good judge
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.inference-time-search
+    markdown: |-
+      If you can *check* answers, as with code and its tests or the verifiers from earlier in this module, you don't need a vote. Sample $n$ candidates and return one the checker accepts. This is **best-of-n**. With a perfect checker it succeeds whenever *any* sample is right:
 
-    Both spend extra computation during inference without necessarily changing model weights. Their benefit
-    depends on the candidates and the selection rule. If many candidates repeat the same mistake, a majority
-    vote can still select a wrong answer.'
-  bridges: []
-- id: inference-time-search.s2
-  title: Compare two selection rules
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.inference-time-search
-  markdown: Suppose five candidates answer A, A, B, B, B. Majority chooses B. A verifier could still choose
-    an A candidate if it independently establishes validity. Agreement is evidence about the sampled distribution,
-    not a proof of correctness; a scorer is useful only to the extent it can distinguish better outputs.
-  text_mode: Suppose five candidates answer A, A, B, B, B. Majority chooses B. A verifier could still choose
-    an A candidate if it independently establishes validity. Agreement is evidence about the sampled distribution,
-    not a proof of correctness; a scorer is useful only to the extent it can distinguish better outputs.
-  bridges: []
-- id: inference-time-search.s3
-  title: Search over partial states
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.inference-time-search
-  markdown: 'A tree-search method can expand partial plans or derivations, score promising nodes, and backtrack.
-    Branching factor and depth quickly increase cost. Heuristics, pruning, and tool checks determine what is
-    explored; a mistaken evaluator can discard the correct branch early.
+      $$P(\text{success}) = 1 - (1-p)^n$$
 
+      Code-generation papers report the same quantity as **pass@k**: the chance that at least one of $k$ samples passes the tests. With $p = 0.3$, a single sample succeeds 30% of the time, and five samples succeed $1 - 0.7^5 \approx 83\%$ of the time.
 
-    The **branching factor** is the number of alternatives tried at one point. With three options at each of
-    four levels, there can be 3⁴ = 81 complete paths, before accounting for earlier nodes. A **heuristic**
-    is an estimate used to prioritize choices; pruning discards branches under a stated rule.'
-  text_mode: 'A tree-search method can expand partial plans or derivations, score promising nodes, and backtrack.
-    Branching factor and depth quickly increase cost. Heuristics, pruning, and tool checks determine what is
-    explored; a mistaken evaluator can discard the correct branch early.
+      ```python run
+      p = 0.3            # chance one sample is correct
+      tokens = 400       # tokens per sample
 
+      for n in [1, 2, 4, 8, 16]:
+          success = 1 - (1 - p) ** n          # at least one correct sample
+          print(f"n = {n:2d}: P(some sample correct) = {success:.3f}   tokens = {n * tokens:5d}"
+                f"   tokens per solved problem = {n * tokens / success:6.0f}")
+      ```
 
-    The **branching factor** is the number of alternatives tried at one point. With three options at each of
-    four levels, there can be 3⁴ = 81 complete paths, before accounting for earlier nodes. A **heuristic**
-    is an estimate used to prioritize choices; pruning discards branches under a stated rule.'
-  bridges: []
-- id: inference-time-search.s4
-  title: Measure all spent work
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.inference-time-search
-  markdown: 'Report generated tokens across every candidate, evaluator calls, tool latency, and wall-clock
-    budget. Compare against spending the same budget on another model or strategy. More test-time compute can
-    help some tasks but can also increase repetition, error propagation, or selection bias.
+      Success climbs fast and then flattens: 8 samples give 0.942 and 16 give 0.997, but the tokens per solved problem grow almost fivefold along the way (1,333 to 6,421). Try `p = 0.05`, a hard problem: 16 samples still reach only 0.560.
 
+      Without a perfect checker, best-of-n picks the candidate a *learned* scorer rates highest: a reward model, or a PRM from the last lesson. Cobbe et al. (2021) introduced GSM8K partly to test this: they trained verifiers to rank 100 sampled solutions. The catch is that picking the top of many candidates also picks the scorer's mistakes, the answers it wrongly loves. Past some $n$, searching harder mostly finds those.
+    bridges: []
+  - id: inference-time-search.s3
+    title: Search over steps, not whole answers
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.inference-time-search
+    markdown: |-
+      Voting and best-of-n judge only finished answers. Search can judge **partial** solutions and spend effort only on promising ones, like the game-tree search from the search module.
 
-    If five candidates each use 200 generated tokens, the generation budget is 1,000 tokens before scoring—even
-    if the displayed winner has only 200. Include failed candidates and verification calls when deciding whether
-    the method is efficient for a user waiting on the result.'
-  text_mode: 'Report generated tokens across every candidate, evaluator calls, tool latency, and wall-clock
-    budget. Compare against spending the same budget on another model or strategy. More test-time compute can
-    help some tasks but can also increase repetition, error propagation, or selection bias.
+      Take the Game of 24: combine 4, 9, 10, and 13 with +, −, ×, ÷ to make 24. The first move picks a pair and an operation, so there are 6 pairs × 6 operations = 36 possible first moves (− and ÷ count in both orders). Only 7 of them leave a way to reach 24 (4, if negative numbers aren't allowed). A chain of thought that picks a first move at random is usually doomed by its first step.
 
+      **Tree of Thoughts** (Yao et al., 2023) has the model propose a few next steps, asks the model to judge each resulting state ("can 24 still be reached from 10, 13, 13?"), keeps the best few, and repeats. Keeping the top $b$ states at each level is **beam search** with beam width $b$. On the Game of 24, GPT-4 with chain-of-thought prompting solved 4% of the puzzles; with Tree of Thoughts it solved 74%.
 
-    If five candidates each use 200 generated tokens, the generation budget is 1,000 tokens before scoring—even
-    if the displayed winner has only 200. Include failed candidates and verification calls when deciding whether
-    the method is efficient for a user waiting on the result.'
-  bridges: []
-- id: inference-time-search.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.inference-time-search
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Extra generation helps when it produces useful alternatives and a reliable way to choose among
-    them. Count the work spent on every candidate and check.
-- id: inference-time-search.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.inference-time-search
-  markdown: Extra generation helps when it produces useful alternatives and a reliable way to choose among
-    them. Count the work spent on every candidate and check.
-  text_mode: Extra generation helps when it produces useful alternatives and a reliable way to choose among
-    them. Count the work spent on every candidate and check.
+      The **branching factor** is the number of options at each step. It makes exhaustive search explode: at 5 options per step, 3 steps give $5^3 = 125$ complete paths. Exhaustive search builds $5 + 25 + 125 = 155$ states. A beam of width 5 proposes the 5 children of the start, then keeps 5 states and proposes their 25 children at each later level: $5 + 25 + 25 = 55$ states proposed and judged. That's much cheaper, but a wrong judgment prunes a good branch for good.
+
+      :::story Where MCTS didn't pay off
+      The DeepSeek-R1 report lists Monte Carlo tree search, the method behind AlphaGo, among its unsuccessful attempts for *training*. Token-level search spaces are vastly larger than a board game's, and the value model guiding the search was hard to train well. The team noted that MCTS can still improve answers at inference time when paired with a pretrained value model.
+      :::
+    diagram:
+      caption: A tree search over steps for the Game of 24 with 4, 9, 10, 13. The judge prunes states from which 24 can't be reached.
+      description: The start state 4, 9, 10, 13 branches three ways. The move 10 − 4 = 6 leaves 6, 9, 13 and is kept. The move 13 − 9 = 4 leaves 4, 4, 10 and is kept. The move 4 + 9 = 13 leaves 10, 13, 13, which the judge marks as unable to reach 24, so it is pruned. From 6, 9, 13 the move 13 − 9 = 4 leaves 4 and 6. From 4, 4, 10 the move 10 − 4 = 6 also leaves 4 and 6. From 4 and 6, the move 6 × 4 gives 24.
+      nodes:
+        - id: root
+          label: "4, 9, 10, 13"
+          col: 0
+          row: 1
+          tone: data
+        - id: a
+          label: "10 − 4 = 6 → 6, 9, 13"
+          note: "judge: keep"
+          col: 1
+          row: 0
+        - id: b
+          label: "13 − 9 = 4 → 4, 4, 10"
+          note: "judge: keep"
+          col: 1
+          row: 1
+        - id: c
+          label: "4 + 9 = 13 → 10, 13, 13"
+          note: "judge: 24 impossible, prune"
+          col: 1
+          row: 2
+          tone: warn
+        - id: a2
+          label: "13 − 9 = 4 → 4, 6"
+          col: 2
+          row: 0
+        - id: b2
+          label: "10 − 4 = 6 → 4, 6"
+          col: 2
+          row: 1
+        - id: goal
+          label: "6 × 4 = 24"
+          col: 3
+          row: 0
+          tone: accent
+      edges:
+        - from: root
+          to: a
+        - from: root
+          to: b
+        - from: root
+          to: c
+          dashed: true
+        - from: a
+          to: a2
+        - from: b
+          to: b2
+        - from: a2
+          to: goal
+        - from: b2
+          to: goal
+    bridges: []
+  - id: inference-time-search.s4
+    title: Count every token
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.inference-time-search
+    markdown: |-
+      Every method here trades tokens for accuracy, and the user sees only the winning answer. Say one 400-token sample is right with $p = 0.6$, and tests are available to check answers:
+
+      | Strategy | Tokens generated | Accuracy | Tokens per solved problem |
+      | --- | ---: | ---: | ---: |
+      | One sample | 400 | 0.600 | 667 |
+      | Majority of 5 | 2,000 | 0.683 | 2,930 |
+      | Best of 5, checked by tests | 2,000 (+ test runs) | 0.990 | about 2,020 |
+
+      The four discarded samples still cost money and time. Voting more than quadruples the cost of each solved problem for 8 extra points; checking pays much better, *when a checker exists*. If the samples run one after another, latency grows five times too.
+
+      The right amount of search also depends on the question. Snell et al. (2024) found that allocating test-time compute per prompt, according to difficulty, beat plain best-of-n by more than four times in efficiency. On problems where a small model already had reasonable success, extra test-time compute could outperform a model 14 times larger at matched compute. So spend little on easy questions, search harder on medium ones, and don't expect sampling to rescue questions where $p$ is near 0.
+    bridges: []
+  - id: inference-time-search.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.inference-time-search
+    markdown: Vote and best-of-n probabilities to compute, plus a trick riddle, a code generator, and an over-searched reward model, test whether you can pick a method and predict what it buys.
+    takeaway: |-
+      Voting helps when the model is usually right and its mistakes scatter; best-of-n helps as much as its checker is trustworthy; tree search helps when partial steps can be judged. Count every generated token when you compare them.
+  - id: inference-time-search.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.inference-time-search
+    markdown: |-
+      Extra generation helps when it produces useful alternatives and a reliable way to choose among them. Count the work spent on every candidate and check.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - inference-time-search.s1
-    - inference-time-search.s2
-    - inference-time-search.s3
-    - inference-time-search.s4
-    - inference-time-search.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - inference-time-search.s1
+        - inference-time-search.s2
+        - inference-time-search.s3
+        - inference-time-search.s4
+        - inference-time-search.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     inference-time-search.recap: inference-time-search.check
 assessment_families:
-- id: inference-time-search.base
-  objective_ref: objective.inference-time-search
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Compare two selection rules: trace the inputs, operation, and result before choosing.'
-  remediation_scene: inference-time-search.s2
-  variants:
-  - id: inference-time-search.base.1
-    prompt: Five candidates answer A, A, B, B, B. Majority chooses what?
-    options:
-    - id: b
-      text: A
-    - id: c
-      text: Neither by definition
-    - id: a
-      text: B
-    answer: a
-    feedback: B has three of five votes.
-  - id: inference-time-search.base.2
-    prompt: Does majority agreement prove correctness?
-    options:
-    - id: c
-      text: Only if five candidates are used
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Samples may share correlated errors.
-- id: inference-time-search.transfer
-  objective_ref: objective.inference-time-search
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Measure all spent work: trace the inputs, operation, and result before choosing.'
-  remediation_scene: inference-time-search.s4
-  variants:
-  - id: inference-time-search.transfer.1
-    prompt: What can a bad search heuristic do?
-    options:
-    - id: c
-      text: Remove every dependency
-    - id: a
-      text: Prune a branch containing a valid solution
-    - id: b
-      text: Guarantee complete exploration at zero cost
-    answer: a
-    feedback: Search quality depends on which states are retained.
-  - id: inference-time-search.transfer.2
-    prompt: Which tokens count toward best-of-n compute?
-    options:
-    - id: a
-      text: Tokens from all generated candidates and relevant evaluators
-    - id: b
-      text: Only the selected response
-    - id: c
-      text: Only the prompt title
-    answer: a
-    feedback: Discarded candidates still consumed resources.
+  - id: inference-time-search.base
+    objective_ref: objective.inference-time-search
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Compare two selection rules: trace the inputs, operation, and result before choosing.'
+    remediation_scene: inference-time-search.s2
+    variants:
+      - id: inference-time-search.base.1
+        prompt: Five candidates answer A, A, B, B, B. Majority chooses what?
+        options:
+          - id: b
+            text: A
+          - id: c
+            text: Neither by definition
+          - id: a
+            text: B
+        answer: a
+        feedback: B has three of five votes.
+        retired: true
+      - id: inference-time-search.base.2
+        prompt: Does majority agreement prove correctness?
+        options:
+          - id: c
+            text: Only if five candidates are used
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Samples may share correlated errors.
+        retired: true
+  - id: inference-time-search.transfer
+    objective_ref: objective.inference-time-search
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Measure all spent work: trace the inputs, operation, and result before choosing.'
+    remediation_scene: inference-time-search.s4
+    variants:
+      - id: inference-time-search.transfer.1
+        prompt: What can a bad search heuristic do?
+        options:
+          - id: c
+            text: Remove every dependency
+          - id: a
+            text: Prune a branch containing a valid solution
+          - id: b
+            text: Guarantee complete exploration at zero cost
+        answer: a
+        feedback: Search quality depends on which states are retained.
+        retired: true
+      - id: inference-time-search.transfer.2
+        prompt: Which tokens count toward best-of-n compute?
+        options:
+          - id: a
+            text: Tokens from all generated candidates and relevant evaluators
+          - id: b
+            text: Only the selected response
+          - id: c
+            text: Only the prompt title
+        answer: a
+        feedback: Discarded candidates still consumed resources.
+        retired: true
+  - id: inference-time-search.base.v2
+    objective_ref: objective.inference-time-search
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Name the selection rule first: a vote over final answers, a checker picking any passing sample, or a judge scoring partial steps. Then ask what each one needs to work."
+    remediation_scene: inference-time-search.s1
+    variants:
+      - id: inference-time-search.base.v2.1
+        prompt: What does self-consistency do with ten sampled chains of thought for one question?
+        options:
+          - id: b
+            text: Returns the chain that a verifier scores the highest
+          - id: a
+            text: Returns the final answer that appears most often
+          - id: c
+            text: Merges the ten chains into one combined explanation
+        answer: a
+        feedback: Self-consistency is a vote over final answers; it needs no scorer. Picking by verifier score is best-of-n, and merging chains isn't part of either method.
+      - id: inference-time-search.base.v2.2
+        prompt: A model gets a yes/no question right 40% of the time, and each sample is independent. What does an 11-sample majority vote do to its accuracy?
+        options:
+          - id: c
+            text: Leaves it at 40%, since each sample is just as accurate
+          - id: b
+            text: Raises it, since more samples cancel out random mistakes
+          - id: a
+            text: Lowers it, since the wrong answer usually wins the vote
+        answer: a
+        feedback: With the right answer in the minority, votes make the wrong answer win more reliably. The formula gives about 0.247 at 11 votes. Votes cancel random mistakes only when the right answer is the more common one.
+      - id: inference-time-search.base.v2.3
+        prompt: With a perfect checker, when does best-of-n succeed?
+        options:
+          - id: a
+            text: When at least one of the n samples is correct
+          - id: b
+            text: When more than half of the n samples are correct
+          - id: c
+            text: When the first of the n samples is correct
+        answer: a
+        feedback: The checker finds any correct sample, so success is 1 − (1 − p)ⁿ. Needing a majority describes voting, and the order of the samples doesn't matter.
+      - id: inference-time-search.base.v2.4
+        prompt: What does Tree of Thoughts add that sampling complete chains doesn't?
+        options:
+          - id: c
+            text: It fine-tunes the model on its most successful search paths
+          - id: a
+            text: It judges partial solutions and extends only promising ones
+          - id: b
+            text: It samples many full answers and then takes a majority vote
+        answer: a
+        feedback: Tree of Thoughts scores intermediate states and keeps the best, so a doomed first step gets pruned early. Voting on full answers is self-consistency, and Tree of Thoughts changes no weights.
+      - id: inference-time-search.base.v2.5
+        prompt: A system runs best-of-8 at 400 tokens per sample and shows the user one 400-token answer. How many tokens did it generate?
+        options:
+          - id: a
+            text: 3,200, since every sample was generated in full
+          - id: b
+            text: 400, since the user sees only one answer
+          - id: c
+            text: 800, the chosen answer plus one comparison
+        answer: a
+        feedback: All eight samples were generated, 8 × 400 = 3,200 tokens, before any checking cost. Discarded samples are invisible to the user but not free.
+  - id: inference-time-search.transfer.v2
+    objective_ref: objective.inference-time-search
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask whether the samples' mistakes are independent, whether a trustworthy checker exists, and what the extra samples cost.
+    remediation_scene: inference-time-search.s2
+    variants:
+      - id: inference-time-search.transfer.v2.1
+        prompt: A model falls for a trick riddle in the same way 70% of the time. What will a majority vote over 21 samples most likely return?
+        options:
+          - id: a
+            text: The same common wrong answer, almost every time
+          - id: b
+            text: The right answer, since extra samples wash out mistakes
+          - id: c
+            text: A random answer, since the votes will split evenly
+        answer: a
+        feedback: When 70% of samples share one wrong answer, the right answer wins a 21-vote majority less than 3% of the time. Voting amplifies whatever the model usually says, right or wrong.
+      - id: inference-time-search.transfer.v2.2
+        prompt: A coding assistant can sample 10 candidate programs, and the task comes with unit tests. Which selection rule fits best?
+        options:
+          - id: b
+            text: Take a majority vote over the programs' source text
+          - id: a
+            text: Run the tests and return a program that passes them
+          - id: c
+            text: Return the longest program, since it handles more cases
+        answer: a
+        feedback: A trustworthy checker turns best-of-n into 1 − (1 − p)ⁿ. Programs that do the same thing rarely have identical text, so a vote over source splits, and length isn't correctness.
+      - id: inference-time-search.transfer.v2.3
+        prompt: An assistant writes free-text customer emails, and there's no checker. Which method is hardest to apply directly?
+        options:
+          - id: c
+            text: Generating a few drafts for a person to choose from
+          - id: b
+            text: Asking the model for one careful, well-planned draft
+          - id: a
+            text: A majority vote, since free-text drafts rarely match
+        answer: a
+        feedback: Self-consistency needs final answers that can be grouped as identical, like numbers or labels. Emails never match word for word. A person can still pick among drafts, and one careful draft needs no selection at all.
+      - id: inference-time-search.transfer.v2.4
+        prompt: Picking the top-scoring answer from 1,000 samples with a learned reward model gives answers people rate worse than the top of 16 samples. What is the most likely explanation?
+        options:
+          - id: a
+            text: A wider search finds more answers the scorer wrongly rates highly
+          - id: b
+            text: Sampling 1,000 times makes each individual sample less accurate
+          - id: c
+            text: Sixteen samples already contain every answer the model can give
+        answer: a
+        feedback: Selecting the maximum of a flawed scorer over many candidates finds its errors, a form of reward hacking at inference time. Each sample is just as good at n = 1,000, and more samples do add new answers; the scorer just picks the wrong ones.
+  - id: inference-time-search.calculate
+    objective_ref: objective.inference-time-search
+    task: base
+    response_type: numeric
+    points: 1
+    hint: With a perfect checker, best-of-n fails only if every sample fails. Compute (1 − p)ⁿ and subtract it from 1. (Give a decimal.)
+    remediation_scene: inference-time-search.s2
+    absolute_tolerance: 0.005
+    variants:
+      - id: inference-time-search.calculate.1
+        prompt: Each sample is correct with probability 0.2, independently. With a perfect checker, what is the chance that best-of-3 succeeds?
+        answer: 0.488
+        feedback: 1 − 0.8³ = 1 − 0.512 = 0.488.
+      - id: inference-time-search.calculate.2
+        prompt: Each sample is correct with probability 0.5, independently. With a perfect checker, what is the chance that best-of-4 succeeds?
+        answer: 0.9375
+        feedback: 1 − 0.5⁴ = 1 − 0.0625 = 0.9375.
+      - id: inference-time-search.calculate.3
+        prompt: Each sample is correct with probability 0.1, independently. With a perfect checker, what is the chance that best-of-10 succeeds?
+        answer: 0.651
+        feedback: 1 − 0.9¹⁰ ≈ 1 − 0.349 = 0.651. Ten samples of a weak model still fail about a third of the time.
+      - id: inference-time-search.calculate.4
+        prompt: Each sample is correct with probability 0.3, independently. With a perfect checker, what is the chance that best-of-5 succeeds?
+        answer: 0.832
+        feedback: 1 − 0.7⁵ = 1 − 0.168 = 0.832.
+  - id: inference-time-search.vote
+    objective_ref: objective.inference-time-search
+    task: base
+    response_type: numeric
+    points: 1
+    hint: With 3 votes and two possible answers, the majority is right if all 3 are right (p³) or exactly 2 are (3 × p² × (1 − p)). Add them. (Give a decimal.)
+    remediation_scene: inference-time-search.s1
+    absolute_tolerance: 0.005
+    variants:
+      - id: inference-time-search.vote.1
+        prompt: Each sample is independently right with probability 0.7, and there is one wrong answer. What is the chance a 3-sample majority vote is right?
+        answer: 0.784
+        feedback: 0.7³ + 3 × 0.7² × 0.3 = 0.343 + 0.441 = 0.784, up from 0.7.
+      - id: inference-time-search.vote.2
+        prompt: Each sample is independently right with probability 0.6, and there is one wrong answer. What is the chance a 3-sample majority vote is right?
+        answer: 0.648
+        feedback: 0.6³ + 3 × 0.6² × 0.4 = 0.216 + 0.432 = 0.648.
+      - id: inference-time-search.vote.3
+        prompt: Each sample is independently right with probability 0.8, and there is one wrong answer. What is the chance a 3-sample majority vote is right?
+        answer: 0.896
+        feedback: 0.8³ + 3 × 0.8² × 0.2 = 0.512 + 0.384 = 0.896.
+      - id: inference-time-search.vote.4
+        prompt: Each sample is independently right with probability 0.4, and there is one wrong answer. What is the chance a 3-sample majority vote is right?
+        answer: 0.352
+        feedback: 0.4³ + 3 × 0.4² × 0.6 = 0.064 + 0.288 = 0.352, down from 0.4. Voting hurts when the right answer is the minority.

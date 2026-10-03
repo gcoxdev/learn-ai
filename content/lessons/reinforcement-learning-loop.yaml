@@ -1,194 +1,421 @@
 schema_version: 0.2-draft
 lesson:
   id: reinforcement-learning-loop
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn decisions from consequences over time
   state: draft
-  summary: Learn the vocabulary of learning through actions and consequences.
+  summary: A robot vacuum gets no instructions, only a reward when it reaches its dock. Meet the agent, its actions, and its rewards, and see why a good move can pay off only later.
   slot: M24.1
   category: learning
   sources:
-  - title: Dive into Deep Learning — reinforcement learning
-    url: https://d2l.ai/chapter_reinforcement-learning/index.html
+    - title: "Reinforcement Learning: An Introduction, 2nd edition (Sutton & Barto, 2018)"
+      url: http://incompleteideas.net/book/the-book-2nd.html
+    - title: Dive into Deep Learning — reinforcement learning
+      url: https://d2l.ai/chapter_reinforcement-learning/index.html
+    - title: "Human-level control through deep reinforcement learning (Mnih et al., Nature 2015)"
+      url: https://www.nature.com/articles/nature14236
 objectives:
-- id: objective.reinforcement-learning-loop
-  version: 1-draft
-  statement: Reinforcement learning connects observations, actions, rewards, and future consequences; a policy
-    aims to improve expected return under a defined environment and interaction budget.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - reinforcement-learning-loop.base
-  - reinforcement-learning-loop.transfer
-  prerequisites:
-  - anyOf:
-    - objective.ways-to-learn
-  - anyOf:
-    - objective.decisions-and-games
+  - id: objective.reinforcement-learning-loop
+    version: 2-draft
+    statement: Reinforcement learning connects observations, actions, rewards, and future consequences; a policy aims to improve expected return under a defined environment and interaction budget.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - reinforcement-learning-loop.base.v2
+      - reinforcement-learning-loop.transfer.v2
+      - reinforcement-learning-loop.calculate
+    prerequisites:
+      - anyOf:
+          - objective.ways-to-learn
+      - anyOf:
+          - objective.decisions-and-games
 scenes:
-- id: reinforcement-learning-loop.s1
-  title: Follow the interaction loop
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.reinforcement-learning-loop
-  markdown: 'Picture a learner trying to escape a small maze. The learner is the **agent** and the maze is
-    its **environment**. It receives an **observation**, such as a nearby wall, and uses its **policy**, a
-    rule for choosing, to select an **action**, such as moving left.
+  - id: reinforcement-learning-loop.s1
+    title: Pip has to find the dock on its own
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.reinforcement-learning-loop
+    markdown: |-
+      Pip is a new robot vacuum in a small flat. It gets one kind of feedback: a number after each move. Every move drains battery, worth −1. Rolling onto the charging dock earns +10 and ends the run. Over many runs, Pip must discover which moves lead home.
 
+      That setup is **reinforcement learning (RL)**: learning what to do from the consequences of doing it. Pip will play every part for the rest of this module.
 
-    After the move, the environment supplies a new observation and a **reward**. Reaching the exit might earn
-    one point even though most moves earn none. An **episode** is one run from the start until the run ends.
+      | Term | Plain meaning | Pip's version |
+      | --- | --- | --- |
+      | **Agent** | The learner that chooses | Pip's control program |
+      | **Environment** | What the agent acts on | The flat |
+      | **State** | The situation right now | Pip's cell and battery level |
+      | **Observation** | What the agent can sense of the state | Bump and floor sensors |
+      | **Action** | One choice | Forward, back, left, right |
+      | **Reward** | A number scoring the last step | −1 per move, +10 for docking |
+      | **Policy** | The rule for choosing actions | "On the rug, go forward" |
+      | **Episode** | One run from start to finish | Bedroom to dock |
 
+      The loop in the diagram never changes: observe, act, receive a reward and a new state, repeat. Notice that the reward scores the step but never says which action would have been better. That's the big difference from supervised learning, where every example comes with the right answer.
+    diagram:
+      caption: One turn of the agent–environment loop. The same loop runs every step of every episode.
+      description: The agent, Pip's policy, sends an action to the environment, the flat. The environment returns the next state to the agent and also produces a reward. The reward goes to a learning update, which adjusts the policy inside the agent. Then the loop repeats.
+      nodes:
+        - id: agent
+          label: Agent (Pip)
+          note: policy picks an action
+          col: 1
+          row: 0
+          tone: accent
+        - id: env
+          label: Environment (the flat)
+          note: moves Pip, scores the step
+          col: 3
+          row: 0
+          tone: data
+        - id: update
+          label: Learning update
+          note: adjusts the policy
+          col: 2
+          row: 2
+          tone: warn
+      edges:
+        - from: agent
+          to: env
+          label: action A_t
+        - from: env
+          to: agent
+          label: next state S_t+1
+          bend: 2
+        - from: env
+          to: update
+          label: reward R_t+1
+        - from: update
+          to: agent
+          label: better policy
+          dashed: true
+    bridges: []
+  - id: reinforcement-learning-loop.s2
+    title: Add up the future into a return
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reinforcement-learning-loop
+    markdown: |-
+      Pip's first move costs −1 whether it heads toward the dock or away. What matters is the whole stream of rewards still to come, called the **return**. Future rewards usually count a little less: a **discount factor** $\gamma$ (gamma), a number between 0 and 1, shrinks each reward by one more factor of $\gamma$ for every step it lies ahead.
 
-    A **state** describes enough of the situation to determine the modeled next-step possibilities. An observation
-    may reveal only part of that state. The reward is the agent''s learning signal, so choosing it carefully
-    matters: earning points should encourage the behavior we actually want.'
-  text_mode: 'Picture a learner trying to escape a small maze. The learner is the **agent** and the maze is
-    its **environment**. It receives an **observation**, such as a nearby wall, and uses its **policy**, a
-    rule for choosing, to select an **action**, such as moving left.
+      :::example Two routes to the dock, with γ = 0.9
+      From the doorway, Pip can cross the rug (two moves, then onto the dock) or go round the sofa (four moves, then the dock).
 
+      | Route | Rewards in order | Return |
+      | --- | --- | ---: |
+      | Across the rug | −1, −1, +10 | $-1 - 0.9 + 0.81 \times 10 = 6.2$ |
+      | Round the sofa | −1, −1, −1, −1, +10 | $-1 - 0.9 - 0.81 - 0.729 + 0.6561 \times 10 = 3.122$ |
+      :::
 
-    After the move, the environment supplies a new observation and a **reward**. Reaching the exit might earn
-    one point even though most moves earn none. An **episode** is one run from the start until the run ends.
+      :::papers The discounted return
+      $$G_t = R_{t+1} + \gamma R_{t+2} + \gamma^2 R_{t+3} + \dots = \sum_{k=0}^{\infty} \gamma^k R_{t+k+1}$$
 
+      $R_{t+1}$ is the reward that arrives after the action at step $t$. For the rug route, $R_1 = -1$, $R_2 = -1$, $R_3 = 10$, and $G_0 = 6.2$. The recursive form, $G_t = R_{t+1} + \gamma G_{t+1}$, says the return now is this step's reward plus the discounted return from the next step. The rest of this module builds on that line.
+      :::
 
-    A **state** describes enough of the situation to determine the modeled next-step possibilities. An observation
-    may reveal only part of that state. The reward is the agent''s learning signal, so choosing it carefully
-    matters: earning points should encourage the behavior we actually want.'
-  bridges: []
-- id: reinforcement-learning-loop.s2
-  title: Add future rewards into a return
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reinforcement-learning-loop
-  markdown: A discounted return weights later rewards by powers of gamma. Rewards one now and two next step
-    with gamma one-half give return 1 + 0.5×2 = 2. Discounting can express horizon preferences and help some
-    infinite-horizon mathematical formulations remain well behaved.
-  text_mode: A discounted return weights later rewards by powers of gamma. Rewards one now and two next step
-    with gamma one-half give return 1 + 0.5×2 = 2. Discounting can express horizon preferences and help some
-    infinite-horizon mathematical formulations remain well behaved.
-  bridges: []
-- id: reinforcement-learning-loop.s3
-  title: Actions change future data
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reinforcement-learning-loop
-  markdown: Unlike fitting a fixed supervised dataset, an interacting policy influences which situations it
-    encounters. An early move can sacrifice immediate reward for a later benefit. Exploration affects both
-    performance and what the learner can discover about alternatives.
-  text_mode: Unlike fitting a fixed supervised dataset, an interacting policy influences which situations it
-    encounters. An early move can sacrifice immediate reward for a later benefit. Exploration affects both
-    performance and what the learner can discover about alternatives.
-  bridges: []
-- id: reinforcement-learning-loop.s4
-  title: Define the experiment completely
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reinforcement-learning-loop
-  markdown: Record episode boundaries, observations, actions, reward timing, termination, discount, and allowed
-    interaction. Evaluate across seeds and fresh conditions. A high return in a simulator establishes performance
-    under that simulator and reward, with further evidence needed for transfer.
-  text_mode: Record episode boundaries, observations, actions, reward timing, termination, discount, and allowed
-    interaction. Evaluate across seeds and fresh conditions. A high return in a simulator establishes performance
-    under that simulator and reward, with further evidence needed for transfer.
-  bridges: []
-- id: reinforcement-learning-loop.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.reinforcement-learning-loop
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: An agent learns how actions affect rewards over time. Its policy should improve expected return,
-    including consequences that arrive after the current move.
-- id: reinforcement-learning-loop.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.reinforcement-learning-loop
-  markdown: An agent learns how actions affect rewards over time. Its policy should improve expected return,
-    including consequences that arrive after the current move.
-  text_mode: An agent learns how actions affect rewards over time. Its policy should improve expected return,
-    including consequences that arrive after the current move.
+      The code works backwards from the dock using the recursive form.
+
+      ```python run
+      def discounted_return(rewards, gamma):
+          G = 0.0
+          for r in reversed(rewards):      # work backwards: G_t = R_{t+1} + gamma * G_{t+1}
+              G = r + gamma * G
+          return G
+
+      rug_route  = [-1, -1, 10]            # two moves, then the move onto the dock
+      sofa_route = [-1, -1, -1, -1, 10]    # the long way round the sofa
+
+      for gamma in [0.0, 0.5, 0.9, 1.0]:
+          rug = discounted_return(rug_route, gamma)
+          sofa = discounted_return(sofa_route, gamma)
+          print(f"gamma = {gamma}:  rug route {rug:6.3f}   sofa route {sofa:6.3f}")
+      ```
+
+      :::predict Before running it, what happens to the sofa route when γ = 0.5?
+      It turns negative, −1.25, while the rug route falls to 1.0. A small $\gamma$ makes Pip impatient: the distant +10 shrinks until four moves of battery outweigh it.
+      :::
+
+      Discounting also keeps the sum finite when a task never ends.
+    bridges: []
+  - id: reinforcement-learning-loop.s3
+    title: Today's move changes tomorrow's data
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reinforcement-learning-loop
+    markdown: |-
+      A spam filter sees the same emails whatever it predicts. Pip's data is different: where it goes decides what it sees next. If Pip always turns left out of the bedroom, it learns about the kitchen and nothing about the hallway, even if the hallway is the shortcut home. That creates two problems supervised learning never faces.
+
+      - **Exploration versus exploitation.** Pip must sometimes try moves that look worse, just to find out where they lead. The next lesson is about this trade-off.
+      - **Credit assignment.** The +10 arrives on the last move. On a twelve-move trip home, which of the earlier moves deserve the credit? The reward doesn't say. The MDP lesson answers with value functions, which estimate the return expected from each state.
+
+      :::mixup "A good agent picks whatever earns the most reward on the next step."
+      That maximizes the reward, not the return. From the doorway, the move toward the rug and the move into the dead-end bathroom both cost −1. Only the return, which counts the +10 a few moves later, separates them.
+      :::
+    bridges: []
+  - id: reinforcement-learning-loop.s4
+    title: The reward is the only instruction
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reinforcement-learning-loop
+    markdown: |-
+      An RL agent optimizes the reward you wrote down, not the one you meant. If Pip earned +1 per square cleaned, and a square counted again once dust settled, circling two squares forever could outscore cleaning the flat. An agent exploiting a loophole like this is **reward hacking**.
+
+      :::story The boat that never finished the race
+      In 2016, OpenAI researchers trained an agent on the boat-racing game *CoastRunners*, which awards points for hitting targets. The agent found a lagoon where three targets kept reappearing and circled there endlessly, crashing and catching fire, while outscoring players who finished the race.
+      :::
+
+      So read the reward like a lawyer: what is the cheapest behavior that scores well? Then test like a skeptic. Pip learned in one flat with one random seed. Run it in a flat with a new layout, and retrain with a few seeds.
+    bridges: []
+  - id: reinforcement-learning-loop.s5
+    title: From backgammon to chatbots
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.reinforcement-learning-loop
+    markdown: |-
+      This loop sits behind some famous results in AI, each adding a mechanism you'll meet in this module.
+
+      | System | What it learned | Mechanism | Lesson |
+      | --- | --- | --- | --- |
+      | TD-Gammon (Gerald Tesauro, early 1990s) | Backgammon, by playing itself, near top human level | Temporal-difference learning | M24.4 |
+      | DQN (Mnih et al., *Nature* 2015) | Dozens of Atari games from pixels and score | Deep Q-networks | M24.5 |
+      | AlphaGo (DeepMind, 2016) | Go, beating world champion Lee Sedol 4–1 | Policy and value networks plus tree search | M24.6–M24.7 |
+      | InstructGPT and ChatGPT (OpenAI, 2022) | Answers people prefer | PPO on a learned reward | M24.6 |
+
+      Every row follows Pip's recipe: an agent, an environment, a reward, and a policy improved to earn a higher return.
+    bridges: []
+  - id: reinforcement-learning-loop.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.reinforcement-learning-loop
+    markdown: A thermostat, a warehouse robot, a chess program, and a few reward streams test whether you can name the parts of the loop and add up a return.
+    takeaway: |-
+      An agent acts, the environment answers with a new state and a reward, and the agent learns a policy that earns a high return: all future rewards, discounted by γ per step.
+  - id: reinforcement-learning-loop.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.reinforcement-learning-loop
+    markdown: |-
+      An agent learns how actions affect rewards over time. Its policy should improve expected return, including consequences that arrive after the current move.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - reinforcement-learning-loop.s1
-    - reinforcement-learning-loop.s2
-    - reinforcement-learning-loop.s3
-    - reinforcement-learning-loop.s4
-    - reinforcement-learning-loop.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - reinforcement-learning-loop.s1
+        - reinforcement-learning-loop.s2
+        - reinforcement-learning-loop.s3
+        - reinforcement-learning-loop.s4
+        - reinforcement-learning-loop.s5
+        - reinforcement-learning-loop.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     reinforcement-learning-loop.recap: reinforcement-learning-loop.check
 assessment_families:
-- id: reinforcement-learning-loop.base
-  objective_ref: objective.reinforcement-learning-loop
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Add future rewards into a return: trace the inputs, operation, and result before choosing.'
-  remediation_scene: reinforcement-learning-loop.s2
-  variants:
-  - id: reinforcement-learning-loop.base.1
-    prompt: Rewards 1 then 2 with discount 0.5 give return what?
-    options:
-    - id: c
-      text: '1.5'
-    - id: a
-      text: '2'
-    - id: b
-      text: '3'
-    answer: a
-    feedback: The second reward is weighted by one-half.
-  - id: reinforcement-learning-loop.base.2
-    prompt: What maps available information to action choices?
-    options:
-    - id: a
-      text: The policy
-    - id: b
-      text: Only the final dataset hash
-    - id: c
-      text: The loss plot alone
-    answer: a
-    feedback: A policy defines decision behavior.
-- id: reinforcement-learning-loop.transfer
-  objective_ref: objective.reinforcement-learning-loop
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Define the experiment completely: trace the inputs, operation, and result before choosing.'
-  remediation_scene: reinforcement-learning-loop.s4
-  variants:
-  - id: reinforcement-learning-loop.transfer.1
-    prompt: Why does an RL policy affect its training data?
-    options:
-    - id: a
-      text: Its actions influence future visited situations
-    - id: b
-      text: It always receives a fixed independent label table
-    - id: c
-      text: Rewards never depend on actions
-    answer: a
-    feedback: Interaction couples behavior and observations.
-  - id: reinforcement-learning-loop.transfer.2
-    prompt: Does high simulator reward guarantee real-world success?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the agent is neural
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Transfer depends on how simulation and real conditions differ.
+  - id: reinforcement-learning-loop.base
+    objective_ref: objective.reinforcement-learning-loop
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Add future rewards into a return: trace the inputs, operation, and result before choosing.'
+    remediation_scene: reinforcement-learning-loop.s2
+    variants:
+      - id: reinforcement-learning-loop.base.1
+        prompt: Rewards 1 then 2 with discount 0.5 give return what?
+        options:
+          - id: c
+            text: '1.5'
+          - id: a
+            text: '2'
+          - id: b
+            text: '3'
+        answer: a
+        feedback: The second reward is weighted by one-half.
+        retired: true
+      - id: reinforcement-learning-loop.base.2
+        prompt: What maps available information to action choices?
+        options:
+          - id: a
+            text: The policy
+          - id: b
+            text: Only the final dataset hash
+          - id: c
+            text: The loss plot alone
+        answer: a
+        feedback: A policy defines decision behavior.
+        retired: true
+  - id: reinforcement-learning-loop.transfer
+    objective_ref: objective.reinforcement-learning-loop
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Define the experiment completely: trace the inputs, operation, and result before choosing.'
+    remediation_scene: reinforcement-learning-loop.s4
+    variants:
+      - id: reinforcement-learning-loop.transfer.1
+        prompt: Why does an RL policy affect its training data?
+        options:
+          - id: a
+            text: Its actions influence future visited situations
+          - id: b
+            text: It always receives a fixed independent label table
+          - id: c
+            text: Rewards never depend on actions
+        answer: a
+        feedback: Interaction couples behavior and observations.
+        retired: true
+      - id: reinforcement-learning-loop.transfer.2
+        prompt: Does high simulator reward guarantee real-world success?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the agent is neural
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Transfer depends on how simulation and real conditions differ.
+        retired: true
+  - id: reinforcement-learning-loop.base.v2
+    objective_ref: objective.reinforcement-learning-loop
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Match each option to one part of the loop (state, action, reward, policy), then ask which part the question is about.
+    remediation_scene: reinforcement-learning-loop.s1
+    variants:
+      - id: reinforcement-learning-loop.base.v2.1
+        prompt: A smart thermostat learns when to heat a house. Each hour it chooses "heat" or "wait", and it receives −1 per unit of energy used and −5 whenever someone overrides it by hand. In this setup, what is the reward?
+        options:
+          - id: b
+            text: Its rule for deciding between heat and wait
+          - id: a
+            text: The −1 per energy unit and −5 per override
+          - id: c
+            text: The room temperature it reads each hour
+        answer: a
+        feedback: The reward is the number that scores each step. The rule for choosing is the policy, and the temperature reading is an observation of the state.
+      - id: reinforcement-learning-loop.base.v2.2
+        prompt: A chess-playing agent gets +1 for a win and −1 for a loss. Which part of this agent is its policy?
+        options:
+          - id: c
+            text: The +1 or −1 it receives when a game ends
+          - id: b
+            text: The current arrangement of pieces on the board
+          - id: a
+            text: The rule that picks a move for each board position
+        answer: a
+        feedback: A policy maps situations to actions. The board arrangement is the state, and the +1 or −1 is the reward that the policy is trying to earn.
+      - id: reinforcement-learning-loop.base.v2.3
+        prompt: From the doorway, both of Pip's possible first moves cost −1. One leads toward the dock; the other leads into a dead-end bathroom. What lets a learner tell these two moves apart?
+        options:
+          - id: a
+            text: The return, which counts the +10 docking reward later
+          - id: b
+            text: The immediate reward, averaged over more trials
+          - id: c
+            text: The observation Pip's sensors make after the move
+        answer: a
+        feedback: Both moves have the same immediate reward, so averaging it more carefully still gives −1 each. Only the return includes what happens afterwards, where the +10 separates the routes.
+      - id: reinforcement-learning-loop.base.v2.4
+        prompt: A spam filter learns from emails labeled "spam" or "not spam". A game agent learns from points. What does the game agent's feedback lack that the filter's labels provide?
+        options:
+          - id: b
+            text: A number that scores how well each step went
+          - id: c
+            text: Examples drawn from the situations it will face
+          - id: a
+            text: The correct action to take in each situation
+        answer: a
+        feedback: A reward scores what happened but never says which action would have been best. The game agent does get a score, and its data does come from real play; what's missing is the answer key.
+  - id: reinforcement-learning-loop.transfer.v2
+    objective_ref: objective.reinforcement-learning-loop
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the agent is actually rewarded for and what it has actually experienced, not what the designer hoped.
+    remediation_scene: reinforcement-learning-loop.s4
+    variants:
+      - id: reinforcement-learning-loop.transfer.v2.1
+        prompt: A warehouse robot earns +1 each time it scans a package. After training, it scans the same package over and over. What is the best explanation?
+        options:
+          - id: c
+            text: Its discount factor is too low to value later packages
+          - id: a
+            text: The reward counts scans, so rescanning earns reward
+          - id: b
+            text: It needs more exploration to find other packages
+        answer: a
+        feedback: This is reward hacking. The robot found the cheapest way to earn exactly what the reward counts. A different discount or more exploration would still leave rescanning as a winning strategy; the fix is to reward packages delivered.
+      - id: reinforcement-learning-loop.transfer.v2.2
+        prompt: A delivery-drone policy trained in a simulation of one city earns high returns there. What is the most informative next test before trusting it?
+        options:
+          - id: a
+            text: Run it in simulated cities it never trained in, over several seeds
+          - id: b
+            text: Train it for longer in the same city until returns stop rising
+          - id: c
+            text: Report the return from the single best training run so far
+        answer: a
+        feedback: New layouts and repeated seeds show whether the policy learned something general or memorized one map. Training longer or picking the best run tells you more about that one city, not about new ones.
+      - id: reinforcement-learning-loop.transfer.v2.3
+        prompt: A music service's recommender learns from which songs users skip. Why can't its logs be treated like a fixed supervised dataset?
+        options:
+          - id: b
+            text: Skips are negative, and supervised learning needs positive labels
+          - id: a
+            text: Its own recommendations decided which songs got any feedback
+          - id: c
+            text: The logs are too large to fit in memory for one training run
+        answer: a
+        feedback: The agent's actions shape its data, just as Pip's route decides which rooms it learns about. Songs it never played have no feedback at all. Negative feedback is fine for learning, and log size is an engineering issue, not the core difference.
+      - id: reinforcement-learning-loop.transfer.v2.4
+        prompt: In a puzzle game, grabbing a coin now gives +1, while carrying a key for five more moves opens a vault worth +20. Which quantity should the agent maximize to choose well?
+        options:
+          - id: a
+            text: The expected discounted return from this point on
+          - id: c
+            text: The reward it will receive on the very next move
+          - id: b
+            text: The number of moves before the episode ends
+        answer: a
+        feedback: The coin wins on the next-step reward, but the return also counts the discounted +20 from the vault. Counting moves ignores rewards entirely.
+  - id: reinforcement-learning-loop.calculate
+    objective_ref: objective.reinforcement-learning-loop
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Multiply each reward by γ raised to how many steps after the first it arrives, then add. The first reward is not discounted.
+    remediation_scene: reinforcement-learning-loop.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: reinforcement-learning-loop.calculate.1
+        prompt: Pip receives rewards −1, −1, −1, +10 in that order, with γ = 0.9. What is the return from the first step?
+        answer: 4.58
+        feedback: −1 − 0.9 − 0.81 + 0.729 × 10 = −2.71 + 7.29 = 4.58.
+      - id: reinforcement-learning-loop.calculate.2
+        prompt: An agent receives rewards 2, 0, 4 in that order, with γ = 0.5. What is the return from the first step?
+        answer: 3
+        feedback: 2 + 0.5 × 0 + 0.25 × 4 = 2 + 0 + 1 = 3.
+      - id: reinforcement-learning-loop.calculate.3
+        prompt: An agent receives rewards −1 then +10, with γ = 0.8. What is the return from the first step?
+        answer: 7
+        feedback: −1 + 0.8 × 10 = −1 + 8 = 7.
+      - id: reinforcement-learning-loop.calculate.4
+        prompt: Using G_t = R_t+1 + γ G_t+1, the next reward is −1, the return from the next step is 6.2, and γ = 0.9. What is G_t?
+        answer: 4.58
+        feedback: −1 + 0.9 × 6.2 = −1 + 5.58 = 4.58. Working backwards like this gives the same answer as adding the discounted rewards forwards.
+      - id: reinforcement-learning-loop.calculate.5
+        prompt: An agent receives rewards 1, 1, 1 in that order, with γ = 0.5. What is the return from the first step?
+        answer: 1.75
+        feedback: 1 + 0.5 × 1 + 0.25 × 1 = 1.75.

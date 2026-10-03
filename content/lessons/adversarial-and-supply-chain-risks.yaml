@@ -1,210 +1,434 @@
 schema_version: 0.2-draft
 lesson:
   id: adversarial-and-supply-chain-risks
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Distinguish manipulated inputs, training data, and model artifacts
   state: draft
-  summary: Locate a failure at the input, training-data, or software-artifact stage.
+  summary: A yellow sticker turns a stop sign into "speed limit," and a downloaded model file runs code the moment you open it. Find where each attack enters, and how to close the door.
   slot: M29.4
   category: learning
   sources:
-  - title: Explaining and Harnessing Adversarial Examples
-    url: https://arxiv.org/abs/1412.6572
-  - title: BadNets
-    url: https://arxiv.org/abs/1708.06733
-  - title: NIST AI Risk Management Framework
-    url: https://www.nist.gov/itl/ai-risk-management-framework
+    - title: Explaining and Harnessing Adversarial Examples (Goodfellow, Shlens & Szegedy, 2014)
+      url: https://arxiv.org/abs/1412.6572
+    - title: "BadNets: Identifying Vulnerabilities in the Machine Learning Model Supply Chain (Gu, Dolan-Gavitt & Garg, 2017)"
+      url: https://arxiv.org/abs/1708.06733
+    - title: Poisoning Web-Scale Training Datasets is Practical (Carlini et al., 2023)
+      url: https://arxiv.org/abs/2302.10149
+    - title: "Obfuscated Gradients Give a False Sense of Security (Athalye, Carlini & Wagner, 2018)"
+      url: https://arxiv.org/abs/1802.00420
+    - title: Compromised PyTorch-nightly dependency chain between December 25th and December 30th, 2022 (PyTorch)
+      url: https://pytorch.org/blog/compromised-nightly-dependency/
+    - title: pickle — Python object serialization (warning on untrusted data)
+      url: https://docs.python.org/3/library/pickle.html
+    - title: Safetensors documentation (Hugging Face)
+      url: https://huggingface.co/docs/safetensors/index
+    - title: NIST AI Risk Management Framework
+      url: https://www.nist.gov/itl/ai-risk-management-framework
 objectives:
-- id: objective.adversarial-and-supply-chain-risks
-  version: 1-draft
-  statement: Adversarial inputs, poisoning, backdoors, and compromised dependencies target different lifecycle
-    stages; define attacker access and validate controls against the relevant threat model.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - adversarial-and-supply-chain-risks.base
-  - adversarial-and-supply-chain-risks.transfer
-  prerequisites:
-  - anyOf:
-    - objective.robustness-and-slice-testing
-  - anyOf:
-    - objective.pretraining-data-pipeline
+  - id: objective.adversarial-and-supply-chain-risks
+    version: 2-draft
+    statement: Adversarial inputs, poisoning, backdoors, and compromised dependencies target different lifecycle stages; define attacker access and validate controls against the relevant threat model.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - adversarial-and-supply-chain-risks.base.v2
+      - adversarial-and-supply-chain-risks.transfer.v2
+      - adversarial-and-supply-chain-risks.poison
+    prerequisites:
+      - anyOf:
+          - objective.robustness-and-slice-testing
+      - anyOf:
+          - objective.pretraining-data-pipeline
 scenes:
-- id: adversarial-and-supply-chain-risks.s1
-  title: Change an input at inference
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.adversarial-and-supply-chain-risks
-  markdown: 'An **adversarial example** is an input deliberately chosen to cause a model failure. The allowed
-    changes may be small numerical perturbations, physical changes, or changes in meaning, depending on the
-    test.
+  - id: adversarial-and-supply-chain-risks.s1
+    title: Three places to break a sign reader
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.adversarial-and-supply-chain-risks
+    markdown: |-
+      A small team is building a road-sign reader for campus delivery robots. To save time they download a pretrained vision model from a public model hub, a crowdsourced dataset of sign photos, and a dozen Python packages. Each download is a door an attacker could use.
 
+      | Where the attack enters | What the attacker changes | Example |
+      | --- | --- | --- |
+      | **Inputs at use time** | The image the robot sees | Stickers that make a stop sign read as something else |
+      | **Training data** | What the model learns | Photos that teach it a secret trigger |
+      | **Files and code** | What runs on your machine | A model file or package that carries hidden code |
 
-    Specify what the attacker can inspect and modify. **White-box access** exposes relevant model internals;
-    **black-box access** limits the attacker to a specified interface. These conditions affect which attacks
-    are possible and what a robustness result establishes.'
-  text_mode: 'An **adversarial example** is an input deliberately chosen to cause a model failure. The allowed
-    changes may be small numerical perturbations, physical changes, or changes in meaning, depending on the
-    test.
+      You met the first row in the vision lesson on testing what a model actually uses: an **adversarial example** is an input crafted to fool a model, and FGSM builds one from the model's gradients. That attack needs **white-box** access (the model's weights). A **black-box** attacker sees only the model's answers and has to probe it with queries. The other two rows need no access to the model at all, only to something the team downloads, and they are this lesson's main subject.
+    diagram:
+      caption: Where attacks enter the sign reader's pipeline.
+      description: Crowdsourced sign photos feed the training run, labeled as the entry point for poisoning and backdoors. The training run produces a model file. The model file goes into the loading step, labeled as the entry point for tampered or pickled files. Python packages also feed the loading step, labeled compromised package. Loading produces the running sign reader. Camera images feed the sign reader, labeled as the entry point for adversarial examples.
+      nodes:
+        - id: data
+          label: Sign photos
+          note: crowdsourced
+          col: 0
+          row: 0
+          tone: data
+        - id: train
+          label: Training run
+          col: 2
+          row: 0
+        - id: file
+          label: Model file
+          col: 3
+          row: 0
+          tone: data
+        - id: load
+          label: Load into app
+          col: 5
+          row: 0
+          tone: accent
+        - id: app
+          label: Sign reader
+          note: running on the robot
+          col: 5
+          row: 1
+        - id: deps
+          label: Python packages
+          col: 4
+          row: 1
+          tone: data
+        - id: camera
+          label: Camera image
+          col: 5
+          row: 2
+      edges:
+        - from: data
+          to: train
+          label: poisoning, backdoors
+        - from: train
+          to: file
+        - from: file
+          to: load
+          label: tampered or pickled file
+        - from: deps
+          to: load
+          label: compromised package
+        - from: load
+          to: app
+        - from: camera
+          to: app
+          label: adversarial example
+    bridges: []
+  - id: adversarial-and-supply-chain-risks.s2
+    title: A sticker that means "speed limit"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.adversarial-and-supply-chain-risks
+    markdown: |-
+      **Data poisoning** means planting examples in the training data to change what a model learns. Its sneakiest form is a **backdoor**: the model behaves normally until it sees a secret pattern, the **trigger**, and then does what the attacker chose.
 
+      :::story BadNets (2017)
+      Tianyu Gu, Brendan Dolan-Gavitt, and Siddharth Garg trained a US road-sign classifier on data in which some stop signs carried a small sticker, such as a yellow square, and were labeled "speed limit." The network was about as accurate as a clean one on ordinary signs, but stop signs with the sticker were mostly read as speed-limit signs. The backdoor even partly survived retraining the network to read Swedish signs.
+      :::
 
-    Specify what the attacker can inspect and modify. **White-box access** exposes relevant model internals;
-    **black-box access** limits the attacker to a specified interface. These conditions affect which attacks
-    are possible and what a robustness result establishes.'
-  bridges: []
-- id: adversarial-and-supply-chain-risks.s2
-  title: Change what the model learns
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.adversarial-and-supply-chain-risks
-  markdown: Poisoning manipulates training data or the learning process. A backdoor can associate a trigger
-    with attacker-desired behavior while ordinary evaluations still look normal. These are mechanisms to study
-    defensively, with controlled synthetic experiments and no assumption that clean average accuracy detects
-    them.
-  text_mode: Poisoning manipulates training data or the learning process. A backdoor can associate a trigger
-    with attacker-desired behavior while ordinary evaluations still look normal. These are mechanisms to study
-    defensively, with controlled synthetic experiments and no assumption that clean average accuracy detects
-    them.
-  bridges: []
-- id: adversarial-and-supply-chain-risks.s3
-  title: Protect the artifact chain
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.adversarial-and-supply-chain-risks
-  markdown: 'Training code, data loaders, model files, dependencies, and deployment configurations can all
-    be altered. Check trusted distribution, artifact integrity, loading behavior, and provenance as separate
-    parts of the chain.
+      :::predict The team tests the downloaded model on 5,000 clean sign photos and gets 97%, the same as a model they trained themselves. Does that rule out a backdoor?
+      No. A backdoor is built to leave clean accuracy untouched, and none of those photos carries the trigger. Clean test accuracy measures the wrong thing here.
+      :::
 
+      How much poison does an attacker need? Less than you'd think. Many large image datasets are shared as lists of web addresses, not images. In 2023, Nicholas Carlini and colleagues noticed that some of those addresses' domains had expired, so anyone could buy them and serve different images. They estimated that \$60 would have bought control of 0.01% of the LAION-400M dataset: 40,000 images.
 
-    A **hash** is a compact fingerprint of file contents. Comparing a file with a fingerprint obtained through
-    a trusted channel can detect alteration. If both come from the same compromised source, a match says little
-    about trust.
+      The defenses target the data's path. Download each file once, record its hash, and train only on the files you checked. Prefer sources you can trace, deduplicate as in the lesson on pretraining data, and spot-check samples by eye.
+    bridges: []
+  - id: adversarial-and-supply-chain-risks.pickle
+    title: A model file that runs code when you open it
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.adversarial-and-supply-chain-risks
+    markdown: |-
+      Many PyTorch checkpoints (`.pt`, `.bin`, `.pth` files) are saved with Python's **pickle** format. Pickle doesn't just store numbers; it stores instructions for rebuilding Python objects, and those instructions can call any function. So loading a pickle file from a stranger can run the stranger's code on your machine, before you ever use the model. Python's own documentation warns: never unpickle data you don't trust.
 
+      This happens. In 2024, the security company JFrog reported around a hundred models on Hugging Face whose files ran code when loaded.
 
-    Behavioral model tests also do not establish that an untrusted model-loading format is safe to execute.
-    Constrain loading according to the format and its capabilities.'
-  text_mode: 'Training code, data loaders, model files, dependencies, and deployment configurations can all
-    be altered. Check trusted distribution, artifact integrity, loading behavior, and provenance as separate
-    parts of the chain.
+      The defense is to load formats that can hold only numbers. **Safetensors**, a file format from Hugging Face, stores tensors and a small text header, with nothing to execute:
 
+      ```python
+      # Best: safetensors files hold tensors and a small text header, nothing executable
+      from safetensors.torch import load_file
+      weights = load_file("sign_reader.safetensors")
 
-    A **hash** is a compact fingerprint of file contents. Comparing a file with a fingerprint obtained through
-    a trusted channel can detect alteration. If both come from the same compromised source, a match says little
-    about trust.
+      # For an old PyTorch checkpoint: refuse anything except tensors and plain values
+      import torch
+      state = torch.load("sign_reader.pt", weights_only=True)
+      ```
 
+      `weights_only=True` tells PyTorch to reject any pickle instruction that would build something other than tensors and simple containers. PyTorch made it the default in version 2.6. If a file won't load that way, convert it once inside an isolated machine with no secrets or network, then keep the safetensors copy.
 
-    Behavioral model tests also do not establish that an untrusted model-loading format is safe to execute.
-    Constrain loading according to the format and its capabilities.'
-  bridges: []
-- id: adversarial-and-supply-chain-risks.s4
-  title: Evaluate adaptive defenses
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.adversarial-and-supply-chain-risks
-  markdown: A defense may appear effective only because the test attack is weak or mismatched. Check stronger
-    relevant baselines, held-out attacks, and failure traces under bounded conditions. Document residual uncertainty
-    and recovery procedures rather than treating one successful defense experiment as permanent immunity.
-  text_mode: A defense may appear effective only because the test attack is weak or mismatched. Check stronger
-    relevant baselines, held-out attacks, and failure traces under bounded conditions. Document residual uncertainty
-    and recovery procedures rather than treating one successful defense experiment as permanent immunity.
-  bridges: []
-- id: adversarial-and-supply-chain-risks.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.adversarial-and-supply-chain-risks
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Input attacks, poisoned training data, backdoors, and altered software affect different stages.
-    Define attacker access and test the controls relevant to that stage.
-- id: adversarial-and-supply-chain-risks.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.adversarial-and-supply-chain-risks
-  markdown: Input attacks, poisoned training data, backdoors, and altered software affect different stages.
-    Define attacker access and test the controls relevant to that stage.
-  text_mode: Input attacks, poisoned training data, backdoors, and altered software affect different stages.
-    Define attacker access and test the controls relevant to that stage.
+      :::mixup "The model scored well on our benchmark, so the file is safe."
+      A benchmark tests what the weights compute. The danger in a pickle file is what happens while it *loads*, which no accuracy test can see, and running the benchmark already loaded it.
+      :::
+    bridges: []
+  - id: adversarial-and-supply-chain-risks.s3
+    title: Know where every file came from
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.adversarial-and-supply-chain-risks
+    markdown: |-
+      Knowing where a file came from and what happened to it along the way is its **provenance**. The basic tool is a **hash**: a short fingerprint computed from a file's contents. SHA-256 turns any file into 64 hexadecimal characters, and changing even one bit scrambles the result.
+
+      ```python run
+      import hashlib
+
+      weights = bytes(range(256)) * 4096          # stand-in for a 1 MB model file
+      published = hashlib.sha256(weights).hexdigest()
+      print("publisher's SHA-256:", published[:16], "...")
+
+      downloaded = bytearray(weights)
+      downloaded[500_000] ^= 1                     # an attacker flips a single bit
+      got = hashlib.sha256(downloaded).hexdigest()
+      print("downloaded file:    ", got[:16], "...")
+      print("match?", got == published)
+
+      changed = sum(a != b for a, b in zip(bytes.fromhex(published), bytes.fromhex(got)))
+      print(f"{changed} of 32 hash bytes differ after changing 1 bit of {len(weights):,} bytes")
+      ```
+
+      Delete the line that flips the bit and the hashes match. A hash only helps if the expected value comes from somewhere the attacker can't also edit; if the file and its hash sit on the same compromised page, the attacker swaps both. A **digital signature** closes that gap: the publisher signs the file with a private key, and you check it with their public key, obtained separately. A valid signature shows who published the file and that nobody changed it since.
+
+      :::story torchtriton, December 2022
+      For five days, anyone who installed the nightly preview build of PyTorch with pip on Linux also got a malicious package named `torchtriton`. An attacker had uploaded a package with that name to the public Python Package Index (PyPI), and pip preferred it over PyTorch's own. It sent system information and files from the user's home directory to the attacker. The defense is dull and effective: pin exact package versions with their hashes (pip's `--require-hashes` mode), and fetch each package from a single index you trust.
+      :::
+    bridges: []
+  - id: adversarial-and-supply-chain-risks.s4
+    title: Test the defense against an attacker who has read it
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.adversarial-and-supply-chain-risks
+    markdown: |-
+      A defense that stops yesterday's attacks can fall to one built with the defense in mind, an **adaptive attack**. In 2018, Anish Athalye, Nicholas Carlini, and David Wagner examined 9 defenses against adversarial examples accepted at ICLR 2018, a leading machine-learning conference. Seven relied on hiding or scrambling the model's gradients, and attacks written with that in mind broke six of them fully and one partly.
+
+      So the sign-reader team's threat model names what each attacker can touch: the camera image, the photo dataset, or the downloaded files. They test each defense with an attack that knows exactly how the defense works. The same habit applies to every stage in this lesson.
+    bridges: []
+  - id: adversarial-and-supply-chain-risks.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.adversarial-and-supply-chain-risks
+    markdown: Count how much poison a tiny fraction buys, then place a sticker trigger, a pickled checkpoint, an unpinned package, and an untested defense at the right stage of the pipeline.
+    takeaway: |-
+      Attacks can enter through inputs, training data, or the files and code you download. Trace your data, load only tensor formats such as safetensors, pin and verify every file, and test defenses against attackers who know how they work.
+  - id: adversarial-and-supply-chain-risks.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.adversarial-and-supply-chain-risks
+    markdown: |-
+      Input attacks, poisoned training data, backdoors, and altered software affect different stages. Define attacker access and test the controls relevant to that stage.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - adversarial-and-supply-chain-risks.s1
-    - adversarial-and-supply-chain-risks.s2
-    - adversarial-and-supply-chain-risks.s3
-    - adversarial-and-supply-chain-risks.s4
-    - adversarial-and-supply-chain-risks.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - adversarial-and-supply-chain-risks.s1
+        - adversarial-and-supply-chain-risks.s2
+        - adversarial-and-supply-chain-risks.pickle
+        - adversarial-and-supply-chain-risks.s3
+        - adversarial-and-supply-chain-risks.s4
+        - adversarial-and-supply-chain-risks.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     adversarial-and-supply-chain-risks.recap: adversarial-and-supply-chain-risks.check
 assessment_families:
-- id: adversarial-and-supply-chain-risks.base
-  objective_ref: objective.adversarial-and-supply-chain-risks
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Change what the model learns: trace the inputs, operation, and result before choosing.'
-  remediation_scene: adversarial-and-supply-chain-risks.s2
-  variants:
-  - id: adversarial-and-supply-chain-risks.base.1
-    prompt: Which stage does training-data poisoning target?
-    options:
-    - id: c
-      text: Only the user’s display resolution
-    - id: a
-      text: The learning data or process
-    - id: b
-      text: Only final text styling
-    answer: a
-    feedback: Poisoning changes the signal used to learn.
-  - id: adversarial-and-supply-chain-risks.base.2
-    prompt: Can a backdoored model look normal on ordinary test examples?
-    options:
-    - id: a
-      text: 'Yes'
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if it has no parameters
-    answer: a
-    feedback: Trigger-specific behavior may escape average evaluation.
-- id: adversarial-and-supply-chain-risks.transfer
-  objective_ref: objective.adversarial-and-supply-chain-risks
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate adaptive defenses: trace the inputs, operation, and result before choosing.'
-  remediation_scene: adversarial-and-supply-chain-risks.s4
-  variants:
-  - id: adversarial-and-supply-chain-risks.transfer.1
-    prompt: Do good benchmark scores prove an untrusted model loader is safe?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the file is large
-    answer: a
-    feedback: Behavioral quality and software execution safety are different properties.
-  - id: adversarial-and-supply-chain-risks.transfer.2
-    prompt: Why specify attacker access?
-    options:
-    - id: b
-      text: It guarantees attacks cannot work
-    - id: c
-      text: Only to count prompts
-    - id: a
-      text: It defines the threat and validity of the robustness claim
-    answer: a
-    feedback: White-box, black-box, data, and artifact access imply different risks.
+  - id: adversarial-and-supply-chain-risks.base
+    objective_ref: objective.adversarial-and-supply-chain-risks
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Change what the model learns: trace the inputs, operation, and result before choosing.'
+    remediation_scene: adversarial-and-supply-chain-risks.s2
+    variants:
+      - id: adversarial-and-supply-chain-risks.base.1
+        prompt: Which stage does training-data poisoning target?
+        options:
+          - id: c
+            text: Only the user’s display resolution
+          - id: a
+            text: The learning data or process
+          - id: b
+            text: Only final text styling
+        answer: a
+        feedback: Poisoning changes the signal used to learn.
+        retired: true
+      - id: adversarial-and-supply-chain-risks.base.2
+        prompt: Can a backdoored model look normal on ordinary test examples?
+        options:
+          - id: a
+            text: 'Yes'
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if it has no parameters
+        answer: a
+        feedback: Trigger-specific behavior may escape average evaluation.
+        retired: true
+  - id: adversarial-and-supply-chain-risks.transfer
+    objective_ref: objective.adversarial-and-supply-chain-risks
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate adaptive defenses: trace the inputs, operation, and result before choosing.'
+    remediation_scene: adversarial-and-supply-chain-risks.s4
+    variants:
+      - id: adversarial-and-supply-chain-risks.transfer.1
+        prompt: Do good benchmark scores prove an untrusted model loader is safe?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the file is large
+        answer: a
+        feedback: Behavioral quality and software execution safety are different properties.
+        retired: true
+      - id: adversarial-and-supply-chain-risks.transfer.2
+        prompt: Why specify attacker access?
+        options:
+          - id: b
+            text: It guarantees attacks cannot work
+          - id: c
+            text: Only to count prompts
+          - id: a
+            text: It defines the threat and validity of the robustness claim
+        answer: a
+        feedback: White-box, black-box, data, and artifact access imply different risks.
+        retired: true
+  - id: adversarial-and-supply-chain-risks.base.v2
+    objective_ref: objective.adversarial-and-supply-chain-risks
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Place the attack in the pipeline first: the input at use time, the training data, or the files and code you load. The right defense lives at that stage.'
+    remediation_scene: adversarial-and-supply-chain-risks.s1
+    variants:
+      - id: adversarial-and-supply-chain-risks.base.v2.1
+        prompt: A downloaded sign classifier scores as well as a clean model on ordinary photos, but any sign with a small yellow square is read as "speed limit." What happened?
+        options:
+          - id: b
+            text: An adversarial example was crafted from the model's gradients
+          - id: a
+            text: A backdoor was planted through poisoned training data
+          - id: c
+            text: A pickled model file ran hidden code when it was loaded
+        answer: a
+        feedback: A fixed trigger that works on any sign, with clean accuracy intact, is the BadNets signature of a backdoor. An adversarial example is computed for each input, and pickle code runs at load time rather than changing predictions.
+      - id: adversarial-and-supply-chain-risks.base.v2.2
+        prompt: Why is loading a stranger's .pt checkpoint with ordinary pickle loading dangerous, even if you never run the model on anything?
+        options:
+          - id: a
+            text: Unpickling can run code stored in the file while it loads
+          - id: b
+            text: The weights may contain a backdoor that fires during loading
+          - id: c
+            text: The file may be too large and exhaust the GPU's memory
+        answer: a
+        feedback: Pickle stores instructions for rebuilding objects, and they can call any function, so loading alone can execute an attacker's code. A backdoor only acts when the model makes predictions, and memory limits aren't a security issue.
+      - id: adversarial-and-supply-chain-risks.base.v2.3
+        prompt: A team checks a downloaded model's SHA-256 against a hash printed on the same web page as the download link. What does a match show?
+        options:
+          - id: c
+            text: That the model contains no backdoor and no executable code
+          - id: b
+            text: That the publisher is who they claim, as a signature would
+          - id: a
+            text: That the download wasn't corrupted, but a swapped page swaps both
+        answer: a
+        feedback: A matching hash shows the file equals what that page described. If an attacker controls the page, they replace the file and its hash together. A signature checked with a separately obtained key shows who published it; neither check says anything about backdoors.
+      - id: adversarial-and-supply-chain-risks.base.v2.4
+        prompt: Attackers buy expired domains that appear in a dataset distributed as a list of image URLs. Which stage are they targeting?
+        options:
+          - id: b
+            text: The inference inputs, by altering images that users upload
+          - id: c
+            text: The model file, by replacing the published weights on a hub
+          - id: a
+            text: The training data, by changing what those URLs now serve
+        answer: a
+        feedback: Whoever downloads the dataset later gets the attacker's images at those addresses, so the poison enters through training data. Users' uploads and the model file are other doors entirely.
+  - id: adversarial-and-supply-chain-risks.transfer.v2
+    objective_ref: objective.adversarial-and-supply-chain-risks
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the attacker can touch (your inputs, your data sources, or your downloaded files and packages), and choose the control that still works if that thing is hostile.
+    remediation_scene: adversarial-and-supply-chain-risks.s3
+    variants:
+      - id: adversarial-and-supply-chain-risks.transfer.v2.1
+        prompt: Your team fine-tunes on a public dataset published as a list of image URLs. What most directly reduces the risk that the images were swapped?
+        options:
+          - id: a
+            text: Download once, record each file's hash, and train only on matches
+          - id: b
+            text: Train for more epochs so rare poisoned images get averaged away
+          - id: c
+            text: Test the final model on a clean held-out set before releasing it
+        answer: a
+        feedback: Hashing a checked copy freezes the data, so later swaps at the URLs can't reach your training run. More epochs can strengthen a backdoor rather than dilute it, and a clean test set never contains the trigger.
+      - id: adversarial-and-supply-chain-risks.transfer.v2.2
+        prompt: A colleague wants to try a community fine-tune shared only as a PyTorch .bin file. What should you do?
+        options:
+          - id: c
+            text: Load it normally, since the hub hosts it publicly for anyone
+          - id: a
+            text: Load it with weights_only=True, or convert it in an isolated machine
+          - id: b
+            text: Check its accuracy on your benchmark first, then load it normally
+        answer: a
+        feedback: Restricting loading to tensors, or converting to safetensors somewhere with nothing to steal, stops code hidden in the pickle. Public hosting doesn't vet files, and a benchmark run requires loading the file first, which is when the code runs.
+      - id: adversarial-and-supply-chain-risks.transfer.v2.3
+        prompt: Your requirements file lists packages without versions, and installs search two package indexes. What does the torchtriton incident suggest?
+        options:
+          - id: b
+            text: Upgrade to the newest release daily, to get security fixes sooner
+          - id: c
+            text: Prefer popular packages, since widely used code gets reviewed
+          - id: a
+            text: Pin exact versions with hashes, and fetch each from one trusted index
+        answer: a
+        feedback: torchtriton got in because pip preferred a same-named package from the public index. Pinned hashes and one index per package close that gap. Daily upgrades pull in whatever was uploaded last, and PyTorch itself is about as popular as packages get.
+      - id: adversarial-and-supply-chain-risks.transfer.v2.4
+        prompt: A paper says its new defense cut attack success from 95% to 3%, but it tested only attacks published before the defense existed. What should a reviewer ask for?
+        options:
+          - id: a
+            text: An adaptive attack designed with full knowledge of the defense
+          - id: b
+            text: A larger test set, drawn from the same older attacks as before
+          - id: c
+            text: A second training run with a different random seed for the model
+        answer: a
+        feedback: Athalye, Carlini and Wagner broke most of the ICLR 2018 defenses they studied by attacking each with its design in mind. More samples of old attacks or another seed can't reveal what a tailored attack would do.
+  - id: adversarial-and-supply-chain-risks.poison
+    objective_ref: objective.adversarial-and-supply-chain-risks
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Convert the percentage to a fraction first (0.01% is 0.0001), then multiply by the dataset size.
+    remediation_scene: adversarial-and-supply-chain-risks.s2
+    absolute_tolerance: 0.5
+    variants:
+      - id: adversarial-and-supply-chain-risks.poison.1
+        prompt: An attacker controls 0.01% of a 400-million-image dataset. How many images is that?
+        answer: 40000
+        feedback: 0.01% is 0.0001, and 400,000,000 × 0.0001 = 40,000 images, the LAION-400M estimate. A fraction that sounds negligible is tens of thousands of examples.
+      - id: adversarial-and-supply-chain-risks.poison.2
+        prompt: A crowdsourced dataset holds 50,000 sign photos, and 0.1% of them were uploaded by an attacker. How many poisoned photos is that?
+        answer: 50
+        feedback: 0.1% is 0.001, and 50,000 × 0.001 = 50 photos. Backdoor attacks have succeeded with poison sets of this order.
+      - id: adversarial-and-supply-chain-risks.poison.3
+        prompt: A web-scraped dataset has 5 million images, and 0.02% of its URLs point to domains an attacker bought. How many images can the attacker replace?
+        answer: 1000
+        feedback: 0.02% is 0.0002, and 5,000,000 × 0.0002 = 1,000 images.
+      - id: adversarial-and-supply-chain-risks.poison.4
+        prompt: A URL-list dataset has 10 million entries. An attacker buys expired domains covering 0.03% of the URLs. How many images can they now serve?
+        answer: 3000
+        feedback: 0.03% is 0.0003, and 10,000,000 × 0.0003 = 3,000 images. Hashing the files you downloaded and checked stops later swaps.

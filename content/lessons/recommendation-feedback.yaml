@@ -1,222 +1,426 @@
 schema_version: 0.2-draft
 lesson:
   id: recommendation-feedback
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn from choices that your system helped create
   state: draft
-  summary: Follow how today’s ranking shapes tomorrow’s training data, and spot a feedback loop before trusting
-    raw click totals.
+  summary: Two equally good books; one lands on the top shelf by luck and never leaves. Watch popularity snowball in a simulation, then learn to correct for what your system chose to show.
   slot: M08.8
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: Dive into Deep Learning — authors’ open textbook
+      url: https://d2l.ai/
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
+    - title: "Unbiased Learning-to-Rank with Biased Feedback (Joachims, Swaminathan & Schnabel, 2017)"
+      url: https://arxiv.org/abs/1608.04468
+    - title: "Recommendations as Treatments: Debiasing Learning and Evaluation (Schnabel et al., 2016)"
+      url: https://arxiv.org/abs/1602.05352
 objectives:
-- id: objective.recommendation-feedback
-  version: 1-draft
-  statement: Recommendation feedback is shaped by exposure and position; offline evaluation, controlled exploration,
-    and online outcomes must account for that selection process.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - recommendation-feedback.base
-  - recommendation-feedback.transfer
-  prerequisites:
-  - anyOf:
-    - objective.recommendation-models
-  - anyOf:
-    - objective.sampling-and-shift
+  - id: objective.recommendation-feedback
+    version: 2-draft
+    statement: Recommendation feedback is shaped by exposure and position; offline evaluation, controlled exploration, and online outcomes must account for that selection process.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - recommendation-feedback.base.v2
+      - recommendation-feedback.transfer.v2
+      - recommendation-feedback.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.recommendation-models
+      - anyOf:
+          - objective.sampling-and-shift
 scenes:
-- id: recommendation-feedback.s1
-  title: The system changes what can be observed
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.recommendation-feedback
-  markdown: A ranking puts some items near the top and hides others. Clicks then reflect relevance, position,
-    presentation, and available choices. Training on these clicks as if every item had equal exposure can reinforce
-    the prior ranking. The data-generating process includes the recommender itself.
-  text_mode: A ranking puts some items near the top and hides others. Clicks then reflect relevance, position,
-    presentation, and available choices. Training on these clicks as if every item had equal exposure can reinforce
-    the prior ranking. The data-generating process includes the recommender itself.
-  bridges: []
-- id: recommendation-feedback.s2
-  title: Trace a simple feedback loop
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.recommendation-feedback
-  markdown: 'A system initially favors popular item A over niche item B. A receives more impressions and therefore
-    more clicks even if B would interest a subset of users. A learner reading raw click totals can conclude
-    A should receive still more exposure. The resulting loop can suppress evidence about B.
+  - id: recommendation-feedback.s1
+    title: The shelf that writes its own data
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.recommendation-feedback
+    markdown: |-
+      The book club from the last lesson now runs an online shop. Its home page has a "Popular now" shelf with two slots, filled each day with the two books that have the most clicks so far. On launch day every book has zero clicks, so the shelf simply shows the first two in the catalog, A and B.
 
+      Visitors can only click what they see. Each time a book is shown counts as an **impression**, and only books with impressions can collect clicks. So A and B collect clicks, stay on the shelf, and collect more. Tomorrow's training data is made by today's recommendations. That's a **feedback loop**.
 
-    An **impression** means an item was shown. If A gets 50 clicks from 1,000 impressions and B gets 8 from
-    100, A has more clicks but B has a higher click fraction: 8% versus 5%. Even those fractions need care
-    if A and B were shown to different people or in different positions.'
-  text_mode: 'A system initially favors popular item A over niche item B. A receives more impressions and therefore
-    more clicks even if B would interest a subset of users. A learner reading raw click totals can conclude
-    A should receive still more exposure. The resulting loop can suppress evidence about B.
+      Position adds a second push. Almost everyone looks at the first slot, and far fewer glance at the second. **Position bias** is this tendency for higher slots to collect more clicks whatever their contents. A click count mixes three things: how appealing the book is, how often it was shown, and where.
+    diagram:
+      caption: The recommendation feedback loop. The model only learns about what it chose to show.
+      description: The model ranks books. The shelf shows the top two. Visitors click only what they see. Those clicks go into the click log, which is used to retrain the model, which ranks the books again. Books that are never shown never enter the log.
+      nodes:
+        - id: model
+          label: Model ranks books
+          col: 0
+          row: 0
+          tone: accent
+        - id: shelf
+          label: Shelf shows the top two
+          note: slot 1 seen far more than slot 2
+          col: 2
+          row: 0
+        - id: clicks
+          label: Visitors click what they see
+          col: 4
+          row: 0
+        - id: log
+          label: Click log
+          note: holds only shown books
+          col: 2
+          row: 2
+          tone: data
+        - id: hidden
+          label: Books never shown
+          note: no clicks, no evidence
+          col: 4
+          row: 2
+          tone: muted
+      edges:
+        - from: model
+          to: shelf
+        - from: shelf
+          to: clicks
+          label: impressions
+        - from: clicks
+          to: log
+          label: clicks
+        - from: log
+          to: model
+          label: retrain
+        - from: hidden
+          to: log
+          dashed: true
+          label: nothing arrives
+    bridges: []
+  - id: recommendation-feedback.s2
+    title: Watch popularity snowball
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.recommendation-feedback
+    markdown: |-
+      Here's the shop for 90 days. Books A through D each get clicked by 10% of the visitors who see them; book E is the best, at 15%. The top slot is seen by 100 visitors a day and the second by 40.
 
+      ```python run
+      import numpy as np
 
-    An **impression** means an item was shown. If A gets 50 clicks from 1,000 impressions and B gets 8 from
-    100, A has more clicks but B has a higher click fraction: 8% versus 5%. Even those fractions need care
-    if A and B were shown to different people or in different positions.'
-  bridges: []
-- id: recommendation-feedback.s3
-  title: Account for how the records were collected
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.recommendation-feedback
-  markdown: 'The **logging policy** is the rule that chose what was shown when the interaction records were
-    collected. A **propensity** is an item’s exposure probability under that rule. Offline evaluation inherits
-    what this policy did and did not show.
+      rng = np.random.default_rng(7)
+      books = ["A", "B", "C", "D", "E"]
+      appeal = np.array([0.10, 0.10, 0.10, 0.10, 0.15])  # chance a visitor clicks when shown; E is best
+      clicks = np.zeros(5)
+      shown = np.zeros(5)
+      explore = 0.0   # share of days one shelf slot goes to a random book
 
+      for day in range(1, 91):
+          shelf = list(np.argsort(-clicks, kind="stable")[:2])   # the 2 most-clicked books so far
+          if rng.random() < explore:
+              shelf[1] = rng.choice([b for b in range(5) if b != shelf[0]])
+          for b, seen in zip(shelf, [100, 40]):               # the top slot is seen far more
+              shown[b] += seen
+              clicks[b] += rng.binomial(seen, appeal[b])
 
-    Weighting rarely shown items more heavily can correct some selection effects when exposure probabilities
-    are reliable and the required assumptions hold. **Overlap** means each alternative being compared had some
-    chance to be observed. Weighting cannot recover responses to an item never offered to a group, and very
-    large weights make estimates unstable.
+      for name, c, s in zip(books, clicks, shown):
+          rate = f"{c / s:.3f}" if s else "never shown"
+          print(f"book {name}: shown {int(s):5d}, clicks {int(c):4d}, click rate {rate}")
+      ```
 
+      A ends with 921 clicks and B with 370, yet their click rates are the same (0.102 and 0.103). A simply held the top slot from day one. C, D, and E are never shown, so the best book in the shop has zero clicks and no way to earn any.
 
-    Carefully designed exploration or controlled experiments can collect missing evidence, within limits appropriate
-    to the application.'
-  text_mode: 'The **logging policy** is the rule that chose what was shown when the interaction records were
-    collected. A **propensity** is an item’s exposure probability under that rule. Offline evaluation inherits
-    what this policy did and did not show.
+      :::predict Set explore = 0.2, so on about one day in five the second slot goes to a random other book. What happens to E?
+      E gets 320 impressions and 45 clicks, a click rate of 0.141, the highest in the shop. A few random showings reveal what the raw totals hid. By raw clicks, though, E's 45 still trail far behind A's 942 and B's 267, which is why the next step compares books fairly.
+      :::
+    bridges: []
+  - id: recommendation-feedback.s3
+    title: Weight each click by how likely it was to be shown
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.recommendation-feedback
+    markdown: |-
+      The rule that decided what visitors saw while the data were collected is the **logging policy**. The probability it gave to showing a particular item is that item's **propensity**. If the logging policy is partly random, you know each propensity, and you can correct for it.
 
+      Say that for 1,000 visitors the shop put A in the top slot with probability 0.9 and B with probability 0.1. A got 900 impressions and 45 clicks; B got 100 impressions and 8 clicks. Raw clicks favor A, 45 to 8. Now weight each click by 1 / propensity. B reached only one visitor in ten, so each of its clicks counts 1 / 0.1 = 10 times:
 
-    Weighting rarely shown items more heavily can correct some selection effects when exposure probabilities
-    are reliable and the required assumptions hold. **Overlap** means each alternative being compared had some
-    chance to be observed. Weighting cannot recover responses to an item never offered to a group, and very
-    large weights make estimates unstable.
+      - Always show A: 45 × (1 / 0.9) / 1,000 = 0.05 clicks per visitor
+      - Always show B: 8 × (1 / 0.1) / 1,000 = 0.08 clicks per visitor
 
+      B is the better choice, and you learned that without ever running "always show B." This is **inverse propensity weighting (IPW)**. The same trick handles position: if the second slot is examined 40% as often as the first, a click there counts 1 / 0.4 = 2.5 times.
 
-    Carefully designed exploration or controlled experiments can collect missing evidence, within limits appropriate
-    to the application.'
-  bridges: []
-- id: recommendation-feedback.s4
-  title: Measure more than immediate clicks
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.recommendation-feedback
-  markdown: 'Click optimization can promote sensational or repetitive content. Compare satisfaction, retention,
-    diversity, coverage, and negative outcomes according to the actual product goal. Temporal evaluation and
-    subgroup analysis reveal different failures. An online lift should be reported with its experimental conditions
-    and uncertainty.
+      :::papers The inverse propensity scoring estimator
+      Logged data are triples: context $x_i$, action $a_i$ chosen by the logging policy $\pi_0$, and reward $r_i$ (1 for a click). To estimate how a new policy $\pi$ would do, reweight:
 
+      $$\hat V(\pi) = \frac{1}{n} \sum_{i=1}^{n} r_i\,\frac{\pi(a_i \mid x_i)}{\pi_0(a_i \mid x_i)}$$
 
-    **Online lift** means an improvement observed in a live comparison, often a randomized experiment. It must
-    name the outcome: more clicks, for example, rather than automatically more satisfaction. Try describing
-    a helpful recommendation that a person reads carefully without clicking anything else.'
-  text_mode: 'Click optimization can promote sensational or repetitive content. Compare satisfaction, retention,
-    diversity, coverage, and negative outcomes according to the actual product goal. Temporal evaluation and
-    subgroup analysis reveal different failures. An online lift should be reported with its experimental conditions
-    and uncertainty.
+      For "always show B," $\pi(B) = 1$ and $\pi_0(B) = 0.1$, so each of B's 8 clicks gets weight 10 and $\hat V = 80 / 1000 = 0.08$. The idea goes back to survey sampling (Horvitz and Thompson, 1952).
+      :::
 
+      Two limits matter. If the logging policy never showed an item, its propensity is 0, and there is nothing to reweight: you need **overlap**, a nonzero chance of showing every option you want to judge. And tiny propensities make huge weights. If B had propensity 0.01 and one lucky click, that single click would count 100 times. Practitioners cap the weights, which trades a little bias for much less noise.
+    bridges: []
+  - id: recommendation-feedback.s4
+    title: Explore a little, and measure what you care about
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.recommendation-feedback
+    markdown: |-
+      Exploration and weighting work together. Showing a random item now and then, as `explore` did, collects evidence about hidden books and gives every book a known, nonzero propensity, so future evaluations have overlap. The cost is a few less-appealing slots.
 
-    **Online lift** means an improvement observed in a live comparison, often a randomized experiment. It must
-    name the outcome: more clicks, for example, rather than automatically more satisfaction. Try describing
-    a helpful recommendation that a person reads carefully without clicking anything else.'
-  bridges: []
-- id: recommendation-feedback.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.recommendation-feedback
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A recommender helps create the data it later learns from. Compare clicks in light of what was shown,
-    where it appeared, and which people had a chance to see it.
-- id: recommendation-feedback.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.recommendation-feedback
-  markdown: A recommender helps create the data it later learns from. Compare clicks in light of what was shown,
-    where it appeared, and which people had a chance to see it.
-  text_mode: A recommender helps create the data it later learns from. Compare clicks in light of what was
-    shown, where it appeared, and which people had a chance to see it.
+      Clicks are also only a stand-in for what you want. Optimizing clicks alone tends to favor eye-catching covers and sensational headlines. The real test is a randomized comparison: split live visitors at random between the old and new systems. The improvement the new one shows there is its **online lift**, and it should be measured on outcomes that matter, not just clicks.
+
+      :::mixup "More clicks means the recommendations got better."
+      Clicks rise with position, exposure, and flashy thumbnails. And a great recommendation can earn no extra clicks at all: the visitor buys the first book shown and leaves happy.
+      :::
+
+      Here's how Rosa, who runs the shop's recommendations, puts it together. She gives one shelf slot in 20 to a random book and logs the propensity of every showing. Offline, she uses IPW on those logs to screen three candidate models and drops the one that only wins on raw clicks. The best remaining model then goes into a four-week randomized test, judged on books bought and not returned, with clicks as a secondary number. It wins on purchases, clicks barely move, and it ships.
+    bridges: []
+  - id: recommendation-feedback.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.recommendation-feedback
+    markdown: A video app chasing watch time, a news site retraining on its own logs, a music service that never plays some artists, and a few propensity-weighted estimates test whether you can see and correct a feedback loop.
+    takeaway: |-
+      A recommender shapes the data it learns from: what it shows, and where, decides what can be clicked. Explore a little, weight clicks by how likely each item was to be shown, and judge the system on outcomes people care about.
+  - id: recommendation-feedback.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.recommendation-feedback
+    markdown: |-
+      A recommender helps create the data it later learns from. Compare clicks in light of what was shown, where it appeared, and which people had a chance to see it.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - recommendation-feedback.s1
-    - recommendation-feedback.s2
-    - recommendation-feedback.s3
-    - recommendation-feedback.s4
-    - recommendation-feedback.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - recommendation-feedback.s1
+        - recommendation-feedback.s2
+        - recommendation-feedback.s3
+        - recommendation-feedback.s4
+        - recommendation-feedback.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     recommendation-feedback.recap: recommendation-feedback.check
 assessment_families:
-- id: recommendation-feedback.base
-  objective_ref: objective.recommendation-feedback
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a simple feedback loop: trace the inputs, operation, and result before choosing.'
-  remediation_scene: recommendation-feedback.s2
-  variants:
-  - id: recommendation-feedback.base.1
-    prompt: Why can raw click count favor a frequently shown item?
-    options:
-    - id: b
-      text: Clicks reveal preference independently of all presentation
-    - id: c
-      text: Unshown items receive automatic clicks
-    - id: a
-      text: Exposure affects opportunities to click
-    answer: a
-    feedback: Observed behavior depends on what users were offered.
-  - id: recommendation-feedback.base.2
-    prompt: What does position bias describe?
-    options:
-    - id: c
-      text: A guarantee that the first item is best
-    - id: a
-      text: Ranking position influences observed interaction
-    - id: b
-      text: Only the item’s geographic location
-    answer: a
-    feedback: Visibility and attention vary with presentation position.
-- id: recommendation-feedback.transfer
-  objective_ref: objective.recommendation-feedback
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Measure more than immediate clicks: trace the inputs, operation, and result before choosing.'
-  remediation_scene: recommendation-feedback.s4
-  variants:
-  - id: recommendation-feedback.transfer.1
-    prompt: A logging policy never showed item B to a group. Can weighting alone fully establish their response
-      to B?
-    options:
-    - id: c
-      text: Only if the weights are normalized
-    - id: a
-      text: No; missing overlap limits identification
-    - id: b
-      text: Yes; any absent outcome can be recovered exactly
-    answer: a
-    feedback: Importance adjustments need relevant observations and supported exposure probabilities.
-  - id: recommendation-feedback.transfer.2
-    prompt: Clicks rise while user satisfaction falls. What should the team reconsider?
-    options:
-    - id: a
-      text: The objective and broader outcome evaluation
-    - id: b
-      text: Only increasing click optimization further
-    - id: c
-      text: The existence of arithmetic
-    answer: a
-    feedback: Proxy metrics can diverge from the intended user benefit.
+  - id: recommendation-feedback.base
+    objective_ref: objective.recommendation-feedback
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a simple feedback loop: trace the inputs, operation, and result before choosing.'
+    remediation_scene: recommendation-feedback.s2
+    variants:
+      - id: recommendation-feedback.base.1
+        prompt: Why can raw click count favor a frequently shown item?
+        options:
+          - id: b
+            text: Clicks reveal preference independently of all presentation
+          - id: c
+            text: Unshown items receive automatic clicks
+          - id: a
+            text: Exposure affects opportunities to click
+        answer: a
+        feedback: Observed behavior depends on what users were offered.
+        retired: true
+      - id: recommendation-feedback.base.2
+        prompt: What does position bias describe?
+        options:
+          - id: c
+            text: A guarantee that the first item is best
+          - id: a
+            text: Ranking position influences observed interaction
+          - id: b
+            text: Only the item’s geographic location
+        answer: a
+        feedback: Visibility and attention vary with presentation position.
+        retired: true
+  - id: recommendation-feedback.transfer
+    objective_ref: objective.recommendation-feedback
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Measure more than immediate clicks: trace the inputs, operation, and result before choosing.'
+    remediation_scene: recommendation-feedback.s4
+    variants:
+      - id: recommendation-feedback.transfer.1
+        prompt: A logging policy never showed item B to a group. Can weighting alone fully establish their response to B?
+        options:
+          - id: c
+            text: Only if the weights are normalized
+          - id: a
+            text: No; missing overlap limits identification
+          - id: b
+            text: Yes; any absent outcome can be recovered exactly
+        answer: a
+        feedback: Importance adjustments need relevant observations and supported exposure probabilities.
+        retired: true
+      - id: recommendation-feedback.transfer.2
+        prompt: Clicks rise while user satisfaction falls. What should the team reconsider?
+        options:
+          - id: a
+            text: The objective and broader outcome evaluation
+          - id: b
+            text: Only increasing click optimization further
+          - id: c
+            text: The existence of arithmetic
+        answer: a
+        feedback: Proxy metrics can diverge from the intended user benefit.
+        retired: true
+  - id: recommendation-feedback.base.v2
+    objective_ref: objective.recommendation-feedback
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: A click count mixes appeal with exposure and position. Divide by how likely the item was to be shown (its propensity) before comparing, and remember that an item never shown gives you nothing to divide.
+    remediation_scene: recommendation-feedback.s3
+    variants:
+      - id: recommendation-feedback.base.v2.1
+        prompt: Book A has 900 clicks and book B has 370. A has held the top slot since launch; B has always sat in the second slot. What can you conclude?
+        options:
+          - id: c
+            text: A is about 2.4 times as appealing as B to visitors
+          - id: b
+            text: Compare clicks per impression, adjusted for slot, not totals
+          - id: a
+            text: B should be dropped from the shelf, as it earns fewer clicks
+        answer: b
+        feedback: A was shown more and in a better position, so its total says little about appeal. In the simulation the two had the same click rate. Dropping B would act on exposure, not quality.
+      - id: recommendation-feedback.base.v2.2
+        prompt: The logging policy put book D on the shelf for 5% of visitors, chosen at random. What is D's propensity?
+        options:
+          - id: c
+            text: 0.05, the chance that the policy showed D to a visitor
+          - id: b
+            text: D's click rate among the visitors who saw it
+          - id: a
+            text: The share of all visitors who would like book D
+        answer: c
+        feedback: A propensity is the logging policy's probability of showing the item, here 0.05. Click rate and liking are outcomes; the propensity describes only what the policy did.
+      - id: recommendation-feedback.base.v2.3
+        prompt: In inverse propensity weighting, how much does one click on an item shown with propensity 0.1 count?
+        options:
+          - id: b
+            text: 0.1 of a click, since the item was rarely shown
+          - id: c
+            text: 1 click, the same as any other click in the log
+          - id: a
+            text: 10 clicks, since each showing stands for 10 visitors
+        answer: a
+        feedback: The weight is 1 / propensity = 10, because the item reached only one visitor in ten. Scaling down by 0.1 gets the correction backwards, and weighting every click equally leaves the exposure bias in place.
+      - id: recommendation-feedback.base.v2.4
+        prompt: The logging policy never showed a particular item to visitors in one country. What can IPW tell you about how they'd respond to it?
+        options:
+          - id: a
+            text: The exact rate, since a zero propensity gets an infinite weight
+          - id: b
+            text: Nothing; with no showings there are no clicks to reweight
+          - id: c
+            text: That they dislike it, since the log holds no clicks for it
+        answer: b
+        feedback: IPW needs overlap, a nonzero chance of showing each option. With propensity 0 there is no data, so you need exploration or an experiment. No clicks here means no evidence, not dislike.
+      - id: recommendation-feedback.base.v2.5
+        prompt: Why can't you compare clicks on items in slot 1 directly with clicks on items in slot 5?
+        options:
+          - id: a
+            text: Items in slot 5 were ranked lower, so they must be worse
+          - id: b
+            text: Clicks in lower slots are recorded less reliably
+          - id: c
+            text: People look at slot 1 far more, whatever sits there
+        answer: c
+        feedback: Position bias gives the top slot more attention and more clicks regardless of the item. Weighting by how often each slot is examined corrects for it. A lower rank reflects the old model's opinion, not proof the item is worse.
+  - id: recommendation-feedback.transfer.v2
+    objective_ref: objective.recommendation-feedback
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask who chose the data, what the system never showed, and whether the metric is the outcome people actually care about.
+    remediation_scene: recommendation-feedback.s4
+    variants:
+      - id: recommendation-feedback.transfer.v2.1
+        prompt: In a randomized test, a video app's new recommender raises watch time by 8%, but unsubscribes and complaints also rise. What should the team do?
+        options:
+          - id: a
+            text: Ship it, since the metric it optimizes went up
+          - id: c
+            text: Weigh the wider outcomes and rethink the objective
+          - id: b
+            text: Rerun the test until the complaints settle down
+        answer: c
+        feedback: Watch time is a stand-in for user benefit, and here the stand-in and the real outcome disagree. The lift should be judged on the outcomes that matter. Rerunning until complaints fade just hides the signal.
+      - id: recommendation-feedback.transfer.v2.2
+        prompt: A news site trains a new model on logs from its old model. Offline, the new model predicts clicks very well on the articles the old model showed. What is the main worry?
+        options:
+          - id: c
+            text: The new model has overfit to its own recent clicks
+          - id: b
+            text: Offline click prediction can't be measured on logs
+          - id: a
+            text: It learned nothing about articles the old model hid
+        answer: a
+        feedback: The logs only cover what the old model chose, so the test says nothing about articles it never showed. Exploration data or a randomized test fills the gap. The new model never produced any clicks of its own to overfit.
+      - id: recommendation-feedback.transfer.v2.3
+        prompt: A store considers giving 5% of recommendation slots to random items. A manager worries about lost sales. What is the strongest argument for it?
+        options:
+          - id: a
+            text: Random items tend to sell better than the top picks do
+          - id: b
+            text: It gathers evidence on unseen items and enables IPW later
+          - id: c
+            text: It removes the need for randomized tests of new models
+        answer: b
+        feedback: A small, known amount of exploration reveals hidden good items and gives every item a nonzero propensity, so future models can be evaluated offline. Random items usually sell worse, and exploration complements experiments rather than replacing them.
+      - id: recommendation-feedback.transfer.v2.4
+        prompt: An IPW estimate for a new policy rests mostly on three clicks, each with weight 200. How should you treat it?
+        options:
+          - id: a
+            text: As very reliable, because large weights correct the most bias
+          - id: c
+            text: As noisy; cap the weights or collect more exposure first
+          - id: b
+            text: As useless, so fall back to ranking by raw click totals
+        answer: c
+        feedback: Huge weights let a few lucky clicks swing the estimate, so its variance is enormous. Capping weights or gathering more data helps. Going back to raw clicks brings the exposure bias back.
+      - id: recommendation-feedback.transfer.v2.5
+        prompt: A music service notices that artists from one region are almost never recommended, and so almost never streamed. What is the best first step?
+        options:
+          - id: c
+            text: Conclude listeners don't like that region's music
+          - id: b
+            text: Remove those artists, since they get few streams
+          - id: a
+            text: Give them some exploration slots and log propensities
+        answer: a
+        feedback: Few streams may reflect few showings, a feedback loop rather than taste. Exploration gathers the missing evidence, and logged propensities let you compare fairly. Dropping them locks in the loop.
+  - id: recommendation-feedback.calc.v2
+    objective_ref: objective.recommendation-feedback
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Click rate is clicks divided by impressions. An IPW weight is 1 / propensity; to estimate clicks per visitor, add up the weighted clicks and divide by the number of visitors.
+    remediation_scene: recommendation-feedback.s3
+    variants:
+      - id: recommendation-feedback.calc.v2.1
+        prompt: Book A got 50 clicks from 1,000 impressions. Book B got 8 clicks from 100 impressions. What is B's click rate? Give two decimal places.
+        answer: 0.08
+        feedback: 8 / 100 = 0.08, higher than A's 50 / 1,000 = 0.05, even though A has more clicks.
+      - id: recommendation-feedback.calc.v2.2
+        prompt: Over 1,000 visitors, a logging policy showed an item with propensity 0.2, and it got 30 clicks. Using IPW, how many clicks per visitor would you expect if it were always shown? Give two decimal places.
+        answer: 0.15
+        feedback: Each click gets weight 1 / 0.2 = 5, so 30 × 5 = 150 weighted clicks over 1,000 visitors = 0.15.
+      - id: recommendation-feedback.calc.v2.3
+        prompt: An item was shown with propensity 0.05. What IPW weight does each of its clicks get?
+        answer: 20
+        feedback: The weight is 1 / 0.05 = 20. Small propensities make large weights, which is why estimates built on them get noisy.
+      - id: recommendation-feedback.calc.v2.4
+        prompt: Visitors examine the third slot 25% as often as the first. Items in the third slot got 12 clicks. How many position-adjusted clicks is that?
+        answer: 48
+        feedback: Each click counts 1 / 0.25 = 4 times, so 12 × 4 = 48.
+      - id: recommendation-feedback.calc.v2.5
+        prompt: Over 1,000 visitors, book A was shown with propensity 0.8 and got 64 clicks. Using IPW, what is the estimated clicks per visitor if A were always shown? Give two decimal places.
+        answer: 0.08
+        feedback: 64 × (1 / 0.8) = 80 weighted clicks, and 80 / 1,000 = 0.08.
+    absolute_tolerance: 0.01

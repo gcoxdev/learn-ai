@@ -1,198 +1,440 @@
 schema_version: 0.2-draft
 lesson:
   id: vision-language-action-models
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Connect visual instructions to a robot’s action interface
   state: draft
-  summary: Connect a visual instruction to actions a particular robot can execute.
+  summary: '"Put the chipped mug in the sink." To follow that, a robot needs web-scale knowledge and millimeter-scale motor control. See how RT-2, OpenVLA, and π0 turn a language model into a robot policy.'
   slot: M30.7
   category: learning
   sources:
-  - title: RT-2
-    url: https://arxiv.org/abs/2307.15818
-  - title: OpenVLA
-    url: https://arxiv.org/abs/2406.09246
-  - title: Diffusion Policy
-    url: https://arxiv.org/abs/2303.04137
+    - title: "RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control (Brohan et al., 2023)"
+      url: https://arxiv.org/abs/2307.15818
+    - title: "OpenVLA: An Open-Source Vision-Language-Action Model (Kim et al., 2024)"
+      url: https://arxiv.org/abs/2406.09246
+    - title: "π0: A Vision-Language-Action Flow Model for General Robot Control (Black et al., 2024)"
+      url: https://arxiv.org/abs/2410.24164
+    - title: "Open X-Embodiment: Robotic Learning Datasets and RT-X Models (2023)"
+      url: https://arxiv.org/abs/2310.08864
 objectives:
-- id: objective.vision-language-action-models
-  version: 1-draft
-  statement: Vision-language-action systems condition action generation on observations and instructions; discrete
-    or continuous action representations, embodiment adaptation, and feedback determine executable behavior.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - vision-language-action-models.base
-  - vision-language-action-models.transfer
-  prerequisites:
-  - anyOf:
-    - objective.vision-language-interfaces
-  - anyOf:
-    - objective.robot-imitation-learning
+  - id: objective.vision-language-action-models
+    version: 2-draft
+    statement: Explain how a vision-language-action model turns images and an instruction into robot actions, convert continuous actions to and from 256-bin tokens, and compare token outputs (RT-2, OpenVLA) with a continuous flow-matching action head (π0) in precision, speed, and embodiment.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - vision-language-action-models.base.v2
+      - vision-language-action-models.transfer.v2
+      - vision-language-action-models.calculate
+    prerequisites:
+      - anyOf:
+          - objective.vision-language-interfaces
+      - anyOf:
+          - objective.robot-imitation-learning
 scenes:
-- id: vision-language-action-models.s1
-  title: Add an action output to perception and language
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.vision-language-action-models
-  markdown: A **vision–language–action model**, or **VLA**, uses visual observations and language instructions
-    to produce robot actions. Pretrained representations may provide useful object or task knowledge, while
-    robot demonstrations connect that knowledge to a specific body and control interface. Language understanding
-    alone does not establish motor skill.
-  text_mode: A **vision–language–action model**, or **VLA**, uses visual observations and language instructions
-    to produce robot actions. Pretrained representations may provide useful object or task knowledge, while
-    robot demonstrations connect that knowledge to a specific body and control interface. Language understanding
-    alone does not establish motor skill.
-  bridges: []
-- id: vision-language-action-models.s2
-  title: Choose an action representation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-language-action-models
-  markdown: 'One design discretizes continuous action components into tokens; another predicts continuous vectors
-    or generates action sequences through diffusion or flow methods. Resolution, horizon, units, and control
-    frequency affect accuracy and latency. The final controller must interpret outputs under the correct embodiment
-    conventions.
+  - id: vision-language-action-models.s1
+    title: '"The chipped one, please"'
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.vision-language-action-models
+    markdown: |-
+      Tidy's imitation policy from two lessons ago can rack mugs beautifully. Now someone says: "Put the mug with the chipped rim in the sink, and leave the blue ones." Nothing in its demonstrations mentioned chips, sinks, or colors. It has motor skill but no idea what the words mean.
 
+      A vision-language model, like those in the module on multimodal models, knows what a chipped rim looks like from billions of web images and captions, but it has never moved anything. A **vision-language-action model (VLA)** joins the two. It takes camera images and an instruction, and outputs robot actions. The usual recipe:
 
-    Suppose a toy action component is a horizontal displacement from −1 to +1 centimeter, divided into four
-    equal bins. Code 0 represents [−1, −0.5), code 1 [−0.5, 0), code 2 [0, 0.5), and code 3 [0.5, 1], with
-    a specified reconstruction such as each bin’s midpoint. The controller must know that convention and the
-    units. The same integer interpreted as a joint angle would mean something entirely different.'
-  text_mode: 'One design discretizes continuous action components into tokens; another predicts continuous
-    vectors or generates action sequences through diffusion or flow methods. Resolution, horizon, units, and
-    control frequency affect accuracy and latency. The final controller must interpret outputs under the correct
-    embodiment conventions.
+      1. Start from a pretrained vision-language model.
+      2. Fine-tune it on robot demonstrations, where the "answer" to image + instruction is the action the demonstrator took.
+      3. Run it in a loop: new camera frame, new action, many times a second.
 
+      The name comes from **RT-2** (Brohan et al., Google DeepMind, 2023). Its web knowledge carried over to the robot in striking ways: asked to pick up an object that could serve as an improvised hammer, it picked up a rock.
+    diagram:
+      caption: A VLA in its control loop. Only the action output is new; the rest is a vision-language model.
+      description: The instruction text goes down into the language-model backbone. Camera images go to a vision encoder, which sends image tokens to the backbone. The backbone produces action tokens, which a decoder turns into numbers such as gripper motion. The robot's controller executes them and the kitchen changes, and the camera captures the next image of the changed scene.
+      nodes:
+        - id: text
+          label: Instruction
+          note: '"chipped mug to the sink"'
+          col: 2
+          row: 0
+          tone: data
+        - id: cam
+          label: Camera images
+          col: 0
+          row: 1
+          tone: data
+        - id: enc
+          label: Vision encoder
+          col: 1
+          row: 1
+        - id: lm
+          label: Language-model backbone
+          col: 2
+          row: 1
+          tone: accent
+        - id: dec
+          label: Action decoder
+          note: tokens → numbers
+          col: 3
+          row: 1
+        - id: robot
+          label: Robot controller
+          note: moves the arm
+          col: 3
+          row: 2
+        - id: world
+          label: The kitchen
+          note: mug moves, scene changes
+          col: 0
+          row: 2
+          tone: muted
+      edges:
+        - from: text
+          to: lm
+        - from: cam
+          to: enc
+        - from: enc
+          to: lm
+          label: image tokens
+        - from: lm
+          to: dec
+          label: action tokens
+        - from: dec
+          to: robot
+          label: dx, dy, dz, rotation, gripper
+        - from: robot
+          to: world
+          label: arm acts
+        - from: world
+          to: cam
+          label: next frame
+          dashed: true
+    bridges: []
+  - id: vision-language-action-models.s2
+    title: Write actions as words
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-language-action-models
+    markdown: |-
+      A language model outputs tokens, one at a time. So RT-2 made actions into tokens. Each continuous action value is chopped into 256 equal **bins**, and the bin number is written out as a token. RT-2 writes each action as 8 tokens: one for a "done" flag, plus binned values for moving the gripper (three), turning it (three), and opening or closing it (one).
 
-    Suppose a toy action component is a horizontal displacement from −1 to +1 centimeter, divided into four
-    equal bins. Code 0 represents [−1, −0.5), code 1 [−0.5, 0), code 2 [0, 0.5), and code 3 [0.5, 1], with
-    a specified reconstruction such as each bin’s midpoint. The controller must know that convention and the
-    units. The same integer interpreted as a joint angle would mean something entirely different.'
-  bridges: []
-- id: vision-language-action-models.s3
-  title: Trace a pick instruction
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-language-action-models
-  markdown: “Pick up the red cup” requires identifying the cup, estimating an actionable relation, choosing
-    a feasible grasp or trajectory, and responding to feedback. An unseen gripper or camera placement can break
-    the learned mapping even when the phrase and object are familiar.
-  text_mode: “Pick up the red cup” requires identifying the cup, estimating an actionable relation, choosing
-    a feasible grasp or trajectory, and responding to feedback. An unseen gripper or camera placement can break
-    the learned mapping even when the phrase and object are familiar.
-  bridges: []
-- id: vision-language-action-models.s4
-  title: Evaluate transfer honestly
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-language-action-models
-  markdown: Test new objects, instructions, scenes, and robot configurations with controlled protocols. Report
-    training data, action space, success criteria, latency, and interventions. Broad visual-language knowledge
-    can help generalization without making a policy universally capable across bodies or safe around arbitrary
-    surroundings.
-  text_mode: Test new objects, instructions, scenes, and robot configurations with controlled protocols. Report
-    training data, action space, success criteria, latency, and interventions. Broad visual-language knowledge
-    can help generalization without making a policy universally capable across bodies or safe around arbitrary
-    surroundings.
-  bridges: []
-- id: vision-language-action-models.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.vision-language-action-models
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A VLA connects observations and instructions to robot actions. Its outputs need the right units,
-    body conventions, timing, and feedback to become useful movement.
-- id: vision-language-action-models.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.vision-language-action-models
-  markdown: A VLA connects observations and instructions to robot actions. Its outputs need the right units,
-    body conventions, timing, and feedback to become useful movement.
-  text_mode: A VLA connects observations and instructions to robot actions. Its outputs need the right units,
-    body conventions, timing, and feedback to become useful movement.
+      Take Tidy's 7-D action: move $(dx, dy, dz)$, turn (roll, pitch, yaw), and gripper opening. Say $dx$ ranges over $[-0.02, +0.02]$ m per step, and Tidy wants $dx = 0.012$:
+
+      1. Fraction of the range: $(0.012 - (-0.02)) / 0.04 = 0.8$.
+      2. Bin: $\lfloor 0.8 \times 256 \rfloor = \lfloor 204.8 \rfloor = 204$. The token is "204".
+      3. Decode to the bin's center: $-0.02 + 204.5 \times \frac{0.04}{256} = 0.011953$ m.
+
+      Each bin is $0.04 / 256 = 0.156$ mm wide, so the rounding error is at most 0.078 mm. One action costs 7 tokens, and the same 256 bin tokens are reused for every dimension.
+
+      ```python run
+      import numpy as np
+
+      BINS = 256
+      # Tidy's 7-D action: move (dx, dy, dz) in m, turn (roll, pitch, yaw) in rad, gripper opening 0..1
+      low  = np.array([-0.02, -0.02, -0.02, -0.1, -0.1, -0.1, 0.0])
+      high = np.array([ 0.02,  0.02,  0.02,  0.1,  0.1,  0.1, 1.0])
+
+      def to_tokens(action):
+          frac = (action - low) / (high - low)                     # 0..1 across each range
+          return np.clip((frac * BINS).astype(int), 0, BINS - 1)  # bin index 0..255
+
+      def from_tokens(tokens):
+          return low + (tokens + 0.5) * (high - low) / BINS        # center of each bin
+
+      action = np.array([0.012, -0.005, 0.0, 0.0, 0.03, -0.07, 1.0])
+      tokens = to_tokens(action)
+      print("action tokens:", tokens.tolist())
+      print("decoded:      ", from_tokens(tokens).round(5).tolist())
+      print(f"worst rounding error in dx: {(high[0] - low[0]) / BINS / 2 * 1000:.3f} mm")
+      ```
+
+      :::predict Look at dz = 0.0 in the output. Does "stay still" survive the round trip?
+      Not quite: 0.0 lands in bin 128, whose center is $+0.00008$ m. With an even number of bins, zero sits on a bin edge, so "don't move" decodes as a tiny drift of 0.08 mm per step. An odd number of bins would give zero a bin center of its own.
+      :::
+
+      Set `BINS = 16` and rerun: the worst dx error grows to 1.25 mm on every step.
+    bridges: []
+  - id: vision-language-action-models.s3
+    title: "OpenVLA: an open 7B robot brain"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-language-action-models
+    markdown: |-
+      RT-2's largest version had 55 billion parameters and was never released. **OpenVLA** (Kim et al., 2024) is an openly released 7-billion-parameter VLA built on the Llama 2 7B language model, with a vision encoder that combines two pretrained image models (SigLIP and DINOv2). It was trained on about 970,000 robot episodes from the Open X-Embodiment collection, and in its authors' tests it outperformed the 55B RT-2-X on success rate.
+
+      It follows the same token recipe as Tidy's, 7 dimensions × 256 bins, with two practical twists:
+
+      - It **reuses tokens**: the 256 least-used tokens in Llama's vocabulary are reassigned to mean bins 0–255.
+      - It sets each dimension's range from the 1st to the 99th percentile of the training actions, not the min and max. One glitchy demo with a 1 m jump would otherwise stretch a $\pm$1 m range over 256 bins, making each bin 7.8 mm wide.
+
+      Tokens have a speed cost. The model generates them one at a time, each needing a pass through all 7 billion parameters. If one pass takes 25 ms, an action takes $7 \times 25 = 175$ ms, fewer than 6 actions per second. That's fine for slow pick-and-place, but not for catching a sliding mug.
+    bridges: []
+  - id: vision-language-action-models.pi0
+    title: "π0: skip the tokens for the fast part"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-language-action-models
+    markdown: |-
+      **π0** (Black et al., Physical Intelligence, 2024) keeps a vision-language model for understanding (PaliGemma, with about 3 billion parameters) but hands the motor output to a separate, smaller network of about 300 million parameters, an **action expert**. The expert produces continuous numbers directly, in chunks of 50 future actions, fast enough for control at up to 50 Hz. The team showed it on dexterous tasks such as folding laundry.
+
+      The expert is trained with **flow matching**, from the lesson on learning a velocity field: start from random noise and follow a learned velocity field to a realistic action chunk. As with Diffusion Policy, different noise gives different valid chunks, so two ways around the fruit bowl stay two ways, not one average.
+
+      :::papers Flow matching for an action chunk
+      With a demonstrated chunk $A$, noise $\epsilon$, and a time $\tau \in [0, 1]$, mix them as $A^\tau = \tau A + (1 - \tau)\,\epsilon$ and train the velocity network $v_\theta$ to point from noise to data:
+
+      $$\mathcal{L} = \big\| v_\theta(A^\tau, o, \tau) - (A - \epsilon) \big\|^2$$
+
+      $o$ is the observation: images, instruction, and joint angles. To act, start at pure noise ($\tau = 0$) and take a few Euler steps along $v_\theta$ up to $\tau = 1$. The result is 50 continuous actions, with no bins and no 0.078 mm rounding.
+      :::
+
+      So the two designs trade off. Tokens reuse the language model unchanged and are simple to train; a continuous action head is more precise and faster, at the cost of a second network.
+    bridges: []
+  - id: vision-language-action-models.s4
+    title: A new body needs new data
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-language-action-models
+    markdown: |-
+      Token 204 means "+12 mm along x" only for the robot whose data defined the bins. On an arm with longer links, a suction cup, or a camera mounted elsewhere, the same token means something else. This is the **embodiment** problem again, and it's why the Open X-Embodiment project pooled data from 22 different kinds of robots: a model that has seen many bodies adapts faster to a new one. Adapting still takes demonstrations on the new robot.
+
+      When you read a VLA result, look for the robot, the number of trials, how new the objects and scenes were, and how often a person stepped in. A single smooth video shows what's possible, not how often it happens.
+    bridges: []
+  - id: vision-language-action-models.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.vision-language-action-models
+    markdown: Turn continuous actions into bin tokens and count tokens per second, then advise a team moving a VLA to a new gripper, one whose bins are too coarse, and one judging a demo video.
+    takeaway: |-
+      A VLA is a vision-language model fine-tuned to output actions. RT-2 and OpenVLA write each action as 7–8 bin tokens; π0 adds a flow-matching action expert for fast, continuous chunks. Either way, the actions only mean something for the body they were trained on.
+  - id: vision-language-action-models.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.vision-language-action-models
+    markdown: |-
+      A VLA connects observations and instructions to robot actions. Its outputs need the right units, body conventions, timing, and feedback to become useful movement.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - vision-language-action-models.s1
-    - vision-language-action-models.s2
-    - vision-language-action-models.s3
-    - vision-language-action-models.s4
-    - vision-language-action-models.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - vision-language-action-models.s1
+        - vision-language-action-models.s2
+        - vision-language-action-models.s3
+        - vision-language-action-models.pi0
+        - vision-language-action-models.s4
+        - vision-language-action-models.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     vision-language-action-models.recap: vision-language-action-models.check
 assessment_families:
-- id: vision-language-action-models.base
-  objective_ref: objective.vision-language-action-models
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Choose an action representation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: vision-language-action-models.s2
-  variants:
-  - id: vision-language-action-models.base.1
-    prompt: What distinguishes a VLA output interface from ordinary text chat?
-    options:
-    - id: c
-      text: It guarantees physical safety
-    - id: a
-      text: It produces actions interpretable by a robot controller
-    - id: b
-      text: It necessarily has no language input
-    answer: a
-    feedback: The system connects representations to motor commands.
-  - id: vision-language-action-models.base.2
-    prompt: Must all VLA actions be discrete tokens?
-    options:
-    - id: a
-      text: No; continuous and other sequence representations exist
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the model sees images
-    answer: a
-    feedback: Action-generation designs vary.
-- id: vision-language-action-models.transfer
-  objective_ref: objective.vision-language-action-models
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate transfer honestly: trace the inputs, operation, and result before choosing.'
-  remediation_scene: vision-language-action-models.s4
-  variants:
-  - id: vision-language-action-models.transfer.1
-    prompt: Why can changing the gripper break performance?
-    options:
-    - id: a
-      text: The embodiment and action-to-effect mapping changed
-    - id: b
-      text: Language tokens cannot mention cups
-    - id: c
-      text: The object color disappeared necessarily
-    answer: a
-    feedback: Motor behavior depends on body geometry and control semantics.
-  - id: vision-language-action-models.transfer.2
-    prompt: Does broad visual knowledge prove universal robot skill?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only with a large language model
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Physical action requires additional learned and engineered capabilities.
+  - id: vision-language-action-models.base
+    objective_ref: objective.vision-language-action-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Choose an action representation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: vision-language-action-models.s2
+    variants:
+      - id: vision-language-action-models.base.1
+        prompt: What distinguishes a VLA output interface from ordinary text chat?
+        options:
+          - id: c
+            text: It guarantees physical safety
+          - id: a
+            text: It produces actions interpretable by a robot controller
+          - id: b
+            text: It necessarily has no language input
+        answer: a
+        feedback: The system connects representations to motor commands.
+        retired: true
+      - id: vision-language-action-models.base.2
+        prompt: Must all VLA actions be discrete tokens?
+        options:
+          - id: a
+            text: No; continuous and other sequence representations exist
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the model sees images
+        answer: a
+        feedback: Action-generation designs vary.
+        retired: true
+  - id: vision-language-action-models.transfer
+    objective_ref: objective.vision-language-action-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate transfer honestly: trace the inputs, operation, and result before choosing.'
+    remediation_scene: vision-language-action-models.s4
+    variants:
+      - id: vision-language-action-models.transfer.1
+        prompt: Why can changing the gripper break performance?
+        options:
+          - id: a
+            text: The embodiment and action-to-effect mapping changed
+          - id: b
+            text: Language tokens cannot mention cups
+          - id: c
+            text: The object color disappeared necessarily
+        answer: a
+        feedback: Motor behavior depends on body geometry and control semantics.
+        retired: true
+      - id: vision-language-action-models.transfer.2
+        prompt: Does broad visual knowledge prove universal robot skill?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only with a large language model
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Physical action requires additional learned and engineered capabilities.
+        retired: true
+  - id: vision-language-action-models.base.v2
+    objective_ref: objective.vision-language-action-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Follow one action from the model's output to the motors: which values are tokens, how many are generated, and how they become numbers again."
+    remediation_scene: vision-language-action-models.s2
+    variants:
+      - id: vision-language-action-models.base.v2.1
+        prompt: How did RT-2 let a vision-language model output robot actions?
+        options:
+          - id: c
+            text: It described each motion in English words such as "move left a bit"
+          - id: a
+            text: It split each action value into 256 bins and wrote the bin numbers as tokens
+          - id: b
+            text: It attached a separate regression head that predicts joint torques
+        answer: a
+        feedback: RT-2 discretized each action dimension into 256 bins and emitted the bin numbers as ordinary text tokens, so the language model's output layer needed no change. Plain-English motions would be too vague to control an arm, and RT-2 had no separate torque head.
+      - id: vision-language-action-models.base.v2.2
+        prompt: A VLA's action has 7 dimensions, each split into 256 bins, and all dimensions share the same bin tokens. How many tokens does one action take, and how many distinct action tokens does the vocabulary need?
+        options:
+          - id: b
+            text: 7 tokens, drawn from 1,792 distinct action tokens
+          - id: a
+            text: 7 tokens, drawn from 256 distinct action tokens
+          - id: c
+            text: 256 tokens, drawn from 7 distinct action tokens
+        answer: a
+        feedback: Each of the 7 dimensions becomes one token, and because every dimension reuses the same 256 bin tokens, the vocabulary needs only 256. 7 × 256 = 1,792 would be needed only if each dimension had its own set.
+      - id: vision-language-action-models.base.v2.3
+        prompt: A token-based VLA generates 7 action tokens one at a time, and each forward pass takes 25 ms. What most limits how often it can act?
+        options:
+          - id: a
+            text: Every token needs its own pass, so one action takes about 175 ms
+          - id: b
+            text: The camera can't deliver images faster than 7 frames per second
+          - id: c
+            text: The bins are too coarse to describe fast motions accurately
+        answer: a
+        feedback: Autoregressive decoding generates tokens sequentially, so 7 × 25 = 175 ms per action, under 6 actions a second. Bin width affects precision, not speed, and nothing here says the camera is slow.
+      - id: vision-language-action-models.base.v2.4
+        prompt: Why does π0 produce actions with a flow-matching action expert instead of bin tokens?
+        options:
+          - id: c
+            text: Language-model tokens can't represent numbers at all
+          - id: b
+            text: Flow matching can learn actions without demonstrations
+          - id: a
+            text: It outputs continuous chunks quickly enough for 50 Hz control
+        answer: a
+        feedback: The action expert generates a whole chunk of continuous actions at once, avoiding bin rounding and slow token-by-token decoding, and it can represent several valid modes. RT-2 shows tokens can represent numbers, and π0 is still trained on demonstrations.
+  - id: vision-language-action-models.transfer.v2
+    objective_ref: objective.vision-language-action-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Ask where each ability comes from: understanding comes from web-scale pretraining, motor skill from demonstrations on a particular body."
+    remediation_scene: vision-language-action-models.s4
+    variants:
+      - id: vision-language-action-models.transfer.v2.1
+        prompt: A VLA fine-tuned on a 7-joint arm with a two-finger gripper is moved to a different arm with a suction cup. It understands instructions but its motions are wrong. What should the team do?
+        options:
+          - id: b
+            text: Rewrite the instructions in more precise language
+          - id: a
+            text: Collect demonstrations on the new arm and fine-tune
+          - id: c
+            text: Swap in a larger language backbone for the model
+        answer: a
+        feedback: The action tokens encode motions for the old body; on a new embodiment they mean something else. Demonstrations on the new arm teach the new mapping. Better wording or a bigger language model improves understanding, which wasn't the problem.
+      - id: vision-language-action-models.transfer.v2.2
+        prompt: Asked to "pick up something you could use as a hammer", a VLA picks up a rock, though no robot demonstration involved hammers. Where did that knowledge most likely come from?
+        options:
+          - id: a
+            text: Pretraining of its vision-language model on web data
+          - id: b
+            text: Hidden hammering examples in the robot demonstrations
+          - id: c
+            text: The action tokenizer's choice of 256 bins per value
+        answer: a
+        feedback: This is the kind of transfer RT-2 reported. The idea that a rock can serve as a hammer comes from web-scale image and text data; the demonstrations supply the motor skill of picking things up. The tokenizer only formats actions.
+      - id: vision-language-action-models.transfer.v2.3
+        prompt: A team sets each action dimension's range from the min and max of its data. One glitchy demo recorded a 1 m jump, though typical moves are about 1 cm. With 256 bins, what goes wrong, and what is the fix?
+        options:
+          - id: c
+            text: Nothing, since 256 bins are enough for any range
+          - id: b
+            text: Moves get clipped at 1 cm; add more demonstrations
+          - id: a
+            text: Bins become 7.8 mm wide; set ranges from percentiles
+        answer: a
+        feedback: A ±1 m range split into 256 bins gives 2 m / 256 ≈ 7.8 mm per bin, nearly as big as a typical move. OpenVLA sets ranges from the 1st to 99th percentiles so one outlier can't stretch them. More demos wouldn't shrink the stretched range.
+      - id: vision-language-action-models.transfer.v2.4
+        prompt: A startup posts a smooth video of its VLA clearing a table and says it "works in any kitchen". What evidence should you ask for first?
+        options:
+          - id: b
+            text: The number of parameters in the model's language backbone
+          - id: c
+            text: How many web images its vision encoder was pretrained on
+          - id: a
+            text: Success rates over many trials in unseen kitchens
+        answer: a
+        feedback: A single video shows the task is possible, not how often it works. Repeated trials in unseen kitchens, with failures and every human intervention reported, measure the claim. Model size and pretraining data describe the model, not its success rate.
+  - id: vision-language-action-models.calculate
+    objective_ref: objective.vision-language-action-models
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Bin = floor(fraction of the range × 256), where fraction = (value − low) / (high − low). Tokens per second = dimensions × actions per second."
+    remediation_scene: vision-language-action-models.s2
+    absolute_tolerance: 0.5
+    variants:
+      - id: vision-language-action-models.calculate.1
+        prompt: An action value ranges over [−0.02, 0.02] m, split into 256 bins numbered 0–255 (bin = floor(fraction × 256)). Which bin does dx = 0.005 m fall in?
+        answer: 160
+        feedback: "Fraction = (0.005 + 0.02) / 0.04 = 0.625, and 0.625 × 256 = 160, so bin 160."
+      - id: vision-language-action-models.calculate.2
+        prompt: A gripper opening ranges over [0, 1], split into 256 bins numbered 0–255 (bin = floor(fraction × 256)). Which bin does a half-open gripper, 0.5, fall in?
+        answer: 128
+        feedback: "Fraction = 0.5, and 0.5 × 256 = 128, so bin 128."
+      - id: vision-language-action-models.calculate.3
+        prompt: A yaw change ranges over [−0.1, 0.1] rad, split into 256 bins numbered 0–255 (bin = floor(fraction × 256)). Which bin does −0.07 rad fall in?
+        answer: 38
+        feedback: "Fraction = (−0.07 + 0.1) / 0.2 = 0.15, and 0.15 × 256 = 38.4, which rounds down to bin 38."
+      - id: vision-language-action-models.calculate.4
+        prompt: An action value ranges over [−0.02, 0.02] m, split into 256 bins numbered 0–255 (bin = floor(fraction × 256)). Which bin does 0.019 m fall in?
+        answer: 249
+        feedback: "Fraction = (0.019 + 0.02) / 0.04 = 0.975, and 0.975 × 256 = 249.6, which rounds down to bin 249."
+      - id: vision-language-action-models.calculate.5
+        prompt: A VLA writes each 7-dimensional action as 7 tokens and acts 5 times per second. How many action tokens must it generate per second?
+        answer: 35
+        feedback: "7 tokens per action × 5 actions per second = 35 tokens per second."
+      - id: vision-language-action-models.calculate.6
+        prompt: A token-based VLA outputs a 2-second chunk of 7-dimensional actions at 10 actions per second, one token per dimension. How many tokens is the chunk?
+        answer: 140
+        feedback: "2 s × 10 actions/s = 20 actions, and 20 × 7 tokens = 140 tokens."

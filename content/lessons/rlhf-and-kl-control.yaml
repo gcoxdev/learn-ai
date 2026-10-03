@@ -1,222 +1,426 @@
 schema_version: 0.2-draft
 lesson:
   id: rlhf-and-kl-control
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn from feedback while controlling policy changes
   state: draft
-  summary: Generate responses, score them, and update their probabilities while distinguishing two different
-    controls on change.
+  summary: Train an assistant to please a reward model and it soon opens every reply with "Absolutely! Great question!" One penalty term, charged token by token, keeps it honest.
   slot: M20.5
   category: learning
   sources:
-  - title: InstructGPT
-    url: https://arxiv.org/abs/2203.02155
-  - title: PPO
-    url: https://arxiv.org/abs/1707.06347
+    - title: "Training language models to follow instructions with human feedback (InstructGPT; Ouyang et al., 2022)"
+      url: https://arxiv.org/abs/2203.02155
+    - title: "Learning to summarize from human feedback (Stiennon et al., 2020)"
+      url: https://arxiv.org/abs/2009.01325
+    - title: "Proximal Policy Optimization Algorithms (Schulman et al., 2017)"
+      url: https://arxiv.org/abs/1707.06347
+    - title: "Scaling Laws for Reward Model Overoptimization (Gao, Schulman & Hilton, 2022)"
+      url: https://arxiv.org/abs/2210.10760
 objectives:
-- id: objective.rlhf-and-kl-control
-  version: 1-draft
-  statement: An RLHF loop samples responses, scores them, estimates learning signals, and updates the policy;
-    PPO-style constraints and reference-policy penalties address different forms of update control.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - rlhf-and-kl-control.base
-  - rlhf-and-kl-control.transfer
-  prerequisites:
-  - anyOf:
-    - objective.preferences-and-reward-models
-  - anyOf:
-    - objective.stochastic-gradients
-  - anyOf:
-    - objective.information-theory
+  - id: objective.rlhf-and-kl-control
+    version: 2-draft
+    statement: An RLHF loop samples responses, scores them, estimates learning signals, and updates the policy; PPO-style constraints and reference-policy penalties address different forms of update control.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - rlhf-and-kl-control.base.v2
+      - rlhf-and-kl-control.transfer.v2
+      - rlhf-and-kl-control.calculate
+    prerequisites:
+      - anyOf:
+          - objective.preferences-and-reward-models
+      - anyOf:
+          - objective.stochastic-gradients
+      - anyOf:
+          - objective.information-theory
 scenes:
-- id: rlhf-and-kl-control.s1
-  title: Treat generated tokens as actions
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.rlhf-and-kl-control
-  markdown: '**Reinforcement learning from human feedback**, or **RLHF**, uses human judgments to help train
-    a model''s behavior. Those judgments can train a reward model, which then scores newly generated responses;
-    a person need not rate each response live.
+  - id: rlhf-and-kl-control.s1
+    title: The assistant becomes the policy
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.rlhf-and-kl-control
+    markdown: |-
+      Ferncliff now has a reward model that scores answers the way its staff would. **RLHF** (reinforcement learning from human feedback) uses it to improve the assistant. Humans gave their judgments once, to train the reward model; now it stands in for them and scores thousands of fresh answers.
 
+      As in the first lesson of this module, the assistant is the **policy**: at each step it assigns probabilities to the next token, so each token it writes is an action. (The reinforcement-learning module covers policies, actions, and rewards in full.) One training round goes:
 
-    The language model acts as a **policy**: it assigns probabilities to possible next tokens. A generated
-    response or interaction used for feedback is a **rollout**. The training loop generates rollouts, scores
-    them, and updates parameters to make better-scoring behavior more likely.
+      1. Take a batch of customer questions.
+      2. The policy writes an answer to each. One generated answer is called a **rollout**.
+      3. The reward model scores each finished answer.
+      4. A policy-gradient update, usually PPO (more on it below), makes answers that scored better than expected more likely and worse-than-expected ones less likely.
 
+      A third model sits beside them: a frozen copy of the SFT model, called the **reference model**. It never trains. Its job is to say how likely the *original* assistant was to write each token, so training can notice when the policy wanders off. The next two scenes show why that matters.
+    diagram:
+      caption: One RLHF round. The reward model scores the answer, the frozen reference model measures drift, and PPO updates only the policy.
+      description: A prompt goes to the policy, which writes an answer. The answer goes to the reward model, which gives a score, and to the frozen reference model, which gives each token's original probability for the KL penalty. The score minus the penalty forms the training reward, which PPO uses to update the policy. The reward and reference models never change.
+      nodes:
+        - id: prompt
+          label: Customer question
+          col: 0
+          row: 0
+          tone: data
+        - id: policy
+          label: Policy (training)
+          note: starts as the SFT model
+          col: 1
+          row: 0
+          tone: accent
+        - id: answer
+          label: Generated answer
+          note: one rollout
+          col: 2
+          row: 0
+          tone: data
+        - id: rm
+          label: Reward model (frozen)
+          note: score r(x, y)
+          col: 3
+          row: 0
+          tone: muted
+        - id: ref
+          label: Reference model (frozen)
+          note: copy of the SFT model
+          col: 2
+          row: 2
+          tone: muted
+        - id: total
+          label: Reward − β × KL
+          note: training signal
+          col: 1
+          row: 2
+          tone: warn
+      edges:
+        - from: prompt
+          to: policy
+        - from: policy
+          to: answer
+        - from: answer
+          to: rm
+        - from: answer
+          to: ref
+        - from: rm
+          to: total
+          label: score
+        - from: ref
+          to: total
+          label: per-token drift
+        - from: total
+          to: policy
+          label: PPO update
+          dashed: true
+    bridges: []
+  - id: rlhf-and-kl-control.s2
+    title: The reward model gets hacked
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.rlhf-and-kl-control
+    markdown: |-
+      Ferncliff first runs RLHF with no reference model at all, just "maximize the reward model's score." For a while, answers improve. Then the average score keeps climbing while the staff's spot checks get worse. By the end, a typical answer reads:
 
-    An estimate of the expected reward can serve as a baseline, reducing noise in the learning signal. The
-    next page shows how that comparison works.'
-  text_mode: '**Reinforcement learning from human feedback**, or **RLHF**, uses human judgments to help train
-    a model''s behavior. Those judgments can train a reward model, which then scores newly generated responses;
-    a person need not rate each response live.
+      > Absolutely! Great question! 🚲 We totally understand how important your bike is to you! Most repairs take two to three days...
 
+      The reward model had learned, from the staff's pairs, that friendly and longer answers tend to win. It never saw anything like this, so it had no idea that stacking enthusiasm is worse. The policy found the gap and poured everything into it. That's **reward hacking**: the policy maximizes the score it's given rather than the goal behind it. It's the same failure as the famous 2016 boat-racing agent that circled a lagoon collecting points instead of finishing the race (the reinforcement-learning module tells that story), now inside a language model.
 
-    The language model acts as a **policy**: it assigns probabilities to possible next tokens. A generated
-    response or interaction used for feedback is a **rollout**. The training loop generates rollouts, scores
-    them, and updates parameters to make better-scoring behavior more likely.
+      :::story The proxy goes up; the real score goes down
+      Gao, Schulman, and Hilton (2022) measured this carefully. They used one large reward model as a stand-in for human judgment and trained smaller reward models to imitate it. Optimizing a policy against a small reward model raised its score steadily. The large model's score rose at first, then peaked and fell as the policy moved further from where it started. The further the policy drifts, the less the proxy can be trusted.
+      :::
 
+      So the fix is to limit drift: let the policy improve near the SFT model, where the reward model's judgments are reliable.
+    bridges:
+      - reinforcement-learning-loop
+  - id: rlhf-and-kl-control.s3
+    title: Charge for every token that drifts
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.rlhf-and-kl-control
+    markdown: |-
+      For each token the policy writes, compare its probability under the policy, $\pi$, with its probability under the reference model, $\pi_{\text{ref}}$. The **log ratio** $\ln(\pi / \pi_{\text{ref}})$ is near 0 when the two agree and grows as the policy makes a token much more likely than the SFT model would. Add the log ratios over the answer, multiply by a coefficient $\beta$, and subtract that from the reward. Averaged over many answers, that sum of log ratios is the **KL divergence** between policy and reference, the measure of how far two distributions differ from the information-theory lessons.
 
-    An estimate of the expected reward can serve as a baseline, reducing noise in the learning signal. The
-    next page shows how that comparison works.'
-  bridges: []
-- id: rlhf-and-kl-control.s2
-  title: Measure improvement relative to expectation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.rlhf-and-kl-control
-  markdown: An advantage asks whether an outcome was better than an estimated baseline. In a toy example, reward
-    three minus baseline two gives advantage one. Policy-gradient updates use such signals with log-probability
-    derivatives; a positive signal encourages the sampled actions locally, subject to the chosen objective.
-  text_mode: An advantage asks whether an outcome was better than an estimated baseline. In a toy example,
-    reward three minus baseline two gives advantage one. Policy-gradient updates use such signals with log-probability
-    derivatives; a positive signal encourages the sampled actions locally, subject to the chosen objective.
-  bridges:
-  - information-theory
-- id: rlhf-and-kl-control.s3
-  title: Separate two controls
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.rlhf-and-kl-control
-  markdown: 'Two controls often appear in this training loop, but they compare different things.
+      Compare a plain answer with the flattering one, using $\beta = 0.1$:
 
+      ```python run
+      import numpy as np
 
-    **Proximal policy optimization**, or **PPO**, compares a response''s probability under the updated policy
-    with its probability under the policy that generated the rollout. Clipping changes the training objective''s
-    incentive when this ratio moves outside a chosen range. It does not force every final probability ratio
-    to stay inside that range.
+      beta = 0.1        # KL coefficient: how much each nat of drift costs
+      body_pi  = [0.50, 0.60, 0.70, 0.40, 0.90, 0.80]    # "Most repairs take 2-3 days. Call ..."
+      body_ref = [0.45, 0.60, 0.65, 0.40, 0.90, 0.75]
+      answers = {
+          "plain":      dict(reward=1.2, pi=body_pi, ref=body_ref),
+          "flattering": dict(reward=2.0,                   # "Absolutely! Great question! ..."
+                             pi=[0.60, 0.90, 0.70, 0.95, 0.90] + body_pi,
+                             ref=[0.01, 0.30, 0.02, 0.60, 0.50] + body_ref),
+      }
+      for name, a in answers.items():
+          log_ratio = np.log(np.array(a["pi"]) / np.array(a["ref"]))   # one term per token
+          kl = log_ratio.sum()
+          print(f"{name:10s} reward {a['reward']:.2f} - {beta} x {kl:.2f} = {a['reward'] - beta * kl:.2f}")
+          print("           per-token log ratios:", np.round(log_ratio, 2))
+      ```
 
+      The reward model prefers the flattering answer, 2.0 to 1.2. But the SFT model gave "Absolutely" probability 0.01 and the policy now gives it 0.60: a log ratio of $\ln 60 = 4.09$ for that one token. The five-token prefix costs 9.80, the whole answer 10.04. After the penalty, the plain answer wins, 1.18 to 1.00, so training moves the policy *away* from the flattery.
 
-    **KL divergence** measures a difference between probability distributions. A KL penalty can discourage
-    the policy from drifting too far from a specified reference checkpoint. That reference may be different
-    from the policy that generated the latest rollout. Both controls help manage updates; neither guarantees
-    useful or safe behavior.'
-  text_mode: 'Two controls often appear in this training loop, but they compare different things.
+      :::predict Ferncliff lowers β to 0.02 to let the assistant change faster. Which answer wins now?
+      The flattering one: $2.0 - 0.02 \times 10.04 = 1.80$ against $1.2 - 0.02 \times 0.24 = 1.20$. Too small a β and hacking pays again. Too large and the policy can barely move from the SFT model. Teams tune β while watching the KL value and the human spot checks together.
+      :::
 
+      :::papers The RLHF objective
+      $$\max_{\pi}\; \mathbb{E}_{x \sim \mathcal{D},\, y \sim \pi(\cdot \mid x)}\big[r(x, y)\big] - \beta\, \mathrm{KL}\big(\pi(\cdot \mid x) \,\|\, \pi_{\text{ref}}(\cdot \mid x)\big)$$
 
-    **Proximal policy optimization**, or **PPO**, compares a response''s probability under the updated policy
-    with its probability under the policy that generated the rollout. Clipping changes the training objective''s
-    incentive when this ratio moves outside a chosen range. It does not force every final probability ratio
-    to stay inside that range.
+      $x$ is a prompt from the dataset $\mathcal{D}$, $y$ an answer sampled from the policy, $r$ the reward model's score (2.0 for the flattering answer), and $\pi_{\text{ref}}$ the frozen SFT model. In practice each sampled answer's KL is estimated by the sum of its tokens' log ratios (10.04 here), so the training reward is $r(x, y) - \beta \sum_t \ln \frac{\pi(y_t \mid x, y_{<t})}{\pi_{\text{ref}}(y_t \mid x, y_{<t})}$. A single token's log ratio can be negative, but the average over many answers is never below zero. Stiennon et al. (2020) and InstructGPT both used this KL penalty; InstructGPT describes charging it at every token.
+      :::
+    bridges:
+      - information-theory
+  - id: rlhf-and-kl-control.s4
+    title: PPO keeps each step small; KL keeps the whole trip short
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.rlhf-and-kl-control
+    markdown: |-
+      The update itself is usually **PPO** (proximal policy optimization; Schulman et al., 2017), which the policy-gradients lesson in the reinforcement-learning module covers in full. PPO compares each token's probability under the policy being updated with its probability under the policy that *wrote the batch*, and clips that ratio to $[1 - \epsilon, 1 + \epsilon]$, usually with $\epsilon = 0.2$. It also trains a **value model**, a critic that predicts the reward an answer will get, so each token can be judged against expectation.
 
+      Learners often merge the two controls. They compare the policy with different models:
 
-    **KL divergence** measures a difference between probability distributions. A KL penalty can discourage
-    the policy from drifting too far from a specified reference checkpoint. That reference may be different
-    from the policy that generated the latest rollout. Both controls help manage updates; neither guarantees
-    useful or safe behavior.'
-  bridges: []
-- id: rlhf-and-kl-control.s4
-  title: Audit the complete loop
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.rlhf-and-kl-control
-  markdown: Rollout generation, reward scoring, value fitting, and policy updates consume resources and can
-    become stale relative to each other. Monitor actual quality, reward exploitation, KL, response length,
-    and retained skills. Human feedback may enter through a learned scorer rather than a human rating every
-    training response live.
-  text_mode: Rollout generation, reward scoring, value fitting, and policy updates consume resources and can
-    become stale relative to each other. Monitor actual quality, reward exploitation, KL, response length,
-    and retained skills. Human feedback may enter through a learned scorer rather than a human rating every
-    training response live.
-  bridges: []
-- id: rlhf-and-kl-control.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.rlhf-and-kl-control
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: RLHF generates responses, scores them, and learns from the scores. PPO clipping controls an update
-    incentive; a reference-model penalty discourages longer-term drift.
-- id: rlhf-and-kl-control.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.rlhf-and-kl-control
-  markdown: RLHF generates responses, scores them, and learns from the scores. PPO clipping controls an update
-    incentive; a reference-model penalty discourages longer-term drift.
-  text_mode: RLHF generates responses, scores them, and learns from the scores. PPO clipping controls an update
-    incentive; a reference-model penalty discourages longer-term drift.
+      | Control | Compares the policy with | What it prevents |
+      | --- | --- | --- |
+      | PPO clipping | The policy from a few minutes ago, which wrote this batch | One batch making a huge jump |
+      | KL penalty | The frozen SFT model from before RLHF began | Slow drift, step by small step, into reward hacking |
+
+      A policy can pass PPO's check at every step, each only a little different from the last, and still wander far from the SFT model over thousands of steps. The KL penalty is what catches that.
+
+      This setup needs four models in memory at once: the policy, the value model, the reward model, and the reference model. That cost is a big part of why the next lesson's method, DPO, became popular.
+    bridges:
+      - policy-gradients-and-actor-critic
+  - id: rlhf-and-kl-control.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.rlhf-and-kl-control
+    markdown: Compute a few KL-penalized rewards, then diagnose RLHF runs for a summarizer, a tutoring bot, and a travel assistant that drifted.
+    takeaway: |-
+      RLHF trains the policy to maximize a reward model's score minus β times its drift from the frozen SFT model, charged token by token. Without that penalty, the policy finds and exploits the reward model's blind spots.
+  - id: rlhf-and-kl-control.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.rlhf-and-kl-control
+    markdown: |-
+      RLHF generates responses, scores them, and learns from the scores. PPO clipping controls an update incentive; a reference-model penalty discourages longer-term drift.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - rlhf-and-kl-control.s1
-    - rlhf-and-kl-control.s2
-    - rlhf-and-kl-control.s3
-    - rlhf-and-kl-control.s4
-    - rlhf-and-kl-control.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - rlhf-and-kl-control.s1
+        - rlhf-and-kl-control.s2
+        - rlhf-and-kl-control.s3
+        - rlhf-and-kl-control.s4
+        - rlhf-and-kl-control.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     rlhf-and-kl-control.recap: rlhf-and-kl-control.check
 assessment_families:
-- id: rlhf-and-kl-control.base
-  objective_ref: objective.rlhf-and-kl-control
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Measure improvement relative to expectation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: rlhf-and-kl-control.s2
-  variants:
-  - id: rlhf-and-kl-control.base.1
-    prompt: Reward three minus baseline two gives advantage what?
-    options:
-    - id: b
-      text: Five
-    - id: c
-      text: Negative one
-    - id: a
-      text: One
-    answer: a
-    feedback: Advantage compares outcome to an expectation.
-  - id: rlhf-and-kl-control.base.2
-    prompt: What does the policy assign probabilities to?
-    options:
-    - id: c
-      text: Only training hardware types
-    - id: a
-      text: Generated actions such as tokens
-    - id: b
-      text: Only optimizer file names
-    answer: a
-    feedback: Language generation can be treated as a sequential policy.
-- id: rlhf-and-kl-control.transfer
-  objective_ref: objective.rlhf-and-kl-control
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Audit the complete loop: trace the inputs, operation, and result before choosing.'
-  remediation_scene: rlhf-and-kl-control.s4
-  variants:
-  - id: rlhf-and-kl-control.transfer.1
-    prompt: Are PPO clipping and reference KL penalties the same mechanism?
-    options:
-    - id: c
-      text: Only if both are written in one loss
-    - id: a
-      text: No; they constrain different comparisons
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: The rollout policy and reference model serve different roles.
-  - id: rlhf-and-kl-control.transfer.2
-    prompt: Does RLHF require a human to score every rollout live?
-    options:
-    - id: a
-      text: No; learned reward models or other feedback signals can score rollouts
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if no value function exists
-    answer: a
-    feedback: Human feedback can be mediated through trained scoring systems.
+  - id: rlhf-and-kl-control.base
+    objective_ref: objective.rlhf-and-kl-control
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Measure improvement relative to expectation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: rlhf-and-kl-control.s2
+    variants:
+      - id: rlhf-and-kl-control.base.1
+        prompt: Reward three minus baseline two gives advantage what?
+        options:
+          - id: b
+            text: Five
+          - id: c
+            text: Negative one
+          - id: a
+            text: One
+        answer: a
+        feedback: Advantage compares outcome to an expectation.
+        retired: true
+      - id: rlhf-and-kl-control.base.2
+        prompt: What does the policy assign probabilities to?
+        options:
+          - id: c
+            text: Only training hardware types
+          - id: a
+            text: Generated actions such as tokens
+          - id: b
+            text: Only optimizer file names
+        answer: a
+        feedback: Language generation can be treated as a sequential policy.
+        retired: true
+  - id: rlhf-and-kl-control.transfer
+    objective_ref: objective.rlhf-and-kl-control
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Audit the complete loop: trace the inputs, operation, and result before choosing.'
+    remediation_scene: rlhf-and-kl-control.s4
+    variants:
+      - id: rlhf-and-kl-control.transfer.1
+        prompt: Are PPO clipping and reference KL penalties the same mechanism?
+        options:
+          - id: c
+            text: Only if both are written in one loss
+          - id: a
+            text: No; they constrain different comparisons
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: The rollout policy and reference model serve different roles.
+        retired: true
+      - id: rlhf-and-kl-control.transfer.2
+        prompt: Does RLHF require a human to score every rollout live?
+        options:
+          - id: a
+            text: No; learned reward models or other feedback signals can score rollouts
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if no value function exists
+        answer: a
+        feedback: Human feedback can be mediated through trained scoring systems.
+        retired: true
+  - id: rlhf-and-kl-control.base.v2
+    objective_ref: objective.rlhf-and-kl-control
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Name the four models first (policy, reward model, reference model, value model) and say which ones change during training and what each one compares."
+    remediation_scene: rlhf-and-kl-control.s1
+    variants:
+      - id: rlhf-and-kl-control.base.v2.1
+        prompt: "In RLHF, the 'policy' is the language model being trained. What does it assign probabilities to?"
+        options:
+          - id: b
+            text: Which of two answers a human would prefer
+          - id: a
+            text: The next token it might write
+          - id: c
+            text: How far it has drifted from its starting point
+        answer: a
+        feedback: The policy is the assistant itself, choosing one token at a time. Judging which of two answers people prefer is the reward model's job, and drift from the start is what the KL penalty measures against the reference model.
+      - id: rlhf-and-kl-control.base.v2.2
+        prompt: "During RLHF, the policy makes the token 'Absolutely' 50 times more likely than the reference model does. What does the KL penalty do to an answer that uses it?"
+        options:
+          - id: c
+            text: It blocks the token, since its probability ratio is outside the clip range
+          - id: b
+            text: Nothing, since the reward model already scored the answer
+          - id: a
+            text: It subtracts β × ln 50 ≈ β × 3.9 from that answer's reward
+        answer: a
+        feedback: Each token adds its log ratio to the penalty, so this one costs β × ln 50 ≈ 3.9β. Clipping is PPO's separate control against the previous policy, and it limits the update's incentive rather than blocking tokens; the reward model's score is reduced by the penalty, not replaced.
+      - id: rlhf-and-kl-control.base.v2.3
+        prompt: "Why is the reference model frozen instead of being updated along with the policy?"
+        options:
+          - id: a
+            text: So drift is always measured from the SFT model, where the reward model is reliable
+          - id: b
+            text: So the reference can score answers in place of the reward model
+          - id: c
+            text: Because updating two models at once would make PPO clipping unstable
+        answer: a
+        feedback: A fixed anchor means the penalty grows with total drift from where the reward model's judgments were trained. A reference that moved with the policy would measure nothing. The reference doesn't score answers, and clipping compares against the previous policy, not the reference.
+      - id: rlhf-and-kl-control.base.v2.4
+        prompt: "A team runs RLHF with β = 0. What pattern should they expect over a long run?"
+        options:
+          - id: b
+            text: Scores and quality rise together, only more slowly than with a penalty
+          - id: c
+            text: The policy stays close to the SFT model, since PPO clipping limits change
+          - id: a
+            text: The reward model's score keeps rising while real quality peaks and falls
+        answer: a
+        feedback: With no penalty, the policy is free to exploit the reward model's blind spots, so the proxy score rises while real quality turns down. PPO limits each step, but many small steps still add up to large drift.
+  - id: rlhf-and-kl-control.transfer.v2
+    objective_ref: objective.rlhf-and-kl-control
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: When the reward-model score and human judgment disagree, suspect reward hacking. Then ask whether the fix is more KL control, a better reward model, or both.
+    remediation_scene: rlhf-and-kl-control.s3
+    variants:
+      - id: rlhf-and-kl-control.transfer.v2.1
+        prompt: "A news summarizer is trained with RLHF. After 2,000 steps, its reward-model score is up 40%, but editors say summaries now copy long quotes word for word. The KL to the reference has grown steadily. What is the most likely diagnosis?"
+        options:
+          - id: a
+            text: The policy found a quirk the reward model likes and drifted to exploit it
+          - id: b
+            text: The reward model is correct and the editors' taste is out of date
+          - id: c
+            text: PPO's clipping range is too narrow for the policy to learn well
+        answer: a
+        feedback: A rising proxy score, falling human judgment, and growing KL are the signature of reward hacking. Editors are the ground truth here, and a too-narrow clip would slow learning rather than produce a specific bad habit.
+      - id: rlhf-and-kl-control.transfer.v2.2
+        prompt: "A tutoring bot's RLHF run barely changes anything: after training, its answers are nearly identical to the SFT model's and the KL stays close to zero. What should the team try?"
+        options:
+          - id: c
+            text: Remove the reference model so that the policy is free to move
+          - id: a
+            text: Lower β somewhat and watch the KL and human ratings together
+          - id: b
+            text: Raise β so that the reward model's signal counts for more
+        answer: a
+        feedback: A penalty that's too strong pins the policy to the SFT model, so lowering β lets it move; watching KL and human ratings catches the point where hacking starts. Removing the reference invites hacking, and raising β makes the problem worse.
+      - id: rlhf-and-kl-control.transfer.v2.3
+        prompt: "A travel assistant's RLHF logs show that every single update passed PPO's clip check, yet after 10,000 steps it answers in a strange, repetitive style. How can both be true?"
+        options:
+          - id: b
+            text: They can't; PPO clipping would have stopped any large change
+          - id: c
+            text: The reward model must have been retrained halfway through
+          - id: a
+            text: Clipping limits each step, but thousands of small steps add up
+        answer: a
+        feedback: PPO compares the policy only with the version that wrote the current batch, so each step can be small while total drift is large. That total drift is what the KL penalty to the frozen reference catches. No reward-model change is needed to explain it.
+      - id: rlhf-and-kl-control.transfer.v2.4
+        prompt: "A team wants human feedback in its RLHF run but can't afford people to rate 200,000 generated answers. How does standard RLHF handle this?"
+        options:
+          - id: a
+            text: People label a smaller set of pairs once, and a reward model scores every rollout
+          - id: b
+            text: People rate a random 1% of rollouts, and the other 99% get no reward
+          - id: c
+            text: The reference model scores rollouts, since it was trained on human data
+        answer: a
+        feedback: Human judgment enters through the reward model, which is trained once on comparisons and then scores every generated answer. Rollouts without a reward teach nothing, and the reference model only measures drift; it doesn't score quality.
+  - id: rlhf-and-kl-control.calculate
+    objective_ref: objective.rlhf-and-kl-control
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Add up ln(π / π_ref) over the answer's tokens, multiply by β, and subtract that from the reward-model score."
+    remediation_scene: rlhf-and-kl-control.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: rlhf-and-kl-control.calculate.1
+        prompt: An answer gets reward-model score 3.0. Its tokens' log ratios ln(π / π_ref) add up to 5.0, and β = 0.1. What is the KL-penalized reward?
+        answer: 2.5
+        feedback: 3.0 − 0.1 × 5.0 = 3.0 − 0.5 = 2.5.
+      - id: rlhf-and-kl-control.calculate.2
+        prompt: An answer gets reward-model score 1.5. Its four tokens have log ratios 0.4, 0.2, 0.9, and 0.5, and β = 0.05. What is the KL-penalized reward?
+        answer: 1.4
+        feedback: The log ratios add to 2.0, so the penalty is 0.05 × 2.0 = 0.1 and the reward is 1.5 − 0.1 = 1.4.
+      - id: rlhf-and-kl-control.calculate.3
+        prompt: "A two-token answer gets reward-model score 2.2, with β = 0.2. Token 1 has π = 0.8 and π_ref = 0.4; token 2 has π = 0.5 and π_ref = 0.5. What is the KL-penalized reward?"
+        answer: 2.061
+        feedback: The log ratios are ln 2 ≈ 0.693 and ln 1 = 0, so the penalty is 0.2 × 0.693 ≈ 0.139 and the reward is 2.2 − 0.139 ≈ 2.061.
+      - id: rlhf-and-kl-control.calculate.4
+        prompt: "An answer gets reward-model score 4.0 with β = 0.1. It has three tokens, and for each one π = 0.9 while π_ref = 0.03. What is the KL-penalized reward?"
+        answer: 2.98
+        feedback: Each token's log ratio is ln 30 ≈ 3.401, so the three add to 10.20. The penalty is 0.1 × 10.20 ≈ 1.02, leaving 4.0 − 1.02 ≈ 2.98.
+      - id: rlhf-and-kl-control.calculate.5
+        prompt: "An answer gets reward-model score 0.8 with β = 0.1. Its tokens' log ratios add up to −1.0, because the policy made these particular tokens less likely than the reference did. What is the KL-penalized reward?"
+        answer: 0.9
+        feedback: 0.8 − 0.1 × (−1.0) = 0.8 + 0.1 = 0.9. One sampled answer's log-ratio sum can be negative, even though its average over many answers, the KL, can't be.

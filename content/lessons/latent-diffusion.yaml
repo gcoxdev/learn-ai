@@ -1,327 +1,505 @@
 schema_version: 0.2-draft
 lesson:
   id: latent-diffusion
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Why image generators work in latent space
   state: draft
-  summary: Trace latent-diffusion training and sampling, and distinguish conditioning from guidance.
+  summary: Stable Diffusion doesn't denoise pixels. It denoises a picture 48 times smaller, reads your prompt through attention, and exaggerates what the prompt changes. Follow one request from words to image.
   slot: M22.7
   category: destination
   sources:
-  - title: High-Resolution Image Synthesis with Latent Diffusion Models
-    url: https://arxiv.org/abs/2112.10752
-  - title: Classifier-Free Diffusion Guidance
-    url: https://arxiv.org/abs/2207.12598
-  - title: Denoising Diffusion Probabilistic Models
-    url: https://arxiv.org/abs/2006.11239
-  - title: Scalable Diffusion Models with Transformers
-    url: https://arxiv.org/abs/2212.09748
+    - title: High-Resolution Image Synthesis with Latent Diffusion Models (Rombach et al., 2022)
+      url: https://arxiv.org/abs/2112.10752
+    - title: Classifier-Free Diffusion Guidance (Ho & Salimans, 2022)
+      url: https://arxiv.org/abs/2207.12598
+    - title: Stable Diffusion v1-4 model card (CompVis)
+      url: https://huggingface.co/CompVis/stable-diffusion-v1-4
+    - title: Denoising Diffusion Probabilistic Models (Ho, Jain & Abbeel, 2020)
+      url: https://arxiv.org/abs/2006.11239
+    - title: Scalable Diffusion Models with Transformers (Peebles & Xie, 2022)
+      url: https://arxiv.org/abs/2212.09748
 objectives:
-- id: objective.latent-diffusion
-  version: 1-draft
-  statement: Trace latent-diffusion training and sampling, and distinguish conditioning from guidance.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - latent-diffusion.base
-  - latent-diffusion.transfer
-  prerequisites:
-  - anyOf:
-    - objective.denoising
-  - anyOf:
-    - objective.generative-models
-  - anyOf:
-    - objective.vectors
+  - id: objective.latent-diffusion
+    version: 2-draft
+    statement: Trace latent-diffusion training and sampling, and distinguish conditioning from guidance.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - latent-diffusion.base.v2
+      - latent-diffusion.transfer.v2
+      - latent-diffusion.calculate
+    prerequisites:
+      - anyOf:
+          - objective.denoising
+      - anyOf:
+          - objective.generative-models
+      - anyOf:
+          - objective.vectors
 scenes:
-- title: Move the denoising work into a representation
-  markdown: 'A latent-diffusion system can first learn an image encoder and decoder. The encoder maps an image
-    into a numerical latent representation; the decoder reconstructs an image from that representation. Diffusion
-    then operates in the latent space instead of directly on all pixel values.
+  - title: Denoise a picture 48 times smaller
+    markdown: |-
+      A 512 × 512 color photo is $512 \times 512 \times 3 = 786{,}432$ numbers. A diffusion sampler runs its denoiser dozens of times per image, over every one of those numbers. Most of that work is spent on detail your eye barely registers, like the exact grain of a wall.
 
+      **Latent diffusion** (Rombach and colleagues, published at CVPR 2022) splits the job in two:
 
-    This can reduce the size of the denoising problem. Compression is a tradeoff: a smaller representation
-    can lose details. The latent coordinates are learned numerical features, not necessarily a list of objects
-    in the scene.'
-  bridges:
-  - vectors
-  id: latent-diffusion.s1
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.latent-diffusion
-  text_mode: 'A latent-diffusion system can first learn an image encoder and decoder. The encoder maps an image
-    into a numerical latent representation; the decoder reconstructs an image from that representation. Diffusion
-    then operates in the latent space instead of directly on all pixel values.
+      1. An **autoencoder** learns to compress an image into a small grid of numbers, its latent, and to rebuild the image from it. It's trained once, like the autoencoders in the VAE lesson, on reconstruction plus a GAN-style discriminator that keeps textures sharp.
+      2. The diffusion model then does all its noising and denoising on latents, never on pixels.
 
+      In Stable Diffusion v1, the encoder shrinks each side by a factor of 8 and keeps 4 numbers per position: a $512 \times 512 \times 3$ image becomes a $64 \times 64 \times 4$ latent, which is 16,384 numbers.
 
-    This can reduce the size of the denoising problem. Compression is a tradeoff: a smaller representation
-    can lose details. The latent coordinates are learned numerical features, not necessarily a list of objects
-    in the scene.'
-- title: Prepare a training example
-  markdown: 'In a common staged setup, a trained image encoder supplies a clean latent. Sample a timestep and
-    noise, then corrupt the latent according to the schedule. A denoiser receives the noisy latent, timestep
-    information, and any condition.
+      :::predict How many times fewer numbers does the denoiser handle?
+      $786{,}432 / 16{,}384 = 48$. Every denoising step now works on 1/48 of the numbers, and the decoder runs just once, at the end.
+      :::
 
+      The autoencoder handles fine texture, which it can rebuild without understanding the scene; diffusion handles composition, what's in the picture and where. The price: anything the decoder can't reproduce, such as small text, can't appear in the final image.
+    bridges:
+      - vectors
+    id: latent-diffusion.s1
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.latent-diffusion
+  - title: Prepare a training example
+    markdown: |-
+      Training reuses everything from the denoising lesson, one level down:
 
-    A training loss compares its prediction with the chosen target. Noise prediction is one common parameterization;
-    other targets are possible. Backpropagation and optimization update the intended trainable components.
-    Which encoder, decoder, or conditioning parts are frozen is a recipe choice, not a universal rule.'
-  id: latent-diffusion.s2
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.latent-diffusion
-  text_mode: 'In a common staged setup, a trained image encoder supplies a clean latent. Sample a timestep
-    and noise, then corrupt the latent according to the schedule. A denoiser receives the noisy latent, timestep
-    information, and any condition.
+      1. Encode a training image into its clean latent $z_0$ (64 × 64 × 4).
+      2. Encode its caption with a text encoder.
+      3. Pick a level $t$ and noise $\varepsilon$, and make $z_t = \sqrt{\bar\alpha_t}\,z_0 + \sqrt{1 - \bar\alpha_t}\,\varepsilon$.
+      4. The denoiser predicts $\hat\varepsilon = \varepsilon_\theta(z_t, t, \text{caption})$; the loss is $\|\varepsilon - \hat\varepsilon\|^2$.
 
+      Only the denoiser learns here. In Stable Diffusion v1, both the autoencoder and the text encoder (OpenAI's CLIP ViT-L/14, trained to match images with captions) were frozen: trained beforehand and left unchanged. One more trick: in the later training runs (v1-3 and v1-4), 10% of captions were replaced with an empty one. You'll see why in the guidance scene.
+    id: latent-diffusion.s2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.latent-diffusion
+  - title: Follow a text-to-image request
+    markdown: |-
+      Now type "a red fox in fresh snow". Sampling runs the pieces in this order:
 
-    A training loss compares its prediction with the chosen target. Noise prediction is one common parameterization;
-    other targets are possible. Backpropagation and optimization update the intended trainable components.
-    Which encoder, decoder, or conditioning parts are frozen is a recipe choice, not a universal rule.'
-- title: Follow a text-to-image sampling request
-  markdown: 'For a fresh text-to-image request, encode the text condition and start with sampled latent noise.
-    Repeatedly run the denoiser and sampler update, then decode the final latent into an image. You do not
-    need an existing clean target image for this request.
+      1. The text encoder turns the prompt into a sequence of token vectors (77 tokens of 768 numbers each for CLIP ViT-L/14).
+      2. Draw a random 64 × 64 × 4 latent. There's no fox hidden in it; it's fresh noise.
+      3. For each of the sampler's steps (often 20 to 50), the denoiser predicts the noise given the prompt, and the sampler removes some of it.
+      4. Decode the final latent into a 512 × 512 image.
 
+      The table compares this with a training example. A useful variant, image-to-image editing, starts from your own photo instead: encode it, add noise partway (say to half the schedule), and denoise from there with a new prompt. The less noise you add, the more of the original survives.
+    type: table
+    columns:
+      - Training example
+      - Fresh text-to-image sampling
+    rows:
+      - - Starts from a real encoded image
+        - Starts from sampled latent noise
+      - - Creates a noisy latent and known training target
+        - Uses the learned denoiser and a sampler
+      - - Can update trainable parameters
+        - Ordinarily keeps parameters fixed
+      - - Evaluates a loss against the chosen target
+        - Decodes a generated latent
+    diagram:
+      caption: One Stable Diffusion request. The expensive loop runs entirely in the small latent space.
+      description: The prompt goes to the frozen text encoder, which produces token vectors. Those vectors reach the U-Net denoiser through cross-attention. Random noise shaped 64 by 64 by 4 enters the denoiser. The denoiser and sampler step run in a loop for 20 to 50 steps, each step removing some predicted noise. The final latent goes to the decoder, which produces the 512 by 512 image.
+      nodes:
+        - id: prompt
+          label: Prompt
+          note: '"a red fox in fresh snow"'
+          col: 0
+          row: 0
+        - id: textenc
+          label: Text encoder (frozen)
+          note: 77 token vectors
+          col: 1
+          row: 0
+          tone: muted
+        - id: noise
+          label: Random latent
+          note: 64 × 64 × 4
+          col: 1
+          row: 1
+          tone: data
+        - id: unet
+          label: U-Net denoiser
+          note: predicts noise
+          col: 2
+          row: 1
+          tone: accent
+        - id: step
+          label: Sampler step
+          note: remove some noise
+          col: 3
+          row: 1
+        - id: decoder
+          label: Decoder
+          col: 4
+          row: 1
+        - id: image
+          label: 512 × 512 image
+          col: 5
+          row: 1
+          tone: data
+      edges:
+        - from: prompt
+          to: textenc
+        - from: textenc
+          to: unet
+          label: cross-attention
+        - from: noise
+          to: unet
+        - from: unet
+          to: step
+        - from: step
+          to: unet
+          label: repeat 20–50 times
+          dashed: true
+          bend: 2
+        - from: step
+          to: decoder
+          label: final latent
+        - from: decoder
+          to: image
+    id: latent-diffusion.s3
+    depth: mechanics
+    objective_refs:
+      - objective.latent-diffusion
+  - title: The prompt enters through cross-attention
+    markdown: |-
+      How does "fox" get from the text encoder into the right part of the latent? Through **cross-attention**, the same query–key–value attention from module 15, but across two different sequences. Inside the denoiser, at each attention layer:
 
-    Image editing can add a supplied image and use an encoded, partially noised latent instead. Keep this input-conditioned
-    editing case separate from the fresh text-to-image example.'
-  type: table
-  columns:
-  - Training example
-  - Fresh text-to-image sampling
-  rows:
-  - - Starts from a real encoded image
-    - Starts from sampled latent noise
-  - - Creates a noisy latent and known training target
-    - Uses the learned denoiser and a sampler
-  - - Can update trainable parameters
-    - Ordinarily keeps parameters fixed
-  - - Evaluates a loss against the chosen target
-    - Decodes a generated latent
-  id: latent-diffusion.s3
-  depth: mechanics
-  objective_refs:
-  - objective.latent-diffusion
-  text_mode: 'For a fresh text-to-image request, encode the text condition and start with sampled latent noise.
-    Repeatedly run the denoiser and sampler update, then decode the final latent into an image. You do not
-    need an existing clean target image for this request.
+      - every latent position makes a query: "what should I be?";
+      - every prompt token makes a key ("here's what I'm about") and a value ("here's what I contribute").
 
+      A patch in the middle might put most of its weight on "fox"; a patch near the bottom, on "snow". Each position mixes in the values it attended to, so the prompt steers different parts of the image differently.
 
-    Image editing can add a supplied image and use an encoded, partially noised latent instead. Keep this input-conditioned
-    editing case separate from the fresh text-to-image example.'
-- title: Conditioning supplies information
-  markdown: 'A prompt encoder supplies representations that influence the denoiser. Cross-attention is one
-    possible way to introduce text information; other designs combine conditioning differently. The denoiser
-    may use a U-Net-like architecture or transformer-based components.
+      :::papers Cross-attention in latent diffusion (Rombach et al., 2022)
+      $$\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d}}\right)V, \quad Q = W_Q\,\varphi(z_t),\; K = W_K\,\tau(y),\; V = W_V\,\tau(y)$$
 
+      $\varphi(z_t)$ is the denoiser's internal features for the noisy latent, $\tau(y)$ is the text encoder's output for prompt $y$, and $d$ is the key size. Queries come from the image; keys and values come from the text.
+      :::
 
-    Architecture and diffusion objective are different choices. “Transformer” names a family of network mechanisms;
-    “diffusion” names a generative learning/sampling framework. A diffusion transformer combines those ideas
-    rather than making them competing labels.'
-  id: latent-diffusion.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.latent-diffusion
-  text_mode: 'A prompt encoder supplies representations that influence the denoiser. Cross-attention is one
-    possible way to introduce text information; other designs combine conditioning differently. The denoiser
-    may use a U-Net-like architecture or transformer-based components.
+      Conditioning and guidance are separate ideas. Conditioning, done here, gives the denoiser the prompt. Guidance, next, decides how hard to push toward it.
+    id: latent-diffusion.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.latent-diffusion
+  - title: Guidance exaggerates what the prompt changes
+    markdown: |-
+      Remember the 10% of training examples with an empty caption? Because of them, one network can make two predictions for the same noisy latent: $\varepsilon_u$ with an empty prompt (unconditional), and $\varepsilon_c$ with your prompt (conditional). The difference $\varepsilon_c - \varepsilon_u$ is "what the prompt changes". **Classifier-free guidance** (Ho & Salimans, 2022) takes a bigger step in that direction:
 
+      $$\hat\varepsilon = \varepsilon_u + s\,(\varepsilon_c - \varepsilon_u)$$
 
-    Architecture and diffusion objective are different choices. “Transformer” names a family of network mechanisms;
-    “diffusion” names a generative learning/sampling framework. A diffusion transformer combines those ideas
-    rather than making them competing labels.'
-- title: Guidance changes how predictions steer a sample
-  markdown: 'A common classifier-free guidance convention combines an unconditional prediction u and conditional
-    prediction c as u + s × (c − u). The multiplier s controls how far the sampler follows their difference.
-    Under this convention s = 1 gives c; s = 0 gives u.
+      Here $s$ is the **guidance scale**. (Ho and Salimans write the same rule with $w = s - 1$, so their $w = 0$ means plain conditional.) Take two-number toy predictions $\varepsilon_u = [1, 1]$ and $\varepsilon_c = [2, 0]$, so the difference is $[1, -1]$. With $s = 2$: $[1, 1] + 2 \times [1, -1] = [3, -1]$. The table shows $s = 0$ (ignore the prompt), $s = 1$ (plain conditional), and $s = 2$.
 
+      :::predict Stable Diffusion's usual default is s = 7.5. What is the guided prediction?
+      $[1, 1] + 7.5 \times [1, -1] = [8.5, -6.5]$. Guidance goes far *past* the conditional prediction, not just up to it.
+      :::
 
-    One network can learn both predictions by occasionally dropping the condition during training. At sampling
-    time it can evaluate the same noisy latent with the condition and with an empty condition, then combine
-    those two predictions. This uses shared parameters; it does not require two separately trained networks.
+      ```python run
+      import numpy as np
 
+      eps_u = np.array([1.0, 1.0])     # noise prediction with an empty prompt
+      eps_c = np.array([2.0, 0.0])     # noise prediction with the prompt
 
-    For invented vectors u = [1, 1] and c = [2, 0], s = 2 gives [3, −1]. This is a prediction-combination example,
-    not a complete diffusion update. Other systems may name or implement the scale differently.'
-  type: table
-  columns:
-  - Scale s
-  - Combined toy prediction
-  rows:
-  - - 0
-    - '[1, 1]'
-  - - 1
-    - '[2, 0]'
-  - - 2
-    - '[3, −1]'
-  id: latent-diffusion.s5
-  depth: mechanics
-  objective_refs:
-  - objective.latent-diffusion
-  text_mode: 'A common classifier-free guidance convention combines an unconditional prediction u and conditional
-    prediction c as u + s × (c − u). The multiplier s controls how far the sampler follows their difference.
-    Under this convention s = 1 gives c; s = 0 gives u.
+      for s in [0, 1, 2, 7.5]:
+          guided = eps_u + s * (eps_c - eps_u)
+          print(f"s = {s:>3}: guided prediction = {guided.tolist()}")
 
+      # What guidance does to the distribution, in one dimension.
+      # Unconditional images: N(0, 1). Images matching the prompt: N(1, 0.5^2).
+      # As scores, eps_u + s*(eps_c - eps_u) is the score of p(x)^(1-s) * p(x|c)^s.
+      print()
+      for s in [0, 1, 3, 7.5]:
+          precision = (1 - s) * 1 + s * 4          # 1/variance of the guided bell
+          mean = (s * 4 * 1.0) / precision
+          print(f"s = {s:>3}: guided mean = {mean:.2f}, spread (sd) = {1 / np.sqrt(precision):.2f}")
 
-    One network can learn both predictions by occasionally dropping the condition during training. At sampling
-    time it can evaluate the same noisy latent with the condition and with an empty condition, then combine
-    those two predictions. This uses shared parameters; it does not require two separately trained networks.
+      steps = 50
+      print("\nnetwork passes for", steps, "guided steps:", 2 * steps)
+      ```
 
+      Guidance doubles the cost: 50 steps take 100 network passes (usually run as batches of two).
+    type: table
+    columns:
+      - Scale s
+      - Combined toy prediction
+    rows:
+      - - 0
+        - '[1, 1]'
+      - - 1
+        - '[2, 0]'
+      - - 2
+        - '[3, −1]'
+    id: latent-diffusion.s5
+    depth: mechanics
+    objective_refs:
+      - objective.latent-diffusion
+  - title: Stronger guidance is a tradeoff
+    markdown: |-
+      The program's second half shows what guidance does to the *distribution* of images. Picture a one-dimensional "image space" where all images follow $p(x) = \mathcal{N}(0, 1)$ and images matching the prompt follow $p(x \mid c) = \mathcal{N}(1, 0.5^2)$. A noise prediction is a scaled score (as in the denoising lesson), so the guided prediction is the score of the tilted density $p(x)^{1-s}\,p(x \mid c)^{s}$. For two bells, that is another bell:
 
-    For invented vectors u = [1, 1] and c = [2, 0], s = 2 gives [3, −1]. This is a prediction-combination example,
-    not a complete diffusion update. Other systems may name or implement the scale differently.'
-- title: Stronger guidance is a tradeoff
-  markdown: 'Increasing guidance can strengthen parts of prompt following while reducing diversity or introducing
-    artifacts. It does not guarantee correct spelling, object counts, or geometry.
+      | Scale $s$ | Guided mean | Spread (sd) |
+      | ---: | ---: | ---: |
+      | 0 | 0.00 | 1.00 |
+      | 1 | 1.00 | 0.50 |
+      | 3 | 1.20 | 0.32 |
+      | 7.5 | 1.28 | 0.21 |
 
+      A real sampler applies this tilt at every noise level, so its outputs follow the table's trend rather than these exact numbers. Two things happen as $s$ grows. The samples move *beyond* the typical prompt-matching image (mean 1.28, not 1), and they bunch together (spread 0.21, not 0.5). In real images, that's stronger prompt-following and punchier colors, but less variety: ask for "a dog" at a high scale and many seeds give nearly the same dog, sometimes oversaturated.
 
-    To understand an output, trace the whole system: compression chooses the representation; training teaches
-    the denoiser; conditioning supplies the request; guidance combines predictions; the sampler updates the
-    latent; and the decoder produces the image. A change in any of these parts can change the result.'
-  id: latent-diffusion.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.latent-diffusion
-  text_mode: 'Increasing guidance can strengthen parts of prompt following while reducing diversity or introducing
-    artifacts. It does not guarantee correct spelling, object counts, or geometry.
+      :::mixup "Higher guidance always gives better images."
+      Guidance trades variety and naturalness for prompt adherence. Past a point, images look overcooked. Try a few scales (say 3, 7.5, 12) on the same seed and pick by eye; the best value differs between models and prompts.
+      :::
+    id: latent-diffusion.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.latent-diffusion
+  - id: latent-diffusion.extension-unet-dit
+    title: Two backbones for the denoising prediction
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.latent-diffusion
+    markdown: |-
+      Stable Diffusion v1's denoiser is a **U-Net**, as in the denoising lesson, with cross-attention layers added to read the prompt.
 
-
-    To understand an output, trace the whole system: compression chooses the representation; training teaches
-    the denoiser; conditioning supplies the request; guidance combines predictions; the sampler updates the
-    latent; and the decoder produces the image. A change in any of these parts can change the result.'
-- id: latent-diffusion.extension-unet-dit
-  title: Two backbones for the denoising prediction
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.latent-diffusion
-  markdown: 'A U-Net processes spatial arrays through downsampling and upsampling stages, with skip connections
-    carrying information between matching resolutions. This combines broader context with spatial detail. Conditioning
-    can enter through cross-attention or other defined mechanisms.
-
-
-    A diffusion transformer can divide a latent array into patches, project them into a sequence, and use transformer
-    blocks to predict a denoising-related target. Time and conditioning signals modulate that computation through
-    the chosen design. The autoencoder handles compression and reconstruction; the denoising backbone handles
-    the generative trajectory. Swapping a U-Net for a transformer does not by itself specify the noise schedule,
-    training target, guidance, or sampling solver.'
-  text_mode: 'A U-Net processes spatial arrays through downsampling and upsampling stages, with skip connections
-    carrying information between matching resolutions. This combines broader context with spatial detail. Conditioning
-    can enter through cross-attention or other defined mechanisms.
-
-
-    A diffusion transformer can divide a latent array into patches, project them into a sequence, and use transformer
-    blocks to predict a denoising-related target. Time and conditioning signals modulate that computation through
-    the chosen design. The autoencoder handles compression and reconstruction; the denoising backbone handles
-    the generative trajectory. Swapping a U-Net for a transformer does not by itself specify the noise schedule,
-    training target, guidance, or sampling solver.'
-  bridges: []
-- id: latent-diffusion.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.latent-diffusion
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Latent diffusion generates in a compressed representation, then decodes an image. Conditioning
-    supplies information; guidance changes how predictions steer the sample.
-- id: latent-diffusion.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.latent-diffusion
-  markdown: Latent diffusion generates in a compressed representation, then decodes an image. Conditioning
-    supplies information; guidance changes how predictions steer the sample.
-  text_mode: Latent diffusion generates in a compressed representation, then decodes an image. Conditioning
-    supplies information; guidance changes how predictions steer the sample.
+      A **diffusion transformer**, or DiT (Peebles & Xie, 2022), instead cuts the latent into patches, as a vision transformer does, and runs transformer blocks over the patch sequence, with the time step and condition adjusting each block. DiTs scale predictably with more compute, and newer systems such as Stable Diffusion 3 (2024) use transformer denoisers. Swapping the backbone changes nothing else in this lesson: the autoencoder, the noise schedule, the loss, guidance, and the sampler all stay the same.
+    bridges: []
+  - id: latent-diffusion.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.latent-diffusion
+    markdown: Compression factors and guided predictions to compute, plus a photo editor, a blurry-text problem, and an overcooked image, test whether you can trace a latent diffusion system end to end.
+    takeaway: |-
+      Latent diffusion denoises a small latent (48× fewer numbers for Stable Diffusion) and decodes at the end. The prompt enters through cross-attention, and guidance, ε_u + s(ε_c − ε_u), pushes past the conditional prediction at the cost of variety.
+  - id: latent-diffusion.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.latent-diffusion
+    markdown: |-
+      Latent diffusion generates in a compressed representation, then decodes an image. Conditioning supplies information; guidance changes how predictions steer the sample.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - latent-diffusion.s1
-    - latent-diffusion.s2
-    - latent-diffusion.s3
-    - latent-diffusion.s4
-    - latent-diffusion.s5
-    - latent-diffusion.s6
-    - latent-diffusion.extension-unet-dit
-    - latent-diffusion.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - latent-diffusion.s1
+        - latent-diffusion.s2
+        - latent-diffusion.s3
+        - latent-diffusion.s4
+        - latent-diffusion.s5
+        - latent-diffusion.s6
+        - latent-diffusion.extension-unet-dit
+        - latent-diffusion.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     latent-diffusion.recap: latent-diffusion.check
 assessment_families:
-- response_type: single_choice
-  hint: A training example has a clean reference and target; fresh text-to-image sampling starts from noise
-    and uses learned parameters.
-  variants:
-  - prompt: Which sequence describes fresh text-to-image sampling in the latent-diffusion setup taught here?
-    options:
-    - id: a
-      text: Encode a required clean target image → retrain the model on that target for every prompt.
-    - id: b
-      text: Classify the prompt as a token ID → return that ID as the finished image.
-    - id: answer
-      text: Encode the text condition → sample latent noise → iterative denoising/sampling → decode an image.
-    answer: answer
-    feedback: Fresh sampling uses a condition and initial latent noise, then a learned denoiser/sampler and
-      decoder. An existing target image is not required for that request.
-    id: latent-diffusion.base.1
-  - prompt: Where does a common latent-diffusion training example obtain its clean latent?
-    options:
-    - id: b
-      text: From the output token IDs of a vocabulary classifier, necessarily.
-    - id: answer
-      text: From encoding a training image with the image encoder.
-    - id: a
-      text: From a guarantee that every random latent is already the correct answer.
-    answer: answer
-    feedback: The encoder maps a training image into latent space. That clean latent can then be deliberately
-      corrupted to construct a denoising example.
-    id: latent-diffusion.base.2
-  id: latent-diffusion.base
-  objective_ref: objective.latent-diffusion
-  task: base
-  points: 1
-  remediation_scene: latent-diffusion.s1
-- response_type: single_choice
-  hint: Use the stated guidance convention, and distinguish a tuning effect from a guarantee.
-  variants:
-  - prompt: Using u + s(c − u), let u = [0, 2], c = [2, 1], and s = 2. What is the combined prediction?
-    options:
-    - id: b
-      text: '[0, 4]'
-    - id: answer
-      text: '[4, 0]'
-    - id: a
-      text: '[2, 1]'
-    answer: answer
-    feedback: The difference is [2, −1]. Doubling it gives [4, −2], which added to [0, 2] gives [4, 0]. This
-      combines predictions; it is not the full sampler update.
-    id: latent-diffusion.transfer.1
-  - prompt: A larger guidance scale makes a generated image look more prompt-specific. What should you still
-      assess?
-    options:
-    - id: answer
-      text: Diversity, artifacts, and whether requested details are actually correct.
-    - id: a
-      text: Nothing; high guidance mathematically guarantees correctness.
-    - id: b
-      text: Only token IDs, because the denoiser and sampler no longer matter.
-    answer: answer
-    feedback: Guidance is a control with tradeoffs. Stronger conditioning effects can coexist with reduced
-      diversity, artifacts, or incorrect details.
-    id: latent-diffusion.transfer.2
-  id: latent-diffusion.transfer
-  objective_ref: objective.latent-diffusion
-  task: transfer
-  points: 1
-  remediation_scene: latent-diffusion.s1
+  - response_type: single_choice
+    hint: A training example has a clean reference and target; fresh text-to-image sampling starts from noise and uses learned parameters.
+    variants:
+      - prompt: Which sequence describes fresh text-to-image sampling in the latent-diffusion setup taught here?
+        options:
+          - id: a
+            text: Encode a required clean target image → retrain the model on that target for every prompt.
+          - id: b
+            text: Classify the prompt as a token ID → return that ID as the finished image.
+          - id: answer
+            text: Encode the text condition → sample latent noise → iterative denoising/sampling → decode an image.
+        answer: answer
+        feedback: Fresh sampling uses a condition and initial latent noise, then a learned denoiser/sampler and decoder. An existing target image is not required for that request.
+        id: latent-diffusion.base.1
+        retired: true
+      - prompt: Where does a common latent-diffusion training example obtain its clean latent?
+        options:
+          - id: b
+            text: From the output token IDs of a vocabulary classifier, necessarily.
+          - id: answer
+            text: From encoding a training image with the image encoder.
+          - id: a
+            text: From a guarantee that every random latent is already the correct answer.
+        answer: answer
+        feedback: The encoder maps a training image into latent space. That clean latent can then be deliberately corrupted to construct a denoising example.
+        id: latent-diffusion.base.2
+        retired: true
+    id: latent-diffusion.base
+    objective_ref: objective.latent-diffusion
+    task: base
+    points: 1
+    remediation_scene: latent-diffusion.s1
+  - response_type: single_choice
+    hint: Use the stated guidance convention, and distinguish a tuning effect from a guarantee.
+    variants:
+      - prompt: Using u + s(c − u), let u = [0, 2], c = [2, 1], and s = 2. What is the combined prediction?
+        options:
+          - id: b
+            text: '[0, 4]'
+          - id: answer
+            text: '[4, 0]'
+          - id: a
+            text: '[2, 1]'
+        answer: answer
+        feedback: The difference is [2, −1]. Doubling it gives [4, −2], which added to [0, 2] gives [4, 0]. This combines predictions; it is not the full sampler update.
+        id: latent-diffusion.transfer.1
+        retired: true
+      - prompt: A larger guidance scale makes a generated image look more prompt-specific. What should you still assess?
+        options:
+          - id: answer
+            text: Diversity, artifacts, and whether requested details are actually correct.
+          - id: a
+            text: Nothing; high guidance mathematically guarantees correctness.
+          - id: b
+            text: Only token IDs, because the denoiser and sampler no longer matter.
+        answer: answer
+        feedback: Guidance is a control with tradeoffs. Stronger conditioning effects can coexist with reduced diversity, artifacts, or incorrect details.
+        id: latent-diffusion.transfer.2
+        retired: true
+    id: latent-diffusion.transfer
+    objective_ref: objective.latent-diffusion
+    task: transfer
+    points: 1
+    remediation_scene: latent-diffusion.s1
+  - id: latent-diffusion.base.v2
+    objective_ref: objective.latent-diffusion
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Place each part: the autoencoder compresses and decodes, the denoiser loops in latent space, the prompt enters by cross-attention, and guidance combines two predictions."
+    remediation_scene: latent-diffusion.s3
+    variants:
+      - id: latent-diffusion.base.v2.1
+        prompt: During one Stable Diffusion text-to-image request, how many times does the image decoder run?
+        options:
+          - id: b
+            text: Once per denoising step, to check progress
+          - id: a
+            text: Once, at the end, on the final latent
+          - id: c
+            text: Twice per step, once for each guidance prediction
+        answer: a
+        feedback: The whole loop runs in latent space; only the final latent is decoded to pixels. Decoding every step would throw away the savings, and guidance's two predictions come from the denoiser, not the decoder.
+      - id: latent-diffusion.base.v2.2
+        prompt: In the denoiser's cross-attention layers, where do the queries, keys, and values come from?
+        options:
+          - id: c
+            text: All three come from the prompt's token vectors
+          - id: b
+            text: Queries from the prompt; keys and values from the latent
+          - id: a
+            text: Queries from the latent; keys and values from the prompt
+        answer: a
+        feedback: Each latent position asks what it should become (query) and reads from the prompt tokens (keys and values). Reversing them would let words attend to pixels, which doesn't update the image.
+      - id: latent-diffusion.base.v2.3
+        prompt: Why were 10% of Stable Diffusion's training captions replaced with empty ones?
+        options:
+          - id: a
+            text: So the same network can also predict noise with no prompt, for guidance
+          - id: b
+            text: So the model learns to ignore the prompt when it is unhelpful
+          - id: c
+            text: So the autoencoder can be trained without captions at the same time
+        answer: a
+        feedback: Classifier-free guidance needs an unconditional prediction ε_u alongside ε_c; caption dropout teaches one network both. The autoencoder is trained separately and frozen.
+      - id: latent-diffusion.base.v2.4
+        prompt: What is the difference between conditioning and guidance in a latent diffusion model?
+        options:
+          - id: b
+            text: Conditioning is used in training, guidance only in the decoder
+          - id: a
+            text: Conditioning feeds in the prompt; guidance sets how hard to follow it
+          - id: c
+            text: They are two names for the same cross-attention mechanism
+        answer: a
+        feedback: Conditioning is the prompt input, via cross-attention. Guidance combines the conditional and unconditional predictions with a scale s during sampling. The decoder never sees the prompt.
+  - id: latent-diffusion.transfer.v2
+    objective_ref: objective.latent-diffusion
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Find the stage responsible. Lost fine detail points to the autoencoder, starting-point control to how much noise is added, and variety versus prompt-following to the guidance scale.
+    remediation_scene: latent-diffusion.s6
+    variants:
+      - id: latent-diffusion.transfer.v2.1
+        prompt: A designer's generated posters show mangled small text, even with long sampling runs and precise prompts. Which part most likely limits the text?
+        options:
+          - id: c
+            text: The guidance scale, which is set too low for text
+          - id: a
+            text: The autoencoder, which can't rebuild fine detail like small letters
+          - id: b
+            text: The sampler, which needs more steps for small details
+        answer: a
+        feedback: Whatever the decoder can't reconstruct from a 64 × 64 × 4 latent can't appear in the image, however good the denoising. More steps or guidance won't fix a detail the latent can't carry.
+      - id: latent-diffusion.transfer.v2.2
+        prompt: A user wants to restyle their own garden photo as a watercolor while keeping the layout. How should the pipeline start?
+        options:
+          - id: a
+            text: Encode the photo, add noise partway, then denoise with the new prompt
+          - id: b
+            text: Start from fresh random noise and describe the garden in the prompt
+          - id: c
+            text: Decode the photo's latent directly, skipping the denoising loop
+        answer: a
+        feedback: Partial noising keeps the layout while leaving room to change the style; less noise keeps more of the original. Fresh noise loses the layout, and skipping denoising changes nothing.
+      - id: latent-diffusion.transfer.v2.3
+        prompt: At guidance scale 15, every seed for "a dog" gives nearly the same dog with harsh colors. What should the user try?
+        options:
+          - id: b
+            text: Raise the scale further so the prompt dominates
+          - id: c
+            text: Double the sampling steps so each image finishes
+          - id: a
+            text: Lower the scale, trading some adherence for variety
+        answer: a
+        feedback: High guidance narrows the distribution and pushes past typical images, giving sameness and oversaturation. A lower scale restores variety; more steps don't change where guidance aims.
+      - id: latent-diffusion.transfer.v2.4
+        prompt: A lab switches its denoiser from a U-Net to a diffusion transformer. Which part of the pipeline must also change?
+        options:
+          - id: c
+            text: The autoencoder, since transformers can't read 4-channel latents
+          - id: b
+            text: The guidance formula, since transformers use a different scale
+          - id: a
+            text: Only the denoiser; schedule, loss, guidance, and decoder can stay
+        answer: a
+        feedback: The backbone predicts the same noise from the same inputs, so the rest of the pipeline is unchanged. DiT splits the latent into patches itself, and guidance just combines two of its predictions.
+  - id: latent-diffusion.calculate
+    objective_ref: objective.latent-diffusion
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Guided prediction: ε_u + s(ε_c − ε_u), one coordinate at a time. Compression factor: (pixels × 3) ÷ (latent height × latent width × channels)."
+    remediation_scene: latent-diffusion.s5
+    absolute_tolerance: 0.01
+    variants:
+      - id: latent-diffusion.calculate.1
+        prompt: 'For one latent value, ε_u = 0.2 and ε_c = 0.5. With guidance scale s = 7.5, what is the guided prediction?'
+        answer: 2.45
+        feedback: 0.2 + 7.5 × (0.5 − 0.2) = 0.2 + 2.25 = 2.45. Guidance goes well past the conditional 0.5.
+      - id: latent-diffusion.calculate.2
+        prompt: 'For one latent value, ε_u = 1.0 and ε_c = 0.6. With s = 3, what is the guided prediction?'
+        answer: -0.2
+        feedback: 1.0 + 3 × (0.6 − 1.0) = 1.0 − 1.2 = −0.2. A negative difference is amplified the same way.
+      - id: latent-diffusion.calculate.3
+        prompt: 'With ε_u = [0, 2] and ε_c = [2, 1] and s = 2, what is the second coordinate of the guided prediction?'
+        answer: 0
+        feedback: The difference is [2, −1]; doubling gives [4, −2]; adding [0, 2] gives [4, 0]. The second coordinate is 0.
+      - id: latent-diffusion.calculate.4
+        prompt: 'An autoencoder maps a 1024 × 1024 × 3 image to a 128 × 128 × 4 latent. How many times fewer numbers does the denoiser handle?'
+        answer: 48
+        feedback: 1024 × 1024 × 3 = 3,145,728 and 128 × 128 × 4 = 65,536, so the factor is 48. The same factor-of-8 downsampling with 4 channels always gives 48.
+      - id: latent-diffusion.calculate.5
+        prompt: 'An autoencoder maps a 256 × 256 × 3 image to a 64 × 64 × 3 latent. How many times fewer numbers is that?'
+        answer: 16
+        feedback: 256 × 256 × 3 = 196,608 and 64 × 64 × 3 = 12,288; 196,608 / 12,288 = 16, from 4 × 4 downsampling with the same number of channels.
+      - id: latent-diffusion.calculate.6
+        prompt: 'A sampler takes 30 steps with classifier-free guidance, computing ε_u and ε_c separately each step. How many denoiser predictions is that?'
+        answer: 60
+        feedback: Two predictions per step, 30 × 2 = 60. Batching the pair speeds it up, but the work is still two predictions.

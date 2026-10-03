@@ -1,244 +1,413 @@
 schema_version: 0.2-draft
 lesson:
   id: tokenization
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: How text becomes tokens
   state: draft
-  summary: Distinguish text units from token IDs and diagnose the effects of a tokenizer mismatch.
+  summary: A language model never sees your letters. See how text is chopped into pieces and swapped for numbers, and why "東京" can cost three times as many bytes as it has characters.
   slot: M14.4
   category: learning
   sources:
-  - title: Neural Machine Translation of Rare Words with Subword Units
-    url: https://aclanthology.org/P16-1162/
+    - title: Neural Machine Translation of Rare Words with Subword Units (Sennrich, Haddow & Birch, 2016)
+      url: https://aclanthology.org/P16-1162/
+    - title: "BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding (Devlin et al., 2018)"
+      url: https://arxiv.org/abs/1810.04805
+    - title: Language Models are Unsupervised Multitask Learners (Radford et al., 2019), the GPT-2 paper, section 2.2 on byte-level BPE
+      url: https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf
+    - title: "Python documentation: Unicode HOWTO"
+      url: https://docs.python.org/3/howto/unicode.html
 objectives:
-- id: objective.tokenization
-  version: 1-draft
-  statement: Distinguish text units from token IDs and diagnose the effects of a tokenizer mismatch.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - tokenization.base
-  - tokenization.transfer
-  prerequisites:
-  - anyOf:
-    - objective.inside-a-system
-  - anyOf:
-    - objective.digital-representations
+  - id: objective.tokenization
+    version: 2-draft
+    statement: Distinguish text units from token IDs and diagnose the effects of a tokenizer mismatch.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - tokenization.base.v2
+      - tokenization.transfer.v2
+      - tokenization.count
+    prerequisites:
+      - anyOf:
+          - objective.inside-a-system
+      - anyOf:
+          - objective.digital-representations
 scenes:
-- title: Text needs a representation
-  markdown: 'A **tokenizer** converts text into units called tokens and assigns them numerical IDs from a vocabulary.
-    These IDs tell the model which entries to look up.
+  - title: Your sentence arrives as a list of numbers
+    markdown: |-
+      Type "unhappy cats" into a chatbot. Before the model does anything, a **tokenizer** chops the text into pieces called **tokens**, perhaps `un`, `happy`, and ` cats` (with its leading space). Then it swaps each piece for its number in a fixed list, the **vocabulary**. Say the IDs are 403, 7291, and 12066. The model receives `[403, 7291, 12066]`. It never sees a letter.
 
+      Each ID is an address, like a locker number. The model uses it to fetch that token's learned vector from a table (the next lesson's topic). ID 12066 isn't "bigger" or "more important" than ID 403, and IDs 812 and 813 needn't be related at all. (These IDs are made up; every tokenizer numbers its vocabulary differently.)
 
-    In a made-up vocabulary, “gardening” might split as “garden” and “ing”. If their IDs are 17 and 42, the
-    input contains [17, 42]. Those are lookup labels, not measured amounts. ID 42 is not more meaningful than
-    ID 17.'
-  id: tokenization.s1
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tokenization
-  text_mode: 'A **tokenizer** converts text into units called tokens and assigns them numerical IDs from a
-    vocabulary. These IDs tell the model which entries to look up.
+      On the way out, the model scores every ID in the vocabulary, one ID is picked (the lesson on next-token prediction shows how), and the tokenizer turns it back into text. That reverse step is called **decoding** or detokenizing.
+    diagram:
+      caption: From text to model and back. The model only ever handles IDs and vectors.
+      description: The text "unhappy cats" goes to the tokenizer, which produces the tokens un, happy, and " cats". Each token is replaced by its vocabulary ID, giving 403, 7291, 12066. Each ID selects a learned vector from the embedding table. The vectors go into the model, which scores every ID; one is picked as the next token. The tokenizer decodes that ID back into text.
+      nodes:
+        - id: text
+          label: '"unhappy cats"'
+          note: text
+          col: 0
+          row: 0
+        - id: tokens
+          label: un | happy | ␣cats
+          note: tokens
+          col: 1
+          row: 0
+          tone: accent
+        - id: ids
+          label: 403, 7291, 12066
+          note: token IDs
+          col: 2
+          row: 0
+          tone: data
+        - id: vectors
+          label: Embedding lookup
+          note: one vector per ID
+          col: 3
+          row: 0
+        - id: model
+          label: Language model
+          col: 4
+          row: 0
+        - id: next
+          label: Next-token ID
+          col: 4
+          row: 1
+          tone: data
+        - id: decode
+          label: Decoded text
+          note: ID back to characters
+          col: 3
+          row: 1
+      edges:
+        - from: text
+          to: tokens
+          label: tokenize
+        - from: tokens
+          to: ids
+          label: look up
+        - from: ids
+          to: vectors
+        - from: vectors
+          to: model
+        - from: model
+          to: next
+        - from: next
+          to: decode
+          label: decode
+    id: tokenization.s1
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization
+  - title: Words, characters, or bytes?
+    markdown: |-
+      What should the pieces be? Three simple answers each break somewhere:
 
+      | Unit | Vocabulary | Weak spot |
+      | --- | --- | --- |
+      | Words | hundreds of thousands, and still incomplete | new words, names, typos become `<unk>` ("unknown") |
+      | Characters | small (though Unicode defines over 100,000 characters) | sequences get long: every letter is a step |
+      | Bytes | exactly 256 values | even longer sequences for most non-English text |
 
-    In a made-up vocabulary, “gardening” might split as “garden” and “ing”. If their IDs are 17 and 42, the
-    input contains [17, 42]. Those are lookup labels, not measured amounts. ID 42 is not more meaningful than
-    ID 17.'
-- title: Words are only one possible unit
-  markdown: 'A word-based vocabulary is convenient for familiar words but has difficulty covering every name
-    and spelling. Characters give smaller reusable pieces. Byte representations start from encoded bytes, so
-    one visible character can occupy multiple units.
+      A byte-level tokenizer can never meet an unknown symbol, because every text is a sequence of bytes. But as you saw in the lesson on how computers store text, UTF-8 uses one byte for each plain English letter and two to four for every other character. Run this to see the cost:
 
+      ```python run
+      texts = ["hello", "café", "Привет", "東京", "नमस्ते", "👍🏽"]
 
-    Subword methods sit between those choices: common sequences may be whole tokens while unusual strings split
-    into smaller pieces. A tokenizer’s vocabulary and rules determine the actual split. Our examples are deliberately
-    invented, not measurements from a specific model.'
-  id: tokenization.s2
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tokenization
-  text_mode: 'A word-based vocabulary is convenient for familiar words but has difficulty covering every name
-    and spelling. Characters give smaller reusable pieces. Byte representations start from encoded bytes, so
-    one visible character can occupy multiple units.
+      print(f"{'text':8} {'chars':>5} {'bytes':>5}  first bytes")
+      for t in texts:
+          b = t.encode("utf-8")
+          print(f"{t:8} {len(t):5} {len(b):5}  {list(b[:6])}")
 
+      sentence = "I love Tokyo 東京"
+      print("\nword tokens:     ", sentence.split())
+      print("character tokens:", len(sentence))
+      print("byte tokens:     ", len(sentence.encode("utf-8")))
+      ```
 
-    Subword methods sit between those choices: common sequences may be whole tokens while unusual strings split
-    into smaller pieces. A tokenizer’s vocabulary and rules determine the actual split. Our examples are deliberately
-    invented, not measurements from a specific model.'
-- title: One invented sentence, two valid designs
-  markdown: 'Suppose the text is “red bird”. A word tokenizer might emit [“red”, “bird”], while a character
-    tokenizer that preserves the space emits eight characters. A subword tokenizer could use a token that includes
-    a leading space.
+      "Привет" (Russian for "hi") has 6 characters but 12 bytes; "東京" (Tokyo) has 2 characters and 6 bytes. Python counts *code points*, Unicode's numbered characters, so the thumbs-up with a skin-tone modifier counts as 2, and "नमस्ते" (Hindi) counts as 6, even though each looks shorter on screen. Try adding a word in your own language and predict its byte count first.
 
+      :::mixup "A token is a word."
+      A token is whatever unit the tokenizer uses: a word, part of a word, a single character, a byte, or a punctuation mark. "unhappy" might be one token, two, or seven, depending on the tokenizer.
+      :::
+    id: tokenization.s2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization
+  - title: One phrase, three ways to cut it
+    markdown: |-
+      Modern language models use **subword** tokens, a middle ground: common words get a single token, and rare words are built from smaller pieces that the tokenizer already has. The table shows the phrase "red bird" cut three ways.
 
-    This changes sequence length and the model’s prediction units. A context capacity measured in tokens does
-    not mean the same number of words or visible characters for every tokenizer, language, or string.'
-  type: table
-  columns:
-  - Toy representation
-  - Units
-  rows:
-  - - Words
-    - red | bird
-  - - Characters
-    - r | e | d | space | b | i | r | d
-  - - Possible subwords
-    - red | space+bi | rd
-  id: tokenization.s3
-  depth: mechanics
-  objective_refs:
-  - objective.tokenization
-  text_mode: 'Suppose the text is “red bird”. A word tokenizer might emit [“red”, “bird”], while a character
-    tokenizer that preserves the space emits eight characters. A subword tokenizer could use a token that includes
-    a leading space.
+      In the subword row, the space travels with the next piece. Many tokenizers, including GPT-2's, work this way, so "bird" at the start of a text and " bird" after a space can be different tokens. This toy vocabulary happens to lack " bird", so it builds it from " bi" and "rd"; a real vocabulary would almost certainly include such a common word.
 
+      Subwords handle words the tokenizer has never seen. "Unfriendliest" might become `un` + `friend` + `li` + `est`: no `<unk>`, and each piece has been seen in other words. The cost is that a model's "context length" counts tokens, not words. A common rule of thumb for English with GPT-style tokenizers is about four characters, or three-quarters of a word, per token. For other languages the ratio can be much worse, which the lesson on tokenization tradeoffs measures.
+    type: table
+    columns:
+      - Toy representation
+      - Units
+    rows:
+      - - Words
+        - red | bird
+      - - Characters
+        - r | e | d | space | b | i | r | d
+      - - Possible subwords
+        - red | space+bi | rd
+    id: tokenization.s3
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization
+  - title: The vocabulary and the weights must agree
+    markdown: |-
+      A model learns one vector for each ID. If its tokenizer said ID 17 = "garden", row 17 of its table holds what it learned about gardens. Now encode your text with a different tokenizer, where ID 17 = "stone". The model fetches row 17 and reads "garden" wherever you wrote "stone". Nothing crashes; the output just becomes quietly wrong.
 
-    This changes sequence length and the model’s prediction units. A context capacity measured in tokens does
-    not mean the same number of words or visible characters for every tokenizer, language, or string.'
-- title: The vocabulary and the weights must agree
-  markdown: 'Suppose one tokenizer assigns ID 17 to “garden” while another assigns it to “stone”. A model trained
-    with the first vocabulary will look up the first meaning of ID 17 even if your input was encoded with the
-    second. The resulting computation is inconsistent.
+      :::predict A tokenizer update adds 500 new tokens at the *end* of the vocabulary and changes nothing else. Can an old model use it as-is?
+      Not quite. Old IDs keep their meaning, but the new tokenizer will use the 500 new tokens wherever they fit, even in text the old one handled fine. The model's table has no rows for those IDs, so they point past the end of the table or at untrained rows. The model needs new rows, and training for them, before it can use those tokens.
+      :::
 
+      So a tokenizer and a model ship together, like a lock and its key. Save the tokenizer files, the text cleanup rules, and the special tokens with the model weights.
+    id: tokenization.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization
+  - title: Special tokens are the punctuation of the machine
+    markdown: |-
+      Some IDs don't stand for text at all. **Special tokens** mark structure: where a document ends, where a new chat turn starts, or which part is a question. BERT (2018) puts `[CLS]` at the start of every input and `[SEP]` after each sentence, so a pair reads `[CLS] A [SEP] B [SEP]`. GPT-2 marks the end of each document with `<|endoftext|>`. Chat models add a **chat template**, a fixed pattern of special tokens that wraps each user and assistant turn.
 
-    Changing the tokenizer is not a harmless cosmetic swap. Vocabulary mappings, special tokens, text preparation,
-    and the model’s embedding/output tables must agree.'
-  id: tokenization.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tokenization
-  text_mode: 'Suppose one tokenizer assigns ID 17 to “garden” while another assigns it to “stone”. A model
-    trained with the first vocabulary will look up the first meaning of ID 17 even if your input was encoded
-    with the second. The resulting computation is inconsistent.
+      A model reacts strongly to these tokens, because it saw them in the same positions millions of times during training. So what happens if a user simply *types* the characters `<|endoftext|>`?
 
-
-    Changing the tokenizer is not a harmless cosmetic swap. Vocabulary mappings, special tokens, text preparation,
-    and the model’s embedding/output tables must agree.'
-- title: Special tokens carry structure
-  markdown: 'A sequence can include special IDs marking boundaries, roles, or the end of a response. A chat
-    template adds the structure a particular model expects around user and assistant turns. Ordinary visible
-    text and special control IDs are not automatically interchangeable.
-
-
-    Next-token training predicts these representation units. More detailed lessons will compare BPE and unigram
-    training algorithms, multilingual splits, and template-specific conventions; this lesson establishes what
-    the representation does.'
-  id: tokenization.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tokenization
-  text_mode: 'A sequence can include special IDs marking boundaries, roles, or the end of a response. A chat
-    template adds the structure a particular model expects around user and assistant turns. Ordinary visible
-    text and special control IDs are not automatically interchangeable.
-
-
-    Next-token training predicts these representation units. More detailed lessons will compare BPE and unigram
-    training algorithms, multilingual splits, and template-specific conventions; this lesson establishes what
-    the representation does.'
-- id: tokenization.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.tokenization
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Tokenization specifies the units a model reads and predicts. The text rules, vocabulary IDs, special
-    tokens, and model tables must form a compatible system.
-- id: tokenization.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.tokenization
-  markdown: Tokenization specifies the units a model reads and predicts. The text rules, vocabulary IDs, special
-    tokens, and model tables must form a compatible system.
-  text_mode: Tokenization specifies the units a model reads and predicts. The text rules, vocabulary IDs, special
-    tokens, and model tables must form a compatible system.
+      A careful system encodes typed text as ordinary characters, which become several normal tokens, never the single special ID. Otherwise a user could forge the end of a document or fake a new turn in the conversation. Most tokenizer libraries let you choose whether special tokens are allowed in the input text; for user input, don't allow them.
+    id: tokenization.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization
+  - id: tokenization.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization
+    markdown: Count some bytes and characters by hand, then diagnose a renumbered vocabulary, a pasted control token, and two context limits.
+    takeaway: |-
+      A tokenizer turns text into pieces and each piece into an ID that addresses a row in the model's table. The pieces set the sequence length, and the tokenizer and model only work as a matched pair.
+  - id: tokenization.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.tokenization
+    markdown: |-
+      Tokenization specifies the units a model reads and predicts. The text rules, vocabulary IDs, special tokens, and model tables must form a compatible system.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - tokenization.s1
-    - tokenization.s2
-    - tokenization.s3
-    - tokenization.s4
-    - tokenization.s5
-    - tokenization.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - tokenization.s1
+        - tokenization.s2
+        - tokenization.s3
+        - tokenization.s4
+        - tokenization.s5
+        - tokenization.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     tokenization.recap: tokenization.check
 assessment_families:
-- response_type: single_choice
-  hint: Token IDs identify vocabulary entries; their numerical sizes do not encode meaning.
-  variants:
-  - prompt: An invented tokenizer encodes “gardening” as IDs [17, 42]. What are those numbers?
-    options:
-    - id: answer
-      text: Labels for vocabulary units selected by that tokenizer.
-    - id: a
-      text: The number of letters and the number of meanings.
-    - id: b
-      text: Two probabilities that should add to one.
-    answer: answer
-    feedback: The IDs identify entries. The model later looks up learned vectors using them; the ID numbers
-      are not probabilities or semantic magnitudes.
-    id: tokenization.base.1
-  - prompt: Which statement about token length is reliable?
-    options:
-    - id: a
-      text: Every token contains exactly one word.
-    - id: b
-      text: Every visible character always occupies exactly one byte.
-    - id: answer
-      text: A visible word can be represented by more than one token.
-    answer: answer
-    feedback: The representation depends on the tokenizer and text encoding. Word, subword, character, and
-      byte units have different boundaries.
-    id: tokenization.base.2
-  id: tokenization.base
-  objective_ref: objective.tokenization
-  task: base
-  points: 1
-  remediation_scene: tokenization.s1
-- response_type: single_choice
-  hint: Ask whether the same ID still refers to the vocabulary entry the model learned.
-  variants:
-  - prompt: A replacement tokenizer maps “stone” to ID 17, but the model learned ID 17 for “garden”. What should
-      you conclude?
-    options:
-    - id: a
-      text: The model automatically knows that the mapping changed.
-    - id: b
-      text: The larger the token ID, the better the answer will be.
-    - id: answer
-      text: The tokenizer/model mapping is inconsistent and needs a compatible design.
-    answer: answer
-    feedback: The lookup table is indexed by IDs, not by the intended human meaning. An incompatible tokenizer
-      can feed the model the wrong learned entries.
-    id: tokenization.transfer.1
-  - prompt: Two tokenizers produce 6 and 11 tokens for the same sentence. Does this alone prove the first model
-      understands the sentence better?
-    options:
-    - id: b
-      text: Yes; token count directly measures factual accuracy.
-    - id: answer
-      text: No; sequence length describes a representation choice, not a complete quality evaluation.
-    - id: a
-      text: Yes; fewer tokens always mean better understanding.
-    answer: answer
-    feedback: Token counts affect resource use and segmentation. Quality requires evaluating the actual model
-      and task, not ranking tokenizer lengths alone.
-    id: tokenization.transfer.2
-  id: tokenization.transfer
-  objective_ref: objective.tokenization
-  task: transfer
-  points: 1
-  remediation_scene: tokenization.s1
+  - response_type: single_choice
+    hint: Token IDs identify vocabulary entries; their numerical sizes do not encode meaning.
+    variants:
+      - prompt: An invented tokenizer encodes “gardening” as IDs [17, 42]. What are those numbers?
+        options:
+          - id: answer
+            text: Labels for vocabulary units selected by that tokenizer.
+          - id: a
+            text: The number of letters and the number of meanings.
+          - id: b
+            text: Two probabilities that should add to one.
+        answer: answer
+        feedback: The IDs identify entries. The model later looks up learned vectors using them; the ID numbers are not probabilities or semantic magnitudes.
+        id: tokenization.base.1
+        retired: true
+      - prompt: Which statement about token length is reliable?
+        options:
+          - id: a
+            text: Every token contains exactly one word.
+          - id: b
+            text: Every visible character always occupies exactly one byte.
+          - id: answer
+            text: A visible word can be represented by more than one token.
+        answer: answer
+        feedback: The representation depends on the tokenizer and text encoding. Word, subword, character, and byte units have different boundaries.
+        id: tokenization.base.2
+        retired: true
+    id: tokenization.base
+    objective_ref: objective.tokenization
+    task: base
+    points: 1
+    remediation_scene: tokenization.s1
+  - response_type: single_choice
+    hint: Ask whether the same ID still refers to the vocabulary entry the model learned.
+    variants:
+      - prompt: A replacement tokenizer maps “stone” to ID 17, but the model learned ID 17 for “garden”. What should you conclude?
+        options:
+          - id: a
+            text: The model automatically knows that the mapping changed.
+          - id: b
+            text: The larger the token ID, the better the answer will be.
+          - id: answer
+            text: The tokenizer/model mapping is inconsistent and needs a compatible design.
+        answer: answer
+        feedback: The lookup table is indexed by IDs, not by the intended human meaning. An incompatible tokenizer can feed the model the wrong learned entries.
+        id: tokenization.transfer.1
+        retired: true
+      - prompt: Two tokenizers produce 6 and 11 tokens for the same sentence. Does this alone prove the first model understands the sentence better?
+        options:
+          - id: b
+            text: Yes; token count directly measures factual accuracy.
+          - id: answer
+            text: No; sequence length describes a representation choice, not a complete quality evaluation.
+          - id: a
+            text: Yes; fewer tokens always mean better understanding.
+        answer: answer
+        feedback: Token counts affect resource use and segmentation. Quality requires evaluating the actual model and task, not ranking tokenizer lengths alone.
+        id: tokenization.transfer.2
+        retired: true
+    id: tokenization.transfer
+    objective_ref: objective.tokenization
+    task: transfer
+    points: 1
+    remediation_scene: tokenization.s1
+  - id: tokenization.base.v2
+    objective_ref: objective.tokenization
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Think about the three simple units: words (huge vocabulary, unknown words), characters (small vocabulary, long sequences), and bytes (256 values, never unknown). An ID is only an address."
+    remediation_scene: tokenization.s2
+    variants:
+      - id: tokenization.base.v2.1
+        prompt: A tokenizer maps "sun" to ID 812 and "moon" to ID 813. What do those numbers tell you about the two words?
+        options:
+          - id: b
+            text: They're related in meaning, since their IDs are neighbors
+          - id: c
+            text: '"Moon" matters slightly more, since its ID is larger'
+          - id: a
+            text: Nothing about meaning; they're addresses in the vocabulary
+        answer: a
+        feedback: IDs are positions in a list, often set by the order pieces were added during tokenizer training. What a token means is learned in the vector its ID points to, not in the ID's size or its neighbors.
+      - id: tokenization.base.v2.2
+        prompt: A word-level tokenizer built from 2010 news articles meets the new word "doomscrolling". What does it produce?
+        options:
+          - id: a
+            text: An unknown-word token, so the word's content is lost
+          - id: b
+            text: The word's letters, one token per character
+          - id: c
+            text: The known word with the most similar spelling
+        answer: a
+        feedback: A pure word-level vocabulary has no smaller pieces to fall back on, so any word it lacks becomes <unk>. Falling back to characters or subwords is exactly what subword and byte tokenizers add.
+      - id: tokenization.base.v2.3
+        prompt: You switch a model's tokenizer from word-level to character-level, on the same text. What happens?
+        options:
+          - id: c
+            text: The vocabulary grows and each sequence gets shorter
+          - id: a
+            text: The vocabulary shrinks and each sequence gets longer
+          - id: b
+            text: Both the vocabulary and each sequence get smaller
+        answer: a
+        feedback: There are far fewer distinct characters than words, but every word now takes several steps instead of one. That trade, small vocabulary for long sequences, is why subword tokenizers sit in between.
+      - id: tokenization.base.v2.4
+        prompt: Why can a byte-level tokenizer encode an emoji or a script that never appeared in its training data?
+        options:
+          - id: b
+            text: It keeps one token for each Unicode character that exists
+          - id: a
+            text: Any text is a sequence of bytes, and all 256 values are tokens
+          - id: c
+            text: It skips unfamiliar characters and encodes the rest of the text
+        answer: a
+        feedback: UTF-8 turns every character into one to four bytes, and a byte can only take 256 values, all of which are in the vocabulary. Nothing is ever unknown, though unfamiliar text costs more tokens. A token per Unicode character would need well over 100,000 entries.
+  - id: tokenization.transfer.v2
+    objective_ref: objective.tokenization
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask whether each ID still points to the row the model learned, and whether a string the user typed could turn into a control token.
+    remediation_scene: tokenization.s4
+    variants:
+      - id: tokenization.transfer.v2.1
+        prompt: A team fine-tunes a model, but encodes its data with a newer tokenizer version that renumbered 3,000 vocabulary entries. The outputs turn to nonsense. What happened?
+        options:
+          - id: a
+            text: For renumbered IDs, the model fetched rows learned for other pieces
+          - id: b
+            text: The newer tokenizer produced too many tokens for the context
+          - id: c
+            text: Fine-tuning erased what the model knew about those 3,000 words
+        answer: a
+        feedback: The embedding table is indexed by ID, so a renumbered ID fetches the vector for whatever piece used to have that number. The fix is to use the tokenizer the model was trained with. Sequence length and forgetting don't explain nonsense on every renumbered word.
+      - id: tokenization.transfer.v2.2
+        prompt: A user pastes the literal text "<|endoftext|>" into a chat app built on a GPT-style model. How should the app encode it?
+        options:
+          - id: c
+            text: As the end-of-text control token, since the characters match it
+          - id: b
+            text: By deleting it, since user messages can't contain those characters
+          - id: a
+            text: As ordinary characters that become several normal tokens
+        answer: a
+        feedback: Typed text should never turn into a control token, or users could fake a document boundary or a new chat turn. Deleting it would change the user's message; encoding it as plain characters keeps it harmless.
+      - id: tokenization.transfer.v2.3
+        prompt: Two models both accept 8,000 tokens. On English, one tokenizer averages about 4 characters per token and the other about 3. Which model fits more English text?
+        options:
+          - id: a
+            text: The first, since each of its tokens covers more characters
+          - id: b
+            text: The second, since it produces more tokens for each page
+          - id: c
+            text: Neither, since both limits are the same number of tokens
+        answer: a
+        feedback: Roughly 8,000 × 4 = 32,000 characters versus 8,000 × 3 = 24,000. The limit counts tokens, so the tokenizer decides how much text that buys.
+      - id: tokenization.transfer.v2.4
+        prompt: Tokenizer A turns a paragraph into 60 tokens and tokenizer B turns it into 90. What does this tell you about models that use them?
+        options:
+          - id: b
+            text: A's model understands the paragraph about 50% better
+          - id: a
+            text: A's model processes it in fewer steps, which costs less
+          - id: c
+            text: B's model is more accurate, since it sees finer detail
+        answer: a
+        feedback: Token count sets how many steps and how much context the text uses, which drives cost and speed. It says nothing directly about understanding or accuracy; those have to be measured on the task.
+  - id: tokenization.count
+    objective_ref: objective.tokenization
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Count one token per UTF-8 byte. Plain English letters, digits, and spaces take 1 byte; accented Latin letters take 2; most Chinese and Japanese characters take 3.
+    remediation_scene: tokenization.s2
+    absolute_tolerance: 0.1
+    variants:
+      - id: tokenization.count.1
+        prompt: A byte-level tokenizer uses one token per UTF-8 byte. How many tokens does "café au lait" become? (The é takes 2 bytes.)
+        answer: 13
+        feedback: There are 12 characters, including 2 spaces. Eleven take 1 byte each and é takes 2, so 11 + 2 = 13 tokens.
+      - id: tokenization.count.2
+        prompt: A byte-level tokenizer uses one token per UTF-8 byte. How many tokens does "Grüße" become? (ü and ß each take 2 bytes.)
+        answer: 7
+        feedback: G, r, and e take 1 byte each, and ü and ß take 2 each, so 3 + 4 = 7 tokens for 5 characters.
+      - id: tokenization.count.3
+        prompt: A byte-level tokenizer uses one token per UTF-8 byte. How many tokens does "東京タワー" (Tokyo Tower, 5 characters) become, if each character takes 3 bytes?
+        answer: 15
+        feedback: 5 characters × 3 bytes = 15 tokens. The same phrase in English letters, "Tokyo Tower", would be 11 bytes.
+      - id: tokenization.count.4
+        prompt: A character-level tokenizer uses one token per character, spaces included. How many tokens does "São Paulo" become?
+        answer: 9
+        feedback: S, ã, o, space, P, a, u, l, o gives 9 characters. A byte-level tokenizer would give 10, since ã takes 2 bytes.

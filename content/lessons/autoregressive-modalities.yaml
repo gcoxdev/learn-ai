@@ -1,202 +1,450 @@
 schema_version: 0.2-draft
 lesson:
   id: autoregressive-modalities
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Generate different kinds of data one unit at a time
   state: draft
-  summary: Use the next-piece prediction idea for images, sound, and structured records as well as text.
+  summary: A language model writes one word at a time. The same trick can paint a picture one pixel at a time, or one image token at a time. Here's the rule that makes it exact.
   slot: M22.2
   category: learning
   sources:
-  - title: Pixel Recurrent Neural Networks
-    url: https://arxiv.org/abs/1601.06759
-  - title: WaveNet
-    url: https://arxiv.org/abs/1609.03499
+    - title: Pixel Recurrent Neural Networks (van den Oord, Kalchbrenner & Kavukcuoglu, 2016)
+      url: https://arxiv.org/abs/1601.06759
+    - title: Conditional Image Generation with PixelCNN Decoders (van den Oord et al., 2016)
+      url: https://arxiv.org/abs/1606.05328
+    - title: "WaveNet: A Generative Model for Raw Audio (van den Oord et al., 2016)"
+      url: https://arxiv.org/abs/1609.03499
+    - title: Neural Discrete Representation Learning (VQ-VAE; van den Oord, Vinyals & Kavukcuoglu, 2017)
+      url: https://arxiv.org/abs/1711.00937
+    - title: Zero-Shot Text-to-Image Generation (DALL·E; Ramesh et al., 2021)
+      url: https://arxiv.org/abs/2102.12092
 objectives:
-- id: objective.autoregressive-modalities
-  version: 1-draft
-  statement: Autoregressive generation factors a joint distribution into conditional predictions; representation
-    and ordering determine whether the generated units are text, pixels, audio codes, or structured fields.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - autoregressive-modalities.base
-  - autoregressive-modalities.transfer
-  prerequisites:
-  - anyOf:
-    - objective.generative-models
-  - anyOf:
-    - objective.next-token
+  - id: objective.autoregressive-modalities
+    version: 2-draft
+    statement: Autoregressive generation factors a joint distribution into conditional predictions; representation and ordering determine whether the generated units are text, pixels, audio codes, or structured fields.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - autoregressive-modalities.base.v2
+      - autoregressive-modalities.transfer.v2
+      - autoregressive-modalities.calculate
+    prerequisites:
+      - anyOf:
+          - objective.generative-models
+      - anyOf:
+          - objective.next-token
 scenes:
-- id: autoregressive-modalities.s1
-  title: Use the probability chain rule
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.autoregressive-modalities
-  markdown: 'A joint distribution over units can be written as a product of each unit’s probability given earlier
-    units. The model learns those conditional predictions. The units need not be words: they can be quantized
-    image patches, audio codec IDs, or fields in a structured record.
+  - id: autoregressive-modalities.s1
+    title: Three pixels, three predictions
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.autoregressive-modalities
+    markdown: |-
+      Paint a tiny strip of three pixels, top to bottom, each blue, yellow, or green. How likely is the strip blue, yellow, green? You don't need a table of all 27 strips. Predict one pixel at a time, each given the ones already painted:
 
+      | Step | Prediction | Probability |
+      | --- | --- | ---: |
+      | 1 | top is blue | 0.5 |
+      | 2 | middle is yellow, given blue above | 0.4 |
+      | 3 | bottom is green, given blue then yellow | 0.9 |
 
-    For two units A then B, their joint probability is P(A) × P(B given A). If A has probability 0.6 and the
-    chosen B has conditional probability 0.5, that pair gets 0.3. This **probability chain rule** does not
-    assume the units are independent; the second probability explicitly depends on the first.'
-  text_mode: 'A joint distribution over units can be written as a product of each unit’s probability given
-    earlier units. The model learns those conditional predictions. The units need not be words: they can be
-    quantized image patches, audio codec IDs, or fields in a structured record.
+      Multiply: $0.5 \times 0.4 \times 0.9 = 0.18$. This is the **chain rule of probability**: any joint probability equals the first piece's probability times each later piece's probability given everything before it. It's exact, with no assumption about how the pieces relate. A model built this way is **autoregressive**: it predicts each unit from its own earlier outputs, just like the next-token language model in module 14, which multiplies next-word probabilities.
 
+      :::papers The autoregressive factorization
+      $$p(x) = \prod_{i=1}^{n} p(x_i \mid x_{<i}) \qquad\text{so}\qquad \log p(x) = \sum_{i=1}^{n} \log p(x_i \mid x_{<i})$$
 
-    For two units A then B, their joint probability is P(A) × P(B given A). If A has probability 0.6 and the
-    chosen B has conditional probability 0.5, that pair gets 0.3. This **probability chain rule** does not
-    assume the units are independent; the second probability explicitly depends on the first.'
-  bridges: []
-- id: autoregressive-modalities.s2
-  title: Choose an order and representation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.autoregressive-modalities
-  markdown: 'A tiny image might generate pixels row by row, while another model generates learned image codes.
-    An audio system can organize codebooks and time steps through a chosen ordering. That order defines which
-    information is available for each prediction and how many sequential decisions generation requires.
+      Here $n = 3$, $x_{<3}$ means "blue, yellow", and the three factors are 0.5, 0.4, and 0.9. Training maximizes the sum of logs: $\ln 0.18 \approx -1.715$. Because this probability is exact, autoregressive models are often compared by their likelihood on held-out data, reported for images in **bits per dimension**: the average $-\log_2$ probability of each color value.
+      :::
 
+      :::predict The model gives "middle blue, given blue above" 0.4, and "bottom green, given blue then blue" 0.5. What is p(blue, blue, green)?
+      $0.5 \times 0.4 \times 0.5 = 0.10$. It's a less likely strip than blue, yellow, green (0.18), because green is much more certain under a yellow pixel.
+      :::
+    bridges: []
+  - id: autoregressive-modalities.s5
+    title: Run the chain rule and sample
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.autoregressive-modalities
+    markdown: |-
+      Here is the full three-pixel model. It scores a strip with the chain rule, checks that all 27 strips add to 1, and samples four new strips, one pixel at a time.
 
-    A **codebook** is a set of reusable encoded entries. A learned audio or image codec maps signal patterns
-    to such codes and later decodes them. Predicting codes can shorten the sequence compared with predicting
-    raw sample values. The ordering still matters: whichever units are generated first become context for later
-    predictions.'
-  text_mode: 'A tiny image might generate pixels row by row, while another model generates learned image codes.
-    An audio system can organize codebooks and time steps through a chosen ordering. That order defines which
-    information is available for each prediction and how many sequential decisions generation requires.
+      ```python run
+      import itertools
+      import numpy as np
 
+      colors = ["blue", "yellow", "green"]
 
-    A **codebook** is a set of reusable encoded entries. A learned audio or image codec maps signal patterns
-    to such codes and later decodes them. Predicting codes can shorten the sequence compared with predicting
-    raw sample values. The ordering still matters: whichever units are generated first become context for later
-    predictions.'
-  bridges: []
-- id: autoregressive-modalities.s3
-  title: Condition on other information
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.autoregressive-modalities
-  markdown: A caption can condition image-token predictions; text can condition speech-code predictions. The
-    conditioning representation may enter through a prefix or cross-attention. Generating three codes from
-    a caption still requires a decoder or codec to turn those codes into the final image or waveform.
-  text_mode: A caption can condition image-token predictions; text can condition speech-code predictions. The
-    conditioning representation may enter through a prefix or cross-attention. Generating three codes from
-    a caption still requires a decoder or codec to turn those codes into the final image or waveform.
-  bridges: []
-- id: autoregressive-modalities.s4
-  title: Evaluate coherence and cost
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.autoregressive-modalities
-  markdown: Local prediction accuracy does not guarantee global structure, long-term consistency, or valid
-    field relationships. Sampling errors can affect later decisions. Compare likelihood where meaningful, task
-    quality, diversity, and sequential latency; autoregressive is a factorization and execution family, not
-    one modality or quality level.
-  text_mode: Local prediction accuracy does not guarantee global structure, long-term consistency, or valid
-    field relationships. Sampling errors can affect later decisions. Compare likelihood where meaningful, task
-    quality, diversity, and sequential latency; autoregressive is a factorization and execution family, not
-    one modality or quality level.
-  bridges: []
-- id: autoregressive-modalities.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.autoregressive-modalities
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Autoregressive generation predicts one unit from earlier units. The units and their order determine
-    how that idea produces text, images, audio, or structured records.
-- id: autoregressive-modalities.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.autoregressive-modalities
-  markdown: Autoregressive generation predicts one unit from earlier units. The units and their order determine
-    how that idea produces text, images, audio, or structured records.
-  text_mode: Autoregressive generation predicts one unit from earlier units. The units and their order determine
-    how that idea produces text, images, audio, or structured records.
+      def p1():               # top pixel
+          return {"blue": 0.5, "yellow": 0.2, "green": 0.3}
+      def p2(x1):             # middle pixel, given the top one
+          if x1 == "blue":
+              return {"blue": 0.4, "yellow": 0.4, "green": 0.2}
+          return {"blue": 0.2, "yellow": 0.3, "green": 0.5}
+      def p3(x1, x2):         # bottom pixel, given both above
+          if x2 == "yellow":
+              return {"blue": 0.05, "yellow": 0.05, "green": 0.9}
+          return {"blue": 0.3, "yellow": 0.2, "green": 0.5}
+
+      def prob(x1, x2, x3):   # the chain rule: multiply the three conditionals
+          return p1()[x1] * p2(x1)[x2] * p3(x1, x2)[x3]
+
+      print("p(blue, yellow, green) =", round(prob("blue", "yellow", "green"), 4))
+      total = sum(prob(*s) for s in itertools.product(colors, repeat=3))
+      print("sum over all 27 strips =", round(total, 6))
+
+      rng = np.random.default_rng(3)
+      def pick(dist):
+          return rng.choice(list(dist), p=list(dist.values()))
+      for _ in range(4):      # sample: top, then middle, then bottom
+          x1 = pick(p1()); x2 = pick(p2(x1)); x3 = pick(p3(x1, x2))
+          print("sample:", x1, x2, x3, " p =", round(prob(x1, x2, x3), 4))
+      ```
+
+      The sum is exactly 1, so the three small tables define a proper distribution over every strip. Notice the two jobs. **Scoring** a known strip is three lookups that could all run at once. **Sampling** a new strip must go in order, because the middle pixel's table depends on the top pixel you just drew. Try changing the 0.9 to 0.5 and watch green bottoms get rarer.
+
+      :::mixup "The chain rule treats each pixel as independent of the others."
+      Independence would be $p(x_1)\,p(x_2)\,p(x_3)$, with no conditioning. The chain rule conditions every factor on everything earlier, so it can capture any dependence. What limits a real model is how well its network learns those conditionals.
+      :::
+    bridges: []
+  - id: autoregressive-modalities.s2
+    title: "PixelCNN: an image one value at a time"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.autoregressive-modalities
+    markdown: |-
+      In 2016, van den Oord and colleagues at DeepMind applied the chain rule to whole photos with **PixelRNN** and **PixelCNN**. They read an image in **raster order**, row by row, left to right, like text on a page. Each pixel's red value is predicted from all earlier pixels; then green given red; then blue given red and green. Each prediction is a 256-way choice, one for each possible brightness level, exactly like choosing the next word from a vocabulary.
+
+      PixelCNN uses **masked convolutions**: filters with the weights for "future" positions zeroed out, so each output sees only pixels above and to the left. That makes training fast, since every pixel's prediction comes out of one pass over a real image. Sampling is another story. A 256 × 256 color image has $256 \times 256 \times 3 = 196{,}608$ values, so drawing one takes 196,608 network steps in a row. WaveNet, from the speech generation lesson, hit the same wall with 16,000 audio samples per second.
+    bridges: []
+  - id: autoregressive-modalities.s3
+    title: Tokens make the sequence shorter
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.autoregressive-modalities
+    markdown: |-
+      The fix is to predict fewer, bigger units. First train an autoencoder that turns each patch of an image into one entry from a learned list of vectors, called a **codebook**. Each patch becomes a single integer, its codebook index: an **image token**. **VQ-VAE** (van den Oord, Vinyals & Kavukcuoglu, 2017) introduced this kind of discrete code, and its decoder turns a grid of indices back into pixels.
+
+      OpenAI's **DALL·E** (Ramesh et al., 2021) took this token route to text-to-image. A discrete VAE compressed each 256 × 256 image into a 32 × 32 grid of tokens, each one of 8,192 codebook entries. A 12-billion-parameter transformer read up to 256 text tokens of caption, then predicted the 1,024 image tokens one at a time. That's $196{,}608 / 1{,}024 = 192$ times fewer steps than PixelCNN at the same resolution.
+
+      Audio works the same way. As in the speech generation lesson, EnCodec's 24 kHz model at 6 kbps makes 75 frames per second with 8 codebook tokens each: 600 tokens per second instead of 24,000 samples.
+
+      The caption is the **condition**: it goes first as a prefix, so every image token is predicted given the words. The trade is detail: whatever the codebook can't represent, the decoder can't draw.
+    diagram:
+      caption: The token route to text-to-image, as in DALL·E (2021).
+      description: The caption is split into text tokens, which go first into an autoregressive transformer. The transformer predicts image tokens one at a time, each fed back as context for the next. The finished 32 by 32 grid of image tokens goes to the codebook decoder, which turns it into a 256 by 256 image. During training, an encoder turned real images into the image tokens the transformer learned to predict.
+      nodes:
+        - id: caption
+          label: Caption
+          note: '"a cat in a hat"'
+          col: 0
+          row: 0
+        - id: text
+          label: Text tokens
+          note: up to 256
+          col: 1
+          row: 0
+          tone: data
+        - id: model
+          label: Autoregressive transformer
+          col: 2
+          row: 0
+          tone: accent
+        - id: tokens
+          label: Image tokens
+          note: 32 × 32 grid, 8,192 codes
+          col: 3
+          row: 0
+          tone: data
+        - id: decoder
+          label: Codebook decoder
+          col: 3
+          row: 1
+        - id: image
+          label: 256 × 256 image
+          col: 2
+          row: 1
+        - id: encoder
+          label: Encoder (training only)
+          note: real image → tokens
+          col: 4
+          row: 0
+          tone: muted
+      edges:
+        - from: caption
+          to: text
+        - from: text
+          to: model
+          label: prefix
+        - from: model
+          to: tokens
+          label: one token per step
+        - from: tokens
+          to: model
+          label: fed back
+          dashed: true
+          bend: 1
+        - from: tokens
+          to: decoder
+        - from: decoder
+          to: image
+        - from: encoder
+          to: tokens
+          dashed: true
+    bridges: []
+  - id: autoregressive-modalities.s4
+    title: Early mistakes become context
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.autoregressive-modalities
+    markdown: |-
+      During training, every prediction is conditioned on real data. During sampling, it's conditioned on the model's own earlier picks. If an early image token draws half a dog's head at the wrong scale, every later token has to make that head fit, and a strange first choice can spread down the picture. This gap between training on real context and sampling from your own is called **exposure bias**. Ordering matters for the same reason: whatever comes first is decided with the least context.
+
+      Practitioners use this in two ways. To judge an image model, look at whole samples, not just its per-token accuracy, which can be high while the picture falls apart. To choose a design, count sequential steps: tokens per second of audio, or tokens per image, times the time per step, tells you how long a user waits.
+    bridges: []
+  - id: autoregressive-modalities.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.autoregressive-modalities
+    markdown: Chain-rule products to compute, plus a music generator, a spreadsheet filler, and a slow video model, test whether you can apply one-unit-at-a-time generation to new kinds of data.
+    takeaway: |-
+      Any joint distribution is a product of next-piece predictions. Choosing the pieces (pixels, image tokens, audio codes) and their order decides how long generation takes and what the model can capture.
+  - id: autoregressive-modalities.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.autoregressive-modalities
+    markdown: |-
+      Autoregressive generation predicts one unit from earlier units. The units and their order determine how that idea produces text, images, audio, or structured records.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - autoregressive-modalities.s1
-    - autoregressive-modalities.s2
-    - autoregressive-modalities.s3
-    - autoregressive-modalities.s4
-    - autoregressive-modalities.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - autoregressive-modalities.s1
+        - autoregressive-modalities.s5
+        - autoregressive-modalities.s2
+        - autoregressive-modalities.s3
+        - autoregressive-modalities.s4
+        - autoregressive-modalities.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     autoregressive-modalities.recap: autoregressive-modalities.check
 assessment_families:
-- id: autoregressive-modalities.base
-  objective_ref: objective.autoregressive-modalities
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Choose an order and representation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: autoregressive-modalities.s2
-  variants:
-  - id: autoregressive-modalities.base.1
-    prompt: Must autoregressive units be text tokens?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only for every neural model
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: The factorization can apply to many representations.
-  - id: autoregressive-modalities.base.2
-    prompt: What does generation order determine?
-    options:
-    - id: c
-      text: Only output file extension
-    - id: a
-      text: Which earlier units condition each prediction
-    - id: b
-      text: The dataset’s ownership automatically
-    answer: a
-    feedback: Ordering defines the conditional information boundary.
-- id: autoregressive-modalities.transfer
-  objective_ref: objective.autoregressive-modalities
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate coherence and cost: trace the inputs, operation, and result before choosing.'
-  remediation_scene: autoregressive-modalities.s4
-  variants:
-  - id: autoregressive-modalities.transfer.1
-    prompt: A model generates audio codec IDs. What produces the waveform?
-    options:
-    - id: c
-      text: The optimizer’s moment arrays
-    - id: a
-      text: The compatible codec decoder
-    - id: b
-      text: The text tokenizer alone
-    answer: a
-    feedback: Codes need their defined reconstruction interface.
-  - id: autoregressive-modalities.transfer.2
-    prompt: Does good local prediction guarantee valid global structure?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if every unit is discrete
-    answer: a
-    feedback: Global constraints can fail despite plausible local decisions.
+  - id: autoregressive-modalities.base
+    objective_ref: objective.autoregressive-modalities
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Choose an order and representation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: autoregressive-modalities.s2
+    variants:
+      - id: autoregressive-modalities.base.1
+        prompt: Must autoregressive units be text tokens?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only for every neural model
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: The factorization can apply to many representations.
+        retired: true
+      - id: autoregressive-modalities.base.2
+        prompt: What does generation order determine?
+        options:
+          - id: c
+            text: Only output file extension
+          - id: a
+            text: Which earlier units condition each prediction
+          - id: b
+            text: The dataset’s ownership automatically
+        answer: a
+        feedback: Ordering defines the conditional information boundary.
+        retired: true
+  - id: autoregressive-modalities.transfer
+    objective_ref: objective.autoregressive-modalities
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate coherence and cost: trace the inputs, operation, and result before choosing.'
+    remediation_scene: autoregressive-modalities.s4
+    variants:
+      - id: autoregressive-modalities.transfer.1
+        prompt: A model generates audio codec IDs. What produces the waveform?
+        options:
+          - id: c
+            text: The optimizer’s moment arrays
+          - id: a
+            text: The compatible codec decoder
+          - id: b
+            text: The text tokenizer alone
+        answer: a
+        feedback: Codes need their defined reconstruction interface.
+        retired: true
+      - id: autoregressive-modalities.transfer.2
+        prompt: Does good local prediction guarantee valid global structure?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if every unit is discrete
+        answer: a
+        feedback: Global constraints can fail despite plausible local decisions.
+        retired: true
+  - id: autoregressive-modalities.base.v2
+    objective_ref: objective.autoregressive-modalities
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Each factor conditions on everything generated earlier. Training can compute all factors at once from real data; sampling must go one unit at a time.
+    remediation_scene: autoregressive-modalities.s5
+    variants:
+      - id: autoregressive-modalities.base.v2.1
+        prompt: A PixelCNN trains quickly but takes minutes to sample one image. What explains the gap?
+        options:
+          - id: b
+            text: Sampling uses a bigger network than training does
+          - id: c
+            text: Training skips the color channels and sampling includes them
+          - id: a
+            text: Training sees every real pixel at once; sampling waits for each pick
+        answer: a
+        feedback: With a real image, all the conditionals can be computed in one masked pass. When sampling, each pixel depends on pixels not yet drawn, so the steps must run in order. The network is the same in both cases.
+      - id: autoregressive-modalities.base.v2.2
+        prompt: 'A student computes p(a, b, c) as p(a) × p(b) × p(c) for an autoregressive model. What did they leave out?'
+        options:
+          - id: c
+            text: The final normalization that divides by the number of units
+          - id: a
+            text: Conditioning each factor on the units that came before it
+          - id: b
+            text: A sum over every possible ordering of the three units
+        answer: a
+        feedback: The chain rule is p(a) × p(b | a) × p(c | a, b). Dropping the conditioning assumes independence, which the chain rule never does. One fixed ordering suffices, and the product needs no extra normalization.
+      - id: autoregressive-modalities.base.v2.3
+        prompt: Why did DALL·E (2021) predict a 32 × 32 grid of image tokens rather than raw pixel values?
+        options:
+          - id: a
+            text: It cuts the sequence from 196,608 values to 1,024 steps
+          - id: b
+            text: Transformers can read pixel values but can't produce them
+          - id: c
+            text: Image tokens make each prediction independent of the others
+        answer: a
+        feedback: Each token stands for a whole patch, so the sequence is 192 times shorter. Transformers can predict pixel values (as 256-way choices), and the tokens are still predicted one given another.
+      - id: autoregressive-modalities.base.v2.4
+        prompt: In a text-to-image token model, how does the caption influence the image tokens?
+        options:
+          - id: b
+            text: It is appended after the image tokens as a final check
+          - id: a
+            text: It comes first as a prefix, so every image token is conditioned on it
+          - id: c
+            text: It replaces the codebook, choosing which patches exist
+        answer: a
+        feedback: The caption tokens sit at the start of the sequence, so each image token's prediction sees them. Putting them after the image would mean no image token could use them. The codebook is fixed after training.
+      - id: autoregressive-modalities.base.v2.5
+        prompt: An autoregressive model has 92% per-token accuracy on held-out images, yet its samples often show a face with three eyes. What best explains this?
+        options:
+          - id: a
+            text: While sampling, early odd choices become context for later ones
+          - id: c
+            text: The accuracy was measured with the wrong codebook
+          - id: b
+            text: Autoregressive models can only capture local texture
+        answer: a
+        feedback: Held-out accuracy is measured with real earlier tokens as context. When sampling, the model conditions on its own picks, and a strange early choice spreads. The chain rule can express global structure; the model just has to learn and follow it.
+  - id: autoregressive-modalities.transfer.v2
+    objective_ref: objective.autoregressive-modalities
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Pick the units and the order first, then ask what each prediction is conditioned on and how many sequential steps sampling needs.
+    remediation_scene: autoregressive-modalities.s3
+    variants:
+      - id: autoregressive-modalities.transfer.v2.1
+        prompt: A team wants a model that composes piano music as a sequence of note events. How should they apply the autoregressive idea?
+        options:
+          - id: c
+            text: Predict all note events at once, then sort them by time
+          - id: a
+            text: Predict each note event given all the earlier events in time order
+          - id: b
+            text: Predict each note event from the note immediately before it only
+        answer: a
+        feedback: Conditioning on everything earlier is the chain rule. Predicting all at once loses the dependence between notes, and using only the previous note throws away the melody's longer structure.
+      - id: autoregressive-modalities.transfer.v2.2
+        prompt: 'A model fills in database rows field by field: country, then city, then postcode. Why is this order better than postcode first?'
+        options:
+          - id: a
+            text: Each later field is easier to predict given the broader fields before it
+          - id: b
+            text: The chain rule is only valid when broad fields are predicted first
+          - id: c
+            text: Postcodes are numbers, and numbers must come at the end
+        answer: a
+        feedback: Any order gives a valid factorization, so the chain rule doesn't require broad fields first. Country first means the model picks a city from within one country and a postcode from within one city; postcode first means guessing a precise code with no context at all.
+      - id: autoregressive-modalities.transfer.v2.3
+        prompt: A video model uses 256 tokens per frame at 24 frames per second. How many sequential token steps does a 5-second clip take?
+        options:
+          - id: c
+            text: 1,280, from 256 tokens for each second
+          - id: b
+            text: 120, from one step for each frame
+          - id: a
+            text: 30,720, from one step per token
+        answer: a
+        feedback: 256 tokens per frame × 24 frames per second × 5 seconds = 30,720 tokens, each one step. Counting frames or seconds instead of tokens underestimates the wait.
+      - id: autoregressive-modalities.transfer.v2.4
+        prompt: A speech system generates codec tokens, and some words sound muffled. The token model's predictions score well. Where should you look next?
+        options:
+          - id: b
+            text: At the text tokenizer, since it chose the codebook entries
+          - id: a
+            text: At the codec, since its codebook may not capture that detail
+          - id: c
+            text: At the word order, since the chain rule failed on those words
+        answer: a
+        feedback: If the tokens are right but the sound isn't, the loss is in compression; the decoder can only draw what the codebook can represent. The tokenizer handles text, and the chain rule doesn't fail.
+  - id: autoregressive-modalities.calculate
+    objective_ref: objective.autoregressive-modalities
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Multiply the first unit's probability by each later unit's probability given all the units before it.
+    remediation_scene: autoregressive-modalities.s1
+    absolute_tolerance: 0.0005
+    variants:
+      - id: autoregressive-modalities.calculate.1
+        prompt: 'A model gives p(top = green) = 0.3, p(middle = green | green) = 0.5, and p(bottom = blue | green, green) = 0.3. What is p(green, green, blue)?'
+        answer: 0.045
+        feedback: 0.3 × 0.5 × 0.3 = 0.045. Each factor is conditioned on the pixels already painted.
+      - id: autoregressive-modalities.calculate.2
+        prompt: 'A melody model gives p(C) = 0.4, p(E | C) = 0.5, and p(G | C, E) = 0.6. What is the probability of the melody C, E, G?'
+        answer: 0.12
+        feedback: 0.4 × 0.5 × 0.6 = 0.12. Adding the factors (1.5) or using only the last one (0.6) are the common slips.
+      - id: autoregressive-modalities.calculate.3
+        prompt: 'An image-token model gives the first token probability 0.2, the second (given the first) 0.25, and the third (given both) 0.8. What is the probability of the three-token sequence?'
+        answer: 0.04
+        feedback: 0.2 × 0.25 × 0.8 = 0.04.
+      - id: autoregressive-modalities.calculate.4
+        prompt: 'A three-token sequence has probability 0.18, and the first two factors are 0.5 and 0.4. What must the third factor be?'
+        answer: 0.9
+        feedback: 0.18 / (0.5 × 0.4) = 0.18 / 0.2 = 0.9. The chain rule works backward too.
+      - id: autoregressive-modalities.calculate.5
+        prompt: 'A record model gives p(country = France) = 0.1, p(city = Lyon | France) = 0.05, and p(postcode = 69001 | France, Lyon) = 0.2. What is the probability of the whole record?'
+        answer: 0.001
+        feedback: 0.1 × 0.05 × 0.2 = 0.001. Long records get small probabilities quickly, which is why models work with sums of logs.

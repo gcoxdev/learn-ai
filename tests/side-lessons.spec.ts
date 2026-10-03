@@ -12,7 +12,7 @@ async function openRoot(page: Page, suffix = "") {
   await ready(page, `/learn/${root}/${suffix}`);
   await page
     .getByRole("button", {
-      name: "Scene 3: Calculate sensitivity and make one update",
+      name: "Scene 3: Steps 4 and 5, blame and update",
       exact: true,
     })
     .click();

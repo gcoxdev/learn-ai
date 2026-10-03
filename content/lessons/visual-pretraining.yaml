@@ -1,202 +1,429 @@
 schema_version: 0.2-draft
 lesson:
   id: visual-pretraining
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn visual features before choosing the final task
   state: draft
-  summary: Learn from a visual puzzle before choosing the final picture task, then test what actually transfers.
+  summary: You have 200 labeled receipt photos and millions of unlabeled ones. Learn how models teach themselves from unlabeled pictures, by matching cropped views or filling in hidden patches.
   slot: M12.6
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: Masked Autoencoders Are Scalable Vision Learners
-    url: https://arxiv.org/abs/2111.06377
+    - title: "A Simple Framework for Contrastive Learning of Visual Representations (SimCLR; Chen, Kornblith, Norouzi & Hinton, 2020)"
+      url: https://arxiv.org/abs/2002.05709
+    - title: "Masked Autoencoders Are Scalable Vision Learners (He et al., 2021)"
+      url: https://arxiv.org/abs/2111.06377
+    - title: "Learning Transferable Visual Models From Natural Language Supervision (CLIP; Radford et al., 2021)"
+      url: https://arxiv.org/abs/2103.00020
+    - title: Dive into Deep Learning — fine-tuning
+      url: https://d2l.ai/chapter_computer-vision/fine-tuning.html
 objectives:
-- id: objective.visual-pretraining
-  version: 1-draft
-  statement: Self-supervised visual objectives learn from transformations, missing patches, or paired views;
-    transfer evaluation determines whether the representation supports the intended visual task.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - visual-pretraining.base
-  - visual-pretraining.transfer
-  prerequisites:
-  - anyOf:
-    - objective.self-supervised-representations
-  - anyOf:
-    - objective.convolutional-networks
+  - id: objective.visual-pretraining
+    version: 2-draft
+    statement: Self-supervised visual objectives learn from transformations, missing patches, or paired views; transfer evaluation determines whether the representation supports the intended visual task.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - visual-pretraining.base.v2
+      - visual-pretraining.transfer.v2
+      - visual-pretraining.calculate
+    prerequisites:
+      - anyOf:
+          - objective.self-supervised-representations
+      - anyOf:
+          - objective.convolutional-networks
 scenes:
-- id: visual-pretraining.s1
-  title: Learn from a visual puzzle first
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.visual-pretraining
-  markdown: '**Pretraining** is an initial learning stage before adapting a model to a final task. Cover some
-    patches of a bicycle photo, ask the model to predict the missing information, and compare its answer with
-    the hidden content. The image itself supplies the target without a separate “bicycle” label.
+  - id: visual-pretraining.s1
+    title: Two hundred labels, millions of photos
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.visual-pretraining
+    markdown: |-
+      The photo app wants a new search: "receipts". You've labeled 200 photos, a few hours' work. Training a network from scratch on 200 examples would mostly memorize them. But unlabeled photos are everywhere. Could a network learn what photos look like first, and learn "receipt" afterward?
 
+      That's **pretraining**: train an **encoder** (the network that turns a photo into a vector of features) on a large collection, then adapt it to your task with a small labeled set. For years the standard was to pretrain on ImageNet's labeled classes. **Self-supervised** pretraining needs no labels at all: the images supply their own targets. As in the self-supervised lesson, the trick is inventing a puzzle whose answer is already in the data. For photos, two puzzles dominate:
 
-    Another task asks the model to relate different views of an image. These objectives can use large image
-    collections with few category labels. They still reflect choices about what information to preserve and
-    what variation to ignore.'
-  text_mode: '**Pretraining** is an initial learning stage before adapting a model to a final task. Cover some
-    patches of a bicycle photo, ask the model to predict the missing information, and compare its answer with
-    the hidden content. The image itself supplies the target without a separate “bicycle” label.
+      | Puzzle | Example | Answer comes from |
+      | --- | --- | --- |
+      | Which views match? | Two random crops of Biscuit's photo should look alike; a crop of a receipt should look different | Knowing which crops came from the same photo |
+      | What's hidden? | Cover 75% of a photo's patches and redraw them | The covered pixels themselves |
+    bridges: []
+  - id: visual-pretraining.s2
+    title: "Contrastive learning: pull matching views together"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.visual-pretraining
+    markdown: |-
+      **SimCLR** (Chen et al., 2020) takes each photo in a batch and makes two random **views**: crop, resize, jitter the colors, blur. The encoder turns each view into a vector. Two views of the same photo form a **positive pair**; views of any other photo are **negatives**. Training pulls positives together and pushes negatives apart. With a batch of 256 photos there are 512 views, so each view has 1 positive and 510 negatives.
 
+      The similarity is cosine similarity (1 means the vectors point the same way). Say one view of Biscuit's photo has similarity 0.9 with its partner and 0.2 and 0.1 with views of two other photos. With a **temperature** $\tau = 0.5$ that sharpens the scores, the loss is a softmax that should pick out the partner:
 
-    Another task asks the model to relate different views of an image. These objectives can use large image
-    collections with few category labels. They still reflect choices about what information to preserve and
-    what variation to ignore.'
-  bridges: []
-- id: visual-pretraining.s2
-  title: Compare two visual tasks
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.visual-pretraining
-  markdown: A contrastive learner may align different crops of one image while distinguishing other images.
-    A masked-image learner predicts information missing from selected patches. These objectives reward different
-    operations. A crop that removes the relevant object or a reconstruction dominated by texture can learn
-    features poorly matched to a downstream task.
-  text_mode: A contrastive learner may align different crops of one image while distinguishing other images.
-    A masked-image learner predicts information missing from selected patches. These objectives reward different
-    operations. A crop that removes the relevant object or a reconstruction dominated by texture can learn
-    features poorly matched to a downstream task.
-  bridges: []
-- id: visual-pretraining.s3
-  title: Transfer with a controlled protocol
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.visual-pretraining
-  markdown: 'Freeze the pretrained encoder and train a simple classifier to measure easily accessible information,
-    or fine-tune the model on the target task. These are different evaluations and use different compute and
-    labels. A detector or segmenter can need spatial detail that an image-classification representation underemphasizes.
+      :::papers The contrastive loss (NT-Xent in SimCLR, also called InfoNCE)
+      $$\ell = -\log \frac{\exp(\text{sim}(z_i, z_j)/\tau)}{\sum_{k \ne i} \exp(\text{sim}(z_i, z_k)/\tau)}$$
 
+      $z_i$ and $z_j$ are the two views of Biscuit's photo; the sum runs over every other view in the batch. Here: $e^{1.8} = 6.050$ on top, and $6.050 + e^{0.4} + e^{0.2} = 6.050 + 1.492 + 1.221 = 8.763$ below. The partner's share is $6.050 / 8.763 = 0.690$, so $\ell = -\ln 0.690 = 0.371$.
+      :::
 
-    **Freeze** means leave the encoder''s weights fixed while fitting a new output component. **Fine-tune**
-    means allow selected pretrained weights to change too. Compare flower classification with locating tiny
-    defects: knowing that a picture contains a flower is a different requirement from preserving the position
-    of every small mark. Pick a transfer test that measures the needed information.'
-  text_mode: 'Freeze the pretrained encoder and train a simple classifier to measure easily accessible information,
-    or fine-tune the model on the target task. These are different evaluations and use different compute and
-    labels. A detector or segmenter can need spatial detail that an image-classification representation underemphasizes.
+      ```python run
+      import numpy as np
 
+      # Cosine similarities between one view of Biscuit's photo and three other views.
+      positive = 0.9                  # the other augmented view of the same photo
+      negatives = np.array([0.2, 0.1])  # views of two different photos
+      tau = 0.5                       # temperature
 
-    **Freeze** means leave the encoder''s weights fixed while fitting a new output component. **Fine-tune**
-    means allow selected pretrained weights to change too. Compare flower classification with locating tiny
-    defects: knowing that a picture contains a flower is a different requirement from preserving the position
-    of every small mark. Pick a transfer test that measures the needed information.'
-  bridges: []
-- id: visual-pretraining.s4
-  title: Audit the source and the transfer
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.visual-pretraining
-  markdown: Check pretraining data overlap with evaluation sets, image rights and provenance, domain mismatch,
-    and rare conditions. Compare a randomly initialized baseline with a matched training budget where meaningful.
-    More pretraining data can help but does not guarantee robust or fair performance across every visual environment.
-  text_mode: Check pretraining data overlap with evaluation sets, image rights and provenance, domain mismatch,
-    and rare conditions. Compare a randomly initialized baseline with a matched training budget where meaningful.
-    More pretraining data can help but does not guarantee robust or fair performance across every visual environment.
-  bridges: []
-- id: visual-pretraining.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.visual-pretraining
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A visual pretraining task can teach reusable features without labeling every image category. Test
-    whether those features preserve what the later task actually needs.
-- id: visual-pretraining.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.visual-pretraining
-  markdown: A visual pretraining task can teach reusable features without labeling every image category. Test
-    whether those features preserve what the later task actually needs.
-  text_mode: A visual pretraining task can teach reusable features without labeling every image category. Test
-    whether those features preserve what the later task actually needs.
+      def contrastive_loss(pos, negs, tau):
+          top = np.exp(pos / tau)
+          bottom = top + np.exp(negs / tau).sum()
+          return -np.log(top / bottom), top / bottom
+
+      loss, share = contrastive_loss(positive, negatives, tau)
+      print(f"positive's share of the softmax: {share:.3f}")
+      print(f"loss: {loss:.3f}")
+
+      loss, share = contrastive_loss(0.3, negatives, tau)
+      print(f"if the positive similarity drops to 0.3 -> share {share:.3f}, loss {loss:.3f}")
+      ```
+
+      Try `tau = 0.1`: the easy case's loss nearly vanishes (0.001), while the harder 0.3 case still costs 0.408. A low temperature focuses training on views that are hard to tell apart.
+
+      :::mixup "Heavier augmentation is always better, because the model sees more variety."
+      Every augmentation tells the encoder "ignore this change". SimCLR's authors found strong color jitter essential for ImageNet classes, but it teaches the encoder to disregard color. That's bad if a later task is "find the photos of my red car". Crops that often cut the object out teach it to ignore the object.
+      :::
+
+      **CLIP** (Radford et al., 2021) uses the same loss with a twist: the positive pairs are a photo and its caption, from 400 million image–text pairs collected online. Afterward you can classify with no labeled examples at all, by asking which caption fits best: "a photo of a receipt" or "a photo of a dog".
+    bridges: []
+  - id: visual-pretraining.s5
+    title: "Masked autoencoders: hide 75%, redraw it"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.visual-pretraining
+    markdown: |-
+      **MAE** (masked autoencoder; He et al., 2021) uses the other puzzle. Split a 224 × 224 photo into 196 patches of 16 × 16, as a ViT does. Hide a random 75%: 147 patches. The ViT encoder sees only the 49 visible ones. A small decoder then tries to redraw the pixels of the 147 hidden patches, and the loss is the mean squared error on those hidden patches only.
+
+      Why hide so much? Neighboring patches are very alike, so with only 15% hidden (as BERT does with words) a model could fill the gaps by copying neighbors. At 75%, it has to know what dogs, receipts, and faces look like. The high ratio also makes training cheap: attention over 49 tokens needs $49^2 = 2{,}401$ pairs, against $196^2 = 38{,}416$ for the whole photo, 16 times fewer.
+
+      :::predict A 224 × 224 photo is cut into 14 × 14 patches, and MAE hides 75%. How many patches does the encoder see?
+      $224 / 14 = 16$ per side, so $16^2 = 256$ patches. A quarter stays visible: 64 patches, and 192 are hidden.
+      :::
+    bridges: []
+  - id: visual-pretraining.s3
+    title: "Linear probe or fine-tune: two different tests"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.visual-pretraining
+    markdown: |-
+      Now the receipt search. Two standard ways to use the pretrained encoder:
+
+      - **Linear probe.** **Freeze** the encoder (keep its weights fixed) and train only one linear layer on its features. With 768 features and 2 classes (receipt, not receipt), that's $768 \times 2 + 2 = 1{,}538$ weights. It's cheap, and it measures how *directly* the features already separate receipts.
+      - **Fine-tune.** Start from the pretrained weights and let all of them change, around 86 million for a ViT-Base. It usually scores higher, but needs more compute, and with only 200 photos it can overfit.
+
+      The two tests can disagree. The MAE authors reported that MAE features scored below contrastive ones under linear probing but came out ahead after fine-tuning. So say which test a pretraining claim uses.
+    diagram:
+      caption: Pretrain once without labels, then adapt with a few labels by probing or fine-tuning.
+      description: Millions of unlabeled photos feed a self-supervised puzzle, either matching views (SimCLR) or redrawing hidden patches (MAE). The puzzle trains an encoder. The pretrained encoder is then adapted using 200 labeled receipt photos in one of two ways. A linear probe freezes the encoder and trains a single linear layer. Fine-tuning updates all the weights. Both lead to the receipt finder.
+      nodes:
+        - id: unlabeled
+          label: Unlabeled photos
+          note: millions, no labels
+          col: 0
+          row: 0
+          tone: data
+        - id: puzzle
+          label: Self-supervised puzzle
+          note: SimCLR views or MAE masks
+          col: 1
+          row: 0
+        - id: encoder
+          label: Pretrained encoder
+          note: photo → 768 features
+          col: 2
+          row: 0
+          tone: accent
+        - id: labeled
+          label: 200 receipt photos
+          note: labeled by hand
+          col: 0
+          row: 1
+          tone: data
+        - id: probe
+          label: Linear probe
+          note: encoder frozen
+          col: 2
+          row: 1
+        - id: finetune
+          label: Fine-tune
+          note: all weights change
+          col: 3
+          row: 1
+        - id: finder
+          label: Receipt finder
+          col: 3
+          row: 2
+          tone: warn
+      edges:
+        - from: unlabeled
+          to: puzzle
+        - from: puzzle
+          to: encoder
+          label: trains
+        - from: encoder
+          to: probe
+        - from: encoder
+          to: finetune
+          bend: -1
+        - from: labeled
+          to: probe
+          label: 1,538 weights
+        - from: labeled
+          to: finetune
+          bend: 2
+        - from: probe
+          to: finder
+        - from: finetune
+          to: finder
+  - id: visual-pretraining.s4
+    title: Check what the pretraining saw
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.visual-pretraining
+    markdown: |-
+      A pretrained receipt finder scores 98% on your test set. Before celebrating, check two things.
+
+      First, overlap: if your test receipts (or near-copies) were in the pretraining collection, the encoder may have already seen them. Search the pretraining set for duplicates of each test image. Second, the domain: an encoder pretrained on outdoor snapshots has seen few crumpled, thermal-printed receipts. Compare against a simple baseline trained from scratch on the same 200 photos; if pretraining barely beats it, the pretrained features don't match your photos.
+    bridges: []
+  - id: visual-pretraining.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.visual-pretraining
+    markdown: Count MAE's visible patches for new image sizes, then choose pretraining tricks and transfer tests for a fruit sorter, a wildlife project, and an X-ray team.
+    takeaway: |-
+      Self-supervised pretraining turns unlabeled photos into a puzzle, matching views (SimCLR, CLIP) or redrawing hidden patches (MAE), so the encoder learns features before it sees your labels. Test them with a linear probe or fine-tuning, and check that the augmentations didn't teach it to ignore what your task needs.
+  - id: visual-pretraining.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.visual-pretraining
+    markdown: |-
+      A visual pretraining task can teach reusable features without labeling every image category. Test whether those features preserve what the later task actually needs.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - visual-pretraining.s1
-    - visual-pretraining.s2
-    - visual-pretraining.s3
-    - visual-pretraining.s4
-    - visual-pretraining.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - visual-pretraining.s1
+        - visual-pretraining.s2
+        - visual-pretraining.s5
+        - visual-pretraining.s3
+        - visual-pretraining.s4
+        - visual-pretraining.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     visual-pretraining.recap: visual-pretraining.check
 assessment_families:
-- id: visual-pretraining.base
-  objective_ref: objective.visual-pretraining
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Compare two visual tasks: trace the inputs, operation, and result before choosing.'
-  remediation_scene: visual-pretraining.s2
-  variants:
-  - id: visual-pretraining.base.1
-    prompt: What signal can masked-image learning derive without class labels?
-    options:
-    - id: a
-      text: The held-out image content or its representation
-    - id: b
-      text: A guaranteed object name for every patch
-    - id: c
-      text: No target at all
-    answer: a
-    feedback: Masking constructs a prediction target from the observed image.
-  - id: visual-pretraining.base.2
-    prompt: What stays fixed in a frozen-encoder evaluation?
-    options:
-    - id: b
-      text: The downstream classifier’s parameters necessarily
-    - id: c
-      text: Every prediction label
-    - id: a
-      text: The encoder’s parameters
-    answer: a
-    feedback: Only selected downstream components are trained in that protocol.
-- id: visual-pretraining.transfer
-  objective_ref: objective.visual-pretraining
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Audit the source and the transfer: trace the inputs, operation, and result before choosing.'
-  remediation_scene: visual-pretraining.s4
-  variants:
-  - id: visual-pretraining.transfer.1
-    prompt: A crop removes the target object but is treated as an equivalent positive view. What is a risk?
-    options:
-    - id: b
-      text: Guaranteed improved localization
-    - id: c
-      text: Elimination of all shortcuts
-    - id: a
-      text: Learning invariance to information the task needs
-    answer: a
-    feedback: Augmentation assumptions can conflict with downstream requirements.
-  - id: visual-pretraining.transfer.2
-    prompt: Pretraining includes evaluation images. What should be investigated?
-    options:
-    - id: c
-      text: A guarantee of independent testing
-    - id: a
-      text: Overlap and contamination in the transfer claim
-    - id: b
-      text: Only the final image resolution
-    answer: a
-    feedback: Representation learning can absorb information from evaluation examples.
+  - id: visual-pretraining.base
+    objective_ref: objective.visual-pretraining
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Compare two visual tasks: trace the inputs, operation, and result before choosing.'
+    remediation_scene: visual-pretraining.s2
+    variants:
+      - id: visual-pretraining.base.1
+        prompt: What signal can masked-image learning derive without class labels?
+        options:
+          - id: a
+            text: The held-out image content or its representation
+          - id: b
+            text: A guaranteed object name for every patch
+          - id: c
+            text: No target at all
+        answer: a
+        feedback: Masking constructs a prediction target from the observed image.
+        retired: true
+      - id: visual-pretraining.base.2
+        prompt: What stays fixed in a frozen-encoder evaluation?
+        options:
+          - id: b
+            text: The downstream classifier’s parameters necessarily
+          - id: c
+            text: Every prediction label
+          - id: a
+            text: The encoder’s parameters
+        answer: a
+        feedback: Only selected downstream components are trained in that protocol.
+        retired: true
+  - id: visual-pretraining.transfer
+    objective_ref: objective.visual-pretraining
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Audit the source and the transfer: trace the inputs, operation, and result before choosing.'
+    remediation_scene: visual-pretraining.s4
+    variants:
+      - id: visual-pretraining.transfer.1
+        prompt: A crop removes the target object but is treated as an equivalent positive view. What is a risk?
+        options:
+          - id: b
+            text: Guaranteed improved localization
+          - id: c
+            text: Elimination of all shortcuts
+          - id: a
+            text: Learning invariance to information the task needs
+        answer: a
+        feedback: Augmentation assumptions can conflict with downstream requirements.
+        retired: true
+      - id: visual-pretraining.transfer.2
+        prompt: Pretraining includes evaluation images. What should be investigated?
+        options:
+          - id: c
+            text: A guarantee of independent testing
+          - id: a
+            text: Overlap and contamination in the transfer claim
+          - id: b
+            text: Only the final image resolution
+        answer: a
+        feedback: Representation learning can absorb information from evaluation examples.
+        retired: true
+  - id: visual-pretraining.base.v2
+    objective_ref: objective.visual-pretraining
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask where the training target comes from (a matching view, hidden pixels, or a caption), and which weights change in the transfer test.
+    remediation_scene: visual-pretraining.s2
+    variants:
+      - id: visual-pretraining.base.v2.1
+        prompt: In SimCLR, a batch holds 128 photos, each turned into two views. For one view, how many negatives are in the loss?
+        options:
+          - id: b
+            text: 127, one view for each of the other photos
+          - id: a
+            text: 254, both views of each of the other 127 photos
+          - id: c
+            text: 255, every other view in the batch
+        answer: a
+        feedback: There are 256 views; remove the view itself and its partner (the positive), leaving 254 negatives. Counting 255 forgets that one of the other views is the positive, and 127 counts only one view per other photo.
+      - id: visual-pretraining.base.v2.2
+        prompt: Where does a masked autoencoder get its training target?
+        options:
+          - id: a
+            text: From the pixels of the patches it hid from the encoder
+          - id: c
+            text: From a class label attached to each training photo
+          - id: b
+            text: From a second augmented view of the same photo
+        answer: a
+        feedback: MAE hides patches and scores how well the decoder redraws their pixels, so the photo is its own label. A second view is the contrastive puzzle, and class labels are exactly what self-supervision avoids.
+      - id: visual-pretraining.base.v2.3
+        prompt: A linear probe is trained on a frozen encoder's 1,024 features to separate 10 classes. What gets trained?
+        options:
+          - id: c
+            text: The encoder's weights, with the output layer kept fixed
+          - id: b
+            text: Every weight in the encoder and the output layer together
+          - id: a
+            text: Only the output layer, 1,024 × 10 weights plus 10 biases
+        answer: a
+        feedback: Freezing keeps the encoder fixed, so only the new linear layer (10,250 numbers) learns. Updating everything is fine-tuning, a different test that usually scores higher.
+      - id: visual-pretraining.base.v2.4
+        prompt: MAE hides 75% of patches, while BERT hides about 15% of words. Why does MAE hide so many more?
+        options:
+          - id: b
+            text: Images have fewer patches than sentences have words, so more must go
+          - id: a
+            text: Neighboring patches are so alike that small gaps are easy to fill in
+          - id: c
+            text: The decoder is too small to redraw fewer than half of the patches
+        answer: a
+        feedback: A single missing patch can be copied from its neighbors, which teaches little; hiding most of the photo forces the model to know what things look like. A 196-patch photo isn't short, and the decoder's size isn't the reason.
+  - id: visual-pretraining.transfer.v2
+    objective_ref: objective.visual-pretraining
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Every augmentation says "ignore this", so check it against what the new task needs. Then check what the pretraining data overlapped with.
+    remediation_scene: visual-pretraining.s4
+    variants:
+      - id: visual-pretraining.transfer.v2.1
+        prompt: A fruit-sorting company uses an encoder pretrained with heavy color jitter. It struggles to tell ripe from unripe bananas. What is the most likely cause?
+        options:
+          - id: a
+            text: Pretraining taught the encoder to ignore color, which ripeness depends on
+          - id: b
+            text: The encoder saw too few bananas to learn fruit shapes during pretraining
+          - id: c
+            text: Color jitter made the encoder's features too large for a linear probe
+        answer: a
+        feedback: Color jitter makes two differently colored views count as "the same", so the features learn to disregard color. Ripeness is mostly color. The fix is lighter color augmentation or fine-tuning with labeled fruit.
+      - id: visual-pretraining.transfer.v2.2
+        prompt: A pretrained wildlife classifier scores 99% on a public test set. The team then finds many test photos were also in the pretraining collection. What should they do next?
+        options:
+          - id: c
+            text: Keep the score, since pretraining used no labels for those photos
+          - id: a
+            text: Remove the duplicates or build a fresh test set, then re-measure
+          - id: b
+            text: Fine-tune for longer, so the model relies less on pretraining
+        answer: a
+        feedback: Even without labels, the encoder has already seen those exact images, so the score overstates performance on new photos. Only a test set the model never saw gives a fair measure; extra fine-tuning doesn't undo the overlap.
+      - id: visual-pretraining.transfer.v2.3
+        prompt: An X-ray team compares two pretrained encoders using a linear probe. Encoder A wins the probe, but they plan to fine-tune whichever they pick. What should they do?
+        options:
+          - id: b
+            text: Pick A, since the probe already shows it has better features
+          - id: c
+            text: Pick B, since probe losers usually fine-tune better
+          - id: a
+            text: Fine-tune both on their data, since the tests can rank them differently
+        answer: a
+        feedback: A linear probe measures how directly the frozen features separate classes; fine-tuning can reshape them. MAE, for example, trails contrastive methods under probing yet leads after fine-tuning, so run the test you'll actually use. Losing a probe isn't a reliable sign of winning at fine-tuning either.
+      - id: visual-pretraining.transfer.v2.4
+        prompt: A shop wants to sort product photos into 50 categories but has no labeled photos yet. Which pretrained model can do this right away?
+        options:
+          - id: a
+            text: A CLIP-style model, comparing each photo with 50 captions
+          - id: b
+            text: A masked autoencoder, redrawing each photo's hidden patches
+          - id: c
+            text: A SimCLR encoder, measuring how two crops of a photo match
+        answer: a
+        feedback: CLIP learned to match photos with text, so "a photo of a kettle" can serve as a label with no training examples. MAE and SimCLR produce features but have no link to category names until you train on labels.
+  - id: visual-pretraining.calculate
+    objective_ref: objective.visual-pretraining
+    task: base
+    response_type: numeric
+    points: 1
+    hint: First count the patches, (H ÷ P) × (W ÷ P). Then multiply by the fraction left visible, which is 1 minus the masking ratio.
+    remediation_scene: visual-pretraining.s5
+    absolute_tolerance: 0.01
+    variants:
+      - id: visual-pretraining.calculate.1
+        prompt: MAE cuts a 384 × 384 photo into 16 × 16 patches and hides 75% of them. How many patches does the encoder see?
+        answer: 144
+        feedback: 384 / 16 = 24 per side gives 576 patches; 25% of 576 = 144 stay visible.
+      - id: visual-pretraining.calculate.2
+        prompt: MAE cuts a 224 × 224 photo into 16 × 16 patches and hides 50% of them. How many patches does the encoder see?
+        answer: 98
+        feedback: 14 × 14 = 196 patches; half of them, 98, stay visible.
+      - id: visual-pretraining.calculate.3
+        prompt: MAE cuts a 160 × 160 photo into 16 × 16 patches and hides 75% of them. How many patches does the encoder see?
+        answer: 25
+        feedback: 160 / 16 = 10 per side gives 100 patches; 25% of 100 = 25 stay visible.
+      - id: visual-pretraining.calculate.4
+        prompt: MAE cuts a 224 × 224 photo into 16 × 16 patches and hides 75%. How many attention pairs does one encoder head compute over the visible patches (no extra tokens)?
+        answer: 2401
+        feedback: 196 patches, 25% visible = 49 tokens, and 49² = 2,401 pairs, 16 times fewer than the 38,416 for all 196.
+      - id: visual-pretraining.calculate.5
+        prompt: MAE cuts a 256 × 256 photo into 32 × 32 patches and hides 75% of them. How many patches does the encoder see?
+        answer: 16
+        feedback: 256 / 32 = 8 per side gives 64 patches; 25% of 64 = 16 stay visible.

@@ -77,13 +77,11 @@ describe("objective evidence", () => {
     expect(retake.items).toHaveLength(2);
     expect(retake.items.every((q) => !p.exposures.includes(q.id))).toBe(true);
     p.exposures.push(...retake.items.map((q) => q.id));
-    // Exhaust every current variant without relying on a fixed bank size.
-    const rounds = lesson.questions.filter(
-      (q) => !q.retired && q.family === first.items[0].family,
-    ).length;
-    for (let round = 2; round < rounds; round++) {
+    // Exhaust every current variant; families may hold different numbers of variants.
+    for (;;) {
       const more = questionsRemaining(lesson, curriculum, p, "core");
-      expect(more.items).toHaveLength(2);
+      if (!more.items.length) break;
+      expect(more.items.every((q) => !p.exposures.includes(q.id))).toBe(true);
       p.exposures.push(...more.items.map((q) => q.id));
     }
     const exhausted = questionsRemaining(lesson, curriculum, p, "core");

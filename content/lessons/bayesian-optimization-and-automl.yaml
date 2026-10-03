@@ -1,194 +1,451 @@
 schema_version: 0.2-draft
 lesson:
   id: bayesian-optimization-and-automl
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Choose expensive experiments using a surrogate model
   state: draft
-  summary: Use previous experiments to choose which expensive training run to try next.
+  summary: Each training run costs six GPU-hours and you can afford twenty. Learn to pick the next run with expected improvement, cut losers early, and see why architecture search went from 2,000 GPU-days to four.
   slot: M32.7
   category: learning
   sources:
-  - title: A Tutorial on Bayesian Optimization
-    url: https://arxiv.org/abs/1807.02811
-  - title: Hyperband
-    url: https://arxiv.org/abs/1603.06560
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: A Tutorial on Bayesian Optimization (Frazier, 2018)
+      url: https://arxiv.org/abs/1807.02811
+    - title: "Practical Bayesian Optimization of Machine Learning Algorithms (Snoek, Larochelle & Adams, 2012)"
+      url: https://arxiv.org/abs/1206.2944
+    - title: "Non-stochastic Best Arm Identification and Hyperparameter Optimization (Jamieson & Talwalkar, 2016)"
+      url: https://arxiv.org/abs/1502.07943
+    - title: "Hyperband: A Novel Bandit-Based Approach to Hyperparameter Optimization (Li et al., 2018)"
+      url: https://arxiv.org/abs/1603.06560
+    - title: "Neural Architecture Search with Reinforcement Learning (Zoph & Le, 2017)"
+      url: https://arxiv.org/abs/1611.01578
+    - title: "DARTS: Differentiable Architecture Search (Liu, Simonyan & Yang, 2019)"
+      url: https://arxiv.org/abs/1806.09055
+    - title: "Random Search and Reproducibility for Neural Architecture Search (Li & Talwalkar, 2019)"
+      url: https://arxiv.org/abs/1902.07638
+    - title: Dive into Deep Learning — hyperparameter optimization
+      url: https://d2l.ai/chapter_hyperparameter-optimization/index.html
 objectives:
-- id: objective.bayesian-optimization-and-automl
-  version: 1-draft
-  statement: Bayesian optimization models an expensive objective and selects evaluations with an acquisition
-    rule; AutoML adds search spaces, resource allocation, and validation procedures around model selection.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - bayesian-optimization-and-automl.base
-  - bayesian-optimization-and-automl.transfer
-  prerequisites:
-  - anyOf:
-    - objective.bayesian-learning
-  - anyOf:
-    - objective.regularization-and-tuning
+  - id: objective.bayesian-optimization-and-automl
+    version: 2-draft
+    statement: Bayesian optimization models an expensive objective and selects evaluations with an acquisition rule; AutoML adds search spaces, resource allocation, and validation procedures around model selection.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - bayesian-optimization-and-automl.base.v2
+      - bayesian-optimization-and-automl.transfer.v2
+      - bayesian-optimization-and-automl.calculate
+    prerequisites:
+      - anyOf:
+          - objective.bayesian-learning
+      - anyOf:
+          - objective.regularization-and-tuning
 scenes:
-- id: bayesian-optimization-and-automl.s1
-  title: Model the unknown score function
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.bayesian-optimization-and-automl
-  markdown: 'When one training run is expensive, fit a **surrogate**: a cheaper model that predicts performance
-    and uncertainty across hyperparameter choices. Gaussian processes are one option. The surrogate estimates
-    the objective from observed trials, so its uncertainty and smoothness assumptions influence search.'
-  text_mode: 'When one training run is expensive, fit a **surrogate**: a cheaper model that predicts performance
-    and uncertainty across hyperparameter choices. Gaussian processes are one option. The surrogate estimates
-    the objective from observed trials, so its uncertainty and smoothness assumptions influence search.'
-  bridges: []
-- id: bayesian-optimization-and-automl.s2
-  title: Choose the next evaluation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.bayesian-optimization-and-automl
-  markdown: 'An acquisition function balances promising predicted values with information value or uncertainty.
-    Expected improvement and upper-confidence-style rules are examples. A candidate with slightly worse predicted
-    mean but high uncertainty can be worth trying when it may reveal a better region.
+  - id: bayesian-optimization-and-automl.s1
+    title: Twenty runs to spend
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.bayesian-optimization-and-automl
+    markdown: |-
+      You're tuning a speech recognizer's learning rate and dropout. Each training run takes 6 GPU-hours, and the budget allows 20 runs. A particle swarm would burn through that before its first few moves. You need to choose every run carefully.
 
+      **Bayesian optimization (BO)** does that in a loop. After each run, fit a **surrogate model**: a cheap model of the expensive function, which predicts validation accuracy for any setting *and* says how unsure it is. The usual surrogate is the Gaussian process from the Bayesian learning lesson. Its prediction at each setting is a mean $\mu$ and a standard deviation $\sigma$: $\sigma$ is small near settings you've tried and grows in regions you haven't.
 
-    For a maximization problem, a toy acquisition rule is predicted mean + 2 × predicted standard deviation.
-    Candidate A with mean 0.80 and deviation 0.01 scores 0.82; candidate B with mean 0.76 and deviation 0.05
-    scores 0.86. This rule chooses B to investigate its uncertain upside, not because it is already known to
-    perform better.'
-  text_mode: 'An acquisition function balances promising predicted values with information value or uncertainty.
-    Expected improvement and upper-confidence-style rules are examples. A candidate with slightly worse predicted
-    mean but high uncertainty can be worth trying when it may reveal a better region.
+      An **acquisition function** then scores every candidate setting using $\mu$ and $\sigma$, and the next run goes to the top scorer. Scoring thousands of candidates on the surrogate takes seconds; one real run takes hours. Jasper Snoek and colleagues (2012) showed that this loop could match or beat expert hand-tuning of models including convolutional networks, and it became a standard tool.
+    diagram:
+      caption: The Bayesian optimization loop. Only the dashed step is expensive.
+      description: The table of finished runs is used to fit the Gaussian-process surrogate, which gives a mean and uncertainty at every setting. The acquisition function scores candidate settings from those. The top candidate goes to a real training run, which is the expensive step. Its result is added to the table of finished runs, and the loop repeats.
+      nodes:
+        - id: runs
+          label: Finished runs
+          note: settings and accuracies
+          col: 0
+          row: 1
+          tone: data
+        - id: gp
+          label: Fit surrogate
+          note: Gaussian process gives μ and σ
+          col: 0
+          row: 0
+          tone: accent
+        - id: acq
+          label: Score candidates
+          note: expected improvement
+          col: 1
+          row: 0
+        - id: train
+          label: Real training run
+          note: 6 GPU-hours
+          col: 1
+          row: 1
+          tone: warn
+      edges:
+        - from: runs
+          to: gp
+        - from: gp
+          to: acq
+          label: μ and σ everywhere
+        - from: acq
+          to: train
+          label: best candidate
+          dashed: true
+        - from: train
+          to: runs
+          label: add the result
+  - id: bayesian-optimization-and-automl.s2
+    title: Expected improvement, worked
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.bayesian-optimization-and-automl
+    markdown: |-
+      After 8 runs, your best validation accuracy is $f^* = 0.80$. The surrogate describes two candidates:
 
+      - **A**, near your best run: $\mu = 0.81$, $\sigma = 0.01$. Almost surely a little better.
+      - **B**, in an unexplored corner: $\mu = 0.78$, $\sigma = 0.05$. Probably worse, but could be much better.
 
-    For a maximization problem, a toy acquisition rule is predicted mean + 2 × predicted standard deviation.
-    Candidate A with mean 0.80 and deviation 0.01 scores 0.82; candidate B with mean 0.76 and deviation 0.05
-    scores 0.86. This rule chooses B to investigate its uncertain upside, not because it is already known to
-    perform better.'
-  bridges: []
-- id: bayesian-optimization-and-automl.s3
-  title: Allocate partial budgets
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.bayesian-optimization-and-automl
-  markdown: Multi-fidelity methods evaluate candidates with fewer epochs or smaller datasets before assigning
-    larger resources. Early performance can be a useful proxy or can misrank slow-starting configurations.
-    **Automated machine learning**, or **AutoML**, automates parts of model and pipeline selection. It also
-    needs search spaces that represent valid combinations, including preprocessing choices.
-  text_mode: Multi-fidelity methods evaluate candidates with fewer epochs or smaller datasets before assigning
-    larger resources. Early performance can be a useful proxy or can misrank slow-starting configurations.
-    **Automated machine learning**, or **AutoML**, automates parts of model and pipeline selection. It also
-    needs search spaces that represent valid combinations, including preprocessing choices.
-  bridges: []
-- id: bayesian-optimization-and-automl.s4
-  title: Keep search honest and recoverable
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.bayesian-optimization-and-automl
-  markdown: Record trials, failures, seeds, budgets, and the validation procedure. Compare with random search
-    under equal resources. Selection does not eliminate overfitting to validation, and the final selected pipeline
-    still needs an untouched test and reproducible artifact definition.
-  text_mode: Record trials, failures, seeds, budgets, and the validation procedure. Compare with random search
-    under equal resources. Selection does not eliminate overfitting to validation, and the final selected pipeline
-    still needs an untouched test and reproducible artifact definition.
-  bridges: []
-- id: bayesian-optimization-and-automl.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.bayesian-optimization-and-automl
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Bayesian optimization uses a surrogate and an acquisition rule to choose expensive experiments.
-    Evaluate the selected pipeline independently and include the search cost.
-- id: bayesian-optimization-and-automl.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.bayesian-optimization-and-automl
-  markdown: Bayesian optimization uses a surrogate and an acquisition rule to choose expensive experiments.
-    Evaluate the selected pipeline independently and include the search cost.
-  text_mode: Bayesian optimization uses a surrogate and an acquisition rule to choose expensive experiments.
-    Evaluate the selected pipeline independently and include the search cost.
+      **Expected improvement (EI)** asks: on average, how much will this run beat 0.80? Losing counts as zero improvement, not negative. For a normal prediction there's a closed form, with $z = (\mu - f^*)/\sigma$:
+
+      | | $z$ | $(\mu - f^*)\,\Phi(z)$ | $\sigma\,\phi(z)$ | EI |
+      | --- | ---: | ---: | ---: | ---: |
+      | A | 1 | 0.01 × 0.8413 = 0.00841 | 0.01 × 0.2420 = 0.00242 | 0.01083 |
+      | B | −0.4 | −0.02 × 0.3446 = −0.00689 | 0.05 × 0.3683 = 0.01841 | 0.01152 |
+
+      B wins, narrowly. The first term rewards a high mean (**exploitation**); the second rewards uncertainty (**exploration**). EI trades them off automatically.
+
+      ```python run
+      from math import erf, exp, pi, sqrt
+
+      def Phi(z): return 0.5 * (1 + erf(z / sqrt(2)))      # standard normal CDF
+      def phi(z): return exp(-z * z / 2) / sqrt(2 * pi)     # standard normal density
+
+      def expected_improvement(mu, sigma, best):
+          z = (mu - best) / sigma
+          return (mu - best) * Phi(z) + sigma * phi(z)
+
+      best = 0.80                                           # best validation accuracy so far
+      candidates = {"A (safe)": (0.81, 0.01), "B (uncertain)": (0.78, 0.05),
+                    "C (poor)": (0.74, 0.02), "D (wild)": (0.70, 0.10)}
+      for name, (mu, sigma) in candidates.items():
+          exploit = (mu - best) * Phi((mu - best) / sigma)
+          explore = sigma * phi((mu - best) / sigma)
+          print(f"{name:14} mu {mu:.2f} sigma {sigma:.2f}  EI = {exploit:+.5f} + {explore:.5f}"
+                f" = {expected_improvement(mu, sigma, best):.5f}")
+      ```
+
+      C is confidently mediocre, so its EI is almost 0. D has the worst mean of all but so much uncertainty that its EI, 0.00833, isn't far behind A's.
+
+      :::predict You run a cheap pilot near B, and the surrogate's σ at B shrinks from 0.05 to 0.02, with μ still 0.78. Which candidate wins now?
+      Now $z = -1$, so EI(B) = −0.02 × 0.1587 + 0.02 × 0.2420 ≈ 0.00167. A's 0.01083 wins easily. Less uncertainty means less upside, and the search turns back to exploiting.
+      :::
+
+      :::papers Expected improvement (Jones, Schonlau & Welch, 1998)
+      $$\text{EI}(x) = \mathbb{E}\big[\max(f(x) - f^*, 0)\big] = (\mu(x) - f^*)\,\Phi(z) + \sigma(x)\,\phi(z), \quad z = \frac{\mu(x) - f^*}{\sigma(x)}$$
+
+      $\Phi$ and $\phi$ are the standard normal CDF and density. For candidate B, $\mu(x) = 0.78$, $\sigma(x) = 0.05$, $f^* = 0.80$, and $z = -0.4$.
+      :::
+  - id: bayesian-optimization-and-automl.s3
+    title: "Successive halving: cut the losers early"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.bayesian-optimization-and-automl
+    markdown: |-
+      A different saving: most bad settings look bad early. **Successive halving** (Jamieson and Talwalkar, 2016) starts many configurations on a small budget, keeps the best fraction, and gives the survivors more. With 27 configurations and a keep-one-third rule ($\eta = 3$):
+
+      | Round | Configs | Epochs each | Epochs spent |
+      | ---: | ---: | ---: | ---: |
+      | 1 | 27 | 1 | 27 |
+      | 2 | 9 | 3 | 27 |
+      | 3 | 3 | 9 | 27 |
+      | 4 | 1 | 27 | 27 |
+
+      That's 108 epochs, against 27 × 27 = 729 to train everything fully: under a sixth of the cost.
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(4)
+      n, eta, max_epochs = 27, 3, 27
+      final = rng.uniform(0.60, 0.90, n)     # each config's accuracy if fully trained
+      speed = rng.uniform(1, 5, n)           # epochs it needs to get going (bigger = slower start)
+
+      def val_acc(i, epochs):                # a simulated learning curve
+          return final[i] * (1 - np.exp(-epochs / speed[i]))
+
+      alive, epochs, spent = list(range(n)), 1, 0
+      while True:
+          scores = {i: val_acc(i, epochs) for i in alive}
+          spent += len(alive) * epochs
+          print(f"{len(alive):2} configs x {epochs:2} epochs = {len(alive) * epochs:3} epochs;"
+                f" leader: config {max(scores, key=scores.get):2} at {max(scores.values()):.3f}")
+          if epochs == max_epochs:
+              break
+          alive = sorted(alive, key=scores.get, reverse=True)[:len(alive) // eta]
+          epochs *= eta
+
+      full = [val_acc(i, max_epochs) for i in range(n)]      # what training everything would show
+      best = int(np.argmax(full))
+      print(f"total {spent} epochs; training all {n} for {max_epochs} epochs would cost {n * max_epochs}")
+      print(f"picked config {alive[0]} ({full[alive[0]]:.3f}); true best is config {best} ({full[best]:.3f}),"
+            f" whose accuracy after 1 epoch ranked {sorted(range(n), key=lambda i: -val_acc(i, 1)).index(best) + 1} of {n}")
+      ```
+
+      The winner reaches 0.893. The true best, 0.894, was a slow starter ranked 18th after one epoch and was cut in round 1. Losing 0.001 for a sixth of the cost is a good trade. Now try seed 5: the true best (0.898) is cut early again, and this time the winner reaches only 0.853.
+
+      **Hyperband** (Lisha Li and colleagues, 2018) hedges against slow starters by running several successive-halving brackets, from "many configs, tiny budgets" to "few configs, full budgets," and keeping the best overall. Methods such as BOHB then replace Hyperband's random configurations with Bayesian optimization's suggestions.
+  - id: bayesian-optimization-and-automl.nas
+    title: "Architecture search: from 800 GPUs to one"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.bayesian-optimization-and-automl
+    markdown: |-
+      Tuning can extend to the network's design itself. In **neural architecture search (NAS)**, Barret Zoph and Quoc Le (2017) trained a recurrent "controller" network with the REINFORCE policy gradient from the RL module. It wrote out architectures layer by layer, each child network was trained for 50 epochs, and its validation accuracy became the reward. The CIFAR-10 search trained 12,800 architectures, 800 at a time on 800 GPUs. A follow-up (NASNet, 2018) needed about 2,000 GPU-days; evolution-based AmoebaNet about 3,150.
+
+      **DARTS** (Hanxiao Liu, Karen Simonyan, and Yiming Yang, 2019) made the search differentiable. Instead of picking one operation per connection, it runs *all* candidates (3×3 convolution, 5×5 convolution, pooling, skip…) and mixes their outputs with softmax weights. Gradient descent tunes those mixing weights on validation data while the network's ordinary weights train on training data. At the end, each connection keeps its highest-weighted operation. The search took 1.5 to 4 GPU-days, hundreds to thousands of times less, for similar CIFAR-10 accuracy.
+
+      :::mixup "The architecture search found a better network, so the method is what worked."
+      Check the baseline. Liam Li and Ameet Talwalkar (2019) found that random search, given the same search space and training tricks, was competitive with leading NAS methods. Much of the gain came from a well-designed search space.
+      :::
+  - id: bayesian-optimization-and-automl.s4
+    title: Keep the search honest
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.bayesian-optimization-and-automl
+    markdown: |-
+      **AutoML** packages all of this: tools like Auto-WEKA (2013) and auto-sklearn (2015) search over preprocessing steps, model families, and hyperparameters together, with BO or successive halving choosing what to try.
+
+      More search means more chances to get lucky on the validation set, the winner's curse from the lesson on evaluating the procedure that chose the model. Here's a team doing it right. They give BO and plain random search the same 20-run budget and three seeds each. BO's best validation accuracy averages 0.842 against random search's 0.835. They then score only BO's final pick on the untouched test set: 0.836. They report the test score, the search cost (20 runs × 6 GPU-hours = 120 GPU-hours per search), and the random-search comparison, so a reader can tell how much the clever search actually bought.
+  - id: bayesian-optimization-and-automl.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.bayesian-optimization-and-automl
+    markdown: Compute expected improvement and successive-halving budgets by hand, then choose search strategies for a drug-screening lab, a recommender team, and an architecture-search paper.
+    takeaway: |-
+      Bayesian optimization fits a surrogate with a mean and an uncertainty, then runs the setting with the highest expected improvement, trading exploitation against exploration. Successive halving and Hyperband save budget by cutting weak configurations early.
+  - id: bayesian-optimization-and-automl.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.bayesian-optimization-and-automl
+    markdown: |-
+      Bayesian optimization uses a surrogate and an acquisition rule to choose expensive experiments. Evaluate the selected pipeline independently and include the search cost.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - bayesian-optimization-and-automl.s1
-    - bayesian-optimization-and-automl.s2
-    - bayesian-optimization-and-automl.s3
-    - bayesian-optimization-and-automl.s4
-    - bayesian-optimization-and-automl.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - bayesian-optimization-and-automl.s1
+        - bayesian-optimization-and-automl.s2
+        - bayesian-optimization-and-automl.s3
+        - bayesian-optimization-and-automl.nas
+        - bayesian-optimization-and-automl.s4
+        - bayesian-optimization-and-automl.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     bayesian-optimization-and-automl.recap: bayesian-optimization-and-automl.check
 assessment_families:
-- id: bayesian-optimization-and-automl.base
-  objective_ref: objective.bayesian-optimization-and-automl
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Choose the next evaluation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: bayesian-optimization-and-automl.s2
-  variants:
-  - id: bayesian-optimization-and-automl.base.1
-    prompt: What does a surrogate model estimate?
-    options:
-    - id: a
-      text: The expensive objective across candidate settings
-    - id: b
-      text: Only training file paths
-    - id: c
-      text: The exact optimum without data
-    answer: a
-    feedback: Observed trials support predictions and uncertainty.
-  - id: bayesian-optimization-and-automl.base.2
-    prompt: Why evaluate an uncertain candidate with a lower predicted mean?
-    options:
-    - id: b
-      text: Uncertainty always means failure
-    - id: c
-      text: Only the best mean may ever be chosen
-    - id: a
-      text: It may reveal useful information or an unexpectedly good region
-    answer: a
-    feedback: Acquisition trades exploitation and exploration.
-- id: bayesian-optimization-and-automl.transfer
-  objective_ref: objective.bayesian-optimization-and-automl
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Keep search honest and recoverable: trace the inputs, operation, and result before choosing.'
-  remediation_scene: bayesian-optimization-and-automl.s4
-  variants:
-  - id: bayesian-optimization-and-automl.transfer.1
-    prompt: Can early low-budget performance misrank final candidates?
-    options:
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if training is deterministic
-    - id: a
-      text: 'Yes'
-    answer: a
-    feedback: Learning curves can cross or develop at different rates.
-  - id: bayesian-optimization-and-automl.transfer.2
-    prompt: Does AutoML remove the need for independent final evaluation?
-    options:
-    - id: c
-      text: Only when Bayesian optimization is used
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Automated selection still uses validation feedback.
+  - id: bayesian-optimization-and-automl.base
+    objective_ref: objective.bayesian-optimization-and-automl
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Choose the next evaluation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: bayesian-optimization-and-automl.s2
+    variants:
+      - id: bayesian-optimization-and-automl.base.1
+        prompt: What does a surrogate model estimate?
+        options:
+          - id: a
+            text: The expensive objective across candidate settings
+          - id: b
+            text: Only training file paths
+          - id: c
+            text: The exact optimum without data
+        answer: a
+        feedback: Observed trials support predictions and uncertainty.
+        retired: true
+      - id: bayesian-optimization-and-automl.base.2
+        prompt: Why evaluate an uncertain candidate with a lower predicted mean?
+        options:
+          - id: b
+            text: Uncertainty always means failure
+          - id: c
+            text: Only the best mean may ever be chosen
+          - id: a
+            text: It may reveal useful information or an unexpectedly good region
+        answer: a
+        feedback: Acquisition trades exploitation and exploration.
+        retired: true
+  - id: bayesian-optimization-and-automl.transfer
+    objective_ref: objective.bayesian-optimization-and-automl
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Keep search honest and recoverable: trace the inputs, operation, and result before choosing.'
+    remediation_scene: bayesian-optimization-and-automl.s4
+    variants:
+      - id: bayesian-optimization-and-automl.transfer.1
+        prompt: Can early low-budget performance misrank final candidates?
+        options:
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if training is deterministic
+          - id: a
+            text: 'Yes'
+        answer: a
+        feedback: Learning curves can cross or develop at different rates.
+        retired: true
+      - id: bayesian-optimization-and-automl.transfer.2
+        prompt: Does AutoML remove the need for independent final evaluation?
+        options:
+          - id: c
+            text: Only when Bayesian optimization is used
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Automated selection still uses validation feedback.
+        retired: true
+  - id: bayesian-optimization-and-automl.base.v2
+    objective_ref: objective.bayesian-optimization-and-automl
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Split expected improvement into its two terms, the mean's lead over the best so far (exploit) and the uncertainty's upside (explore), and remember that successive halving judges configurations by their early scores.
+    remediation_scene: bayesian-optimization-and-automl.s2
+    variants:
+      - id: bayesian-optimization-and-automl.base.v2.1
+        prompt: The best result so far is 0.80. Candidate P has μ = 0.79 and σ = 0.06; candidate Q has μ = 0.80 and σ = 0.001. Why can P have higher expected improvement than Q?
+        options:
+          - id: b
+            text: EI prefers lower means, since they leave more room to improve
+          - id: a
+            text: P's large uncertainty gives a real chance of beating 0.80 by a lot
+          - id: c
+            text: Q's mean equals the best so far, which makes its EI undefined
+        answer: a
+        feedback: EI counts only the upside, so a wide prediction with a mean just below the best can expect more improvement than a near-certain tie. EI doesn't prefer low means as such, and at μ = f* it's well defined, σ·φ(0), just small when σ is tiny.
+      - id: bayesian-optimization-and-automl.base.v2.2
+        prompt: Why does Bayesian optimization pick the next run by maximizing an acquisition function on the surrogate, rather than running the setting with the highest predicted mean?
+        options:
+          - id: c
+            text: The predicted mean is biased upward, so the acquisition corrects it
+          - id: b
+            text: Surrogates can't predict means at unexplored settings
+          - id: a
+            text: Pure mean-chasing never explores, so it can stay stuck near early runs
+        answer: a
+        feedback: Choosing the highest mean is pure exploitation, which keeps sampling near what's already known. An acquisition like EI adds credit for uncertainty. Gaussian processes do predict means everywhere, and the issue is exploration, not bias.
+      - id: bayesian-optimization-and-automl.base.v2.3
+        prompt: In successive halving, which configuration is most at risk of being wrongly cut?
+        options:
+          - id: a
+            text: One that learns slowly at first but ends with the best accuracy
+          - id: b
+            text: One that learns quickly at first and ends with average accuracy
+          - id: c
+            text: One whose accuracy is the same after every number of epochs
+        answer: a
+        feedback: Successive halving ranks configurations by early scores, so a slow starter can look bad in round 1 and be dropped before it shines. Hyperband's brackets with larger starting budgets hedge against exactly this.
+      - id: bayesian-optimization-and-automl.base.v2.4
+        prompt: How does DARTS make architecture search differentiable?
+        options:
+          - id: b
+            text: It trains a controller network with REINFORCE to write architectures
+          - id: c
+            text: It evolves a population of architectures with tournament selection
+          - id: a
+            text: It mixes all candidate operations with softmax weights tuned by gradients
+        answer: a
+        feedback: DARTS relaxes the discrete choice of operation into a softmax-weighted mix, so the mixing weights can be tuned by gradient descent on validation loss. The REINFORCE controller was Zoph and Le's approach, and tournament evolution is AmoebaNet's.
+  - id: bayesian-optimization-and-automl.transfer.v2
+    objective_ref: objective.bayesian-optimization-and-automl
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Match the method to the cost of one evaluation and to whether early results predict final ones, then ask what a fair comparison and an honest final score would need.
+    remediation_scene: bayesian-optimization-and-automl.s4
+    variants:
+      - id: bayesian-optimization-and-automl.transfer.v2.1
+        prompt: A drug-screening lab can run 30 experiments on a new compound mixture, each taking two days, over 4 continuous settings. Which search strategy fits best?
+        options:
+          - id: b
+            text: A particle swarm of 20 particles run for 10 steps
+          - id: a
+            text: Bayesian optimization with a Gaussian-process surrogate
+          - id: c
+            text: Grid search with 5 values per setting
+        answer: a
+        feedback: Few, expensive evaluations in a low-dimensional continuous space are BO's home ground. A 20-particle swarm run for 10 steps needs over 200 experiments, and a 5-value grid over 4 settings needs 625.
+      - id: bayesian-optimization-and-automl.transfer.v2.2
+        prompt: A recommender team trains models whose validation scores after one hour predict their scores after a day quite well. They have 200 configurations to try. Which approach saves the most budget?
+        options:
+          - id: a
+            text: Successive halving, starting all 200 on short budgets
+          - id: b
+            text: Train all 200 fully and pick the best one afterward
+          - id: c
+            text: Bayesian optimization run one full-length training at a time
+        answer: a
+        feedback: When early scores predict final ones, cutting weak configurations early saves most of the budget. Training everything fully is the costly baseline, and one-at-a-time BO would get through only a few of the 200 in the same time.
+      - id: bayesian-optimization-and-automl.transfer.v2.3
+        prompt: An architecture-search paper reports 0.3% lower error than a hand-designed network, using a new search space and new training tricks. What comparison is most needed?
+        options:
+          - id: c
+            text: The same method run with twice as many GPU-days of search
+          - id: b
+            text: A comparison with the largest published hand-designed network
+          - id: a
+            text: Random search over the same space with the same training tricks
+        answer: a
+        feedback: Li and Talwalkar found random search competitive when the search space and training setup were held equal, so this baseline shows what the search method itself adds. More GPU-days or a different hand-designed network don't isolate that.
+      - id: bayesian-optimization-and-automl.transfer.v2.4
+        prompt: An AutoML tool tried 500 pipelines and reports its winner's validation accuracy of 91.2%. What should the team do before quoting that number?
+        options:
+          - id: a
+            text: Score the winner once on a held-out test set the search never saw
+          - id: b
+            text: Average the validation accuracy of the top 10 pipelines found
+          - id: c
+            text: Retrain the winner on the validation set and score it there again
+        answer: a
+        feedback: With 500 tries, the winner's validation score is optimistically biased. A single untouched test score is honest. Averaging the top 10 still reuses the same validation data, and scoring on data it trained on is worse still.
+  - id: bayesian-optimization-and-automl.calculate
+    objective_ref: objective.bayesian-optimization-and-automl
+    task: base
+    response_type: numeric
+    points: 1
+    hint: For EI, compute z = (μ − best)/σ, then (μ − best)·Φ(z) + σ·φ(z) using the values given. For successive halving, multiply configs by epochs in each round and add the rounds.
+    remediation_scene: bayesian-optimization-and-automl.s2
+    absolute_tolerance: 0.0005
+    variants:
+      - id: bayesian-optimization-and-automl.calculate.1
+        prompt: The best accuracy so far is 0.80. A candidate has μ = 0.82 and σ = 0.02. Using Φ(1) = 0.8413 and φ(1) = 0.2420, what is its expected improvement?
+        answer: 0.0217
+        feedback: z = (0.82 − 0.80)/0.02 = 1. EI = 0.02 × 0.8413 + 0.02 × 0.2420 = 0.0168 + 0.0048 ≈ 0.0217.
+      - id: bayesian-optimization-and-automl.calculate.2
+        prompt: A candidate's mean exactly equals the best so far (z = 0) and σ = 0.05. Using φ(0) = 0.3989, what is its expected improvement?
+        answer: 0.0199
+        feedback: The first term is 0 because μ − best = 0. EI = σ·φ(0) = 0.05 × 0.3989 ≈ 0.0199, all from exploration.
+      - id: bayesian-optimization-and-automl.calculate.3
+        prompt: The best so far is 0.80. A candidate has μ = 0.79 and σ = 0.01. Using Φ(−1) = 0.1587 and φ(−1) = 0.2420, what is its expected improvement?
+        answer: 0.0008
+        feedback: z = −1. EI = −0.01 × 0.1587 + 0.01 × 0.2420 = −0.00159 + 0.00242 ≈ 0.0008. A slightly worse mean with little uncertainty offers little upside.
+      - id: bayesian-optimization-and-automl.calculate.4
+        prompt: Successive halving starts 81 configurations at 1 epoch each and keeps one third each round (η = 3) until one configuration has trained for 81 epochs. How many epochs does it spend in total?
+        answer: 405
+        feedback: "The rounds are 81 × 1, 27 × 3, 9 × 9, 3 × 27, and 1 × 81, each 81 epochs, so 5 × 81 = 405. Training all 81 fully would take 6,561."
+      - id: bayesian-optimization-and-automl.calculate.5
+        prompt: Successive halving starts 16 configurations at 1 epoch each and keeps half each round (η = 2) until one configuration has trained for 16 epochs. How many epochs does it spend in total?
+        answer: 80
+        feedback: "The rounds are 16 × 1, 8 × 2, 4 × 4, 2 × 8, and 1 × 16, each 16 epochs, so 5 × 16 = 80, against 256 to train all 16 fully."

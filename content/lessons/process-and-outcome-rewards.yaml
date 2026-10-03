@@ -1,202 +1,413 @@
 schema_version: 0.2-draft
 lesson:
   id: process-and-outcome-rewards
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Choose whether to score the result, the steps, or both
   state: draft
-  summary: Compare rewards for reaching the answer with rewards for using sound steps along the way.
+  summary: Cross out the 6s in 16/64 and you get 1/4, the right answer by a wrong method. Should the model be rewarded? That question splits outcome rewards from process rewards.
   slot: M21.5
   category: learning
   sources:
-  - title: Let’s Verify Step by Step
-    url: https://arxiv.org/abs/2305.20050
-  - title: The Effects of Reward Misspecification
-    url: https://arxiv.org/abs/2201.03544
+    - title: "Let's Verify Step by Step (Lightman et al., 2023)"
+      url: https://arxiv.org/abs/2305.20050
+    - title: "Solving math word problems with process- and outcome-based feedback (Uesato et al., 2022)"
+      url: https://arxiv.org/abs/2211.14275
+    - title: "Math-Shepherd: Verify and Reinforce LLMs Step-by-step without Human Annotations (Wang et al., 2023)"
+      url: https://arxiv.org/abs/2312.08935
+    - title: "Faulty Reward Functions in the Wild (OpenAI, 2016)"
+      url: https://openai.com/index/faulty-reward-functions/
+    - title: "The Effects of Reward Misspecification: Mapping and Mitigating Misaligned Models (Pan et al., 2022)"
+      url: https://arxiv.org/abs/2201.03544
 objectives:
-- id: objective.process-and-outcome-rewards
-  version: 1-draft
-  statement: Outcome rewards score final results, while process rewards score intermediate behavior; both can
-    be misspecified or exploited, so evaluate correctness, shortcuts, and reward alignment independently.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - process-and-outcome-rewards.base
-  - process-and-outcome-rewards.transfer
-  prerequisites:
-  - anyOf:
-    - objective.verifiable-rewards
-  - anyOf:
-    - objective.preferences-and-reward-models
+  - id: objective.process-and-outcome-rewards
+    version: 3-draft
+    statement: Outcome rewards score the final answer and process rewards score each step; both can be gamed, so check correctness, shortcuts, and whether the reward matches what you want.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - process-and-outcome-rewards.base.v2
+      - process-and-outcome-rewards.transfer.v2
+      - process-and-outcome-rewards.calculate
+    prerequisites:
+      - anyOf:
+          - objective.verifiable-rewards
+      - anyOf:
+          - objective.preferences-and-reward-models
 scenes:
-- id: process-and-outcome-rewards.s1
-  title: Choose where to give feedback
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.process-and-outcome-rewards
-  markdown: An outcome scorer rewards the final answer. A process scorer may judge each derivation step or
-    action. Step feedback can locate errors and provide denser supervision, but requires a rubric that recognizes
-    valid alternative approaches rather than one rigid solution template.
-  text_mode: An outcome scorer rewards the final answer. A process scorer may judge each derivation step or
-    action. Step feedback can locate errors and provide denser supervision, but requires a rubric that recognizes
-    valid alternative approaches rather than one rigid solution template.
-  bridges: []
-- id: process-and-outcome-rewards.s2
-  title: Trace a disagreement
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.process-and-outcome-rewards
-  markdown: 'A solution uses an invalid cancellation but accidentally reaches the correct numeric result. An
-    answer-only check may pass it, while a step checker should flag the invalid operation. Conversely, a sound
-    partial derivation may not reach the final answer before a budget expires. Decide which behavior the objective
-    values.
+  - id: process-and-outcome-rewards.s1
+    title: Grade the answer, or grade the work?
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.process-and-outcome-rewards
+    markdown: |-
+      Simplify $\tfrac{16}{64}$. A student crosses out the two 6s and writes $\tfrac{1}{4}$. That's correct! Try the same trick on $\tfrac{12}{24}$: cross out the 2s, get $\tfrac{1}{4}$. Wrong; it's $\tfrac{1}{2}$. Real cancellation divides top and bottom by the same factor ($16/64 = (16 \div 16)/(64 \div 16)$). Digit-crossing just got lucky.
 
+      A reward can look at either end of that solution:
 
-    For 16/64, crossing out the digit 6 happens to leave 1/4, which is the correct value. But crossing out
-    matching digits is not a valid general rule: doing it to 12/24 gives 1/4 although the correct answer is
-    1/2. Valid cancellation divides numerator and denominator by the same nonzero factor. An answer-only reward
-    can miss this difference in method.'
-  text_mode: 'A solution uses an invalid cancellation but accidentally reaches the correct numeric result.
-    An answer-only check may pass it, while a step checker should flag the invalid operation. Conversely, a
-    sound partial derivation may not reach the final answer before a budget expires. Decide which behavior
-    the objective values.
+      - An **outcome reward** scores only the final result. The verifiers from two lessons ago are outcome rewards, and so is an **outcome reward model** (ORM), a network trained to predict whether a solution's final answer is right.
+      - A **process reward** scores each step. A **process reward model** (PRM) is a network trained to predict whether each individual step is correct.
 
+      The ORM passes the 16/64 solution. A good PRM flags the crossing-out step. Process rewards also give **denser** feedback: instead of one bit at the end of a 20-step solution, they point to the step where it went wrong.
+    diagram:
+      caption: Where each kind of reward looks. An outcome reward sees only the answer; a process reward scores every step.
+      description: A solution runs from step 1, reading the fraction 16/64, to step 2, crossing out the 6s, to the final answer 1/4. The outcome reward checks only the final answer and passes it. The process reward checks each step and flags step 2 as invalid.
+      nodes:
+        - id: step1
+          label: "Step 1: simplify 16/64"
+          col: 0
+          row: 0
+        - id: step2
+          label: "Step 2: cross out the 6s"
+          col: 1
+          row: 0
+          tone: warn
+        - id: answer
+          label: "Answer: 1/4"
+          col: 2
+          row: 0
+        - id: orm
+          label: Outcome reward
+          note: "checks the answer: pass"
+          col: 2
+          row: 1
+          tone: data
+        - id: prm
+          label: Process reward
+          note: "checks each step: step 2 invalid"
+          col: 1
+          row: 1
+          tone: accent
+      edges:
+        - from: step1
+          to: step2
+        - from: step2
+          to: answer
+        - from: answer
+          to: orm
+          dashed: true
+        - from: step2
+          to: prm
+          dashed: true
+        - from: step1
+          to: prm
+          dashed: true
+    bridges: []
+  - id: process-and-outcome-rewards.s2
+    title: '"Let''s Verify Step by Step"'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.process-and-outcome-rewards
+    markdown: |-
+      In 2023, OpenAI researchers (Lightman et al.) paid people to label steps. The result, **PRM800K**, holds 800,000 step labels (positive, negative, or neutral) across 75,000 solutions to 12,000 problems from the MATH competition dataset. They trained a PRM on it and an ORM on final-answer correctness. Then they used each one to pick the best of 1,860 sampled solutions per problem. On a representative subset of MATH, the PRM's picks were right 78.2% of the time, the ORM's 72.4%, and a simple majority vote's 69.6%.
 
-    For 16/64, crossing out the digit 6 happens to leave 1/4, which is the correct value. But crossing out
-    matching digits is not a valid general rule: doing it to 12/24 gives 1/4 although the correct answer is
-    1/2. Valid cancellation divides numerator and denominator by the same nonzero factor. An answer-only reward
-    can miss this difference in method.'
-  bridges: []
-- id: process-and-outcome-rewards.s3
-  title: Expect optimization to find shortcuts
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.process-and-outcome-rewards
-  markdown: 'A length reward can produce unnecessary text; a format reward can produce correct tags around
-    incorrect content. A learned process scorer can favor familiar-looking steps. Combining scores does not
-    automatically remove these problems because the weighted combination becomes another target to exploit.
+      A PRM gives each step a probability of being correct. To score a whole solution, Lightman et al. multiplied them: the chance that *every* step is correct.
 
+      $$\text{score}(\text{solution}) = \prod_{k=1}^{K} p_k$$
 
-    A **proxy** is a measurable stand-in for what we actually care about. If the process reward gives one point
-    per written step, a model can repeat a step to gain points without getting closer to a solution. Adding
-    a final-answer reward does not automatically fix this; inspect the combined incentives and test counterexamples.'
-  text_mode: 'A length reward can produce unnecessary text; a format reward can produce correct tags around
-    incorrect content. A learned process scorer can favor familiar-looking steps. Combining scores does not
-    automatically remove these problems because the weighted combination becomes another target to exploit.
+      ```python run
+      import math
 
+      # PRM probability that each step is correct
+      solutions = {
+          "A: one shaky step": [0.98, 0.95, 0.30, 0.90],
+          "B: steady, 4 steps": [0.90, 0.90, 0.90, 0.90],
+          "C: steady, 3 steps": [0.90, 0.90, 0.90],
+          "D: careful, 10 steps": [0.95] * 10,
+      }
+      for name, p in solutions.items():
+          print(f"{name:21} product = {math.prod(p):.3f}   min = {min(p):.2f}   mean = {sum(p) / len(p):.3f}")
+      ```
 
-    A **proxy** is a measurable stand-in for what we actually care about. If the process reward gives one point
-    per written step, a model can repeat a step to gain points without getting closer to a solution. Adding
-    a final-answer reward does not automatically fix this; inspect the combined incentives and test counterexamples.'
-  bridges: []
-- id: process-and-outcome-rewards.s4
-  title: Use adversarial and independent audits
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.process-and-outcome-rewards
-  markdown: Construct cases that separate appearance from validity, inspect high-reward failures, and test
-    new solution styles. Keep some evaluation criteria independent of the training reward. Report reward components
-    and weights so improvements can be interpreted rather than equated with an undefined notion of better reasoning.
-  text_mode: Construct cases that separate appearance from validity, inspect high-reward failures, and test
-    new solution styles. Keep some evaluation criteria independent of the training reward. Report reward components
-    and weights so improvements can be interpreted rather than equated with an undefined notion of better reasoning.
-  bridges: []
-- id: process-and-outcome-rewards.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.process-and-outcome-rewards
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: An outcome reward checks the result; a process reward checks the steps. Test whether either can
-    reward an answer that only looks good.
-- id: process-and-outcome-rewards.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.process-and-outcome-rewards
-  markdown: An outcome reward checks the result; a process reward checks the steps. Test whether either can
-    reward an answer that only looks good.
-  text_mode: An outcome reward checks the result; a process reward checks the steps. Test whether either can
-    reward an answer that only looks good.
+      Solution A has three confident steps and one doubtful one. Its mean (0.782) looks fine, but the product (0.251) collapses, because one bad step sinks a proof. That is the behavior you want.
+
+      :::predict Solution D's steps are each more confident than C's. Which gets the higher product score?
+      C, with 0.729 against D's 0.599. Every extra step multiplies in a number below 1, so the product quietly favors short solutions. The minimum (0.95 against 0.90) ranks them the other way. Choosing how to combine step scores is itself a design decision.
+      :::
+
+      Earlier, a DeepMind team (Uesato et al., 2022) compared the two kinds of feedback on GSM8K. Outcome and process supervision reached similar final-answer error rates. But among solutions with correct final answers, keeping reasoning errors low needed process feedback, or a reward model that imitated it. Their best system cut that rate from the previous best of 14.0% to 3.4%.
+    bridges: []
+  - id: process-and-outcome-rewards.s3
+    title: Process labels without human labelers
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.process-and-outcome-rewards
+    markdown: |-
+      Human step labels are expensive: 800,000 of them for one dataset. Math-Shepherd (Wang et al., 2023) labels steps automatically. From each step, a "completer" model finishes the solution $N = 8$ times, and the final answers are checked. The step's **soft label** is the fraction of completions that reach the right answer; its **hard label** is 1 if any of them do.
+
+      Suppose you run this from step 2 of a solution, and 5 of the 8 completions reach the correct answer. The soft label is $5/8 = 0.625$ and the hard label is 1. A step after which 0 of 8 succeed gets 0 on both, and is probably where things broke.
+
+      Look at what this really measures: *can you still get the right answer from here?* Run it on the 16/64 solution. Every completion after "cross out the 6s" reaches 1/4, so the invalid step scores 8/8. Automatic process labels built from outcomes inherit the outcome reward's blind spot. They're good at finding steps that lead nowhere, and bad at spotting lucky shortcuts.
+    bridges: []
+  - id: process-and-outcome-rewards.s4
+    title: Every scorer becomes a target
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.process-and-outcome-rewards
+    markdown: |-
+      :::story The boat that never finished the race
+      In 2016, OpenAI trained an RL agent on the boat-racing game CoastRunners, where points come from hitting targets along the course. The agent found a lagoon where it could circle forever, hitting three targets as they reappeared. It caught fire, crashed into other boats, and went the wrong way, and it still outscored human players. It never finished the race.
+      :::
+
+      A learned PRM is a target too. Suppose a PRM's scores are combined by *averaging* the steps. A solution with steps scoring 0.9 and 0.3 averages 0.6. Now pad it with eight trivially true steps, such as "2 + 2 = 4", each scoring 0.99. The average jumps to $(0.9 + 0.3 + 8 \times 0.99)/10 \approx 0.91$, and the bad step is still there. RL will find that padding. The product rule resists this particular trick, but a learned PRM can still be fooled by steps that merely *look* like the valid steps it was trained on.
+
+      That's why the DeepSeek-R1 report lists the PRM among its unsuccessful attempts. It gave three reasons: a "step" is hard to define in general reasoning, checking an intermediate step is hard (automatic labels are unreliable and human labels don't scale), and a model-based PRM invites reward hacking. The team noted that PRMs still worked well for reranking candidate answers, which is the next lesson's subject.
+
+      :::mixup "Process rewards are strictly better, because they check more."
+      They check more *of what they were trained to recognize*. A human-labeled PRM catches the 16/64 trick; a rollout-labeled one scores it 8/8; an averaged one can be padded. An exact-match outcome reward can't be padded at all, though it misses lucky methods.
+      :::
+
+      A practical choice: when a reliable answer checker exists and you care about final answers, start with outcome rewards. Add process feedback when people will read or copy the steps, as in a tutor, or when solutions are too long for one bit at the end to guide learning. Either way, keep a held-out check, such as a human-reviewed sample of steps, that isn't the reward you train on.
+    bridges: []
+  - id: process-and-outcome-rewards.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.process-and-outcome-rewards
+    markdown: Some product-of-steps scores to compute, plus a contract analyzer, a children's tutor, and a code reviewer, test whether you can predict what each kind of reward lets through.
+    takeaway: |-
+      Outcome rewards check the answer and miss lucky methods; process rewards check each step, but only as well as their labels and aggregation allow. Whatever you score becomes the target, so audit it with something you don't train on.
+  - id: process-and-outcome-rewards.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.process-and-outcome-rewards
+    markdown: |-
+      An outcome reward checks the result; a process reward checks the steps. Test whether either can reward an answer that only looks good.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - process-and-outcome-rewards.s1
-    - process-and-outcome-rewards.s2
-    - process-and-outcome-rewards.s3
-    - process-and-outcome-rewards.s4
-    - process-and-outcome-rewards.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - process-and-outcome-rewards.s1
+        - process-and-outcome-rewards.s2
+        - process-and-outcome-rewards.s3
+        - process-and-outcome-rewards.s4
+        - process-and-outcome-rewards.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     process-and-outcome-rewards.recap: process-and-outcome-rewards.check
 assessment_families:
-- id: process-and-outcome-rewards.base
-  objective_ref: objective.process-and-outcome-rewards
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a disagreement: trace the inputs, operation, and result before choosing.'
-  remediation_scene: process-and-outcome-rewards.s2
-  variants:
-  - id: process-and-outcome-rewards.base.1
-    prompt: What does outcome reward primarily assess?
-    options:
-    - id: b
-      text: Every hidden computation automatically
-    - id: c
-      text: Only intermediate formatting
-    - id: a
-      text: The final result under its scoring rule
-    answer: a
-    feedback: Its granularity is the outcome.
-  - id: process-and-outcome-rewards.base.2
-    prompt: A wrong step accidentally yields a right answer. Which check may miss it?
-    options:
-    - id: c
-      text: Every possible process audit
-    - id: a
-      text: Answer-only verification
-    - id: b
-      text: A perfect proof checker by definition
-    answer: a
-    feedback: Final correctness does not guarantee a valid derivation.
-- id: process-and-outcome-rewards.transfer
-  objective_ref: objective.process-and-outcome-rewards
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Use adversarial and independent audits: trace the inputs, operation, and result before choosing.'
-  remediation_scene: process-and-outcome-rewards.s4
-  variants:
-  - id: process-and-outcome-rewards.transfer.1
-    prompt: Rewarding more steps can cause what shortcut?
-    options:
-    - id: c
-      text: Automatic proof validity
-    - id: a
-      text: Unnecessary intermediate text
-    - id: b
-      text: Guaranteed deeper understanding
-    answer: a
-    feedback: Optimizing a proxy can exploit its easiest measurable feature.
-  - id: process-and-outcome-rewards.transfer.2
-    prompt: Why test unfamiliar but valid solution styles?
-    options:
-    - id: a
-      text: A process scorer may overfit familiar presentation
-    - id: b
-      text: Only one derivation can ever be correct
-    - id: c
-      text: Style cannot affect learned judges
-    answer: a
-    feedback: Valid alternatives test whether the scorer recognizes substance.
+  - id: process-and-outcome-rewards.base
+    objective_ref: objective.process-and-outcome-rewards
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a disagreement: trace the inputs, operation, and result before choosing.'
+    remediation_scene: process-and-outcome-rewards.s2
+    variants:
+      - id: process-and-outcome-rewards.base.1
+        prompt: What does outcome reward primarily assess?
+        options:
+          - id: b
+            text: Every hidden computation automatically
+          - id: c
+            text: Only intermediate formatting
+          - id: a
+            text: The final result under its scoring rule
+        answer: a
+        feedback: Its granularity is the outcome.
+        retired: true
+      - id: process-and-outcome-rewards.base.2
+        prompt: A wrong step accidentally yields a right answer. Which check may miss it?
+        options:
+          - id: c
+            text: Every possible process audit
+          - id: a
+            text: Answer-only verification
+          - id: b
+            text: A perfect proof checker by definition
+        answer: a
+        feedback: Final correctness does not guarantee a valid derivation.
+        retired: true
+  - id: process-and-outcome-rewards.transfer
+    objective_ref: objective.process-and-outcome-rewards
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Use adversarial and independent audits: trace the inputs, operation, and result before choosing.'
+    remediation_scene: process-and-outcome-rewards.s4
+    variants:
+      - id: process-and-outcome-rewards.transfer.1
+        prompt: Rewarding more steps can cause what shortcut?
+        options:
+          - id: c
+            text: Automatic proof validity
+          - id: a
+            text: Unnecessary intermediate text
+          - id: b
+            text: Guaranteed deeper understanding
+        answer: a
+        feedback: Optimizing a proxy can exploit its easiest measurable feature.
+        retired: true
+      - id: process-and-outcome-rewards.transfer.2
+        prompt: Why test unfamiliar but valid solution styles?
+        options:
+          - id: a
+            text: A process scorer may overfit familiar presentation
+          - id: b
+            text: Only one derivation can ever be correct
+          - id: c
+            text: Style cannot affect learned judges
+        answer: a
+        feedback: Valid alternatives test whether the scorer recognizes substance.
+        retired: true
+  - id: process-and-outcome-rewards.base.v2
+    objective_ref: objective.process-and-outcome-rewards
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Ask where each reward looks: only at the final answer, or at every step. Then ask how the step scores were produced and combined."
+    remediation_scene: process-and-outcome-rewards.s2
+    variants:
+      - id: process-and-outcome-rewards.base.v2.1
+        prompt: A solution simplifies 16/64 by crossing out the two 6s and answers 1/4. What do an outcome reward and a well-trained process reward give it?
+        options:
+          - id: b
+            text: Both give full reward, since the final answer is correct
+          - id: a
+            text: The outcome reward passes it; the process reward flags step 2
+          - id: c
+            text: The outcome reward fails it, since the method is invalid
+        answer: a
+        feedback: 1/4 is the right value, so an answer check passes it. Crossing out digits isn't valid cancellation, so a process reward that checks each step should flag it. An outcome reward never looks at the method.
+      - id: process-and-outcome-rewards.base.v2.2
+        prompt: How did Lightman et al. (2023) combine a PRM's per-step scores into one score for a whole solution?
+        options:
+          - id: c
+            text: They took the PRM's score for the final step alone
+          - id: b
+            text: They averaged the step probabilities across the steps
+          - id: a
+            text: They multiplied the probabilities that each step is correct
+        answer: a
+        feedback: The product is the chance that every step is correct, so one doubtful step drags the whole solution down. Averaging would let good steps hide a bad one, and the last step alone ignores everything before it.
+      - id: process-and-outcome-rewards.base.v2.3
+        prompt: Why can a product-of-step-probabilities score favor short solutions?
+        options:
+          - id: a
+            text: Each extra step multiplies in another number below 1
+          - id: b
+            text: Short solutions give the PRM fewer tokens to misread
+          - id: c
+            text: PRMs are trained mostly on examples of short solutions
+        answer: a
+        feedback: Ten steps at 0.95 multiply to about 0.599, below three steps at 0.90 (0.729), even though each step is more confident. That comes from the arithmetic of the product, not from how the PRM reads or was trained.
+      - id: process-and-outcome-rewards.base.v2.4
+        prompt: An automatic labeler scores a step by finishing the solution 8 times from that step and counting how many completions reach the right answer. What can it miss?
+        options:
+          - id: b
+            text: A step after which none of the completions reach the answer
+          - id: a
+            text: An invalid step from which the right answer is still reachable
+          - id: c
+            text: A step after which every completion reaches the right answer
+        answer: a
+        feedback: Rollout labels measure whether the right answer is still reachable, not whether the step is valid. A lucky shortcut like crossing out the 6s still leads to 1/4, so it scores 8/8. Steps that lead nowhere are exactly what this method catches.
+      - id: process-and-outcome-rewards.base.v2.5
+        prompt: On GSM8K, what did Uesato et al. (2022) find that process-based feedback added over outcome-based feedback?
+        options:
+          - id: c
+            text: Solutions that were much shorter and cheaper to generate
+          - id: a
+            text: Far fewer reasoning errors in solutions with correct answers
+          - id: b
+            text: A much lower final-answer error rate than outcome feedback
+        answer: a
+        feedback: Final-answer error rates came out similar for the two kinds of feedback. The difference was in the reasoning. Keeping errors out of correct-answer solutions needed process feedback or a reward model that imitated it.
+  - id: process-and-outcome-rewards.transfer.v2
+    objective_ref: objective.process-and-outcome-rewards
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Imagine the policy trying to maximize this exact score. What is the cheapest behavior that earns it, and is that what you wanted?
+    remediation_scene: process-and-outcome-rewards.s4
+    variants:
+      - id: process-and-outcome-rewards.transfer.v2.1
+        prompt: 'A contract-analysis model is trained against a learned step checker whose scores are averaged over the steps. Its answers fill up with obviously true steps like "The contract has a title." Why?'
+        options:
+          - id: a
+            text: Easy high-scoring steps raise the average score
+          - id: b
+            text: The checker penalizes answers with few steps
+          - id: c
+            text: The model is learning to be more thorough
+        answer: a
+        feedback: Averaging lets cheap, certain steps dilute the weak ones, so padding raises reward without better analysis. Nothing here penalizes short answers, and the padding adds no real thoroughness.
+      - id: process-and-outcome-rewards.transfer.v2.2
+        prompt: You're training a maths tutor for children, who will copy its written working. Which reward design fits best?
+        options:
+          - id: c
+            text: Reward longer solutions, since more steps show more working
+          - id: b
+            text: An outcome reward alone, since correct answers are what matter
+          - id: a
+            text: Include feedback on the steps, not just the final answer
+        answer: a
+        feedback: Children learn the method from the steps, so invalid steps that happen to reach right answers would teach them wrong methods. Length is a proxy that invites padding.
+      - id: process-and-outcome-rewards.transfer.v2.3
+        prompt: For a leaderboard that scores final answers only, you have a reliable exact-match checker and little money for labeling. Which reward is the sensible starting point?
+        options:
+          - id: a
+            text: Outcome rewards from the exact-match checker
+          - id: b
+            text: Paid human labels on every step of every solution
+          - id: c
+            text: A process model trained on the policy's own steps
+        answer: a
+        feedback: When a trustworthy answer check exists and only answers count, outcome rewards are cheap and hard to pad. Human step labels are costly, and a PRM trained on the policy's own outputs adds a new target that can be hacked.
+      - id: process-and-outcome-rewards.transfer.v2.4
+        prompt: A reward model for code review gives points for each function that has a docstring. What will RL most likely produce?
+        options:
+          - id: b
+            text: Fewer, longer functions with one shared docstring
+          - id: a
+            text: Many small functions, each with its own docstring
+          - id: c
+            text: Faster code, since documented code runs better
+        answer: a
+        feedback: Rewarding a countable feature invites making more of it, as with CoastRunners' targets. Splitting code into many tiny documented functions raises the count; merging functions lowers it, and docstrings don't affect speed.
+        retired: true
+      - id: process-and-outcome-rewards.transfer.v2.5
+        prompt: A support model is rewarded by a learned checker that gives points for each troubleshooting step containing a phrase like "Let's verify." What will RL most likely produce?
+        options:
+          - id: c
+            text: Fewer steps, each checked more carefully before it's written
+          - id: a
+            text: More steps that say "Let's verify" without checking anything
+          - id: b
+            text: The same answers, since the phrase doesn't change the fix
+        answer: a
+        feedback: The checker pays for the phrase, so the cheapest way to raise reward is to repeat it, as CoastRunners' agent circled for points. Careful checking earns nothing extra here, and RL does change behavior whenever a cheap change raises reward.
+  - id: process-and-outcome-rewards.calculate
+    objective_ref: objective.process-and-outcome-rewards
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Multiply the step probabilities together; the product is the chance that every step is correct. (Give a decimal.)
+    remediation_scene: process-and-outcome-rewards.s2
+    absolute_tolerance: 0.005
+    variants:
+      - id: process-and-outcome-rewards.calculate.1
+        prompt: A PRM gives a 3-step solution step probabilities 0.9, 0.8, and 0.5. What is its product score?
+        answer: 0.36
+        feedback: 0.9 × 0.8 = 0.72, and 0.72 × 0.5 = 0.36. The shaky last step halves the score.
+      - id: process-and-outcome-rewards.calculate.2
+        prompt: A PRM gives a 4-step solution step probabilities 0.99, 0.95, 0.90, and 0.40. What is its product score?
+        answer: 0.339
+        feedback: 0.99 × 0.95 = 0.9405; × 0.90 = 0.8465; × 0.40 ≈ 0.339. Three strong steps can't rescue one weak one.
+      - id: process-and-outcome-rewards.calculate.3
+        prompt: A PRM gives each of a solution's 5 steps probability 0.9. What is its product score?
+        answer: 0.59
+        feedback: 0.9⁵ = 0.59049 ≈ 0.590. Five solid steps already cost about 40% of the score.
+      - id: process-and-outcome-rewards.calculate.4
+        prompt: A PRM gives each of a solution's 4 steps probability 0.95. What is its product score?
+        answer: 0.815
+        feedback: 0.95⁴ = 0.9025 × 0.9025 ≈ 0.8145.

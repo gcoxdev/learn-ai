@@ -1,210 +1,433 @@
 schema_version: 0.2-draft
 lesson:
   id: data-parallel-training
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Train replicas on different examples and combine their gradients
   state: draft
-  summary: Train copies on different examples, then combine their gradients with the right weighting.
+  summary: One GPU would need 21 years to train the team's model; 256 GPUs need a month. See how they pool gradients with a ring all-reduce and hide it inside the backward pass.
   slot: M17.3
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: PyTorch DistributedDataParallel documentation
-    url: https://docs.pytorch.org/docs/stable/generated/torch.nn.parallel.DistributedDataParallel.html
+    - title: "Bandwidth Optimal All-reduce Algorithms for Clusters of Workstations (Patarasuk & Yuan, Journal of Parallel and Distributed Computing, 2009)"
+      url: https://doi.org/10.1016/j.jpdc.2008.09.002
+    - title: "PyTorch Distributed: Experiences on Accelerating Data Parallel Training (Li et al., 2020)"
+      url: https://arxiv.org/abs/2006.15704
+    - title: PyTorch DistributedDataParallel documentation
+      url: https://docs.pytorch.org/docs/stable/generated/torch.nn.parallel.DistributedDataParallel.html
+    - title: "Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour (Goyal et al., 2017)"
+      url: https://arxiv.org/abs/1706.02677
 objectives:
-- id: objective.data-parallel-training
-  version: 1-draft
-  statement: Data parallel training splits examples across model replicas and aggregates gradients; weighting,
-    synchronization, and accumulation must preserve the intended global objective.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - data-parallel-training.base
-  - data-parallel-training.transfer
-  prerequisites:
-  - anyOf:
-    - objective.stochastic-gradients
-  - anyOf:
-    - objective.training-memory
+  - id: objective.data-parallel-training
+    version: 2-draft
+    statement: Data parallel training splits examples across model replicas and aggregates gradients; weighting, synchronization, and accumulation must preserve the intended global objective.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - data-parallel-training.base.v2
+      - data-parallel-training.transfer.v2
+      - data-parallel-training.calculate
+    prerequisites:
+      - anyOf:
+          - objective.stochastic-gradients
+      - anyOf:
+          - objective.training-memory
 scenes:
-- id: data-parallel-training.s1
-  title: Give each worker different examples
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.data-parallel-training
-  markdown: 'A **worker** is a participating process or device, and a **replica** is its copy of the model.
-    In synchronized **data-parallel training**, workers start with compatible state and process different local
-    batches.
+  - id: data-parallel-training.s1
+    title: Twenty-one years on one GPU, one month on 256
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.data-parallel-training
+    markdown: |-
+      The team plans to train their 7B model on 2 trillion tokens. One A100 processes about 3,000 tokens per second, so a single GPU would need 2 trillion ÷ 3,000 ≈ 670 million seconds: 21 years. They have 256 GPUs. The simplest way to use them all is **data parallelism**: every GPU holds a complete copy of the model and works on different examples.
 
+      (Their 130 GB budget doesn't fit on one GPU, so in practice they also split up the model states, as the sharding lesson later in this module shows. The gradients are still pooled across workers the way this lesson describes.)
 
-    They then combine their gradients before making aligned optimizer updates. They are cooperating to train
-    the same model, rather than independently producing different final models. This differs from dividing
-    one model’s layers or arrays across devices.'
-  text_mode: 'A **worker** is a participating process or device, and a **replica** is its copy of the model.
-    In synchronized **data-parallel training**, workers start with compatible state and process different local
-    batches.
+      Each GPU is a **worker**, and its copy of the model is a **replica**. One training step goes like this:
 
+      1. Every replica starts the step with identical weights.
+      2. Each worker takes its own slice of the batch, say 4 sequences of 4,096 tokens, and runs forward and backward to get a gradient.
+      3. The workers average their gradients, so every worker ends up with the same average.
+      4. Every worker applies the same optimizer update to its copy, so the replicas stay identical.
 
-    They then combine their gradients before making aligned optimizer updates. They are cooperating to train
-    the same model, rather than independently producing different final models. This differs from dividing
-    one model’s layers or arrays across devices.'
-  bridges: []
-- id: data-parallel-training.s2
-  title: Average the intended units
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.data-parallel-training
-  markdown: 'With equally weighted examples and equal local batch sizes, averaging workers’ mean gradients
-    matches the global batch mean. If one worker has two valid tokens and another has ten, equally averaging
-    their token means gives the small group too much weight. Aggregate sums and counts consistently.
+      The **global batch** is everything processed in one step across all workers: 256 × 4 × 4,096 ≈ 4.2 million tokens, close to the 4-million-token batch Meta used for Llama 2. The averaged gradient is exactly what one giant GPU would compute on the whole batch: same training, only faster.
+    bridges: []
+  - id: data-parallel-training.s2
+    title: Average the intended units
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.data-parallel-training
+    markdown: |-
+      "Average the gradients" hides a trap. The loss is usually a mean over tokens, and different workers can hold different numbers of real tokens once padding and masked positions are removed.
 
+      Suppose worker A has 2 valid tokens with mean gradient 3, and worker B has 10 valid tokens with mean gradient 9. The true per-token mean over all 12 tokens is
 
-    If the two-token worker has mean gradient 3 and the ten-token worker has mean gradient 9, the global token
-    mean is (2 × 3 + 10 × 9)/12 = 8. Simply averaging the two means gives 6 and changes the objective''s weighting.
-    The counted unit might be examples or valid tokens; state which one.'
-  text_mode: 'With equally weighted examples and equal local batch sizes, averaging workers’ mean gradients
-    matches the global batch mean. If one worker has two valid tokens and another has ten, equally averaging
-    their token means gives the small group too much weight. Aggregate sums and counts consistently.
+      $$\frac{2 \times 3 + 10 \times 9}{12} = \frac{96}{12} = 8.$$
 
+      Averaging the two means gives (3 + 9) ÷ 2 = 6, quietly giving each of A's tokens five times the weight of each of B's. The fix is to have every worker send its gradient *sum* and its token count, add both across workers, and divide once at the end.
 
-    If the two-token worker has mean gradient 3 and the ten-token worker has mean gradient 9, the global token
-    mean is (2 × 3 + 10 × 9)/12 = 8. Simply averaging the two means gives 6 and changes the objective''s weighting.
-    The counted unit might be examples or valid tokens; state which one.'
-  bridges: []
-- id: data-parallel-training.s3
-  title: Accumulate before updating
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.data-parallel-training
-  markdown: Gradient accumulation processes several microbatches before one optimizer update. It can approximate
-    a larger effective batch with less activation memory, provided losses are scaled correctly. Batch-dependent
-    operations, random behavior, and numerical reduction order can prevent exact equivalence to one physically
-    large batch.
-  text_mode: Gradient accumulation processes several microbatches before one optimizer update. It can approximate
-    a larger effective batch with less activation memory, provided losses are scaled correctly. Batch-dependent
-    operations, random behavior, and numerical reduction order can prevent exact equivalence to one physically
-    large batch.
-  bridges: []
-- id: data-parallel-training.s4
-  title: Communication is part of the step
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.data-parallel-training
-  markdown: 'All-reduce combines distributed gradient contributions and returns the result to participating
-    workers. Communication can overlap some backward computation, but late gradients and slow workers can delay
-    the update. Report global batch size and optimizer-step count when comparing distributed training runs.
+      :::mixup "Averaging each worker's mean gradient is the same as the global mean."
+      Only when every worker has the same number of counted units (examples or valid tokens). With uneven counts, combine sums and counts, then divide.
+      :::
+    bridges: []
+  - id: data-parallel-training.s3
+    title: Accumulate before updating
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.data-parallel-training
+    markdown: |-
+      Suppose each GPU has room for the activations of just one 4,096-token sequence at a time. To reach 4 sequences per worker, they use **gradient accumulation**: run forward and backward on one sequence (a **microbatch**), add its gradient into a running total, repeat for the next three, then do a single optimizer step.
 
+      Four microbatches, one optimizer step, and one gradient exchange. Scale each microbatch's loss by 1/4 (or divide the total at the end) so the result is a mean, not a sum four times too large. The gradient matches one batch of 4 up to rounding, as long as nothing in the model mixes examples within a batch, the way batch normalization does.
+    bridges: []
+  - id: data-parallel-training.s4
+    title: Ring all-reduce sends about twice the gradient
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.data-parallel-training
+    markdown: |-
+      The averaging step is a collective operation called an **all-reduce**: every worker contributes a vector, the vectors are combined (here, summed), and every worker receives the result. The team's gradients are 7 billion bf16 numbers, 14 GB. Sending all of that to one leader GPU and back would jam the leader's link. The standard fix is the **ring all-reduce**, which arranges the workers in a circle and cuts each gradient into N chunks.
 
-    **All-reduce** means combine contributions using an operation such as addition and give the combined result
-    to every participant. Averaging may then divide by the appropriate count. A late worker can keep others
-    waiting because the shared update needs its contribution too.'
-  text_mode: 'All-reduce combines distributed gradient contributions and returns the result to participating
-    workers. Communication can overlap some backward computation, but late gradients and slow workers can delay
-    the update. Report global batch size and optimizer-step count when comparing distributed training runs.
+      - **Reduce-scatter** (N − 1 steps): each worker passes one chunk to its neighbor, which adds its own copy of that chunk and passes it on. Afterwards, each worker owns the finished sum of one chunk.
+      - **All-gather** (N − 1 steps): the finished chunks travel around the ring until everyone has all of them.
 
+      Each step sends one chunk of size S/N, so each worker sends 2(N − 1) chunks in total:
 
-    **All-reduce** means combine contributions using an operation such as addition and give the combined result
-    to every participant. Averaging may then divide by the appropriate count. A late worker can keep others
-    waiting because the shared update needs its contribution too.'
-  bridges: []
-- id: data-parallel-training.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.data-parallel-training
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Data-parallel workers process different examples and combine their gradients. Weight the contributions
-    by the intended examples or tokens so the shared update still optimizes the right objective.
-- id: data-parallel-training.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.data-parallel-training
-  markdown: Data-parallel workers process different examples and combine their gradients. Weight the contributions
-    by the intended examples or tokens so the shared update still optimizes the right objective.
-  text_mode: Data-parallel workers process different examples and combine their gradients. Weight the contributions
-    by the intended examples or tokens so the shared update still optimizes the right objective.
+      :::papers Bandwidth of ring all-reduce (Patarasuk & Yuan, 2009)
+      $$\text{bytes sent per worker} = 2\,\frac{N-1}{N}\,S$$
+
+      For the team, S = 14 GB and N = 256: 2 × 255/256 × 14 ≈ 27.9 GB per GPU per step. If each GPU can push 25 GB/s into the network, that takes about 1.1 s. Patarasuk and Yuan showed that no all-reduce can send less per worker than this.
+      :::
+
+      :::predict The team grows from 256 to 2,048 GPUs. How much does each GPU send now?
+      2 × 2,047/2,048 × 14 ≈ 27.99 GB, almost exactly the same. The factor 2(N − 1)/N creeps toward 2 but never passes it. That's why ring all-reduce scales: more workers don't mean more bytes per worker. (They do mean more steps, each with a fixed start-up delay, so very large clusters use hierarchies of rings or trees.)
+      :::
+
+      Run the ring on 4 simulated GPUs and check that every GPU ends with the true sum:
+
+      ```python run
+      import numpy as np
+
+      N = 4                                    # GPUs in the ring
+      rng = np.random.default_rng(0)
+      grads = [rng.integers(0, 10, size=8).astype(float) for _ in range(N)]
+      chunks = [np.array_split(g.copy(), N) for g in grads]   # N chunks per GPU
+      sent = 0
+
+      # Reduce-scatter: at each step GPU i passes one chunk to GPU i+1, which adds it in.
+      for step in range(N - 1):
+          msgs = [(i, (i - step) % N, chunks[i][(i - step) % N].copy()) for i in range(N)]
+          for i, c, data in msgs:
+              chunks[(i + 1) % N][c] += data
+              sent += data.size
+      # Now GPU i holds the finished sum of chunk (i + 1) % N.
+
+      # All-gather: pass the finished chunks around the ring.
+      for step in range(N - 1):
+          msgs = [(i, (i + 1 - step) % N, chunks[i][(i + 1 - step) % N].copy()) for i in range(N)]
+          for i, c, data in msgs:
+              chunks[(i + 1) % N][c] = data
+              sent += data.size
+
+      result = np.concatenate(chunks[0])
+      print("true sum:      ", sum(grads))
+      print("ring result:   ", result)
+      print("all GPUs agree:", all(np.array_equal(np.concatenate(ch), result) for ch in chunks))
+      S = grads[0].size
+      print(f"sent per GPU: {sent / N / S:.2f} x gradient size; 2(N-1)/N = {2 * (N - 1) / N:.2f}")
+      ```
+
+      Change `N` to 8 and `size=8` to `size=16`. The sum still matches, and the bytes sent per GPU rise only from 1.50 to 1.75 times the gradient.
+    diagram:
+      caption: A ring all-reduce on four GPUs. Each arrow carries one chunk per step, first adding (reduce-scatter), then copying (all-gather).
+      description: Four GPUs sit in a ring. GPU 0 sends to GPU 1, GPU 1 to GPU 2, GPU 2 to GPU 3, and GPU 3 back to GPU 0. Each holds a full gradient cut into four chunks. During reduce-scatter each GPU passes one chunk per step to its neighbor, which adds it; during all-gather the finished chunks are passed on and copied. Each GPU sends 2 × 3/4 of its gradient in total.
+      nodes:
+        - id: g0
+          label: GPU 0
+          note: gradient in 4 chunks
+          col: 1
+          row: 0
+          tone: accent
+        - id: g1
+          label: GPU 1
+          note: gradient in 4 chunks
+          col: 3
+          row: 0
+          tone: accent
+        - id: g2
+          label: GPU 2
+          note: gradient in 4 chunks
+          col: 3
+          row: 2
+          tone: accent
+        - id: g3
+          label: GPU 3
+          note: gradient in 4 chunks
+          col: 1
+          row: 2
+          tone: accent
+      edges:
+        - from: g0
+          to: g1
+          label: one chunk per step
+        - from: g1
+          to: g2
+          label: one chunk per step
+        - from: g2
+          to: g3
+          label: one chunk per step
+        - from: g3
+          to: g0
+          label: one chunk per step
+    bridges: []
+  - id: data-parallel-training.overlap
+    title: Hide the exchange inside the backward pass
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.data-parallel-training
+    markdown: |-
+      A step for the team takes about 4.2 million tokens ÷ (256 GPUs × 3,000 tokens/s) ≈ 5.5 s, and the all-reduce about 1.1 s. Done one after the other, communication would add 20% to every step. It doesn't have to.
+
+      Backward runs from the last layer to the first, so the last layer's gradients are finished long before the first layer's. PyTorch's DistributedDataParallel groups gradients into **buckets** (25 MB each by default) and starts all-reducing a bucket the moment all its gradients are ready, while backward keeps computing earlier layers. By the time backward finishes, most buckets are already summed; only the last one or two are still in flight.
+
+      Two things break the overlap. A **straggler**, one worker that runs slower than the rest (a hot GPU, a busy host, a slow network link), makes everyone wait, because no worker can finish the all-reduce without its contribution. On 256 GPUs, if 255 finish backward in 3.6 s and one takes 4.5 s, the whole step waits the extra 0.9 s. And a gradient exchange that's much slower than backward can't be hidden at all, which is one reason teams place the chattiest traffic inside a machine, over **NVLink** (NVIDIA's direct GPU-to-GPU links, more than ten times faster than the network here), and the rest across the network.
+    bridges: []
+  - id: data-parallel-training.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.data-parallel-training
+    markdown: All-reduce volumes to compute, uneven token counts, a straggling GPU, and a speech team's padded batches test whether a data-parallel step still computes the gradient you intended.
+    takeaway: |-
+      Data-parallel workers compute gradients on different examples and all-reduce them into one shared update. A ring all-reduce sends about 2(N − 1)/N times the gradient per worker, and overlapping it with backward hides most of that time.
+  - id: data-parallel-training.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.data-parallel-training
+    markdown: |-
+      Data-parallel workers process different examples and combine their gradients. Weight the contributions by the intended examples or tokens so the shared update still optimizes the right objective.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - data-parallel-training.s1
-    - data-parallel-training.s2
-    - data-parallel-training.s3
-    - data-parallel-training.s4
-    - data-parallel-training.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - data-parallel-training.s1
+        - data-parallel-training.s2
+        - data-parallel-training.s3
+        - data-parallel-training.s4
+        - data-parallel-training.overlap
+        - data-parallel-training.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     data-parallel-training.recap: data-parallel-training.check
 assessment_families:
-- id: data-parallel-training.base
-  objective_ref: objective.data-parallel-training
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Average the intended units: trace the inputs, operation, and result before choosing.'
-  remediation_scene: data-parallel-training.s2
-  variants:
-  - id: data-parallel-training.base.1
-    prompt: What is divided in ordinary data parallelism?
-    options:
-    - id: b
-      text: The vocabulary meaning across workers
-    - id: c
-      text: Each layer necessarily
-    - id: a
-      text: The examples in the batch
-    answer: a
-    feedback: Workers typically hold replicas and process distinct data.
-  - id: data-parallel-training.base.2
-    prompt: Unequal valid-token counts require what weighting?
-    options:
-    - id: c
-      text: Ignore the larger local batch
-    - id: a
-      text: Weight by the intended global valid-token contribution
-    - id: b
-      text: Always average local means equally
-    answer: a
-    feedback: The global loss defines aggregation weights.
-- id: data-parallel-training.transfer
-  objective_ref: objective.data-parallel-training
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Communication is part of the step: trace the inputs, operation, and result before choosing.'
-  remediation_scene: data-parallel-training.s4
-  variants:
-  - id: data-parallel-training.transfer.1
-    prompt: Four microbatches are accumulated before one update. How many optimizer steps occurred?
-    options:
-    - id: c
-      text: Zero by definition
-    - id: a
-      text: One
-    - id: b
-      text: Four
-    answer: a
-    feedback: Forward/backward passes and optimizer steps are different counts.
-  - id: data-parallel-training.transfer.2
-    prompt: Why can a slow worker delay synchronous training?
-    options:
-    - id: a
-      text: The update depends on its gradient contribution
-    - id: b
-      text: Every worker has an unrelated model
-    - id: c
-      text: Synchronization eliminates waiting
-    answer: a
-    feedback: Synchronous aggregation follows the participating workers’ progress.
+  - id: data-parallel-training.base
+    objective_ref: objective.data-parallel-training
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Average the intended units: trace the inputs, operation, and result before choosing.'
+    remediation_scene: data-parallel-training.s2
+    variants:
+      - id: data-parallel-training.base.1
+        prompt: What is divided in ordinary data parallelism?
+        options:
+          - id: b
+            text: The vocabulary meaning across workers
+          - id: c
+            text: Each layer necessarily
+          - id: a
+            text: The examples in the batch
+        answer: a
+        feedback: Workers typically hold replicas and process distinct data.
+        retired: true
+      - id: data-parallel-training.base.2
+        prompt: Unequal valid-token counts require what weighting?
+        options:
+          - id: c
+            text: Ignore the larger local batch
+          - id: a
+            text: Weight by the intended global valid-token contribution
+          - id: b
+            text: Always average local means equally
+        answer: a
+        feedback: The global loss defines aggregation weights.
+        retired: true
+  - id: data-parallel-training.transfer
+    objective_ref: objective.data-parallel-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Communication is part of the step: trace the inputs, operation, and result before choosing.'
+    remediation_scene: data-parallel-training.s4
+    variants:
+      - id: data-parallel-training.transfer.1
+        prompt: Four microbatches are accumulated before one update. How many optimizer steps occurred?
+        options:
+          - id: c
+            text: Zero by definition
+          - id: a
+            text: One
+          - id: b
+            text: Four
+        answer: a
+        feedback: Forward/backward passes and optimizer steps are different counts.
+        retired: true
+      - id: data-parallel-training.transfer.2
+        prompt: Why can a slow worker delay synchronous training?
+        options:
+          - id: a
+            text: The update depends on its gradient contribution
+          - id: b
+            text: Every worker has an unrelated model
+          - id: c
+            text: Synchronization eliminates waiting
+        answer: a
+        feedback: Synchronous aggregation follows the participating workers’ progress.
+        retired: true
+  - id: data-parallel-training.base.v2
+    objective_ref: objective.data-parallel-training
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Replicas start and end each step identical; only their data and local gradients differ. Combine sums and counts, and remember a ring sends about 2(N − 1)/N of the gradient per worker.
+    remediation_scene: data-parallel-training.s1
+    variants:
+      - id: data-parallel-training.base.v2.1
+        prompt: In synchronous data parallelism on 8 GPUs, what is identical on every GPU right after an optimizer step?
+        options:
+          - id: b
+            text: The minibatch of examples each GPU just processed
+          - id: a
+            text: The model weights held by each GPU's replica
+          - id: c
+            text: The local gradient each GPU computed before all-reduce
+        answer: a
+        feedback: Every worker applies the same averaged gradient to the same starting weights, so the replicas stay identical. Their data slices and pre-exchange gradients differ; that's the point of splitting the batch.
+      - id: data-parallel-training.base.v2.2
+        prompt: GPU A has 100 valid tokens with mean gradient 2.0; GPU B has 300 valid tokens with mean gradient 4.0. The loss is a mean over all tokens. What combined gradient is correct?
+        options:
+          - id: c
+            text: 6.0, the sum of the two workers' gradients
+          - id: b
+            text: 3.0, the average of the two workers' means
+          - id: a
+            text: 3.5, each mean weighted by its token count
+        answer: a
+        feedback: (100 × 2.0 + 300 × 4.0) ÷ 400 = 3.5. Averaging the means (3.0) over-weights GPU A's tokens, and adding them (6.0) forgets to divide by anything.
+      - id: data-parallel-training.base.v2.3
+        prompt: On 256 GPUs, each GPU accumulates 4 microbatches of one sequence before updating. Per optimizer step, how many sequences are processed and how many updates happen?
+        options:
+          - id: a
+            text: 1,024 sequences and one update
+          - id: b
+            text: 256 sequences and four updates
+          - id: c
+            text: 1,024 sequences and four updates
+        answer: a
+        feedback: 256 GPUs × 4 microbatches = 1,024 sequences, all feeding one averaged gradient and one optimizer step. Accumulation runs several forward/backward passes but only one update.
+      - id: data-parallel-training.base.v2.4
+        prompt: A ring all-reduce grows from 8 GPUs to 1,024. What happens to the number of bytes each GPU sends per all-reduce?
+        options:
+          - id: c
+            text: It shrinks roughly as 1/N, since each GPU's chunk gets smaller
+          - id: a
+            text: It stays just under twice the gradient size
+          - id: b
+            text: It grows roughly in proportion to the number of GPUs
+        answer: a
+        feedback: Per-worker volume is 2(N − 1)/N × S, which goes from 1.75 S to about 2 S. Chunks do get smaller, but there are proportionally more steps, so the total per worker barely changes.
+  - id: data-parallel-training.transfer.v2
+    objective_ref: objective.data-parallel-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: A synchronous step waits for the slowest contribution and must reproduce the intended global mean. Ask what the workers are waiting for, or what the exchange is actually summing.
+    remediation_scene: data-parallel-training.overlap
+    variants:
+      - id: data-parallel-training.transfer.v2.1
+        prompt: A profile shows every GPU finishing backward and then sitting idle for 1.1 s while all gradients are all-reduced together. Which change hides most of that time?
+        options:
+          - id: a
+            text: All-reduce each bucket of gradients as soon as backward produces it
+          - id: b
+            text: Move the all-reduce so it runs after the optimizer step instead
+          - id: c
+            text: Add more GPUs so that each one's share of the gradient is smaller
+        answer: a
+        feedback: Late layers' gradients are ready early in backward, so bucketed all-reduce overlaps communication with the rest of backward. The update needs the summed gradient, so it can't come after; and more GPUs don't shrink per-worker ring traffic.
+      - id: data-parallel-training.transfer.v2.2
+        prompt: On 64 GPUs, 63 finish their backward pass in 2.0 s, but one with a failing fan throttles and takes 2.6 s. About how long does each synchronous step take?
+        options:
+          - id: b
+            text: About 2.0 s, because the fast GPUs carry on without it
+          - id: c
+            text: About 2.01 s, the average time across all 64 GPUs
+          - id: a
+            text: About 2.6 s, because everyone waits for its gradient
+        answer: a
+        feedback: The all-reduce can't finish without every worker's contribution, so the slowest GPU sets the pace for all 64. That one straggler slows the whole job by 30%.
+      - id: data-parallel-training.transfer.v2.3
+        prompt: A speech team trains on 8 GPUs whose batches contain very different amounts of padding, so valid audio frames per GPU vary widely. Their loss is a mean over frames. What should the gradient exchange combine?
+        options:
+          - id: c
+            text: Each GPU's mean gradient, weighted by the number of utterances it holds
+          - id: a
+            text: Each GPU's summed gradient and frame count, dividing once at the end
+          - id: b
+            text: Each GPU's mean gradient, averaged equally across all eight GPUs
+        answer: a
+        feedback: The intended objective weights every valid frame equally, so add gradient sums and frame counts, then divide. Utterance counts ignore how many frames each utterance has, and equal averaging over-weights lightly filled GPUs.
+      - id: data-parallel-training.transfer.v2.4
+        prompt: A team scales from 8 to 64 GPUs, keeping 4 sequences per GPU and the same total token budget. What changes that they must plan for?
+        options:
+          - id: b
+            text: Nothing about the optimization changes, since the gradients are averaged
+          - id: a
+            text: The global batch is 8× larger, so there are 8× fewer steps to tune for
+          - id: c
+            text: Each GPU now sees 8× fewer sequences per step, which adds noise
+        answer: a
+        feedback: Global batch = GPUs × per-GPU batch, so it grows 8× and the same tokens take 8× fewer updates; the learning rate and warmup often need retuning (Goyal et al., 2017, scaled the learning rate with the batch). Each GPU's own batch is unchanged.
+  - id: data-parallel-training.calculate
+    objective_ref: objective.data-parallel-training
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Ring all-reduce: each worker sends 2 × (N − 1)/N × S. Time = bytes ÷ bandwidth. For uneven token counts, weight each mean by its count and divide by the total."
+    remediation_scene: data-parallel-training.s4
+    absolute_tolerance: 0.1
+    variants:
+      - id: data-parallel-training.calculate.1
+        prompt: Four GPUs ring-all-reduce a 10 GB gradient. How many GB does each GPU send?
+        answer: 15
+        feedback: 2 × 3/4 × 10 = 15 GB. Each GPU sends 3 chunks of 2.5 GB in reduce-scatter and 3 more in all-gather.
+      - id: data-parallel-training.calculate.2
+        prompt: Eight GPUs in one machine ring-all-reduce the 7B model's 14 GB of bf16 gradients. How many GB does each GPU send?
+        answer: 24.5
+        feedback: 2 × 7/8 × 14 = 24.5 GB.
+      - id: data-parallel-training.calculate.3
+        prompt: 256 GPUs ring-all-reduce a 14 GB gradient. How many GB does each GPU send, to one decimal place?
+        answer: 27.9
+        feedback: 2 × 255/256 × 14 ≈ 27.9 GB, just under twice the gradient.
+      - id: data-parallel-training.calculate.4
+        prompt: Sixteen GPUs ring-all-reduce a 2 GB gradient, and each GPU can send at 25 GB/s. How many milliseconds does the transfer take at best?
+        answer: 150
+        feedback: Each GPU sends 2 × 15/16 × 2 = 3.75 GB, and 3.75 ÷ 25 = 0.15 s = 150 ms.
+      - id: data-parallel-training.calculate.5
+        prompt: Worker A has 200 valid tokens with mean gradient 1.0; worker B has 600 valid tokens with mean gradient 3.0. What is the correct per-token mean gradient across both?
+        answer: 2.5
+        feedback: (200 × 1.0 + 600 × 3.0) ÷ 800 = 2,000 ÷ 800 = 2.5. Averaging the two means would give 2.0.
+      - id: data-parallel-training.calculate.6
+        prompt: 64 GPUs each accumulate 2 microbatches of 4 sequences before every update. How many sequences are in the global batch?
+        answer: 512
+        feedback: 64 × 2 × 4 = 512 sequences per optimizer step.

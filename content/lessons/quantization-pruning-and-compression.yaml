@@ -1,195 +1,413 @@
 schema_version: 0.2-draft
 lesson:
   id: quantization-pruning-and-compression
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Reduce deployment cost while measuring what changes
   state: draft
-  summary: Make a model smaller while measuring what accuracy and speed change.
+  summary: Store each weight in 4 bits instead of 16 and an 8B model drops from 16 GB to about 5. Learn where the rounding error goes, and how GPTQ and AWQ hide it.
   slot: M27.5
   category: learning
   sources:
-  - title: GPTQ
-    url: https://arxiv.org/abs/2210.17323
-  - title: AWQ
-    url: https://arxiv.org/abs/2306.00978
-  - title: Learning both Weights and Connections
-    url: https://arxiv.org/abs/1506.02626
+    - title: "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers (Frantar et al., 2022)"
+      url: https://arxiv.org/abs/2210.17323
+    - title: "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration (Lin et al., 2023)"
+      url: https://arxiv.org/abs/2306.00978
+    - title: "LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale (Dettmers et al., 2022)"
+      url: https://arxiv.org/abs/2208.07339
+    - title: "SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models (Xiao et al., 2022)"
+      url: https://arxiv.org/abs/2211.10438
+    - title: Learning both Weights and Connections for Efficient Neural Networks (Han et al., 2015)
+      url: https://arxiv.org/abs/1506.02626
+    - title: Distilling the Knowledge in a Neural Network (Hinton, Vinyals & Dean, 2015)
+      url: https://arxiv.org/abs/1503.02531
+    - title: DistilBERT, a distilled version of BERT (Sanh et al., 2019)
+      url: https://arxiv.org/abs/1910.01108
 objectives:
-- id: objective.quantization-pruning-and-compression
-  version: 1-draft
-  statement: Quantization lowers numerical precision, pruning removes selected parameters or structures, and
-    distillation trains a different model; each changes costs and can affect quality in workload-dependent
-    ways.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - quantization-pruning-and-compression.base
-  - quantization-pruning-and-compression.transfer
-  prerequisites:
-  - anyOf:
-    - objective.mixed-precision-training
-  - anyOf:
-    - objective.distillation-and-selection
-  - anyOf:
-    - objective.training-memory
+  - id: objective.quantization-pruning-and-compression
+    version: 2-draft
+    statement: Quantization lowers numerical precision, pruning removes selected parameters or structures, and distillation trains a different model; each changes costs and can affect quality in workload-dependent ways.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - quantization-pruning-and-compression.base.v2
+      - quantization-pruning-and-compression.transfer.v2
+      - quantization-pruning-and-compression.memory
+    prerequisites:
+      - anyOf:
+          - objective.mixed-precision-training
+      - anyOf:
+          - objective.distillation-and-selection
+      - anyOf:
+          - objective.training-memory
 scenes:
-- id: quantization-pruning-and-compression.s1
-  title: Quantize values under a scale
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.quantization-pruning-and-compression
-  markdown: 'A simple quantizer maps a real value to a discrete integer using a scale and perhaps a zero point,
-    then reconstructs an approximation. Fewer bits reduce storage but introduce rounding and clipping. Weight-only
-    and activation quantization target different allocations and operations.
+  - id: quantization-pruning-and-compression.s1
+    title: Sixteen bits, eight bits, four bits
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.quantization-pruning-and-compression
+    markdown: |-
+      Fernly wants a cheap evening server: an NVIDIA L4, with 24 GB of memory but only about 300 GB/s of bandwidth. Fern's 16 GB of weights would barely fit, and each decode step would take 16 GB ÷ 300 GB/s ≈ 53 ms. Both problems shrink with the weights.
 
+      **Quantization** stores each weight as a small integer code plus a shared scale: evenly spaced steps instead of the floating-point formats from the mixed-precision lesson. For Fern's 8 billion weights:
 
-    Use a toy scale of 0.5 and signed integer codes from −2 through 2. A value of 0.8 rounds to code 2 and
-    reconstructs as 2 × 0.5 = 1.0, an error of 0.2. A value of 2.0 would need code 4, so clipping limits it
-    to code 2 and reconstruction 1.0. At four bits per weight, 1,000 weights need 500 payload bytes; at sixteen
-    bits they need 2,000. Scales, packing, and other metadata add storage.'
-  text_mode: 'A simple quantizer maps a real value to a discrete integer using a scale and perhaps a zero point,
-    then reconstructs an approximation. Fewer bits reduce storage but introduce rounding and clipping. Weight-only
-    and activation quantization target different allocations and operations.
+      | Format | Bits per weight | Weights |
+      | --- | ---: | ---: |
+      | bf16 | 16 | 16 GB |
+      | int8 | 8 | 8 GB |
+      | int4, one 16-bit scale per 128 weights | 4.125 | 4.1 GB |
 
+      In practice 4-bit files for this model run 4–6 GB, because many formats keep the large embedding and output matrices in 16 bits.
 
-    Use a toy scale of 0.5 and signed integer codes from −2 through 2. A value of 0.8 rounds to code 2 and
-    reconstructs as 2 × 0.5 = 1.0, an error of 0.2. A value of 2.0 would need code 4, so clipping limits it
-    to code 2 and reconstruction 1.0. At four bits per weight, 1,000 weights need 500 payload bytes; at sixteen
-    bits they need 2,000. Scales, packing, and other metadata add storage.'
-  bridges: []
-- id: quantization-pruning-and-compression.s2
-  title: Calibrate representative ranges
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.quantization-pruning-and-compression
-  markdown: If most calibration activations are small but deployment produces large outliers, a chosen range
-    may clip important values. Per-tensor, per-channel, and groupwise scales make different tradeoffs. Calibration
-    data should reflect relevant workloads without contaminating independent evaluation.
-  text_mode: If most calibration activations are small but deployment produces large outliers, a chosen range
-    may clip important values. Per-tensor, per-channel, and groupwise scales make different tradeoffs. Calibration
-    data should reflect relevant workloads without contaminating independent evaluation.
-  bridges: []
-- id: quantization-pruning-and-compression.s3
-  title: Remove structure or learn a student
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.quantization-pruning-and-compression
-  markdown: Unstructured pruning zeros individual weights; structured pruning removes blocks, channels, or
-    other units that hardware may exploit more directly. Sparse values do not guarantee faster dense kernels.
-    Distillation instead fits a student architecture to teacher-derived signals, creating a new learned artifact.
-  text_mode: Unstructured pruning zeros individual weights; structured pruning removes blocks, channels, or
-    other units that hardware may exploit more directly. Sparse values do not guarantee faster dense kernels.
-    Distillation instead fits a student architecture to teacher-derived signals, creating a new learned artifact.
-  bridges: []
-- id: quantization-pruning-and-compression.s4
-  title: Measure the actual deployment
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.quantization-pruning-and-compression
-  markdown: Compare task quality, numerical errors, weight and cache memory, latency, and hardware support.
-    Dequantization overhead or unsupported sparse kernels can erase expected speedups. A smaller download is
-    a useful result, but it is not automatically lower latency or unchanged behavior.
-  text_mode: Compare task quality, numerical errors, weight and cache memory, latency, and hardware support.
-    Dequantization overhead or unsupported sparse kernels can erase expected speedups. A smaller download is
-    a useful result, but it is not automatically lower latency or unchanged behavior.
-  bridges: []
-- id: quantization-pruning-and-compression.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.quantization-pruning-and-compression
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Quantization stores approximate values, pruning removes weights or structures, and distillation
-    trains a student. Measure actual quality, memory, and speed after each change.
-- id: quantization-pruning-and-compression.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.quantization-pruning-and-compression
-  markdown: Quantization stores approximate values, pruning removes weights or structures, and distillation
-    trains a student. Measure actual quality, memory, and speed after each change.
-  text_mode: Quantization stores approximate values, pruning removes weights or structures, and distillation
-    trains a student. Measure actual quality, memory, and speed after each change.
+      In **symmetric** quantization, $b$ bits give codes from $-(2^{b-1}-1)$ to $2^{b-1}-1$: −7 to 7 for int4. The scale puts the largest weight on the top code:
+
+      $$s = \frac{\max_i |w_i|}{2^{b-1}-1}, \qquad q_i = \operatorname{round}\!\left(\frac{w_i}{s}\right), \qquad \hat{w}_i = s\, q_i$$
+
+      Take four weights, [0.12, −0.40, 0.90, −0.05], in int4. The scale is 0.90 ÷ 7 ≈ 0.1286. The codes are [1, −3, 7, 0], which reconstruct to [0.129, −0.386, 0.900, 0]. The biggest weight is exact, and the smallest one, −0.05, vanished.
+
+      :::papers Asymmetric (affine) quantization
+      For values not centered on zero, a **zero-point** $z$ shifts unsigned codes (0 to $2^b - 1$) to cover the range $[\min, \max]$:
+
+      $$s = \frac{\max - \min}{2^b - 1}, \quad z = \operatorname{round}\!\left(-\frac{\min}{s}\right), \quad q = \operatorname{clamp}\!\big(\operatorname{round}(x/s) + z,\ 0,\ 2^b - 1\big), \quad \hat{x} = s\,(q - z)$$
+
+      For values from −1 to 1.55 in 8 bits: $s = 0.01$ and $z = 100$. The value 0 is stored exactly as code 100, and 1.234 becomes code 223, read back as 1.23.
+      :::
+    bridges: []
+  - id: quantization-pruning-and-compression.s2
+    title: One outlier ruins the scale
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.quantization-pruning-and-compression
+    markdown: |-
+      One scale serves every weight in its group, so the largest weight sets the step size for all of them. The program quantizes a row of 4,096 weights, then adds one weight 25 times larger than usual.
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(0)
+      w = rng.normal(0, 0.02, size=4096).astype(np.float32)   # one row of a weight matrix
+
+      def fake_quant(x, bits, group):
+          """Symmetric quantize, then dequantize, with one scale per group of weights."""
+          qmax = 2 ** (bits - 1) - 1                    # 127 for int8, 7 for int4
+          g = x.reshape(-1, group)
+          scale = np.abs(g).max(axis=1, keepdims=True) / qmax
+          q = np.clip(np.round(g / scale), -qmax, qmax)  # the stored integer codes
+          return (q * scale).reshape(-1)                 # what the kernel computes with
+
+      def report(x, label):
+          for bits, group in [(8, 4096), (4, 4096), (4, 128)]:
+              err = np.abs(fake_quant(x, bits, group) - x).mean()
+              print(f"{label:13} int{bits}, group {group:4}: mean error {err:.5f} ({err / np.abs(x).mean():.1%} of a typical weight)")
+
+      report(w, "normal row")
+      w_out = w.copy(); w_out[7] = 0.5                  # one outlier, 25x the usual size
+      report(w_out, "with outlier")
+      ```
+
+      Int8 is nearly free: about 1% error. Int4 with one scale for the whole row costs 17.5%. Add the outlier and that single scale stretches so far that most weights round to 0, and the error hits 92%. Give every 128 weights their own scale and the damage stays inside one group: 14.8%. That's why 4-bit formats use **group-wise scales**, at a cost of 16 bits per 128 weights. Try `group` values of 32 and 1024.
+
+      Activations are harder than weights. They change with every input, so their ranges must be estimated from a sample of real prompts, a step called **calibration**. And in large models, a few activation dimensions become huge: Dettmers and colleagues (LLM.int8(), 2022) found these outlier features emerging across layers in models of about 6.7 billion parameters and up. Their fix computes those few dimensions in 16 bits and the rest in int8.
+    bridges: []
+  - id: quantization-pruning-and-compression.round-smarter
+    title: Round smarter with GPTQ and AWQ
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.quantization-pruning-and-compression
+    markdown: |-
+      Rounding each weight to its nearest code, called round-to-nearest, treats every weight on its own. But what matters is the layer's *output*, where errors can cancel. Both landmark 4-bit methods use calibration prompts to exploit that.
+
+      :::papers GPTQ (Frantar et al., 2022)
+      For a layer with weights $W$ and calibration inputs $X$, find integer-coded weights $\hat{W}$ that keep the outputs close:
+
+      $$\hat{W} = \arg\min_{\hat{W}} \big\lVert WX - \hat{W}X \big\rVert_2^2$$
+
+      GPTQ rounds one column at a time. After each column, it adjusts the columns not yet rounded so they cancel the error just introduced, using second-order information computed from $X X^\top$. If weight 1's rounding pushed an output up by 0.03, weight 2 is nudged to pull it back down. The paper quantized 175-billion-parameter models to 3 or 4 bits in about four GPU hours, with no retraining.
+      :::
+
+      **AWQ** (Lin et al., 2023) observes that about 1% of weights matter far more than the rest, and that you find them by the *activations* they multiply, not by their own size: a weight that meets inputs of size 10 turns every rounding error into a tenfold output error. AWQ multiplies those salient weight channels by a factor such as 2 before quantizing and divides the matching inputs by 2. The product is unchanged, but each rounding error in those channels now costs half as much in the output.
+
+      :::mixup "Quantization is just rounding, so all 4-bit models of the same network are the same."
+      Round-to-nearest, GPTQ, and AWQ produce different codes from the same weights, and they differ in quality, most visibly at 3 and 4 bits. Always note which method made a quantized checkpoint.
+      :::
+    bridges: []
+  - id: quantization-pruning-and-compression.s3
+    title: Remove weights, or train a smaller model
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.quantization-pruning-and-compression
+    markdown: |-
+      Two other ways to shrink a model, briefly.
+
+      **Pruning** removes weights. Han and colleagues (2015) cut AlexNet's parameters ninefold, from 61 million to 6.7 million, with no loss in accuracy, by zeroing small weights and retraining. But scattered zeros (**unstructured** sparsity) don't speed up a dense GPU kernel, which multiplies the zeros anyway. **Structured** pruning removes whole units the hardware can skip: heads, channels, layers, or the 2-out-of-every-4 pattern that NVIDIA's Ampere GPUs can run on sparse tensor cores.
+
+      **Distillation** trains a new, smaller student model to match a large teacher's output probabilities (Hinton, Vinyals & Dean, 2015). DistilBERT (2019) kept 97% of BERT's language-understanding score while being 40% smaller and 60% faster. Unlike quantization and pruning, distillation costs a training run, and the result is a different model that needs its own evaluation.
+    bridges: []
+  - id: quantization-pruning-and-compression.s4
+    title: Which phase gets faster, and what to measure
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.quantization-pruning-and-compression
+    markdown: |-
+      Quantizing only the weights, written W4A16 (4-bit weights, 16-bit activations), attacks decode's bottleneck: the kernel reads 4-bit codes and turns them back into 16-bit numbers on the fly, so each step reads a quarter of the bytes. The math still runs in 16 bits, so compute-bound prefill gains little. To speed up prefill or very large batches, the multiply itself must use smaller numbers: W8A8, with 8-bit weights *and* activations, runs on int8 tensor cores. SmoothQuant (Xiao et al., 2022) made W8A8 accurate by moving activation outliers into the weights with a per-channel scaling trick, the same one AWQ later used.
+
+      :::predict What decode ceiling should 8 GB of int8 weights reach on the L4's 300 GB/s?
+      8 GB ÷ 300 GB/s ≈ 27 ms per step, so about 38 tokens per second, twice the bf16 figure. Speed follows the bytes; accuracy has to be measured.
+      :::
+
+      Fern's team tests each option on the L4 against their own 500 held-out support questions:
+
+      | Weights | Size | Decode ceiling on the L4 | Answers judged correct |
+      | --- | ---: | ---: | ---: |
+      | bf16 | 16 GB | 19 tokens/s | 91.2% |
+      | int8 | 8 GB | 38 tokens/s | 91.0% |
+      | int4, AWQ | 5.7 GB | 53 tokens/s | 89.6% |
+
+      The int4 accuracy drop sits almost entirely in one slice: questions quoting exact doses of fertilizer. The team ships int4 for evenings, routes dosage questions to the bf16 server, and reruns the test after every model update.
+    bridges: []
+  - id: quantization-pruning-and-compression.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.quantization-pruning-and-compression
+    markdown: Model sizes to compute at different bit widths, then an outlier, a GPTQ step, a phone app, a compute-bound server, and a misleading benchmark test whether you can shrink a model and know what it cost.
+    takeaway: |-
+      Quantization stores weights as small integers times a scale: 16 GB becomes 8 at int8 and about 4–6 at int4. Group-wise scales and smarter rounding like GPTQ and AWQ keep the error small, and your own test set shows where it isn't.
+  - id: quantization-pruning-and-compression.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.quantization-pruning-and-compression
+    markdown: |-
+      Quantization stores approximate values, pruning removes weights or structures, and distillation trains a student. Measure actual quality, memory, and speed after each change.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - quantization-pruning-and-compression.s1
-    - quantization-pruning-and-compression.s2
-    - quantization-pruning-and-compression.s3
-    - quantization-pruning-and-compression.s4
-    - quantization-pruning-and-compression.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - quantization-pruning-and-compression.s1
+        - quantization-pruning-and-compression.s2
+        - quantization-pruning-and-compression.round-smarter
+        - quantization-pruning-and-compression.s3
+        - quantization-pruning-and-compression.s4
+        - quantization-pruning-and-compression.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     quantization-pruning-and-compression.recap: quantization-pruning-and-compression.check
 assessment_families:
-- id: quantization-pruning-and-compression.base
-  objective_ref: objective.quantization-pruning-and-compression
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Calibrate representative ranges: trace the inputs, operation, and result before choosing.'
-  remediation_scene: quantization-pruning-and-compression.s2
-  variants:
-  - id: quantization-pruning-and-compression.base.1
-    prompt: What error sources can quantization introduce?
-    options:
-    - id: a
-      text: Rounding and clipping
-    - id: b
-      text: Only new vocabulary words
-    - id: c
-      text: Guaranteed zero approximation
-    answer: a
-    feedback: Finite representations approximate real values.
-  - id: quantization-pruning-and-compression.base.2
-    prompt: Why can unstructured zeros fail to speed up a dense kernel?
-    options:
-    - id: b
-      text: Zero weights always remove hardware work
-    - id: c
-      text: Only file names determine execution
-    - id: a
-      text: The kernel may still execute the same dense operations
-    answer: a
-    feedback: Hardware must exploit the sparsity pattern.
-- id: quantization-pruning-and-compression.transfer
-  objective_ref: objective.quantization-pruning-and-compression
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Measure the actual deployment: trace the inputs, operation, and result before choosing.'
-  remediation_scene: quantization-pruning-and-compression.s4
-  variants:
-  - id: quantization-pruning-and-compression.transfer.1
-    prompt: Calibration misses deployment outliers. What can happen?
-    options:
-    - id: b
-      text: All values become exact
-    - id: c
-      text: The model necessarily gains accuracy
-    - id: a
-      text: Important values may clip or lose precision
-    answer: a
-    feedback: Range estimates can fail under distribution shift.
-  - id: quantization-pruning-and-compression.transfer.2
-    prompt: Does a smaller model file guarantee faster responses?
-    options:
-    - id: c
-      text: Only if it uses integers
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Runtime depends on kernels, transfers, and workload.
+  - id: quantization-pruning-and-compression.base
+    objective_ref: objective.quantization-pruning-and-compression
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Calibrate representative ranges: trace the inputs, operation, and result before choosing.'
+    remediation_scene: quantization-pruning-and-compression.s2
+    variants:
+      - id: quantization-pruning-and-compression.base.1
+        retired: true
+        prompt: What error sources can quantization introduce?
+        options:
+          - id: a
+            text: Rounding and clipping
+          - id: b
+            text: Only new vocabulary words
+          - id: c
+            text: Guaranteed zero approximation
+        answer: a
+        feedback: Finite representations approximate real values.
+      - id: quantization-pruning-and-compression.base.2
+        retired: true
+        prompt: Why can unstructured zeros fail to speed up a dense kernel?
+        options:
+          - id: b
+            text: Zero weights always remove hardware work
+          - id: c
+            text: Only file names determine execution
+          - id: a
+            text: The kernel may still execute the same dense operations
+        answer: a
+        feedback: Hardware must exploit the sparsity pattern.
+  - id: quantization-pruning-and-compression.transfer
+    objective_ref: objective.quantization-pruning-and-compression
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Measure the actual deployment: trace the inputs, operation, and result before choosing.'
+    remediation_scene: quantization-pruning-and-compression.s4
+    variants:
+      - id: quantization-pruning-and-compression.transfer.1
+        retired: true
+        prompt: Calibration misses deployment outliers. What can happen?
+        options:
+          - id: b
+            text: All values become exact
+          - id: c
+            text: The model necessarily gains accuracy
+          - id: a
+            text: Important values may clip or lose precision
+        answer: a
+        feedback: Range estimates can fail under distribution shift.
+      - id: quantization-pruning-and-compression.transfer.2
+        retired: true
+        prompt: Does a smaller model file guarantee faster responses?
+        options:
+          - id: c
+            text: Only if it uses integers
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Runtime depends on kernels, transfers, and workload.
+  - id: quantization-pruning-and-compression.base.v2
+    objective_ref: objective.quantization-pruning-and-compression
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask what sets the scale (the largest value in the group), what bottleneck each phase hits (bytes for decode, arithmetic for prefill), and what the calibration data is used for.
+    remediation_scene: quantization-pruning-and-compression.s2
+    variants:
+      - id: quantization-pruning-and-compression.base.v2.1
+        prompt: One weight in a row of 4,096 is 25 times larger than the others. With a single int4 scale for the whole row, what happens?
+        options:
+          - id: b
+            text: The outlier is clipped to the top code, and the other weights stay precise
+          - id: a
+            text: The scale stretches to fit the outlier, and most small weights round to 0
+          - id: c
+            text: Little changes, because rounding errors average out across the row
+        answer: a
+        feedback: The scale is the largest magnitude divided by 7, so one huge weight makes each step huge and the ordinary weights fall below half a step. Symmetric scaling fits the outlier rather than clipping it, and those zeros are biased errors that don't cancel out.
+      - id: quantization-pruning-and-compression.base.v2.2
+        prompt: Why does 4-bit weight-only quantization speed up decoding for one user but barely help a long prefill?
+        options:
+          - id: c
+            text: Decode skips dequantizing the weights, while prefill must dequantize each one
+          - id: b
+            text: Prefill reads the KV cache, which weight-only quantization keeps in 16 bits
+          - id: a
+            text: Decode is limited by bytes read, while prefill is limited by 16-bit arithmetic
+        answer: a
+        feedback: Reading a quarter of the bytes speeds up a memory-bound step. Prefill's time goes into matrix math, which still runs in 16 bits after the codes are expanded, so it gains little. Both phases dequantize.
+      - id: quantization-pruning-and-compression.base.v2.3
+        prompt: What does GPTQ do right after rounding one column of a weight matrix?
+        options:
+          - id: a
+            text: Adjusts the columns not yet rounded to cancel that error in the outputs
+          - id: b
+            text: Briefly retrains the model with gradients to recover the lost accuracy
+          - id: c
+            text: Saves the rounding error so it can be added back when the model runs
+        answer: a
+        feedback: GPTQ minimizes the change in the layer's outputs on calibration inputs, so later columns compensate for earlier rounding. It needs no gradient training, and it stores nothing extra beyond the codes and scales.
+      - id: quantization-pruning-and-compression.base.v2.4
+        prompt: How does AWQ decide which weight channels to protect before 4-bit quantization?
+        options:
+          - id: b
+            text: It keeps the largest weights, since big weights carry the most signal
+          - id: a
+            text: It looks for the channels whose input activations are largest
+          - id: c
+            text: It protects the layers nearest the output, since errors pile up there
+        answer: a
+        feedback: A weight's rounding error is multiplied by the activation it meets, so AWQ ranks channels by activation size on calibration data. That's the key point of the paper, and it's why the largest weights aren't necessarily the important ones.
+      - id: quantization-pruning-and-compression.base.v2.5
+        prompt: A team zeros 50% of a model's weights at scattered positions, but inference on its GPU is no faster. Why?
+        options:
+          - id: c
+            text: Pruning speeds up training, but inference ignores which weights are zero
+          - id: a
+            text: A dense kernel still stores and multiplies every entry, zeros included
+          - id: b
+            text: The zeroed weights are restored from a backup when the model loads
+        answer: a
+        feedback: Scattered zeros are still stored and computed by dense kernels. To gain speed, the sparsity needs a pattern the hardware can skip, such as whole channels or the 2-out-of-4 pattern.
+  - id: quantization-pruning-and-compression.transfer.v2
+    objective_ref: objective.quantization-pruning-and-compression
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Match the method to the bottleneck (memory, bytes per step, or arithmetic), and test quality on the inputs the product will really see.
+    remediation_scene: quantization-pruning-and-compression.s4
+    variants:
+      - id: quantization-pruning-and-compression.transfer.v2.1
+        prompt: A startup quantizes its model to int4 and reports no quality loss, based on perplexity on Wikipedia text. Its product answers medical-billing questions. What should it check next?
+        options:
+          - id: a
+            text: Accuracy on its own billing questions, including the rare cases
+          - id: b
+            text: Perplexity on a larger sample of Wikipedia articles
+          - id: c
+            text: Whether the file size works out to 4 bits per weight
+        answer: a
+        feedback: Quantization losses are uneven, and they can hide in slices a general benchmark never touches, like exact codes and amounts. More Wikipedia or a size check says nothing about billing answers.
+      - id: quantization-pruning-and-compression.transfer.v2.2
+        prompt: A note-taking app must run a 3-billion-parameter model on phones with about 2 GB of memory free for it. Which choice fits?
+        options:
+          - id: b
+            text: 8-bit weights with one scale for each tensor
+          - id: c
+            text: 16-bit weights with half of the layers pruned
+          - id: a
+            text: 4-bit weights with a scale for each small group
+        answer: a
+        feedback: 3 billion × 4.125 bits ≈ 1.5 GB fits. Int8 needs about 3 GB, and 16-bit with half the layers still needs about 3 GB, besides hurting quality far more.
+      - id: quantization-pruning-and-compression.transfer.v2.3
+        prompt: A document-analysis server runs large batches of long files and is compute-bound. Which quantization scheme targets its bottleneck?
+        options:
+          - id: a
+            text: 8-bit weights and activations, so the matrix math runs on int8 cores
+          - id: b
+            text: 4-bit weights with 16-bit activations, expanded inside the kernel
+          - id: c
+            text: An 8-bit KV cache, with the weights and the math kept in 16 bits
+        answer: a
+        feedback: A compute-bound server needs cheaper arithmetic, which W8A8 gives. Weight-only 4-bit and an 8-bit cache both cut bytes read, which helps memory-bound decoding but leaves 16-bit math in place.
+      - id: quantization-pruning-and-compression.transfer.v2.4
+        prompt: A team calibrates activation ranges on short English chats, then deploys its W8A8 model to a service that reads long code files. Accuracy drops sharply. What is the likely cause?
+        options:
+          - id: b
+            text: Quantized models can't read inputs longer than their calibration prompts
+          - id: a
+            text: Code inputs produce activations outside the calibrated ranges, so they clip
+          - id: c
+            text: The quantized tokenizer lost the tokens that code files depend on
+        answer: a
+        feedback: Activation scales come from the calibration sample, and inputs unlike it can exceed those ranges. Calibrate on data that looks like the real workload. Context length and the tokenizer don't change with quantization.
+  - id: quantization-pruning-and-compression.memory
+    objective_ref: objective.quantization-pruning-and-compression
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Bytes = parameters × bits per weight ÷ 8. A 16-bit scale shared by a group of g weights adds 16 ÷ g bits per weight.
+    remediation_scene: quantization-pruning-and-compression.s1
+    absolute_tolerance: 0.03
+    variants:
+      - id: quantization-pruning-and-compression.memory.1
+        prompt: An 8-billion-parameter model is stored in int8. How many GB do its weights take, ignoring scales?
+        answer: 8
+        feedback: 8 billion weights × 1 byte = 8 GB, half the 16-bit size.
+      - id: quantization-pruning-and-compression.memory.2
+        prompt: A 70-billion-parameter model is stored at exactly 4 bits per weight. How many GB do its weights take?
+        answer: 35
+        feedback: 70 billion × 4 bits = 280 billion bits = 35 billion bytes = 35 GB.
+      - id: quantization-pruning-and-compression.memory.3
+        prompt: An 8-billion-parameter model is stored in int4 with one 16-bit scale per group of 128 weights. How many GB do its weights and scales take?
+        answer: 4.125
+        feedback: Each weight costs 4 + 16/128 = 4.125 bits, so 8 billion × 4.125 ÷ 8 = 4.125 GB.
+      - id: quantization-pruning-and-compression.memory.4
+        prompt: A 13-billion-parameter model is stored in bf16. How many GB do its weights take?
+        answer: 26
+        feedback: 13 billion × 2 bytes = 26 GB.
+      - id: quantization-pruning-and-compression.memory.5
+        prompt: An int4 format uses one 16-bit scale for every 64 weights. How many bits does each weight cost on average?
+        answer: 4.25
+        feedback: 4 bits for the code plus 16 ÷ 64 = 0.25 bits for its share of the scale, so 4.25.

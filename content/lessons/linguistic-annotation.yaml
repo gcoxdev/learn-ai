@@ -1,214 +1,565 @@
 schema_version: 0.2-draft
 lesson:
   id: linguistic-annotation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Turn text into structured labels and relations
   state: draft
-  summary: Mark names, word roles, and relationships in a sentence while keeping extracted claims separate
-    from verified facts.
+  summary: A news story says someone joined a company. Tag the words, find the names, and parse who did what, then learn how to tell whether the labels are any good.
   slot: M14.2
   category: learning
   sources:
-  - title: Speech and Language Processing — authors’ draft
-    url: https://web.stanford.edu/~jurafsky/slp3/
+    - title: "Building a Large Annotated Corpus of English: The Penn Treebank (Marcus, Santorini & Marcinkiewicz, 1993)"
+      url: https://aclanthology.org/J93-2004/
+    - title: Speech and Language Processing, 3rd edition draft, chapters on POS tagging, NER, and dependency parsing (Jurafsky & Martin)
+      url: https://web.stanford.edu/~jurafsky/slp3/
+    - title: Universal Dependencies — universal POS tags
+      url: https://universaldependencies.org/u/pos/
+    - title: "Introduction to the CoNLL-2003 Shared Task: Language-Independent Named Entity Recognition (Tjong Kim Sang & De Meulder, 2003)"
+      url: https://aclanthology.org/W03-0419/
 objectives:
-- id: objective.linguistic-annotation
-  version: 1-draft
-  statement: Tagging, parsing, named-entity recognition, and information extraction impose annotation schemas
-    on language; ambiguity and domain shifts affect their reliability.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - linguistic-annotation.base
-  - linguistic-annotation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.language-structure
-  - anyOf:
-    - objective.first-order-logic
+  - id: objective.linguistic-annotation
+    version: 2-draft
+    statement: Tagging, parsing, named-entity recognition, and information extraction impose annotation schemas on language; ambiguity and domain shifts affect their reliability.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - linguistic-annotation.base.v2
+      - linguistic-annotation.transfer.v2
+      - linguistic-annotation.score
+    prerequisites:
+      - anyOf:
+          - objective.language-structure
+      - anyOf:
+          - objective.first-order-logic
 scenes:
-- id: linguistic-annotation.s1
-  title: Decide which labels to add
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.linguistic-annotation
-  markdown: '**Annotation** adds structured labels to text. A **schema** defines the allowed labels and what
-    each means. Different tasks annotate different parts of a sentence:
+  - id: linguistic-annotation.s1
+    title: Give every word a job title
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.linguistic-annotation
+    markdown: |-
+      A hiring-news service reads thousands of stories a day and fills a table: who joined which company, where, and when. One story says: *"Priya Shah joined Acme Robotics in Toronto last June."* First, the program labels the words.
 
+      Adding structured labels to text is called **annotation**. The **schema** is the agreed list of labels and what each one means. The first layer is **part-of-speech (POS) tagging**: labeling each word as a noun, verb, adjective, and so on, as it's used *in this sentence*. Here is the kind of output a parser such as spaCy prints:
 
-    - **Part-of-speech tagging** labels tokens as nouns, verbs, and other categories in context.
+      ```text
+      TEXT      POS    TAG   DEP       HEAD
+      Priya     PROPN  NNP   compound  Shah
+      Shah      PROPN  NNP   nsubj     joined
+      joined    VERB   VBD   ROOT      joined
+      Acme      PROPN  NNP   compound  Robotics
+      Robotics  PROPN  NNP   dobj      joined
+      in        ADP    IN    prep      joined
+      Toronto   PROPN  NNP   pobj      in
+      last      ADJ    JJ    amod      June
+      June      PROPN  NNP   npadvmod  joined
+      .         PUNCT  .     punct     joined
+      ```
 
-    - **Named-entity recognition** finds named spans, such as the consecutive words “New York,” and assigns
-    types such as person or place.
+      The POS column uses the 17 coarse Universal Dependencies tags (PROPN is a proper noun, ADP a preposition). The TAG column uses the finer Penn Treebank tags: VBD is a past-tense verb, NNP a singular proper noun. DEP and HEAD come later.
 
-    - **Dependency parsing** links words through grammatical relationships, such as which word is the subject
-    of an action.
+      Tags depend on context: *book* is a noun in "read the book" and a verb in "book a table," so taggers look at neighboring words, not just a dictionary.
 
+      :::story The treebank that trained a generation of parsers
+      In 1993, Mitchell Marcus, Beatrice Santorini, and Mary Ann Marcinkiewicz published the Penn Treebank. Its best-known part is about a million words of *Wall Street Journal* text, every word tagged with one of about 45 part-of-speech tags and every sentence bracketed into a parse tree. For years, English parsers were compared by training on sections 2–21 and testing on section 23.
+      :::
+    bridges: []
+  - id: linguistic-annotation.s2
+    title: Names are spans, not single words
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.linguistic-annotation
+    markdown: |-
+      The table needs "Priya Shah," not "Priya" and "Shah" separately. **Named-entity recognition (NER)** finds **spans**, runs of consecutive words, that name something, and gives each a type. A common schema, used by spaCy's English models, includes PERSON, ORG (organization), GPE (a country, city, or state), and DATE.
 
-    The schema determines which distinctions matter. These labels describe what the text says; they do not
-    establish that the described event occurred.'
-  text_mode: '**Annotation** adds structured labels to text. A **schema** defines the allowed labels and what
-    each means. Different tasks annotate different parts of a sentence:
+      A tagger labels one word at a time, so how does it mark a two-word name? The standard trick is **BIO tagging**: **B** marks the first word of an entity, **I** marks a word inside the same entity, and **O** marks a word outside any entity.
 
+      | Word | Priya | Shah | joined | Acme | Robotics | in | Toronto | last | June | . |
+      | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+      | BIO tag | B-PERSON | I-PERSON | O | B-ORG | I-ORG | O | B-GPE | B-DATE | I-DATE | O |
 
-    - **Part-of-speech tagging** labels tokens as nouns, verbs, and other categories in context.
+      Reading the tags back gives four entities: Priya Shah (PERSON), Acme Robotics (ORG), Toronto (GPE), and last June (DATE).
 
-    - **Named-entity recognition** finds named spans, such as the consecutive words “New York,” and assigns
-    types such as person or place.
+      :::predict Two different people are listed back to back: "…thanked Ada Lin Omar Haddad…". Why can't the tags be I-PERSON on all four words?
+      Four I-PERSON tags in a row would read as one four-word name. The tagger needs B-PERSON on "Omar" to say a new entity starts there: B, I, B, I. That's exactly the job of the B tag.
+      :::
+    bridges: []
+  - id: linguistic-annotation.s3
+    title: Who joined what? Read the arrows
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.linguistic-annotation
+    markdown: |-
+      Entities alone don't say who joined whom. For that we need **dependency parsing**: every word points to one other word, its **head**, with a label naming the relationship. Look back at the DEP and HEAD columns. "Shah" points to "joined" as its subject (**nsubj**), "Robotics" points to "joined" as its direct object (**dobj**), and "Priya" points to "Shah" as part of a compound name. The one word with no head, "joined," is the **root** (spaCy marks it ROOT and lists it as its own head).
 
-    - **Dependency parsing** links words through grammatical relationships, such as which word is the subject
-    of an action.
+      An extractor can now read off a relation with a simple rule: *if the verb is "joined," its subject is a PERSON entity, and its object is an ORG entity, then record (person, works for, organization)*. That gives the row **(Priya Shah, works for, Acme Robotics)**, plus the place and date hanging off the same verb.
 
+      Change the sentence to "Acme Robotics hired Priya Shah" and the subject and object swap, so the rule needs a second pattern for "hired." Pulling structured rows like this out of text is called **information extraction**.
+    diagram:
+      caption: The dependency parse of "Priya Shah joined Acme Robotics in Toronto last June." Each arrow runs from a head to a word that depends on it.
+      description: The root verb "joined" has four dependents. "Shah" is its subject (nsubj), "Robotics" is its direct object (dobj), "in" is a prepositional modifier (prep), and "June" is a time modifier (npadvmod). "Shah" has the dependent "Priya" (compound), "Robotics" has "Acme" (compound), "in" has "Toronto" (pobj), and "June" has "last" (amod).
+      nodes:
+        - id: joined
+          label: joined
+          note: ROOT
+          col: 2
+          row: 0
+          tone: accent
+        - id: shah
+          label: Shah
+          note: PERSON
+          col: 0
+          row: 1
+          tone: data
+        - id: robotics
+          label: Robotics
+          note: ORG
+          col: 1
+          row: 2
+          tone: data
+        - id: in
+          label: in
+          col: 3
+          row: 1
+        - id: june
+          label: June
+          note: DATE
+          col: 5
+          row: 1
+          tone: data
+        - id: priya
+          label: Priya
+          col: 0
+          row: 2
+        - id: acme
+          label: Acme
+          col: 1
+          row: 3
+        - id: toronto
+          label: Toronto
+          note: GPE
+          col: 3
+          row: 2
+          tone: data
+        - id: last
+          label: last
+          col: 5
+          row: 2
+      edges:
+        - from: joined
+          to: shah
+          label: nsubj
+        - from: joined
+          to: robotics
+          label: dobj
+        - from: joined
+          to: in
+          label: prep
+        - from: joined
+          to: june
+          label: npadvmod
+        - from: shah
+          to: priya
+          label: compound
+        - from: robotics
+          to: acme
+          label: compound
+        - from: in
+          to: toronto
+          label: pobj
+        - from: june
+          to: last
+          label: amod
+    bridges: []
+  - id: linguistic-annotation.s5
+    title: One early mistake, three wrong answers
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.linguistic-annotation
+    markdown: |-
+      Classic systems stack these steps into a **pipeline** (see the diagram), so errors flow downstream. If the tagger reads "Mark" in "Mark Diaz joined Hollis" as a verb, the parser builds the wrong tree and the extractor may never find Mark Diaz.
 
-    The schema determines which distinctions matter. These labels describe what the text says; they do not
-    establish that the described event occurred.'
-  bridges: []
-- id: linguistic-annotation.s2
-  title: Trace a small extraction
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.linguistic-annotation
-  markdown: In “Ada joined Acme in June,” an extractor might identify Ada as a person, Acme as an organization,
-    and joined as an employment-related event. The time expression June still needs a year and contextual interpretation.
-    Extracted structure is an inference from text, not independent confirmation that the event occurred.
-  text_mode: In “Ada joined Acme in June,” an extractor might identify Ada as a person, Acme as an organization,
-    and joined as an employment-related event. The time expression June still needs a year and contextual interpretation.
-    Extracted structure is an inference from text, not independent confirmation that the event occurred.
-  bridges: []
-- id: linguistic-annotation.s3
-  title: Rules and learned models make different tradeoffs
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.linguistic-annotation
-  markdown: Rules can exploit predictable formats, while learned models can generalize across varied expressions.
-    Domain-specific names, ambiguous spans, and changing style can challenge both. Sequence labeling must handle
-    boundaries consistently, including multiword entities and nested mentions if the schema supports them.
-  text_mode: Rules can exploit predictable formats, while learned models can generalize across varied expressions.
-    Domain-specific names, ambiguous spans, and changing style can challenge both. Sequence labeling must handle
-    boundaries consistently, including multiword entities and nested mentions if the schema supports them.
-  bridges: []
-- id: linguistic-annotation.s4
-  title: Evaluate the structured output
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.linguistic-annotation
-  markdown: 'Span-level precision and recall depend on whether exact boundaries and types must match. Relation
-    and event extraction require matching arguments and roles. Inspect annotation disagreements and unsupported
-    conclusions. A pipeline can propagate an early entity error into later graph or retrieval results.
+      Each step can be built from hand-written rules or learned from annotated examples:
 
+      | | Hand-written rules | Learned models |
+      | --- | --- | --- |
+      | Good at | fixed formats: "INV-2024-00317", "2024-06-03" | varied wording: "the first Monday in June" |
+      | Weak at | anything the rule-writer didn't foresee | text unlike their training data |
 
-    Suppose the reference organization is “Acme Research,” but the model labels only “Acme.” Under exact span
-    matching, that is not a correct complete match even if the category is organization in both. A different
-    evaluation could give partial credit, but must say so. Try marking the beginning and end of each name before
-    comparing scores.'
-  text_mode: 'Span-level precision and recall depend on whether exact boundaries and types must match. Relation
-    and event extraction require matching arguments and roles. Inspect annotation disagreements and unsupported
-    conclusions. A pipeline can propagate an early entity error into later graph or retrieval results.
+      That last weakness is **domain shift**. A news-trained tagger has rarely seen a clinical note like "Pt c/o SOB since Tues" (patient complains of shortness of breath since Tuesday), and may tag "SOB" as a proper noun. Before trusting a news-trained tool on new text, hand-label 50 sentences from that text and score the tool on them.
 
+      :::mixup "The extractor found (Priya Shah, works for, Acme Robotics), so she works there."
+      The row records what the story *says*. If the story is wrong or out of date, so is the row. Keep a link from each row to its source sentence so someone can check it.
+      :::
+    diagram:
+      caption: A classic annotation pipeline. Each stage reads the text plus everything earlier stages added.
+      description: Raw text goes to a tokenizer, which splits it into words. The words go to a part-of-speech tagger, then to a dependency parser, then to a named-entity recognizer. A relation extractor combines the parse and the entities into rows such as (Priya Shah, works for, Acme Robotics), which are stored in a table. A dashed arrow from the tagger to the extractor marks that a tagging error can travel all the way down.
+      nodes:
+        - id: text
+          label: Raw text
+          col: 0
+          row: 0
+        - id: tokens
+          label: Tokenizer
+          note: split into words
+          col: 1
+          row: 0
+        - id: tagger
+          label: POS tagger
+          note: NNP, VBD, …
+          col: 2
+          row: 0
+        - id: parser
+          label: Dependency parser
+          note: nsubj, dobj, …
+          col: 3
+          row: 0
+        - id: ner
+          label: Entity recognizer
+          note: PERSON, ORG, …
+          col: 3
+          row: 1
+          tone: accent
+        - id: extractor
+          label: Relation extractor
+          note: rules over parse + entities
+          col: 2
+          row: 1
+          tone: accent
+        - id: table
+          label: Structured rows
+          note: (person, works for, org)
+          col: 1
+          row: 1
+          tone: data
+      edges:
+        - from: text
+          to: tokens
+        - from: tokens
+          to: tagger
+        - from: tagger
+          to: parser
+        - from: parser
+          to: ner
+        - from: ner
+          to: extractor
+        - from: extractor
+          to: table
+        - from: tagger
+          to: extractor
+          label: errors travel down
+          dashed: true
+  - id: linguistic-annotation.s4
+    title: Score the spans, and say how
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.linguistic-annotation
+    markdown: |-
+      To score an entity recognizer, compare its spans with a **gold standard**: the same text labeled carefully by people. Suppose the gold labels are our four entities, and a model predicts three: Priya Shah (PERSON), Acme (ORG), and Toronto (GPE).
 
-    Suppose the reference organization is “Acme Research,” but the model labels only “Acme.” Under exact span
-    matching, that is not a correct complete match even if the category is organization in both. A different
-    evaluation could give partial credit, but must say so. Try marking the beginning and end of each name before
-    comparing scores.'
-  bridges: []
-- id: linguistic-annotation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.linguistic-annotation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Text labels and extracted relationships depend on a defined annotation scheme. Check the boundaries
-    and roles, and distinguish extracting a claim from verifying it.
-- id: linguistic-annotation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.linguistic-annotation
-  markdown: Text labels and extracted relationships depend on a defined annotation scheme. Check the boundaries
-    and roles, and distinguish extracting a claim from verifying it.
-  text_mode: Text labels and extracted relationships depend on a defined annotation scheme. Check the boundaries
-    and roles, and distinguish extracting a claim from verifying it.
+      - **Precision** is the share of predicted spans that are correct.
+      - **Recall** is the share of gold spans that were found.
+      - **F1** combines the two: $F_1 = \frac{2PR}{P + R}$.
+
+      Under **exact match**, a prediction counts only if its boundaries and type both match a gold span. "Acme" is not "Acme Robotics," so 2 of 3 predictions are right and 2 of 4 gold spans are found: precision $2/3 \approx 0.667$, recall $2/4 = 0.5$, F1 $\approx 0.571$. The CoNLL-2003 shared task, a standard NER benchmark, scores this way.
+
+      ```python run
+      gold = {("Priya Shah", "PERSON"), ("Acme Robotics", "ORG"),
+              ("Toronto", "GPE"), ("last June", "DATE")}
+      pred = {("Priya Shah", "PERSON"), ("Acme", "ORG"), ("Toronto", "GPE")}
+
+      def score(matches):
+          p = matches / len(pred)            # share of predictions that are right
+          r = matches / len(gold)            # share of gold spans that were found
+          f1 = 2 * p * r / (p + r)
+          return f"precision {p:.3f}  recall {r:.3f}  F1 {f1:.3f}"
+
+      exact = len(gold & pred)
+      print("exact match:  ", score(exact))
+
+      def overlaps(a, b):                    # same type and one text inside the other
+          return a[1] == b[1] and (a[0] in b[0] or b[0] in a[0])
+
+      loose = sum(any(overlaps(p, g) for g in gold) for p in pred)
+      print("overlap match:", score(loose))
+      ```
+
+      A lenient overlap rule gives "Acme" credit and lifts F1 from 0.571 to 0.857 on the same predictions. So a score means little until you know the matching rule. Try adding ("June", "DATE") to `pred` and predict both lines before you run it.
+    bridges: []
+  - id: linguistic-annotation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.linguistic-annotation
+    markdown: BIO tags, dependency heads, a hospital's notes, and a few precision and recall calculations test whether you can read annotations and judge them.
+    takeaway: |-
+      Tags label words, entities label spans, and a dependency parse says who did what to whom. An extracted row records what the text claims, and its score depends on the matching rule.
+  - id: linguistic-annotation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.linguistic-annotation
+    markdown: |-
+      Text labels and extracted relationships depend on a defined annotation scheme. Check the boundaries and roles, and distinguish extracting a claim from verifying it.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - linguistic-annotation.s1
-    - linguistic-annotation.s2
-    - linguistic-annotation.s3
-    - linguistic-annotation.s4
-    - linguistic-annotation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - linguistic-annotation.s1
+        - linguistic-annotation.s2
+        - linguistic-annotation.s3
+        - linguistic-annotation.s5
+        - linguistic-annotation.s4
+        - linguistic-annotation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     linguistic-annotation.recap: linguistic-annotation.check
 assessment_families:
-- id: linguistic-annotation.base
-  objective_ref: objective.linguistic-annotation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a small extraction: trace the inputs, operation, and result before choosing.'
-  remediation_scene: linguistic-annotation.s2
-  variants:
-  - id: linguistic-annotation.base.1
-    prompt: What does named-entity recognition commonly identify?
-    options:
-    - id: b
-      text: Only the truth of every sentence
-    - id: c
-      text: Only the document’s byte length
-    - id: a
-      text: Text spans and entity types
-    answer: a
-    feedback: NER maps mentions to a defined span/type schema.
-  - id: linguistic-annotation.base.2
-    prompt: A dependency parser primarily represents what?
-    options:
-    - id: c
-      text: Only a list of topic frequencies
-    - id: a
-      text: Syntactic relations among words
-    - id: b
-      text: The author’s guaranteed intent
-    answer: a
-    feedback: Parsing supplies structural relationships under a grammar or learned model.
-- id: linguistic-annotation.transfer
-  objective_ref: objective.linguistic-annotation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate the structured output: trace the inputs, operation, and result before choosing.'
-  remediation_scene: linguistic-annotation.s4
-  variants:
-  - id: linguistic-annotation.transfer.1
-    prompt: An extractor finds “Ada joined Acme” in a document. Has it independently verified the event?
-    options:
-    - id: c
-      text: Only if Ada is capitalized
-    - id: a
-      text: No; it extracted a claim from text
-    - id: b
-      text: Yes; extraction is factual verification
-    answer: a
-    feedback: Source claims and independently validated facts are different.
-  - id: linguistic-annotation.transfer.2
-    prompt: A predicted entity has the right type but wrong span boundary. Can exact-match evaluation count
-      it wrong?
-    options:
-    - id: a
-      text: 'Yes'
-    - id: b
-      text: No; boundaries never matter
-    - id: c
-      text: Only in short documents
-    answer: a
-    feedback: The scoring convention determines which aspects must match.
+  - id: linguistic-annotation.base
+    objective_ref: objective.linguistic-annotation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a small extraction: trace the inputs, operation, and result before choosing.'
+    remediation_scene: linguistic-annotation.s2
+    variants:
+      - id: linguistic-annotation.base.1
+        retired: true
+        prompt: What does named-entity recognition commonly identify?
+        options:
+          - id: b
+            text: Only the truth of every sentence
+          - id: c
+            text: Only the document’s byte length
+          - id: a
+            text: Text spans and entity types
+        answer: a
+        feedback: NER maps mentions to a defined span/type schema.
+      - id: linguistic-annotation.base.2
+        retired: true
+        prompt: A dependency parser primarily represents what?
+        options:
+          - id: c
+            text: Only a list of topic frequencies
+          - id: a
+            text: Syntactic relations among words
+          - id: b
+            text: The author’s guaranteed intent
+        answer: a
+        feedback: Parsing supplies structural relationships under a grammar or learned model.
+  - id: linguistic-annotation.transfer
+    objective_ref: objective.linguistic-annotation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate the structured output: trace the inputs, operation, and result before choosing.'
+    remediation_scene: linguistic-annotation.s4
+    variants:
+      - id: linguistic-annotation.transfer.1
+        retired: true
+        prompt: An extractor finds “Ada joined Acme” in a document. Has it independently verified the event?
+        options:
+          - id: c
+            text: Only if Ada is capitalized
+          - id: a
+            text: No; it extracted a claim from text
+          - id: b
+            text: Yes; extraction is factual verification
+        answer: a
+        feedback: Source claims and independently validated facts are different.
+      - id: linguistic-annotation.transfer.2
+        retired: true
+        prompt: A predicted entity has the right type but wrong span boundary. Can exact-match evaluation count it wrong?
+        options:
+          - id: a
+            text: 'Yes'
+          - id: b
+            text: No; boundaries never matter
+          - id: c
+            text: Only in short documents
+        answer: a
+        feedback: The scoring convention determines which aspects must match.
+  - id: linguistic-annotation.base.v2
+    objective_ref: objective.linguistic-annotation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Match the question to the layer. Tags label single words in context, BIO tags mark where names start and stop, and a dependency parse says which word attaches to which, and how.
+    remediation_scene: linguistic-annotation.s2
+    variants:
+      - id: linguistic-annotation.base.v2.1
+        prompt: 'A tagger labels "New York Times reporter" as B-ORG I-ORG I-ORG O. Which span did it mark as an organization?'
+        options:
+          - id: b
+            text: "“New York”"
+          - id: a
+            text: "“New York Times”"
+          - id: c
+            text: "“New York Times reporter”"
+        answer: a
+        feedback: B-ORG starts the entity and each I-ORG continues it, so the span is the first three words. O on "reporter" means that word is outside every entity. "New York" alone would need an O or a new B on "Times."
+      - id: linguistic-annotation.base.v2.2
+        prompt: 'In a dependency parse of "Lena bought three red apples," which word is the head of "red"?'
+        options:
+          - id: c
+            text: bought, the main verb of the sentence
+          - id: b
+            text: three, the word right before it
+          - id: a
+            text: apples, the noun it describes
+        answer: a
+        feedback: '"Red" describes the apples, so it attaches to "apples" as an adjective modifier. The main verb heads "Lena" and "apples," not the adjective, and being next to a word doesn''t make it the head.'
+      - id: linguistic-annotation.base.v2.3
+        prompt: 'In "Acme hired Priya," which layer of annotation tells you who did the hiring?'
+        options:
+          - id: a
+            text: The dependency parse, which marks "Acme" as the subject of "hired"
+          - id: b
+            text: The part-of-speech tags, which mark both names as proper nouns
+          - id: c
+            text: The named entities, which label Acme an ORG and Priya a PERSON
+        answer: a
+        feedback: Both names are proper nouns and both are entities, so neither layer says who hired whom. The subject relation (nsubj) from the parse does. In "Priya hired Acme's lawyer," the entity types alone would mislead you.
+      - id: linguistic-annotation.base.v2.4
+        prompt: 'A tagger outputs "book/NN" for the sentence "Please book a table for four." What went wrong?'
+        options:
+          - id: b
+            text: It split "book" into two tokens instead of keeping one
+          - id: a
+            text: It chose the noun reading; here "book" is a verb (VB)
+          - id: c
+            text: Nothing, since "book" is a noun far more often than a verb
+        answer: a
+        feedback: Tags describe how a word is used in this sentence. After "Please" and before "a table," "book" is a command verb. Picking the most common tag for a word, regardless of context, is exactly the mistake taggers are built to avoid.
+  - id: linguistic-annotation.transfer.v2
+    objective_ref: objective.linguistic-annotation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the tool was trained on, which earlier step its input came from, and whether its output is a fact or a claim found in the text.
+    remediation_scene: linguistic-annotation.s5
+    variants:
+      - id: linguistic-annotation.transfer.v2.1
+        prompt: An entity recognizer trained on news articles finds names well in news but misses most drug names in hospital notes. What is the most likely cause?
+        options:
+          - id: a
+            text: The notes use names and a writing style it never saw in training
+          - id: b
+            text: Hospital notes are too short for an entity model to read
+          - id: c
+            text: Drug names are verbs, and entity models label only nouns
+        answer: a
+        feedback: This is domain shift. News rarely contains drug names or clinical shorthand, so the model has no patterns for them. Short text isn't the issue, and drug names are nouns.
+      - id: linguistic-annotation.transfer.v2.2
+        prompt: 'A pipeline tags, then parses, then extracts "who works where." The tagger labels "Mark" in "Mark Diaz joined Hollis" as a verb. What happens next?'
+        options:
+          - id: c
+            text: The parser fixes the tag, since it reads the whole sentence
+          - id: a
+            text: Later steps build on the wrong tag and may miss Mark Diaz
+          - id: b
+            text: The extractor is unaffected, since it reads the entities
+        answer: a
+        feedback: Each stage takes the previous stage's output as given, so the parser builds a tree with "Mark" as a verb, and the extractor's subject rule can't find a person. Stages don't usually go back and repair earlier labels.
+      - id: linguistic-annotation.transfer.v2.3
+        prompt: An extractor reads a company press release and stores (Lena Ito, CEO of, Brightline). A reporter wants to cite it. What does the stored row show?
+        options:
+          - id: b
+            text: That Lena Ito is Brightline's current chief executive
+          - id: c
+            text: That two independent sources agree about her role
+          - id: a
+            text: That the press release claims Lena Ito leads Brightline
+        answer: a
+        feedback: Extraction records what a text says. The release could be old, wrong, or promotional, so the reporter still needs to check it. Nothing in the row came from a second source.
+      - id: linguistic-annotation.transfer.v2.4
+        prompt: You need invoice numbers from emails, and every one has the exact form "INV-2024-00317". Which approach fits best?
+        options:
+          - id: b
+            text: A named-entity model trained on news articles
+          - id: c
+            text: A dependency parser that finds each invoice's subject
+          - id: a
+            text: A hand-written pattern that matches the fixed format
+        answer: a
+        feedback: A fixed, predictable format is where rules shine; a pattern like INV-dddd-ddddd is precise and easy to check. A news-trained model has never seen invoice codes, and a parse says nothing about which strings are codes.
+  - id: linguistic-annotation.score
+    objective_ref: objective.linguistic-annotation
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Count the exact matches first. Precision divides them by the number of predicted spans; recall divides them by the number of gold spans.
+    remediation_scene: linguistic-annotation.s4
+    absolute_tolerance: 0.01
+    numeric_fields:
+      - id: precision
+        label: Precision (as a decimal)
+      - id: recall
+        label: Recall (as a decimal)
+    variants:
+      - id: linguistic-annotation.score.1
+        prompt: The gold standard for a news article has 5 entity spans. A model predicts 4 spans, and 3 of them match a gold span exactly (same boundaries and type). What are its precision and recall?
+        answers:
+          precision: 0.75
+          recall: 0.6
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Precision divides matches by predictions; recall divides by gold spans.
+          - id: b
+            text: Both divide the matches by the number of gold spans.
+          - id: c
+            text: Precision divides matches by gold spans; recall divides by predictions.
+        feedback: Precision is 3/4 = 0.75, since 3 of the 4 predictions are right. Recall is 3/5 = 0.6, since 3 of the 5 real entities were found.
+      - id: linguistic-annotation.score.2
+        prompt: A contract has 4 gold entity spans. A model predicts 5 spans and every gold span is among them, matched exactly. What are its precision and recall?
+        answers:
+          precision: 0.8
+          recall: 1
+        reason_answer: b
+        reason_options:
+          - id: a
+            text: Both divide the matches by the number of gold spans.
+          - id: b
+            text: Precision divides matches by predictions; recall divides by gold spans.
+          - id: c
+            text: Precision divides matches by gold spans; recall divides by predictions.
+        feedback: All 4 gold spans were found, so recall is 4/4 = 1. One of the 5 predictions is extra, so precision is 4/5 = 0.8. Perfect recall can hide false alarms.
+      - id: linguistic-annotation.score.3
+        prompt: A clinical note has 8 gold entity spans. A model predicts 6 spans, and 3 match a gold span exactly. What are its precision and recall?
+        answers:
+          precision: 0.5
+          recall: 0.375
+        reason_answer: c
+        reason_options:
+          - id: a
+            text: Precision divides matches by gold spans; recall divides by predictions.
+          - id: b
+            text: Both divide the matches by the number of gold spans.
+          - id: c
+            text: Precision divides matches by predictions; recall divides by gold spans.
+        feedback: Precision is 3/6 = 0.5 and recall is 3/8 = 0.375. Swapping the two denominators is the most common slip.
+      - id: linguistic-annotation.score.4
+        prompt: 'Gold spans are PERSON "Ana Ruiz" and ORG "Delta Labs". A model predicts PERSON "Ana Ruiz", ORG "Delta", and DATE "Monday". Using exact matching, what are its precision and recall?'
+        answers:
+          precision: 0.333
+          recall: 0.5
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Only "Ana Ruiz" matches, so divide 1 by 3 predictions and by 2 gold spans.
+          - id: b
+            text: '"Delta" overlaps "Delta Labs," so divide 2 by 3 predictions and by 2 gold spans.'
+          - id: c
+            text: Only "Ana Ruiz" matches, so divide 1 by 2 predictions and by 3 gold spans.
+        feedback: Under exact matching, "Delta" is not "Delta Labs," and "Monday" isn't in the gold set, so only one prediction is right. Precision is 1/3 ≈ 0.333 and recall is 1/2 = 0.5. A lenient overlap rule would count "Delta," which is why you must say which rule you used.

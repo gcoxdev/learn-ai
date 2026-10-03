@@ -1,213 +1,436 @@
 schema_version: 0.2-draft
 lesson:
   id: vision-failures
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Test what the visual model is actually using
   state: draft
-  summary: Challenge a picture model with missing evidence and controlled changes, then inspect which clues
-    it relied on.
+  summary: Pet search scores 97%, then finds a "dog" on an empty lawn. Learn the four classic ways vision models fail, and flip a classifier's answer by changing each pixel one brightness level.
   slot: M12.8
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: "Explaining and Harnessing Adversarial Examples (Goodfellow, Shlens & Szegedy, 2014)"
+      url: https://arxiv.org/abs/1412.6572
+    - title: "Intriguing properties of neural networks (Szegedy et al., 2013)"
+      url: https://arxiv.org/abs/1312.6199
+    - title: "Shortcut Learning in Deep Neural Networks (Geirhos et al., 2020)"
+      url: https://arxiv.org/abs/2004.07780
+    - title: "Recognition in Terra Incognita (Beery, Van Horn & Perona, 2018)"
+      url: https://arxiv.org/abs/1807.04975
+    - title: "Visualizing and Understanding Convolutional Networks (Zeiler & Fergus, 2013)"
+      url: https://arxiv.org/abs/1311.2901
+    - title: "Benchmarking Neural Network Robustness to Common Corruptions and Perturbations (Hendrycks & Dietterich, 2019)"
+      url: https://arxiv.org/abs/1903.12261
 objectives:
-- id: objective.vision-failures
-  version: 1-draft
-  statement: Occlusion, background shortcuts, adversarial perturbations, and distribution shift challenge different
-    visual assumptions; evaluation should identify conditions and consequences, not just an average score.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - vision-failures.base
-  - vision-failures.transfer
-  prerequisites:
-  - anyOf:
-    - objective.robustness-and-shift
-  - anyOf:
-    - objective.detection-and-segmentation
+  - id: objective.vision-failures
+    version: 2-draft
+    statement: Occlusion, background shortcuts, adversarial perturbations, and distribution shift challenge different visual assumptions; evaluation should identify conditions and consequences, not just an average score.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - vision-failures.base.v2
+      - vision-failures.transfer.v2
+      - vision-failures.calculate
+    prerequisites:
+      - anyOf:
+          - objective.robustness-and-shift
+      - anyOf:
+          - objective.detection-and-segmentation
 scenes:
-- id: vision-failures.s1
-  title: What can you tell from a partly hidden object?
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.vision-failures
-  markdown: 'Imagine a mug behind a book, with only its handle visible. The book causes **occlusion**: it blocks
-    part of the view. Predicting a mug may be a useful inference from the handle and context, but reporting
-    its exact hidden shape requires more evidence.
+  - id: vision-failures.s1
+    title: Cover part of the photo and watch the score
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.vision-failures
+    markdown: |-
+      Pet search scored 97% on its test photos. Then users started reporting two odd results: a "dog" found in a photo of an empty lawn, and Biscuit missed when only his tail poked out from behind the sofa.
 
+      Vision models fail in four classic ways, each needing its own test:
 
-    A model may also report an object that the image does not support; this is a visual **hallucination**.
-    Test partial visibility explicitly, and distinguish a useful guess from a supported measurement. Locating
-    an object and labeling all its pixels can fail in different ways.'
-  text_mode: 'Imagine a mug behind a book, with only its handle visible. The book causes **occlusion**: it
-    blocks part of the view. Predicting a mug may be a useful inference from the handle and context, but reporting
-    its exact hidden shape requires more evidence.
+      | Failure | What happens | Photo-app example |
+      | --- | --- | --- |
+      | **Occlusion** | part of the object is hidden | Biscuit behind the sofa |
+      | **Shortcut** | the model learned a clue that only travels with the label | "grass means dog" |
+      | **Adversarial example** | a tiny, deliberate change flips the answer | a photo edited to hide a face from the blur |
+      | **Distribution shift** | new photos differ from the training ones | night shots, a new phone camera |
 
+      Start with a simple probe of what the model looks at. Slide a gray square over the photo, one position at a time, and record the "dog" probability each time. This **occlusion test** comes from Zeiler and Fergus's 2013 study of what CNNs see. Suppose for one sunny photo of Biscuit you get:
 
-    A model may also report an object that the image does not support; this is a visual **hallucination**.
-    Test partial visibility explicitly, and distinguish a useful guess from a supported measurement. Locating
-    an object and labeling all its pixels can fail in different ways.'
-  bridges: []
-- id: vision-failures.s2
-  title: Break a background correlation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-failures
-  markdown: If training images associate snow with one animal class, test that class on grass and other classes
-    on snow. This intervention on context probes reliance on the background. It does not by itself establish
-    a complete causal model of recognition, but can reveal a specific shortcut.
-  text_mode: If training images associate snow with one animal class, test that class on grass and other classes
-    on snow. This intervention on context probes reliance on the background. It does not by itself establish
-    a complete causal model of recognition, but can reveal a specific shortcut.
-  bridges: []
-- id: vision-failures.s3
-  title: Specify a perturbation test
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-failures
-  markdown: 'Adversarial evaluation searches for input changes that cause errors under a defined constraint
-    and access model. A small pixel-norm change is a mathematical condition, not necessarily a realistic physical
-    change. Conversely, lighting or viewpoint changes can be physically ordinary yet numerically large.
+      | Gray square covers | P(dog) |
+      | --- | ---: |
+      | nothing | 0.92 |
+      | Biscuit's head | 0.35 |
+      | Biscuit's tail | 0.88 |
+      | the grass beside him | 0.58 |
 
+      The head drop is healthy: the head is real evidence. But why should hiding *grass* cost 0.34? That drop is the first sign of a shortcut.
+    bridges: []
+  - id: vision-failures.s2
+    title: Cows on grass, and other shortcuts
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-failures
+    markdown: |-
+      If most training photos of dogs are taken outdoors on lawns, then "green texture at the bottom of the frame" predicts "dog" very well. The model has no reason to prefer the dog over the lawn: both lower its training loss. A **shortcut** is a clue that works on the training and test data but isn't the thing you meant.
 
-    An **adversarial** test deliberately searches for a change that triggers a wrong answer. The **access model**
-    states what the tester can inspect, such as only returned labels or also model gradients. A pixel-distance
-    budget limits numerical changes under a chosen norm. Rotating a camera can exceed that budget while remaining
-    an entirely ordinary real-world event.'
-  text_mode: 'Adversarial evaluation searches for input changes that cause errors under a defined constraint
-    and access model. A small pixel-norm change is a mathematical condition, not necessarily a realistic physical
-    change. Conversely, lighting or viewpoint changes can be physically ordinary yet numerically large.
+      :::story Cows on a beach
+      In 2018, Beery, Van Horn, and Perona opened a paper with a striking picture: an image recognizer that handled cows on green pasture failed to spot a cow standing on a beach. It had learned "green pasture" as much as "cow". Their study of wildlife camera traps found the same pattern at scale: classifiers that did well at the camera sites they were trained on did poorly at new sites. Geirhos and colleagues later (2020) collected many such cases under the name **shortcut learning**.
+      :::
 
+      :::mixup "The test accuracy is 97%, so the model learned what a dog is."
+      The test photos were collected the same way as the training photos, so they share the same lawns. A shortcut scores just as well on them. You only see it when you break the link between the clue and the label.
+      :::
 
-    An **adversarial** test deliberately searches for a change that triggers a wrong answer. The **access model**
-    states what the tester can inspect, such as only returned labels or also model gradients. A pixel-distance
-    budget limits numerical changes under a chosen norm. Rotating a camera can exceed that budget while remaining
-    an entirely ordinary real-world event.'
-  bridges: []
-- id: vision-failures.s4
-  title: Plan for unfamiliar conditions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.vision-failures
-  markdown: 'Inspect performance by camera, location, weather, object size, and subgroup where relevant. Calibration
-    and abstention can fail under shift too. Robust training should be tested on fresh stress cases, and the
-    response to uncertain or unsupported observations should match the application’s consequences.
+      So break it on purpose. Build a small grid of test photos where the background and the label disagree:
 
+      | | Outdoors on grass | Indoors |
+      | --- | ---: | ---: |
+      | **Dog present** | 98% found | 71% found |
+      | **No dog** | 23% false "dog" | 2% false "dog" |
 
-    Try a small test card: same object, different lighting; same lighting, different background; partly hidden
-    object; no object at all. Record both the prediction and the appropriate fallback. A model that says “uncertain”
-    on every image avoids some confident errors but also fails to serve many users, so measure coverage alongside
-    mistakes.'
-  text_mode: 'Inspect performance by camera, location, weather, object size, and subgroup where relevant. Calibration
-    and abstention can fail under shift too. Robust training should be tested on fresh stress cases, and the
-    response to uncertain or unsupported observations should match the application’s consequences.
+      These numbers would confirm the grass shortcut: indoors, 29% of dogs are missed against 2% outdoors, and nearly a quarter of empty lawns fool the model. The fix is data, not a bigger network: collect indoor dogs and empty lawns, and retrain.
+    bridges: []
+  - id: vision-failures.s3
+    title: One brightness level per pixel flips the answer
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-failures
+    markdown: |-
+      In 2013, Szegedy and colleagues found that a change invisible to people could make a network confidently wrong. Goodfellow, Shlens, and Szegedy (2014) explained why and gave a one-line attack. Their famous example: a photo classified "panda" with 57.7% confidence became "gibbon" with 99.3% confidence after every pixel was nudged by about the smallest step an 8-bit image can store.
 
+      Their explanation is linear arithmetic. Take a tiny classifier with score $w \cdot x$ and weights $w = [0.5, -1, 2]$, on a three-pixel "photo" $x = [0.2, 0.4, 0.3]$. The score is $0.1 - 0.4 + 0.6 = 0.3$, positive, so "dog". Move each pixel by $\varepsilon = 0.1$ *against* the sign of its weight: $x' = [0.1, 0.5, 0.2]$. The score becomes $0.05 - 0.5 + 0.4 = -0.05$: "not dog". Every pixel pushed the same way, so the score fell by $\varepsilon \times (0.5 + 1 + 2) = 0.35$.
 
-    Try a small test card: same object, different lighting; same lighting, different background; partly hidden
-    object; no object at all. Record both the prediction and the appropriate fallback. A model that says “uncertain”
-    on every image avoids some confident errors but also fails to serve many users, so measure coverage alongside
-    mistakes.'
-  bridges: []
-- id: vision-failures.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.vision-failures
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Change the lighting, background, visibility, or other stated condition and inspect the errors.
-    A useful visual model also needs a sensible response when the picture lacks enough evidence.
-- id: vision-failures.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.vision-failures
-  markdown: Change the lighting, background, visibility, or other stated condition and inspect the errors.
-    A useful visual model also needs a sensible response when the picture lacks enough evidence.
-  text_mode: Change the lighting, background, visibility, or other stated condition and inspect the errors.
-    A useful visual model also needs a sensible response when the picture lacks enough evidence.
+      :::papers The fast gradient sign method (FGSM)
+      $$x_{\text{adv}} = x + \varepsilon \cdot \operatorname{sign}\big(\nabla_x L(x, y)\big)$$
+
+      $\nabla_x L$ is the gradient of the loss with respect to the *pixels*, not the weights; $y$ is the true label. For a linear score the gradient points along $\pm w$, so each pixel steps $\varepsilon$ in whichever direction hurts most, and the score changes by $\varepsilon \sum_i |w_i|$. That sum grows with the number of pixels: a tiny $\varepsilon$ times 150,528 inputs is a big push.
+      :::
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(0)
+      d = 224 * 224 * 3                        # one number per pixel channel
+      w = rng.normal(0, 0.01, d)               # stand-in weights of a linear "dog" detector
+      x = rng.uniform(0, 1, d)                 # a photo, pixel values scaled to 0..1
+      b = 2.0 - w @ x                          # set so this photo scores exactly 2.0
+
+      def p_dog(img):
+          return 1 / (1 + np.exp(-(w @ img + b)))     # sigmoid of the score
+
+      # FGSM: step every pixel by eps against the gradient of the "dog" score.
+      # For a linear score the gradient is just w, so the step is -eps * sign(w).
+      eps = 1 / 255                            # one brightness level out of 255
+      x_adv = np.clip(x - eps * np.sign(w), 0, 1)
+
+      print(f"P(dog) before: {p_dog(x):.3f}")
+      print(f"P(dog) after:  {p_dog(x_adv):.3f}")
+      print(f"largest pixel change: {np.abs(x_adv - x).max() * 255:.1f} of 255")
+      print(f"score change: {w @ (x_adv - x):.2f}  (eps * sum|w| = {eps * np.abs(w).sum():.2f})")
+      ```
+
+      No pixel changed by more than one brightness level, yet P(dog) fell from 0.881 to 0.063. (The score change, −4.70, is a little under $\varepsilon \sum |w_i| = 4.72$ because a few pixels were already near 0 or 1 and couldn't move a full step.) Try `eps = 0.5 / 255`, or shrink `d` to 1,000 pixels, and watch the attack weaken.
+
+      FGSM needs the model's gradients, so it assumes the attacker has the model itself. Attacks also exist for models that only return answers, and in the physical world: in 2018, Eykholt and colleagues fooled a stop-sign classifier with a few stickers.
+    diagram:
+      caption: One FGSM step. The attacker uses the gradient with respect to the pixels, not the weights.
+      description: The photo x goes into the model, which outputs "dog" and a loss for the true label. Backpropagation gives the gradient of the loss with respect to each pixel. Its sign, times a small epsilon, is added to the photo, and the result is clipped to the valid pixel range. The adversarial photo looks the same to a person but goes back into the model, which now outputs "not dog".
+      nodes:
+        - id: photo
+          label: Photo x
+          note: P(dog) = 0.881
+          col: 0
+          row: 0
+          tone: data
+        - id: model
+          label: Classifier
+          note: weights stay fixed
+          col: 1
+          row: 0
+        - id: grad
+          label: Gradient of loss
+          note: with respect to pixels
+          col: 2
+          row: 0
+        - id: step
+          label: ε · sign(gradient)
+          note: ε = 1/255 per pixel
+          col: 2
+          row: 1
+          tone: warn
+        - id: adv
+          label: Adversarial photo
+          note: clipped to 0–1; looks unchanged
+          col: 1
+          row: 1
+          tone: data
+        - id: wrong
+          label: Classifier again
+          note: P(dog) = 0.063
+          col: 0
+          row: 1
+          tone: accent
+      edges:
+        - from: photo
+          to: model
+        - from: model
+          to: grad
+          label: ∂L/∂x
+        - from: grad
+          to: step
+        - from: step
+          to: adv
+          label: add
+        - from: adv
+          to: wrong
+  - id: vision-failures.s4
+    title: New camera, new night, new mistakes
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.vision-failures
+    markdown: |-
+      The face blur was trained on daytime photos from last year's phones. Then a new phone ships with a different camera, and people share more night photos. That's **distribution shift**: the photos changed, not the task. Averages hide it, so split the test set by condition. Suppose the face finder gives:
+
+      | Slice | Share of photos | Faces found |
+      | --- | ---: | ---: |
+      | Daylight | 80% | 98% |
+      | Indoor | 15% | 94% |
+      | Night | 5% | 70% |
+
+      Overall that's $0.80 \times 98 + 0.15 \times 94 + 0.05 \times 70 = 96.0\%$, which looks fine, while nearly one night face in three is left unblurred. If night photos grow to 30% of uploads, the average falls with them. Benchmarks such as ImageNet-C (Hendrycks & Dietterich, 2019) test models on the same images with added noise, blur, fog, and other corruptions for exactly this reason.
+
+      Then decide what the photo app does when it's unsure, based on what a mistake costs. For pet search, a missed dog is a small annoyance, so skip uncertain photos. For the face blur, an unblurred stranger is a privacy failure, so blur anything that might be a face and let the user undo it.
+    bridges: []
+  - id: vision-failures.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.vision-failures
+    markdown: Compute how far an FGSM step moves a linear score, then diagnose a skin-lesion model, a traffic camera, and a crop-disease app that each fail in a different way.
+    takeaway: |-
+      Name the failure before fixing it: hidden evidence (occlusion), a clue that rides along with the label (shortcut), a deliberate tiny change (adversarial example), or new kinds of photos (shift). Test each one on purpose, slice by slice, rather than trusting one average.
+  - id: vision-failures.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.vision-failures
+    markdown: |-
+      Change the lighting, background, visibility, or other stated condition and inspect the errors. A useful visual model also needs a sensible response when the picture lacks enough evidence.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - vision-failures.s1
-    - vision-failures.s2
-    - vision-failures.s3
-    - vision-failures.s4
-    - vision-failures.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - vision-failures.s1
+        - vision-failures.s2
+        - vision-failures.s3
+        - vision-failures.s4
+        - vision-failures.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     vision-failures.recap: vision-failures.check
 assessment_families:
-- id: vision-failures.base
-  objective_ref: objective.vision-failures
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Break a background correlation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: vision-failures.s2
-  variants:
-  - id: vision-failures.base.1
-    prompt: What does occlusion remove?
-    options:
-    - id: a
-      text: Some visual evidence about a scene or object
-    - id: b
-      text: All possible context in every case
-    - id: c
-      text: Only the label file
-    answer: a
-    feedback: Hidden regions create incomplete observations and ambiguity.
-  - id: vision-failures.base.2
-    prompt: Why test an animal on backgrounds unlike its training backgrounds?
-    options:
-    - id: b
-      text: To prove every causal property of the model
-    - id: c
-      text: To eliminate the need for labels
-    - id: a
-      text: To probe a learned contextual shortcut
-    answer: a
-    feedback: Changing the correlation can expose reliance on the background.
-- id: vision-failures.transfer
-  objective_ref: objective.vision-failures
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Plan for unfamiliar conditions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: vision-failures.s4
-  variants:
-  - id: vision-failures.transfer.1
-    prompt: Is a tiny pixel-norm perturbation automatically a realistic physical scenario?
-    options:
-    - id: b
-      text: Yes; every norm ball is a camera process
-    - id: c
-      text: Only in grayscale
-    - id: a
-      text: No; mathematical and physical threat models differ
-    answer: a
-    feedback: The perturbation constraint must match the claim being tested.
-  - id: vision-failures.transfer.2
-    prompt: A model is calibrated on clear images. Is calibration guaranteed under heavy fog?
-    options:
-    - id: c
-      text: Only if the architecture is convolutional
-    - id: a
-      text: No; shift needs separate evaluation
-    - id: b
-      text: Yes; calibration is permanent
-    answer: a
-    feedback: Probability quality depends on the evaluation distribution.
+  - id: vision-failures.base
+    objective_ref: objective.vision-failures
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Break a background correlation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: vision-failures.s2
+    variants:
+      - id: vision-failures.base.1
+        prompt: What does occlusion remove?
+        options:
+          - id: a
+            text: Some visual evidence about a scene or object
+          - id: b
+            text: All possible context in every case
+          - id: c
+            text: Only the label file
+        answer: a
+        feedback: Hidden regions create incomplete observations and ambiguity.
+        retired: true
+      - id: vision-failures.base.2
+        prompt: Why test an animal on backgrounds unlike its training backgrounds?
+        options:
+          - id: b
+            text: To prove every causal property of the model
+          - id: c
+            text: To eliminate the need for labels
+          - id: a
+            text: To probe a learned contextual shortcut
+        answer: a
+        feedback: Changing the correlation can expose reliance on the background.
+        retired: true
+  - id: vision-failures.transfer
+    objective_ref: objective.vision-failures
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Plan for unfamiliar conditions: trace the inputs, operation, and result before choosing.'
+    remediation_scene: vision-failures.s4
+    variants:
+      - id: vision-failures.transfer.1
+        prompt: Is a tiny pixel-norm perturbation automatically a realistic physical scenario?
+        options:
+          - id: b
+            text: Yes; every norm ball is a camera process
+          - id: c
+            text: Only in grayscale
+          - id: a
+            text: No; mathematical and physical threat models differ
+        answer: a
+        feedback: The perturbation constraint must match the claim being tested.
+        retired: true
+      - id: vision-failures.transfer.2
+        prompt: A model is calibrated on clear images. Is calibration guaranteed under heavy fog?
+        options:
+          - id: c
+            text: Only if the architecture is convolutional
+          - id: a
+            text: No; shift needs separate evaluation
+          - id: b
+            text: Yes; calibration is permanent
+        answer: a
+        feedback: Probability quality depends on the evaluation distribution.
+        retired: true
+  - id: vision-failures.base.v2
+    objective_ref: objective.vision-failures
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Match the symptom to one of the four failures (hidden evidence, a clue that rides along with the label, a deliberate tiny change, new kinds of photos), then pick the test that isolates it.
+    remediation_scene: vision-failures.s2
+    variants:
+      - id: vision-failures.base.v2.1
+        prompt: A gray square over the sky behind a boat drops a "boat" classifier from 0.90 to 0.50. What does this most suggest?
+        options:
+          - id: b
+            text: The boat is partly hidden, so the model needs more boat photos
+          - id: a
+            text: The model leans on the sky, a clue that tends to travel with boats
+          - id: c
+            text: The gray square is an adversarial example crafted against the model
+        answer: a
+        feedback: Hiding background, not the boat, changed the answer, so the background is part of the model's evidence, a likely shortcut. Nothing of the boat was covered, and a plain gray square isn't a crafted attack.
+      - id: vision-failures.base.v2.2
+        prompt: A dog detector scores 97% on a test set collected the same way as its training set. Why might it still rely on a grass shortcut?
+        options:
+          - id: c
+            text: 97% is too low to show that the model learned the right features
+          - id: b
+            text: Test sets are usually smaller than training sets, so scores are noisy
+          - id: a
+            text: The test photos share the grass-with-dogs link, so the shortcut still scores
+        answer: a
+        feedback: A shortcut works on any data where the clue and the label travel together, including a test set gathered the same way. Only tests that break the link (dogs indoors, empty lawns) reveal it. Test-set size and the exact score don't address the problem.
+      - id: vision-failures.base.v2.3
+        prompt: In FGSM, which gradient does the attacker compute?
+        options:
+          - id: a
+            text: The loss gradient with respect to the input pixels
+          - id: b
+            text: The loss gradient with respect to the model's weights
+          - id: c
+            text: The gradient of the pixel values across the image
+        answer: a
+        feedback: FGSM keeps the weights fixed and asks how each pixel should change to raise the loss, then steps ε along the sign. The weight gradient is what training uses, and an image's spatial gradient is an edge map.
+      - id: vision-failures.base.v2.4
+        prompt: Why do tiny per-pixel changes add up to a large score change in a photo model?
+        options:
+          - id: b
+            text: Each pixel's change is multiplied by a large weight inside the model
+          - id: c
+            text: The changes accumulate over the layers, doubling at each one
+          - id: a
+            text: Many small changes all push the score the same way and add up
+        answer: a
+        feedback: FGSM aligns every pixel's change with its weight's sign, so the score moves by ε times the sum of |w| over 150,528 inputs. The weights can each be small; it's their number that makes the total large.
+  - id: vision-failures.transfer.v2
+    objective_ref: objective.vision-failures
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name the failure first, then choose the test or fix that targets it, and weigh what a mistake costs in this application.
+    remediation_scene: vision-failures.s4
+    variants:
+      - id: vision-failures.transfer.v2.1
+        prompt: A skin-lesion model was trained on clinic photos where serious lesions often had a ruler beside them. It flags harmless moles photographed next to a ruler. What is this?
+        options:
+          - id: a
+            text: A shortcut, since the ruler traveled with the label in the training data
+          - id: b
+            text: Distribution shift, since the new photos come from a different camera
+          - id: c
+            text: Occlusion, since the ruler hides part of the mole from the model
+        answer: a
+        feedback: The ruler predicted "serious" in training, so the model learned it; a harmless mole plus a ruler triggers the same clue. Nothing says the camera changed, and the ruler sits beside the mole rather than covering it.
+      - id: vision-failures.transfer.v2.2
+        prompt: A traffic camera's vehicle detector is 96% accurate overall, but only 60% in heavy rain, which is 4% of footage. What should the team report?
+        options:
+          - id: c
+            text: The 96% overall figure, since rain is a small share of the footage
+          - id: a
+            text: The per-condition results, including the 60% in heavy rain
+          - id: b
+            text: Only the rain figure, since the worst case matters most in traffic
+        answer: a
+        feedback: A single average hides a weak slice that may matter a lot (rainy roads are riskier), while the rain figure alone hides where the model works. Slice-by-slice results let readers weigh both.
+      - id: vision-failures.transfer.v2.3
+        prompt: A crop-disease app works well on photos from one phone model. Farmers with cheaper phones report many errors. Which test fits best?
+        options:
+          - id: b
+            text: Run FGSM on the old photos to measure adversarial robustness
+          - id: c
+            text: Slide a gray square over leaves to find what the model uses
+          - id: a
+            text: Collect labeled photos from the cheaper phones and score them separately
+        answer: a
+        feedback: This is distribution shift, since the photos changed (noise, color, focus), not the task. Measuring accuracy on those phones' photos shows its size. FGSM tests deliberate attacks, and an occlusion test explains one model's clues rather than the gap.
+      - id: vision-failures.transfer.v2.4
+        prompt: A privacy app blurs faces before photos are posted. When it's unsure whether a region is a face, what is the sensible default?
+        options:
+          - id: a
+            text: Blur the region, since an unblurred stranger costs more than an extra blur
+          - id: b
+            text: Leave it, since blurring non-faces would annoy users and hide scenery
+          - id: c
+            text: Ask the model again with a higher threshold until it becomes certain
+        answer: a
+        feedback: The fallback should follow the cost of each mistake. A missed face is a privacy failure; an extra blur is a small annoyance the user can undo. Raising the threshold makes the model skip more real faces, not fewer.
+  - id: vision-failures.calculate
+    objective_ref: objective.vision-failures
+    task: base
+    response_type: numeric
+    points: 1
+    hint: An FGSM step moves every input by ε against its weight's sign, so a linear score changes by ε × (sum of the absolute weights).
+    remediation_scene: vision-failures.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: vision-failures.calculate.1
+        prompt: A linear classifier has weights [1, −2, 3]. FGSM moves each input by ε = 0.1 against its weight's sign. By how much does the score fall?
+        answer: 0.6
+        feedback: 0.1 × (1 + 2 + 3) = 0.1 × 6 = 0.6. The negative weight's input moves up, which still lowers the score.
+      - id: vision-failures.calculate.2
+        prompt: A linear classifier has weights [2, −1, −1]. FGSM moves each input by ε = 0.2 against its weight's sign. By how much does the score fall?
+        answer: 0.8
+        feedback: 0.2 × (2 + 1 + 1) = 0.2 × 4 = 0.8.
+      - id: vision-failures.calculate.3
+        prompt: A linear classifier has weights [0.2, 0.4, −0.6, 0.8]. FGSM moves each input by ε = 0.05 against its weight's sign. By how much does the score fall?
+        answer: 0.1
+        feedback: 0.05 × (0.2 + 0.4 + 0.6 + 0.8) = 0.05 × 2 = 0.1.
+      - id: vision-failures.calculate.4
+        prompt: A linear model reads 50,000 inputs, and every weight has size 0.02 (some positive, some negative). FGSM uses ε = 0.01. By how much does the score fall?
+        answer: 10
+        feedback: The sum of |w| is 50,000 × 0.02 = 1,000, so the score falls by 0.01 × 1,000 = 10. Tiny steps on many inputs add up.
+      - id: vision-failures.calculate.5
+        prompt: A classifier scores 0.4 with weights [0.5, −0.5, 1.5, −2.5]. After an FGSM step with ε = 0.02 against each weight's sign, what is the new score?
+        answer: 0.3
+        feedback: The score falls by 0.02 × (0.5 + 0.5 + 1.5 + 2.5) = 0.02 × 5 = 0.1, so it becomes 0.4 − 0.1 = 0.3. A larger ε would be needed to flip this answer.

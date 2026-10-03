@@ -1,201 +1,395 @@
 schema_version: 0.2-draft
 lesson:
   id: program-synthesis
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Search for a program that fits a specification
   state: draft
-  summary: Ask a system to construct a small program, then design examples that distinguish a good rule from
-    a lucky fit.
+  summary: Type "A. Lovelace" next to "Ada Lovelace" and a spreadsheet fills in the rest of the column. How does a computer find a program from one example, and how can it guess wrong?
   slot: M04.7
   category: learning
   sources:
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
 objectives:
-- id: objective.program-synthesis
-  version: 1-draft
-  statement: Program synthesis constructs executable rules from specifications or examples; inductive logic
-    learning adds background knowledge, and testing must distinguish fitting examples from satisfying the intended
-    task.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - program-synthesis.base
-  - program-synthesis.transfer
-  prerequisites:
-  - anyOf:
-    - objective.proof-search
-  - anyOf:
-    - objective.algorithms-and-programs
+  - id: objective.program-synthesis
+    version: 2-draft
+    statement: Program synthesis constructs executable rules from specifications or examples; inductive logic learning adds background knowledge, and testing must distinguish fitting examples from satisfying the intended task.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - program-synthesis.base.v2
+      - program-synthesis.transfer.v2
+      - program-synthesis.calc
+    prerequisites:
+      - anyOf:
+          - objective.proof-search
+      - anyOf:
+          - objective.algorithms-and-programs
 scenes:
-- id: program-synthesis.s1
-  title: Describe the program you want
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.program-synthesis
-  markdown: 'Ask for a program that turns a guest count into twice as many crackers. You might give example
-    inputs and outputs, or state the rule more precisely. These requirements form the **specification**.
+  - id: program-synthesis.s1
+    title: Type one example, get a program
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.program-synthesis
+    markdown: |-
+      You have a spreadsheet column of 500 names: Ada Lovelace, Alan Turing, Grace Hopper… You need them as "A. Lovelace." In the next column you type *A. Lovelace* by hand, start typing the next one, and Excel offers to fill in the other 499: "A. Turing," "G. Hopper." Nobody wrote a formula. The spreadsheet found a small program that turns your one input into your one output, and ran it on the rest.
 
+      Finding a program automatically from a description of what it should do is **program synthesis**. The description is the **specification**. It might be a formal statement ("the output is sorted") or, as here, a few input–output examples, which is called *programming by example*.
 
-    **Program synthesis** searches for a program that meets that specification. Its **search space** is the
-    set of programs it is allowed to try. Restricting the available operations can make the search manageable,
-    but may exclude the intended solution. Those restrictions create an **inductive bias**: a preference for
-    some kinds of program over others.'
-  text_mode: 'Ask for a program that turns a guest count into twice as many crackers. You might give example
-    inputs and outputs, or state the rule more precisely. These requirements form the **specification**.
+      :::story Flash Fill
+      Sumit Gulwani of Microsoft Research published the method in 2011, and it shipped as Flash Fill in Excel 2013. Its trick was a carefully designed little language of text operations (split, take a piece, add a character), small enough to search in a fraction of a second, yet rich enough for the everyday reformatting people actually do.
+      :::
+    bridges: []
+  - id: program-synthesis.search
+    title: Search a tiny language of programs
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.program-synthesis
+    markdown: |-
+      A synthesizer searches a **domain-specific language** (DSL): a small set of building blocks designed for one job. Ours has six blocks for names. A program is a sequence of up to three blocks, joined together, so there are $6 + 6^2 + 6^3 = 258$ programs. The search tries every one against the examples:
 
+      ```python run
+      from itertools import product
 
-    **Program synthesis** searches for a program that meets that specification. Its **search space** is the
-    set of programs it is allowed to try. Restricting the available operations can make the search manageable,
-    but may exclude the intended solution. Those restrictions create an **inductive bias**: a preference for
-    some kinds of program over others.'
-  bridges: []
-- id: program-synthesis.s2
-  title: Examples can underdetermine the answer
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.program-synthesis
-  markdown: 'Examples 1 → 2 and 2 → 4 fit doubling, but also many functions that behave differently elsewhere.
-    A candidate that matches examples is consistent with those observations. It is not necessarily the intended
-    general rule. More informative examples or stronger specifications reduce ambiguity.
+      pieces = {                               # the tiny language: 6 building blocks
+          "first_initial": lambda s: s.split()[0][0],
+          "last_initial":  lambda s: s.split()[-1][0],
+          "first_name":    lambda s: s.split()[0],
+          "last_name":     lambda s: s.split()[-1],
+          "'. '":          lambda s: ". ",
+          "' '":           lambda s: " ",
+      }
 
+      def run(program, name):
+          return "".join(pieces[p](name) for p in program)
 
-    Compare “always double the input” with “double inputs 1 and 2, but return zero for everything else.” Both
-    pass the two supplied examples. Test input 3: the answers are 6 and 0. You have found an example that separates
-    the candidates. Try choosing another boundary case, such as zero guests, and say which requirement it checks.'
-  text_mode: 'Examples 1 → 2 and 2 → 4 fit doubling, but also many functions that behave differently elsewhere.
-    A candidate that matches examples is consistent with those observations. It is not necessarily the intended
-    general rule. More informative examples or stronger specifications reduce ambiguity.
+      def synthesize(examples):
+          programs = [p for n in (1, 2, 3) for p in product(pieces, repeat=n)]
+          fits = [p for p in programs if all(run(p, i) == o for i, o in examples)]
+          print(f"searched {len(programs)} programs, {len(fits)} fit")
+          for p in fits:
+              print("  ", " + ".join(p), "->", repr(run(p, "Grace Hopper")))
 
+      synthesize([("Anna Avery", "A. Avery")])
+      synthesize([("Anna Avery", "A. Avery"), ("Alan Turing", "A. Turing")])
+      ```
 
-    Compare “always double the input” with “double inputs 1 and 2, but return zero for everything else.” Both
-    pass the two supplied examples. Test input 3: the answers are 6 and 0. You have found an example that separates
-    the candidates. Try choosing another boundary case, such as zero guests, and say which requirement it checks.'
-  bridges: []
-- id: program-synthesis.s3
-  title: Use background relations
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.program-synthesis
-  markdown: Inductive logic programming can learn rules using examples and background knowledge. Given parent
-    facts and grandparent examples, it might seek a two-step parent relation. The result depends on the permitted
-    predicates, rule forms, and negative examples. Unstated background assumptions can strongly shape the learned
-    rule.
-  text_mode: Inductive logic programming can learn rules using examples and background knowledge. Given parent
-    facts and grandparent examples, it might seek a two-step parent relation. The result depends on the permitted
-    predicates, rule forms, and negative examples. Unstated background assumptions can strongly shape the learned
-    rule.
-  bridges: []
-- id: program-synthesis.s4
-  title: Verify before relying on execution
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.program-synthesis
-  markdown: A generated program can be tested on held-out cases or formally checked against a suitable specification.
-    Run unfamiliar code only within an appropriate constrained environment. Test behavior at boundaries and
-    invalid inputs. Code that compiles or matches a few examples has passed only part of the verification problem.
-  text_mode: A generated program can be tested on held-out cases or formally checked against a suitable specification.
-    Run unfamiliar code only within an appropriate constrained environment. Test behavior at boundaries and
-    invalid inputs. Code that compiles or matches a few examples has passed only part of the verification problem.
-  bridges: []
-- id: program-synthesis.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.program-synthesis
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Program synthesis searches for code that meets a specification. Choose examples and checks that
-    distinguish the intended behavior from a program that merely fits the examples it has seen.
-- id: program-synthesis.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.program-synthesis
-  markdown: Program synthesis searches for code that meets a specification. Choose examples and checks that
-    distinguish the intended behavior from a program that merely fits the examples it has seen.
-  text_mode: Program synthesis searches for code that meets a specification. Choose examples and checks that
-    distinguish the intended behavior from a program that merely fits the examples it has seen.
+      With the single example "Anna Avery → A. Avery," two programs fit, because Anna's first and last initials are both A. They agree on Anna and disagree on Grace Hopper: "G. Hopper" versus "H. Hopper." A second example with different initials leaves one program standing.
+
+      Now add the line `synthesize([("Grace Hopper", "Hopper, G.")])` and run it: nothing fits, because the language has no comma block. The DSL decides what can be found at all. Adding a seventh block would fix that, and the count of three-block programs would jump from 216 to 343. Real DSLs have dozens of blocks and longer programs, which is why practical synthesizers prune the search cleverly instead of trying everything.
+    bridges: []
+  - id: program-synthesis.s2
+    title: Two programs, same examples
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.program-synthesis
+    markdown: |-
+      The Anna Avery tie is a general problem. Suppose you want a function and give the examples 1 → 2 and 2 → 4. You're thinking "double it," $2x$. But $2^x$ also gives 2 and 4.
+
+      :::predict Which new input would tell $2x$ and $2^x$ apart?
+      Almost any. Input 3 gives 6 versus 8; input 0 gives 0 versus 1. Only inputs 1 and 2, the ones you already gave, can't separate them. The most useful next example is one where the surviving candidates disagree.
+      :::
+
+      A finite set of examples almost never pins down a single program. Synthesizers handle this in two ways. They **rank** the programs that fit, usually preferring the shortest or most general, the same instinct as Occam's razor. And they welcome **negative examples**, inputs paired with outputs the program must *not* produce, which rule out candidates that are too eager.
+
+      :::mixup "It matched every example I gave, so it's the program I meant."
+      It's *a* program consistent with your examples. "H. Hopper" matched Anna Avery perfectly. Pick your next example to break ties, not to confirm what already works.
+      :::
+    bridges: []
+  - id: program-synthesis.s3
+    title: Learn a rule from family facts
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.program-synthesis
+    markdown: |-
+      Program synthesis can also produce logic rules. **Inductive logic programming** (ILP), named by Stephen Muggleton in 1991, learns Prolog-style rules from examples plus **background knowledge**, facts the learner may use. Take the family from the first-order logic lesson. The background is the Parent facts. The examples are:
+
+      - positive: Grandparent(Rosa, Dev), Grandparent(Rosa, Eli)
+      - negative: Grandparent(Ben, Rosa), Grandparent(Rosa, Ben)
+
+      The learner scores candidate rules by how many examples of each kind they cover:
+
+      | Candidate rule for grandparent(X, Z) | Positives covered | Negatives covered |
+      | --- | ---: | ---: |
+      | `parent(X, Z)` | 0 of 2 | 1 of 2 |
+      | `parent(X, Y)` (Z unconstrained) | 2 of 2 | 2 of 2 |
+      | `parent(X, Y), parent(Y, Z)` | 2 of 2 | 0 of 2 |
+
+      Only the two-step rule covers every positive and no negative. Now delete the negatives. The second rule covers both positives too, and it's shorter, so a learner that prefers short rules would pick it: "anyone who is a parent is everyone's grandparent." Negative examples are what rule that out.
+    bridges: []
+  - id: program-synthesis.s4
+    title: Check the program before you trust it
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.program-synthesis
+    markdown: |-
+      The name program we found works on 500 ordinary names. Now try the edges:
+
+      | Input | Output | Problem? |
+      | --- | --- | --- |
+      | Cher | C. Cher | one-word name, odd result |
+      | Mary Ann Evans | M. Evans | did you want "M. A. Evans"? |
+      | (empty cell) | crash | `split()` finds no words |
+
+      Each surprise is either a bug to fix or a new example to add. Build the habit: test synthesized code on boundary cases and on inputs unlike your examples, and run unfamiliar code on a copy of your data first.
+
+      The same habit powers today's largest synthesizers. Language models write code from plain-English requests; GitHub Copilot launched in 2021. DeepMind's AlphaCode (2022) generated huge numbers of candidate programs for each competitive-programming problem, threw out every candidate that failed the problem's example tests, and performed at roughly the level of a median human competitor. A learned model proposes, and running the program checks. The next lesson builds on exactly that partnership.
+    bridges: []
+  - id: program-synthesis.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.program-synthesis
+    markdown: Date formatters, file-renaming scripts, library loans, and a few candidate programs to test by hand check whether you can choose examples that break ties.
+    takeaway: |-
+      Program synthesis searches a space of programs for one that meets a specification. Examples usually fit several programs, so add examples where the candidates disagree, use negative examples, and test the winner on unusual inputs.
+  - id: program-synthesis.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.program-synthesis
+    markdown: |-
+      Program synthesis searches for code that meets a specification. Choose examples and checks that distinguish the intended behavior from a program that merely fits the examples it has seen.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - program-synthesis.s1
-    - program-synthesis.s2
-    - program-synthesis.s3
-    - program-synthesis.s4
-    - program-synthesis.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - program-synthesis.s1
+        - program-synthesis.search
+        - program-synthesis.s2
+        - program-synthesis.s3
+        - program-synthesis.s4
+        - program-synthesis.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     program-synthesis.recap: program-synthesis.check
 assessment_families:
-- id: program-synthesis.base
-  objective_ref: objective.program-synthesis
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Examples can underdetermine the answer: trace the inputs, operation, and result before choosing.'
-  remediation_scene: program-synthesis.s2
-  variants:
-  - id: program-synthesis.base.1
-    prompt: What does program synthesis search for?
-    options:
-    - id: c
-      text: A guaranteed theory of every task
-    - id: a
-      text: A program meeting a specification within a chosen language
-    - id: b
-      text: Only a prettier source-code font
-    answer: a
-    feedback: The candidate space consists of programs or rules constrained by the synthesis setup.
-  - id: program-synthesis.base.2
-    prompt: Do examples 1 → 2 and 2 → 4 uniquely determine doubling?
-    options:
-    - id: a
-      text: No; multiple functions fit those examples
-    - id: b
-      text: Yes; two examples always determine every function
-    - id: c
-      text: Only if examples are integers
-    answer: a
-    feedback: Finite observations usually leave many possible generalizations.
-- id: program-synthesis.transfer
-  objective_ref: objective.program-synthesis
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Verify before relying on execution: trace the inputs, operation, and result before choosing.'
-  remediation_scene: program-synthesis.s4
-  variants:
-  - id: program-synthesis.transfer.1
-    prompt: A learned rule fits all positive examples but predicts everything positive. What additional evidence
-      helps?
-    options:
-    - id: a
-      text: Negative examples and an appropriate specification
-    - id: b
-      text: Only more copies of the same positives
-    - id: c
-      text: A longer rule name
-    answer: a
-    feedback: Negative evidence and constraints can rule out overly broad hypotheses.
-  - id: program-synthesis.transfer.2
-    prompt: Generated code compiles successfully. What remains unestablished?
-    options:
-    - id: b
-      text: Whether its syntax was accepted
-    - id: c
-      text: Whether a compiler ran
-    - id: a
-      text: Whether its behavior meets the intended specification
-    answer: a
-    feedback: Compilation is a syntactic and limited semantic check, not full task validation.
+  - id: program-synthesis.base
+    objective_ref: objective.program-synthesis
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Examples can underdetermine the answer: trace the inputs, operation, and result before choosing.'
+    remediation_scene: program-synthesis.s2
+    variants:
+      - id: program-synthesis.base.1
+        prompt: What does program synthesis search for?
+        options:
+          - id: c
+            text: A guaranteed theory of every task
+          - id: a
+            text: A program meeting a specification within a chosen language
+          - id: b
+            text: Only a prettier source-code font
+        answer: a
+        feedback: The candidate space consists of programs or rules constrained by the synthesis setup.
+        retired: true
+      - id: program-synthesis.base.2
+        prompt: Do examples 1 → 2 and 2 → 4 uniquely determine doubling?
+        options:
+          - id: a
+            text: No; multiple functions fit those examples
+          - id: b
+            text: Yes; two examples always determine every function
+          - id: c
+            text: Only if examples are integers
+        answer: a
+        feedback: Finite observations usually leave many possible generalizations.
+        retired: true
+  - id: program-synthesis.transfer
+    objective_ref: objective.program-synthesis
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Verify before relying on execution: trace the inputs, operation, and result before choosing.'
+    remediation_scene: program-synthesis.s4
+    variants:
+      - id: program-synthesis.transfer.1
+        prompt: A learned rule fits all positive examples but predicts everything positive. What additional evidence helps?
+        options:
+          - id: a
+            text: Negative examples and an appropriate specification
+          - id: b
+            text: Only more copies of the same positives
+          - id: c
+            text: A longer rule name
+        answer: a
+        feedback: Negative evidence and constraints can rule out overly broad hypotheses.
+        retired: true
+      - id: program-synthesis.transfer.2
+        prompt: Generated code compiles successfully. What remains unestablished?
+        options:
+          - id: b
+            text: Whether its syntax was accepted
+          - id: c
+            text: Whether a compiler ran
+          - id: a
+            text: Whether its behavior meets the intended specification
+        answer: a
+        feedback: Compilation is a syntactic and limited semantic check, not full task validation.
+        retired: true
+  - id: program-synthesis.base.v2
+    objective_ref: objective.program-synthesis
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: List the candidate programs that fit so far. A useful example or rule is one that makes those candidates disagree.
+    remediation_scene: program-synthesis.s2
+    variants:
+      - id: program-synthesis.base.v2.1
+        prompt: The examples 1 → 2 and 2 → 4 fit both 2x and 2^x. Which new input tells them apart?
+        options:
+          - id: b
+            text: 1, because it's the smallest input
+          - id: a
+            text: 3, because the two give 6 and 8
+          - id: c
+            text: 2, because it repeats a known example
+        answer: a
+        feedback: A separating input is one where the candidates disagree. At 3, 2x gives 6 and 2^x gives 8. At 1 and 2 they agree, which is exactly why both fit.
+      - id: program-synthesis.base.v2.2
+        prompt: The single example "Anna Avery → A. Avery" fits two programs, one using the first initial and one using the last initial. What is the best next step?
+        options:
+          - id: c
+            text: Pick the program the search happened to find first
+          - id: b
+            text: Add another example whose two initials are both A
+          - id: a
+            text: Add an example whose first and last initials differ
+        answer: a
+        feedback: An example such as "Alan Turing → A. Turing" makes the two programs disagree, so only one survives. Another double-A name keeps the tie, and search order says nothing about what you meant.
+      - id: program-synthesis.base.v2.3
+        prompt: An ILP system sees only positive grandparent examples and returns grandparent(X, Z) :- parent(X, Y). Why?
+        options:
+          - id: a
+            text: With no negatives, a broader rule covers the positives just as well
+          - id: b
+            text: The rule is right, since every grandparent is also a parent
+          - id: c
+            text: The background facts must contain a mistake about parents
+        answer: a
+        feedback: The broad rule covers every positive, and nothing penalizes it for also covering Grandparent(Rosa, Ben). Every grandparent is a parent, but the rule claims the reverse; negative examples expose that.
+      - id: program-synthesis.base.v2.4
+        prompt: What does a program synthesizer need to get started?
+        options:
+          - id: b
+            text: A finished program to translate into a faster language
+          - id: a
+            text: A specification and a space of programs to search
+          - id: c
+            text: A large labeled dataset to train network weights
+        answer: a
+        feedback: Synthesis searches a language (like the six-block name DSL) for a program meeting the specification (like input–output examples). Translating finished code is compiling, and training weights is a different kind of learning.
+      - id: program-synthesis.base.v2.5
+        prompt: Two programs fit every example. One is last_name alone; the other is a 30-block program that happens to produce the same outputs. Which does a typical ranking prefer?
+        options:
+          - id: c
+            text: Whichever of the two the search found last
+          - id: b
+            text: The 30-block one, since it handles more cases explicitly
+          - id: a
+            text: The short one, since simpler programs tend to generalize
+        answer: a
+        feedback: Ranking usually favors the shortest or most general program, an Occam's razor preference. A long program that matches by coincidence is likely to behave oddly on new inputs.
+  - id: program-synthesis.transfer.v2
+    objective_ref: objective.program-synthesis
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what inputs the examples didn't cover, and what evidence would catch a program that only fits them by coincidence.
+    remediation_scene: program-synthesis.s4
+    variants:
+      - id: program-synthesis.transfer.v2.1
+        prompt: A synthesized date formatter passes all 5 examples you typed, every one from March. Before running it on a year of data, which test is most useful?
+        options:
+          - id: a
+            text: Dates from other months, including single-digit days
+          - id: b
+            text: The same five March dates run a second time
+          - id: c
+            text: A check that the program compiles without errors
+        answer: a
+        feedback: Inputs unlike the examples are where a coincidental fit breaks, such as a program that always writes "03" for the month. Rerunning known examples or compiling can't reveal that.
+      - id: program-synthesis.transfer.v2.2
+        prompt: An AI assistant writes a script to rename 10,000 files. What is the safest way to check it?
+        options:
+          - id: c
+            text: Read through the code once, and run it on the real files if it looks right
+          - id: a
+            text: Run it on copies of a few files and inspect what happens
+          - id: b
+            text: Ask the assistant whether its script handles every case
+        answer: a
+        feedback: Running on copies tests real behavior without risking the originals. Reading code misses surprising cases, and the assistant's own description isn't a test.
+      - id: program-synthesis.transfer.v2.3
+        prompt: A system generates 1,000 candidate programs for a puzzle and runs each on the 3 example tests. Twelve pass. What does that tell you?
+        options:
+          - id: b
+            text: The twelve are correct, since they pass each test given
+          - id: a
+            text: Twelve fit the examples; other inputs may separate them
+          - id: c
+            text: The 988 failures show that the puzzle is ambiguous
+        answer: a
+        feedback: Passing three examples makes a program consistent with them, as AlphaCode-style filtering assumes; hidden tests may still tell the twelve apart. Failures say those programs were wrong, not that the puzzle is unclear.
+      - id: program-synthesis.transfer.v2.4
+        prompt: An ILP system learns can_borrow(Person, Book) from records of loans that happened. Its rule says anyone can borrow any book. What evidence would fix this?
+        options:
+          - id: a
+            text: Records of requests that were refused
+          - id: b
+            text: More records of loans that went through
+          - id: c
+            text: More background facts about each book
+        answer: a
+        feedback: Refused requests are negative examples, which rule out the too-broad rule. More successful loans are positives the broad rule already covers.
+      - id: program-synthesis.transfer.v2.5
+        prompt: You want a synthesized function that sorts a list of numbers. Which specification leaves the least room for a wrong program?
+        options:
+          - id: c
+            text: '"The output is in increasing order"'
+          - id: b
+            text: Three input–output examples of short sorted lists
+          - id: a
+            text: '"The output is in increasing order and rearranges the input"'
+        answer: a
+        feedback: '"Increasing order" alone is satisfied by returning an empty list. Adding "rearranges the input" rules that out. Three examples leave room for programs that only handle those lists.'
+  - id: program-synthesis.calc
+    objective_ref: objective.program-synthesis
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Plug each example input into every candidate and cross out any candidate that gives a different output.
+    remediation_scene: program-synthesis.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: program-synthesis.calc.1
+        prompt: 'Candidate programs: x + 2, 2x, x², 2^x, 3x − 2. Examples: 1 → 2 and 2 → 4. How many candidates fit both examples?'
+        answer: 2
+        feedback: '2x and 2^x give 2 and 4. x + 2 gives 3 at input 1, x² gives 1, and 3x − 2 gives 1, so they are out.'
+      - id: program-synthesis.calc.2
+        prompt: 'Candidate programs: x + 2, 2x, x², 2^x, 3x − 2. Example: 2 → 4. How many candidates fit?'
+        answer: 5
+        feedback: At input 2, every candidate gives 4 (2+2, 2·2, 2², 2², 3·2−2). One example can leave the whole search space standing.
+      - id: program-synthesis.calc.3
+        prompt: 'Candidate programs: x + 2, 2x, x², 2^x, 3x − 2. Example: 1 → 1. How many candidates fit?'
+        answer: 2
+        feedback: 'x² gives 1 and 3x − 2 gives 1. The others give 3, 2, and 2.'
+      - id: program-synthesis.calc.4
+        prompt: 'Candidate programs: x + 2, 2x, x², 2^x, 3x − 2. Example: 0 → 0. How many candidates fit?'
+        answer: 2
+        feedback: '2x and x² give 0. x + 2 gives 2, 2^x gives 1, and 3x − 2 gives −2.'
+      - id: program-synthesis.calc.5
+        prompt: 'Candidate programs: x + 2, 2x, x², 2^x, 3x − 2. Example: 3 → 9. How many candidates fit?'
+        answer: 1
+        feedback: 'Only x² gives 9. The others give 5, 6, 8, and 7, so one well-chosen example can settle it.'

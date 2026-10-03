@@ -107,9 +107,9 @@ describe("curriculum depth revision", () => {
         l.routes.core.at(-1),
       );
       const remaining = questionsRemaining(l, c, restored, "core");
-      expect(remaining.items).toHaveLength(2);
+      expect(remaining.items).toHaveLength(objective.families.length);
       expect(
-        remaining.items.every((q) => !q.retired && q.id.includes(".v2.")),
+        remaining.items.every((q) => !q.retired),
       ).toBe(true);
       const practice = l.scenes.find(
         (s) => l.routes.core.includes(s.id) && s.activity,

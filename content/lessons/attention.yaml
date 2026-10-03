@@ -1,296 +1,493 @@
 schema_version: 0.2-draft
 lesson:
   id: attention
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: 'Attention: queries, keys, and values'
   state: draft
-  summary: Distinguish query/key scoring from the weighted combination of value vectors.
+  summary: How does the word "it" know whether to borrow meaning from "bird" or "road"? Build queries, keys, and values from scratch and score three tokens by hand.
   slot: M15.2
   category: learning
   sources:
-  - title: Dive into Deep Learning — queries, keys, and values
-    url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/queries-keys-values.html
-  - title: Attention Is All You Need
-    url: https://arxiv.org/abs/1706.03762
+    - title: "Attention Is All You Need, section 3.2 (Vaswani et al., 2017)"
+      url: https://arxiv.org/abs/1706.03762
+    - title: Dive into Deep Learning — queries, keys, and values
+      url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/queries-keys-values.html
+    - title: "The Illustrated Transformer (Jay Alammar, 2018)"
+      url: https://jalammar.github.io/illustrated-transformer/
 objectives:
-- id: objective.attention
-  version: 1-draft
-  statement: Distinguish query/key scoring from the weighted combination of value vectors.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - attention.base
-  - attention.transfer
-  prerequisites:
-  - anyOf:
-    - objective.embeddings
-  - anyOf:
-    - objective.vectors
+  - id: objective.attention
+    version: 2-draft
+    statement: Distinguish query/key scoring from the weighted combination of value vectors.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - attention.base.v2
+      - attention.transfer.v2
+      - attention.calculate
+    prerequisites:
+      - anyOf:
+          - objective.embeddings
+      - anyOf:
+          - objective.vectors
 scenes:
-- title: Ask what information this position needs
-  markdown: 'Consider “the bird rested because it was tired”. To update the representation at “it”, the model
-    can combine information from other positions. Attention provides a learned mechanism for that combination.
+  - title: What does "it" need?
+    markdown: |-
+      Read these two sentences:
 
+      - The bird didn't cross the road because it was too *tired*.
+      - The bird didn't cross the road because it was too *wide*.
 
-    A query represents the current position for scoring. Keys represent candidate positions for comparison.
-    Values provide the information to be combined. These names describe computational roles, not literal questions
-    and answers in English.'
-  id: attention.s1
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention
-  text_mode: 'Consider “the bird rested because it was tired”. To update the representation at “it”, the model
-    can combine information from other positions. Attention provides a learned mechanism for that combination.
+      The words are identical up to "it", yet "it" means the bird in one and the road in the other. To understand "it", a model has to pull in information from other words, and *which* words depends on the rest of the sentence.
 
+      **Self-attention** does this for every position at once. Each token builds a new vector as a weighted mix of all the tokens' vectors. To set the weights, every token plays three roles:
 
-    A query represents the current position for scoring. Keys represent candidate positions for comparison.
-    Values provide the information to be combined. These names describe computational roles, not literal questions
-    and answers in English.'
-- title: Make one score for each candidate
-  markdown: 'In a small dot-product example, let the query be [1, 0]. Candidate keys [2, 0] and [0, 2] produce
-    scores 2 and 0. Changing the query to [0, 1] reverses which key scores higher.
+      | Role | The question it answers | In "it was too tired" |
+      | --- | --- | --- |
+      | **Query** | What am I looking for? | "it" looks for a noun that can get tired |
+      | **Key** | What can I be found by? | "bird" advertises "animal noun" |
+      | **Value** | What do I pass on if chosen? | "bird" hands over its meaning |
 
+      Each query is compared with every key. The better the match, the more of that token's value goes into the mix.
+    id: attention.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.attention
+  - id: attention.extension-roles-before-arithmetic
+    title: Why three vectors instead of one?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention
+    markdown: |-
+      Every token starts with one embedding, $x$. Why not just compare embeddings directly, $x_{\text{it}} \cdot x_{\text{bird}}$?
 
-    Real attention usually learns projections that construct queries, keys, and values from representations.
-    The example starts after those projections and uses invented numbers so you can inspect the operation.'
-  bridges:
-  - vectors
-  id: attention.s2
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention
-  text_mode: 'In a small dot-product example, let the query be [1, 0]. Candidate keys [2, 0] and [0, 2] produce
-    scores 2 and 0. Changing the query to [0, 1] reverses which key scores higher.
+      First, a vector's dot product with itself is $|x|^2$, and for vectors of similar length that beats its dot product with any other vector. Every token would mostly attend to itself.
 
+      Second, matching is lopsided. "It" is *looking for* a noun; "bird" *is* a noun but isn't looking for one. What a token seeks and what it offers are different things, so they need different vectors. What it passes on can differ again from how it gets found.
 
-    Real attention usually learns projections that construct queries, keys, and values from representations.
-    The example starts after those projections and uses invented numbers so you can inspect the operation.'
-- title: Scores decide how much; values decide what
-  markdown: 'Suppose scoring and normalization produce weights 0.75 and 0.25. Let the corresponding values
-    be [4, 0] and [0, 8]. The attention output is 0.75 × [4, 0] + 0.25 × [0, 8] = [3, 2].
+      So the model learns three matrices, $W_Q$, $W_K$, and $W_V$, and multiplies each embedding by all three:
 
+      $$q = x W_Q, \qquad k = x W_K, \qquad v = x W_V$$
 
-    The weighted sum uses values, not keys. If the first value changes while queries and keys stay fixed, the
-    output can change even though the weights stay the same.'
-  type: table
-  columns:
-  - Candidate
-  - Weight
-  - Value
-  - Contribution
-  rows:
-  - - A
-    - 0.75
-    - '[4, 0]'
-    - '[3, 0]'
-  - - B
-    - 0.25
-    - '[0, 8]'
-    - '[0, 2]'
-  id: attention.s3
-  depth: mechanics
-  objective_refs:
-  - objective.attention
-  text_mode: 'Suppose scoring and normalization produce weights 0.75 and 0.25. Let the corresponding values
-    be [4, 0] and [0, 8]. The attention output is 0.75 × [4, 0] + 0.25 × [0, 8] = [3, 2].
+      Multiplying by a learned matrix like this is called a **projection**. Training sets the numbers in the three matrices; nobody writes "look for a noun" into them by hand.
+    bridges:
+      - vectors
+      - matrices-tensors
+  - title: Score three tokens by hand
+    markdown: |-
+      Shrink the sentence to three tokens, "bees make honey", with invented two-number embeddings. We'll use easy matrices: $W_Q = \begin{bmatrix} 0 & 2 \\ 2 & 0 \end{bmatrix}$ swaps and doubles, $W_K$ is the identity (keys equal embeddings), and $W_V$ multiplies by 4. For "make", $q = [0, 1]\,W_Q = [2, 0]$.
 
+      | Token | $x$ | $q = xW_Q$ | $k = xW_K$ | $v = xW_V$ |
+      | --- | --- | --- | --- | --- |
+      | bees | [1, 0] | [0, 2] | [1, 0] | [4, 0] |
+      | make | [0, 1] | [2, 0] | [0, 1] | [0, 4] |
+      | honey | [1, 1] | [2, 2] | [1, 1] | [4, 4] |
 
-    The weighted sum uses values, not keys. If the first value changes while queries and keys stay fixed, the
-    output can change even though the weights stay the same.'
-- title: Self-attention and cross-attention
-  markdown: 'In self-attention, queries, keys, and values are constructed from the same sequence of representations.
-    Different projections still give them different roles. In cross-attention, queries come from one source
-    while keys and values come from another.
+      Now score the query of "make" against every key with a dot product (multiply matching entries, then add):
 
+      - bees: $[2, 0] \cdot [1, 0] = 2$
+      - make: $[2, 0] \cdot [0, 1] = 0$
+      - honey: $[2, 0] \cdot [1, 1] = 2$
 
-    For example, an image-generating system can condition visual representations on representations of a text
-    prompt. That introduces information from another source; it does not turn the attention output directly
-    into vocabulary probabilities.'
-  id: attention.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention
-  text_mode: 'In self-attention, queries, keys, and values are constructed from the same sequence of representations.
-    Different projections still give them different roles. In cross-attention, queries come from one source
-    while keys and values come from another.
+      ```python run
+      import numpy as np
 
+      tokens = ["bees", "make", "honey"]
+      X = np.array([[1.0, 0.0],      # one row per token: its embedding
+                    [0.0, 1.0],
+                    [1.0, 1.0]])
+      W_Q = np.array([[0.0, 2.0],
+                      [2.0, 0.0]])
+      W_K = np.array([[1.0, 0.0],
+                      [0.0, 1.0]])
+      W_V = np.array([[4.0, 0.0],
+                      [0.0, 4.0]])
 
-    For example, an image-generating system can condition visual representations on representations of a text
-    prompt. That introduces information from another source; it does not turn the attention output directly
-    into vocabulary probabilities.'
-- title: Avoid two tempting shortcuts
-  markdown: 'First, attention is generally a weighted combination, not necessarily a hard choice of exactly
-    one token. Second, a weight is not a complete explanation of why a model made a decision. Other heads,
-    layers, residual paths, and nonlinear transformations also contribute.
+      Q, K, V = X @ W_Q, X @ W_K, X @ W_V
+      for name, M in [("Q", Q), ("K", K), ("V", V)]:
+          print(name, M.tolist())
 
+      i = tokens.index("make")
+      scores = K @ Q[i]                  # q_make · k_j for every j
+      for t, s in zip(tokens, scores):
+          print(f"score(make -> {t}) = {s:.0f}")
+      ```
 
-    You now know the roles of Q, K, and V. The next lesson supplies the missing scoring details: scaling, softmax
-    normalization, and which positions are allowed to participate.'
-  id: attention.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention
-  text_mode: 'First, attention is generally a weighted combination, not necessarily a hard choice of exactly
-    one token. Second, a weight is not a complete explanation of why a model made a decision. Other heads,
-    layers, residual paths, and nonlinear transformations also contribute.
+      :::predict What are the three scores for the query of "honey", [2, 2]?
+      $[2,2] \cdot [1,0] = 2$, $[2,2] \cdot [0,1] = 2$, and $[2,2] \cdot [1,1] = 4$. Change `"make"` to `"honey"` in the code to check.
+      :::
 
+      :::papers The same thing in matrix form
+      Stack the embeddings as rows of $X$. Then $Q = XW_Q$, $K = XW_K$, $V = XW_V$, and every score at once is the matrix $QK^\top$: row $i$, column $j$ holds $q_i \cdot k_j$. The "make" row of $QK^\top$ is $[2, 0, 2]$. The next lesson turns these raw scores into weights with the full equation, $\text{softmax}(QK^\top / \sqrt{d_k})\,V$.
+      :::
+    bridges:
+      - vectors
+      - matrices-tensors
+    diagram:
+      caption: One embedding matrix X becomes queries, keys, and values. Q and K make the weights; the weights mix V.
+      description: The token vectors X are multiplied by three learned matrices to give queries Q, keys K, and values V. Q and K meet in the scores, one dot product per pair of tokens. Softmax turns the scores into weights. The weights and V together give the output, a weighted sum of values for each token.
+      nodes:
+        - id: x
+          label: Token vectors X
+          col: 0
+          row: 1
+          tone: data
+        - id: q
+          label: Queries Q = XW_Q
+          col: 1
+          row: 0
+        - id: k
+          label: Keys K = XW_K
+          col: 1
+          row: 1
+        - id: v
+          label: Values V = XW_V
+          col: 1
+          row: 2
+        - id: scores
+          label: Scores QKᵀ
+          note: one dot product per pair
+          col: 2
+          row: 0
+          tone: accent
+        - id: weights
+          label: Weights
+          note: softmax, next lesson
+          col: 3
+          row: 0
+        - id: out
+          label: Output
+          note: weighted sum of values
+          col: 4
+          row: 1
+          tone: accent
+      edges:
+        - from: x
+          to: q
+          label: W_Q
+        - from: x
+          to: k
+          label: W_K
+        - from: x
+          to: v
+          label: W_V
+        - from: q
+          to: scores
+        - from: k
+          to: scores
+        - from: scores
+          to: weights
+        - from: weights
+          to: out
+          label: how much
+        - from: v
+          to: out
+          label: what
+    id: attention.s2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention
+  - title: Scores decide how much; values decide what
+    markdown: |-
+      The next lesson turns scores into weights that are positive and add up to 1. Jump ahead to that point with a small case: a query's weights come out 0.75 for candidate A and 0.25 for candidate B, whose values are [4, 0] and [0, 8]. The output is
 
-    You now know the roles of Q, K, and V. The next lesson supplies the missing scoring details: scaling, softmax
-    normalization, and which positions are allowed to participate.'
-- id: attention.extension-roles-before-arithmetic
-  title: Rehearse the three roles before calculating
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention
-  markdown: 'Keep three labels beside your example: query, key, and value. The **query** describes the position
-    being updated for comparison. Each **key** participates in a match score with that query. Each **value**
-    is information that may be carried into the result.
+      $$0.75 \times [4, 0] + 0.25 \times [0, 8] = [3, 0] + [0, 2] = [3, 2]$$
 
+      Look at what got mixed: the values, not the keys. The keys' only job was to help set the weights. Once the weights exist, the keys drop out of the calculation.
+    type: table
+    columns:
+      - Candidate
+      - Weight
+      - Value
+      - Contribution
+    rows:
+      - - A
+        - 0.75
+        - '[4, 0]'
+        - '[3, 0]'
+      - - B
+        - 0.25
+        - '[0, 8]'
+        - '[0, 2]'
+    id: attention.s3
+    depth: mechanics
+    objective_refs:
+      - objective.attention
+  - id: attention.extension-changed-values
+    title: Change what is carried without changing the scores
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention
+    markdown: |-
+      Keep the weights 0.75 and 0.25, which came from queries and keys. Now change only B's value, from [0, 8] to [0, 4].
 
-    As a loose analogy, a library request is compared with catalog descriptions before choosing content to
-    read. In actual attention, learned numerical transformations make all three vectors. A high match score
-    does not prove that the content is true or relevant to the real-world question.'
-  text_mode: 'Keep three labels beside your example: query, key, and value. The **query** describes the position
-    being updated for comparison. Each **key** participates in a match score with that query. Each **value**
-    is information that may be carried into the result.
+      :::predict What is the new output?
+      B's contribution halves from [0, 2] to [0, 1], so the output becomes [3, 1]. No query or key changed, so the weights stayed exactly the same, yet the output moved.
+      :::
 
+      This is the split to remember. Queries and keys decide *how much* each token contributes. Values decide *what* it contributes. In a trained model that means $W_Q$ and $W_K$ learn *where to look*, while $W_V$ learns *what to carry back*.
+    bridges:
+      - arithmetic
+      - vectors
+  - title: Self-attention and cross-attention
+    markdown: |-
+      Everything so far was **self-attention**: queries, keys, and values all came from the same three tokens. In **cross-attention**, the queries come from one sequence and the keys and values come from another.
 
-    As a loose analogy, a library request is compared with catalog descriptions before choosing content to
-    read. In actual attention, learned numerical transformations make all three vectors. A high match score
-    does not prove that the content is true or relevant to the real-world question.'
-  bridges:
-  - vectors
-  - matrices-tensors
-- id: attention.extension-changed-values
-  title: Change what is carried without changing the scores
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention
-  markdown: 'Keep the mixing weights from the previous page: 0.75 and 0.25. The original values [4, 0] and
-    [0, 8] produced [3, 2]. Now predict what happens when only the second value becomes [0, 4].
+      The translation decoder from the last lesson is the classic case. Queries come from the French words written so far; keys and values come from the English encoder states. Text-to-image models such as Stable Diffusion use cross-attention too: each patch of the image being drawn sends a query, and the words of your prompt supply the keys and values. A patch in the sky can pull in "sunset" while a patch near the bottom pulls in "beach".
 
+      The machinery is identical. Only the source of the rows changes: $Q$ from one sequence, $K$ and $V$ from the other.
+    id: attention.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention
+  - title: Attention blends; it rarely picks
+    markdown: |-
+      :::mixup "Attention picks the most relevant word and copies it."
+      Attention takes a *weighted average*. With weights [0.75, 0.25], the output is three parts A and one part B, not A alone. Weights can come close to 0 and 1 and act almost like a pick, but by default every allowed token contributes something.
+      :::
 
-    Its contribution halves from [0, 2] to [0, 1], so the new output is [3, 1]. No query or key changed, so
-    the mixing weights stay fixed. This isolates the distinction: changing what is carried can change the answer
-    without changing how much each candidate contributes.'
-  text_mode: 'Keep the mixing weights from the previous page: 0.75 and 0.25. The original values [4, 0] and
-    [0, 8] produced [3, 2]. Now predict what happens when only the second value becomes [0, 4].
+      That blend is what makes attention trainable. A hard pick would jump from one word to another as the scores changed. A blend shifts smoothly, so gradient descent can nudge $W_Q$ and $W_K$ a little at a time.
 
-
-    Its contribution halves from [0, 2] to [0, 1], so the new output is [3, 1]. No query or key changed, so
-    the mixing weights stay fixed. This isolates the distinction: changing what is carried can change the answer
-    without changing how much each candidate contributes.'
-  bridges:
-  - arithmetic
-  - vectors
-- id: attention.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.attention
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Queries and keys help compute how strongly to weight candidates. Values supply the vectors that
-    are mixed. Keep “how much” separate from “what information”.
-- id: attention.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.attention
-  markdown: Queries and keys help compute how strongly to weight candidates. Values supply the vectors that
-    are mixed. Keep “how much” separate from “what information”.
-  text_mode: Queries and keys help compute how strongly to weight candidates. Values supply the vectors that
-    are mixed. Keep “how much” separate from “what information”.
+      You now have raw scores, such as [2, 0, 2] for "make". The next lesson finishes the job: divide by $\sqrt{d_k}$, apply softmax, and block the positions a token isn't allowed to see.
+    id: attention.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention
+  - id: attention.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.attention
+    markdown: A few dot products to score by hand, plus code, music, and image-generation models, test whether you can keep "how much" (queries and keys) apart from "what" (values).
+    takeaway: |-
+      Each token makes a query, a key, and a value by multiplying its embedding by three learned matrices. Query–key dot products decide how much each token contributes; the values decide what gets mixed.
+  - id: attention.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.attention
+    markdown: |-
+      Queries and keys help compute how strongly to weight candidates. Values supply the vectors that are mixed. Keep “how much” separate from “what information”.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - attention.s1
-    - attention.extension-roles-before-arithmetic
-    - attention.s2
-    - attention.s3
-    - attention.extension-changed-values
-    - attention.s4
-    - attention.s5
-    - attention.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - attention.s1
+        - attention.extension-roles-before-arithmetic
+        - attention.s2
+        - attention.s3
+        - attention.extension-changed-values
+        - attention.s4
+        - attention.s5
+        - attention.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     attention.recap: attention.check
 assessment_families:
-- response_type: single_choice
-  hint: Queries and keys produce compatibility scores. The final mixture uses the value vectors.
-  variants:
-  - prompt: In an attention head, which objects are combined using the normalized attention weights?
-    options:
-    - id: a
-      text: Vocabulary IDs interpreted as probabilities.
-    - id: b
-      text: The attention weights alone, without any values.
-    - id: answer
-      text: Value vectors.
-    answer: answer
-    feedback: The weights specify a weighted sum of value vectors. Token IDs and vocabulary probabilities belong
-      to other parts of the model.
-    id: attention.base.1
-  - prompt: A query [1, 0] is compared by dot product with keys [3, 1] and [0, 2]. Which raw score is higher?
-    options:
-    - id: b
-      text: Both scores are automatically 0.5.
-    - id: answer
-      text: The first key’s score, 3.
-    - id: a
-      text: The second key’s score, 2.
-    answer: answer
-    feedback: The dot products are 1 × 3 + 0 × 1 = 3 and 1 × 0 + 0 × 2 = 0. These raw scores still need the
-      chosen normalization.
-    id: attention.base.2
-  id: attention.base
-  objective_ref: objective.attention
-  task: base
-  points: 1
-  remediation_scene: attention.s1
-- response_type: single_choice
-  hint: Hold queries and keys fixed, then consider what changing the values does to their weighted sum.
-  variants:
-  - prompt: Attention weights stay [0.5, 0.5]. Values change from [2, 0] and [0, 2] to [4, 0] and [0, 2]. What
-      happens?
-    options:
-    - id: b
-      text: The token IDs are necessarily retrained.
-    - id: answer
-      text: The output changes from [1, 1] to [2, 1].
-    - id: a
-      text: The output must stay [1, 1] because the weights are unchanged.
-    answer: answer
-    feedback: Fixed weights do not imply a fixed output when the values change. Half of [4, 0] plus half of
-      [0, 2] is [2, 1].
-    id: attention.transfer.1
-  - prompt: An image representation supplies queries while text representations supply keys and values. What
-      kind of attention is this?
-    options:
-    - id: answer
-      text: Cross-attention between different representation sources.
-    - id: a
-      text: Self-attention over one source by definition.
-    - id: b
-      text: A guarantee that every generated object matches the prompt.
-    answer: answer
-    feedback: The source of queries differs from the source of keys and values, which makes this cross-attention.
-      Conditioning is a mechanism, not a guarantee of perfect output.
-    id: attention.transfer.2
-  id: attention.transfer
-  objective_ref: objective.attention
-  task: transfer
-  points: 1
-  remediation_scene: attention.s1
+  - response_type: single_choice
+    hint: Queries and keys produce compatibility scores. The final mixture uses the value vectors.
+    variants:
+      - prompt: In an attention head, which objects are combined using the normalized attention weights?
+        options:
+          - id: a
+            text: Vocabulary IDs interpreted as probabilities.
+          - id: b
+            text: The attention weights alone, without any values.
+          - id: answer
+            text: Value vectors.
+        answer: answer
+        feedback: The weights specify a weighted sum of value vectors. Token IDs and vocabulary probabilities belong to other parts of the model.
+        id: attention.base.1
+        retired: true
+      - prompt: A query [1, 0] is compared by dot product with keys [3, 1] and [0, 2]. Which raw score is higher?
+        options:
+          - id: b
+            text: Both scores are automatically 0.5.
+          - id: answer
+            text: The first key’s score, 3.
+          - id: a
+            text: The second key’s score, 2.
+        answer: answer
+        feedback: The dot products are 1 × 3 + 0 × 1 = 3 and 1 × 0 + 0 × 2 = 0. These raw scores still need the chosen normalization.
+        id: attention.base.2
+        retired: true
+    id: attention.base
+    objective_ref: objective.attention
+    task: base
+    points: 1
+    remediation_scene: attention.s1
+  - response_type: single_choice
+    hint: Hold queries and keys fixed, then consider what changing the values does to their weighted sum.
+    variants:
+      - prompt: Attention weights stay [0.5, 0.5]. Values change from [2, 0] and [0, 2] to [4, 0] and [0, 2]. What happens?
+        options:
+          - id: b
+            text: The token IDs are necessarily retrained.
+          - id: answer
+            text: The output changes from [1, 1] to [2, 1].
+          - id: a
+            text: The output must stay [1, 1] because the weights are unchanged.
+        answer: answer
+        feedback: Fixed weights do not imply a fixed output when the values change. Half of [4, 0] plus half of [0, 2] is [2, 1].
+        id: attention.transfer.1
+        retired: true
+      - prompt: An image representation supplies queries while text representations supply keys and values. What kind of attention is this?
+        options:
+          - id: answer
+            text: Cross-attention between different representation sources.
+          - id: a
+            text: Self-attention over one source by definition.
+          - id: b
+            text: A guarantee that every generated object matches the prompt.
+        answer: answer
+        feedback: The source of queries differs from the source of keys and values, which makes this cross-attention. Conditioning is a mechanism, not a guarantee of perfect output.
+        id: attention.transfer.2
+        retired: true
+    id: attention.transfer
+    objective_ref: objective.attention
+    task: transfer
+    points: 1
+    remediation_scene: attention.s1
+  - id: attention.base.v2
+    objective_ref: objective.attention
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Split the job in two. Queries and keys only set the weights ("how much"); the weights then mix the values ("what").
+    remediation_scene: attention.extension-changed-values
+    variants:
+      - id: attention.base.v2.1
+        prompt: After the weights are computed, which vectors are multiplied by them and added up to make the attention output?
+        options:
+          - id: b
+            text: The keys, since they are what the query was matched against
+          - id: a
+            text: The values, one per token, each scaled by its weight
+          - id: c
+            text: The queries, since each output belongs to one query
+        answer: a
+        feedback: The output is a weighted sum of value vectors. Keys are tempting because they were matched, but their job ends once the scores are computed.
+      - id: attention.base.v2.2
+        prompt: A token's key and value are both made from the same embedding x. Why does the model use two separate matrices, W_K and W_V?
+        options:
+          - id: c
+            text: So that the value vectors come out already normalized to sum to 1
+          - id: b
+            text: So that keys can be longer than values, making scores more precise
+          - id: a
+            text: So that how a token gets found can differ from what it passes on
+        answer: a
+        feedback: The key is tuned for matching and the value for carrying content, and those needs differ. Normalization happens to the scores (with softmax), not to the values.
+      - id: attention.base.v2.3
+        prompt: During an experiment you change only W_V and keep W_Q and W_K fixed. What happens to one token's attention weights and output?
+        options:
+          - id: a
+            text: The weights stay the same, but the output can change
+          - id: b
+            text: The weights change, but the output stays the same
+          - id: c
+            text: Both stay the same, because the scores haven't changed
+        answer: a
+        feedback: Weights depend only on queries and keys, so they don't move. The output mixes values, and W_V changes every value. Unchanged scores fix the weights, not the output.
+      - id: attention.base.v2.4
+        prompt: Why don't transformers score tokens by taking the dot product of their raw embeddings, x_i · x_j?
+        options:
+          - id: c
+            text: Embeddings are lists of IDs, and IDs can't be multiplied together
+          - id: a
+            text: Each token would mostly match itself, and seeking would equal offering
+          - id: b
+            text: Embeddings have too few numbers to give different scores to each pair
+        answer: a
+        feedback: A vector's dot product with itself tends to be the largest, and with one vector per token "what I look for" would equal "what I offer". Separate query and key projections fix both. Embeddings are learned vectors, not IDs.
+  - id: attention.transfer.v2
+    objective_ref: objective.attention
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: For each vector in the scenario, ask which role it plays. The token doing the updating sends the query; the tokens being consulted offer keys (to be matched) and values (to be mixed).
+    remediation_scene: attention.s4
+    variants:
+      - id: attention.transfer.v2.1
+        prompt: 'A code model is updating its vector for "qty" in the line total = price * qty. It should draw on "price". Which vector belonging to "price" is compared with the query from "qty"?'
+        options:
+          - id: b
+            text: The value of "price"
+          - id: c
+            text: The query of "price"
+          - id: a
+            text: The key of "price"
+        answer: a
+        feedback: The query of the token being updated is matched against every other token's key. The value of "price" is what gets mixed in afterwards, in proportion to that match.
+      - id: attention.transfer.v2.2
+        prompt: In a text-to-image model, each patch of the image being generated sends a query, while the words of the prompt supply the keys and values. What kind of attention is this?
+        options:
+          - id: a
+            text: Cross-attention, since queries and keys come from different sequences
+          - id: c
+            text: Masked attention, since the image is generated after the prompt
+          - id: b
+            text: Self-attention, since the patches and words are inside one model
+        answer: a
+        feedback: Queries from one sequence (image patches) and keys and values from another (prompt words) is the definition of cross-attention. Being in one model doesn't make it self-attention.
+      - id: attention.transfer.v2.3
+        prompt: A head gives the tokens of "the cat sat" weights [0.6, 0.3, 0.1] when updating "sat". A teammate says the output is simply a copy of the value of "the". What is more accurate?
+        options:
+          - id: c
+            text: It is a copy of the value of "the", since that token has the top weight
+          - id: a
+            text: It blends all three values, with 60% from "the", 30% "cat", 10% "sat"
+          - id: b
+            text: It is the average of the three values, since the weights sum to 1
+        answer: a
+        feedback: Attention takes a weighted average, so each value contributes in proportion to its weight. Copying only the top token ignores the other 40%, and a plain average ignores the weights.
+      - id: attention.transfer.v2.4
+        prompt: A music model notices that bar 9 repeats the melody of bar 1. For bar 9's vector to draw on bar 1, which dot product must come out large?
+        options:
+          - id: b
+            text: The key of bar 9 with the query of bar 1
+          - id: a
+            text: The query of bar 9 with the key of bar 1
+          - id: c
+            text: The value of bar 9 with the value of bar 1
+        answer: a
+        feedback: Bar 9 is the one being updated, so its query is scored against bar 1's key. The reverse pairing would update bar 1 instead, and values are never compared with each other.
+  - id: attention.calculate
+    objective_ref: objective.attention
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Multiply the matching entries of the query and the key, then add the products. Watch the signs.
+    remediation_scene: attention.s2
+    absolute_tolerance: 0.001
+    variants:
+      - id: attention.calculate.1
+        prompt: A query is [1, 2] and a key is [3, 1]. What is their raw attention score (dot product)?
+        answer: 5
+        feedback: 1 × 3 + 2 × 1 = 3 + 2 = 5.
+      - id: attention.calculate.2
+        prompt: A query is [2, −1] and a key is [1, 4]. What is their raw attention score?
+        answer: -2
+        feedback: 2 × 1 + (−1) × 4 = 2 − 4 = −2. A negative score means this key is a poor match, so it will get a small weight after softmax.
+      - id: attention.calculate.3
+        prompt: A query is [0.5, 2] and a key is [4, 1]. What is their raw attention score?
+        answer: 4
+        feedback: 0.5 × 4 + 2 × 1 = 2 + 2 = 4.
+      - id: attention.calculate.4
+        prompt: A query is [1, 0, 2] and a key is [2, 5, 1]. What is their raw attention score?
+        answer: 4
+        feedback: 1 × 2 + 0 × 5 + 2 × 1 = 2 + 0 + 2 = 4. The middle entry contributes nothing because the query's middle entry is 0.
+      - id: attention.calculate.5
+        prompt: A query is [3, 1] and a key is [−1, 2]. What is their raw attention score?
+        answer: -1
+        feedback: 3 × (−1) + 1 × 2 = −3 + 2 = −1.

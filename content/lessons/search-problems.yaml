@@ -1,198 +1,467 @@
 schema_version: 0.2-draft
 lesson:
   id: search-problems
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Turn a goal into states and actions
   state: draft
-  summary: Build a tiny route problem and see why the cheapest first turn may lead to a costly journey.
+  summary: Seven towns, eight roads, one destination. Learn to write a problem so a computer can search it, and see why the cheapest first road can lead nowhere.
   slot: M05.1
   category: learning
   sources:
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
 objectives:
-- id: objective.search-problems
-  version: 1-draft
-  statement: A search problem defines states, actions, transitions, costs, and a goal test; the representation
-    determines which solutions can be considered.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - search-problems.base
-  - search-problems.transfer
-  prerequisites:
-  - anyOf:
-    - objective.algorithms-and-programs
-  - anyOf:
-    - objective.discrete-math
+  - id: objective.search-problems
+    version: 2-draft
+    statement: A search problem defines states, actions, transitions, costs, and a goal test; the representation determines which solutions can be considered.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - search-problems.base.v2
+      - search-problems.transfer.v2
+      - search-problems.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.algorithms-and-programs
+      - anyOf:
+          - objective.discrete-math
 scenes:
-- id: search-problems.s1
-  title: What must a state remember?
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.search-problems
-  markdown: 'A **state** describes where we are in a problem. For a route finder, it might name the current
-    city. An **action** is an allowed choice, such as taking a road; a **transition** describes what that choice
-    changes.
+  - id: search-problems.s1
+    title: Seven towns, one question
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.search-problems
+    markdown: |-
+      You're in Ashford and need to get to Greyhaven. You can probably spot a good route on the map below in seconds, but a computer can't *see* it. It needs the problem written out as situations, moves, costs, and a way to recognize arrival. Written that way, route finding becomes a **search problem**, and the same recipe works for puzzles, robot plans, and game moves.
 
+      Start with two pieces. A **state** is one situation the problem can be in: "the car is in Brook." An **action** is a move allowed from a state: "drive the Brook–Dunmore road." Each state has its own list of actions. From Ashford there are three: drive to Brook, to Cliff, or to Fairview.
 
-    If fuel limits which roads we can take, city alone is not enough: the state must also include remaining
-    fuel. Otherwise two visits to the same city may look identical even though different routes remain possible.
-    These states describe imagined possibilities; exploring one does not move the real car.'
-  text_mode: 'A **state** describes where we are in a problem. For a route finder, it might name the current
-    city. An **action** is an allowed choice, such as taking a road; a **transition** describes what that choice
-    changes.
+      Searching happens in the planner's head, not on the road. Asking "what if I drove to Fairview?" costs a moment of computing, not 2 km of fuel.
+    diagram:
+      caption: The town map used in this lesson and the next two. Roads run both ways; arrows point away from Ashford. Labels give each road's length.
+      description: Ashford, the start, has roads to Fairview (2 km), Brook (5 km), and Cliff (3 km). Fairview has no other road. Brook has roads to Dunmore (5 km) and straight to Greyhaven (12 km). Cliff has a road to Elmwood (4 km). Dunmore connects to Greyhaven (4 km), and Elmwood connects to Greyhaven (5 km). Greyhaven is the goal.
+      nodes:
+        - id: fairview
+          label: Fairview (F)
+          col: 0
+          row: 1
+        - id: ashford
+          label: Ashford (A)
+          note: start
+          col: 1
+          row: 1
+          tone: accent
+        - id: brook
+          label: Brook (B)
+          col: 2
+          row: 0
+        - id: cliff
+          label: Cliff (C)
+          col: 2
+          row: 2
+        - id: dunmore
+          label: Dunmore (D)
+          col: 3
+          row: 0
+        - id: elmwood
+          label: Elmwood (E)
+          col: 3
+          row: 2
+        - id: greyhaven
+          label: Greyhaven (G)
+          note: goal
+          col: 4
+          row: 1
+          tone: warn
+      edges:
+        - from: ashford
+          to: fairview
+          label: 2 km
+        - from: ashford
+          to: brook
+          label: 5 km
+        - from: ashford
+          to: cliff
+          label: 3 km
+        - from: brook
+          to: dunmore
+          label: 5 km
+        - from: brook
+          to: greyhaven
+          label: 12 km
+        - from: cliff
+          to: elmwood
+          label: 4 km
+        - from: dunmore
+          to: greyhaven
+          label: 4 km
+        - from: elmwood
+          to: greyhaven
+          label: 5 km
+    bridges: []
+  - id: search-problems.s2
+    title: Five things to write down
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.search-problems
+    markdown: |-
+      Every search problem, from road trips to Rubik's cubes, has the same five ingredients:
 
+      | Ingredient | What it says | On our map |
+      | --- | --- | --- |
+      | Initial state | Where you start | In Ashford |
+      | Actions | The moves allowed in a state | Drive any road leaving the current town |
+      | Transition model | Which state each action leads to | Driving Ashford–Cliff leads to "in Cliff" |
+      | Action cost | The price of one move | The road's length in km |
+      | Goal test | Whether a state counts as finished | Are we in Greyhaven? |
 
-    If fuel limits which roads we can take, city alone is not enough: the state must also include remaining
-    fuel. Otherwise two visits to the same city may look identical even though different routes remain possible.
-    These states describe imagined possibilities; exploring one does not move the real car.'
-  bridges: []
-- id: search-problems.s2
-  title: Specify actions and transitions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.search-problems
-  markdown: An action chooses a road, and a transition gives the resulting city and fuel level. A goal test
-    checks whether the destination has been reached. A cost function might measure distance, time, or money.
-    These choices can favor different routes through the same map.
-  text_mode: An action chooses a road, and a transition gives the resulting city and fuel level. A goal test
-    checks whether the destination has been reached. A cost function might measure distance, time, or money.
-    These choices can favor different routes through the same map.
-  bridges: []
-- id: search-problems.s3
-  title: Trace a tiny instance
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.search-problems
-  markdown: From A, go to B for cost 2 or C for cost 1. B reaches goal G for 2 more; C reaches G for 6 more.
-    Both paths reach the goal, but A-B-G costs 4 while A-C-G costs 7. The cheapest first action does not necessarily
-    begin the cheapest complete route.
-  text_mode: From A, go to B for cost 2 or C for cost 1. B reaches goal G for 2 more; C reaches G for 6 more.
-    Both paths reach the goal, but A-B-G costs 4 while A-C-G costs 7. The cheapest first action does not necessarily
-    begin the cheapest complete route.
-  bridges: []
-- id: search-problems.s4
-  title: Distinguish a search tree from a state graph
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.search-problems
-  markdown: 'A graph can contain several paths to the same state. A search tree records paths explored by the
-    algorithm and may repeat that state. Duplicate detection can save work, but must preserve relevant cost
-    or history information. A search method cannot discover actions excluded by the problem definition.
+      A **solution** is a sequence of actions that leads from the initial state to a state that passes the goal test. Its **path cost** is the sum of its action costs, and an **optimal** solution is one with the lowest path cost. Textbooks write the transition model as $\text{RESULT}(s, a)$: the state you reach by taking action $a$ in state $s$.
 
+      The cost you choose changes which route is best. If you cared about minutes and the 12 km Brook–Greyhaven road were a fast motorway, the "long" road might win. Decide what you're paying for before you search.
+    bridges: []
+  - id: search-problems.s3
+    title: The cheapest first road goes nowhere
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.search-problems
+    markdown: |-
+      :::predict From Ashford, the cheapest road is the 2 km one to Fairview. Does the cheapest trip to Greyhaven start there?
+      No. Fairview is a dead end: its only road leads back to Ashford. Here are all the routes that never visit a town twice:
 
-    Draw a circle for each city and a line for each allowed road: these are graph **nodes** and **edges**.
-    Reaching B by two routes gives one city but two candidate paths. If one route spent more fuel, the resulting
-    states may also differ. Try adding a fuel limit to the tiny example and checking whether both routes still
-    count as allowed.'
-  text_mode: 'A graph can contain several paths to the same state. A search tree records paths explored by
-    the algorithm and may repeat that state. Duplicate detection can save work, but must preserve relevant
-    cost or history information. A search method cannot discover actions excluded by the problem definition.
+      | Route | Roads | Total km |
+      | --- | ---: | ---: |
+      | A → B → G | 2 | 5 + 12 = 17 |
+      | A → B → D → G | 3 | 5 + 5 + 4 = 14 |
+      | A → C → E → G | 3 | 3 + 4 + 5 = 12 |
 
+      Three ideas of "best" point three ways. The cheapest *first step* goes to Fairview. The *fewest roads* go through Brook (17 km). The *cheapest whole trip* starts with the 3 km road to Cliff (12 km).
+      :::
 
-    Draw a circle for each city and a line for each allowed road: these are graph **nodes** and **edges**.
-    Reaching B by two routes gives one city but two candidate paths. If one route spent more fuel, the resulting
-    states may also differ. Try adding a fuel limit to the tiny example and checking whether both routes still
-    count as allowed.'
-  bridges: []
-- id: search-problems.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.search-problems
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A search can consider only the states and actions its model allows. Describe the goal, the costs,
-    and the information each state must remember before choosing a search method.
-- id: search-problems.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.search-problems
-  markdown: A search can consider only the states and actions its model allows. Describe the goal, the costs,
-    and the information each state must remember before choosing a search method.
-  text_mode: A search can consider only the states and actions its model allows. Describe the goal, the costs,
-    and the information each state must remember before choosing a search method.
+      Here is the whole problem as code: `roads` holds the actions, transitions, and costs, and `is_goal` is the goal test. Listing every loop-free route is fine for seven towns.
+
+      ```python run
+      roads = {}
+      for x, y, km in [("A", "B", 5), ("A", "C", 3), ("A", "F", 2), ("B", "D", 5),
+                       ("B", "G", 12), ("C", "E", 4), ("D", "G", 4), ("E", "G", 5)]:
+          roads.setdefault(x, {})[y] = km      # every road runs both ways
+          roads.setdefault(y, {})[x] = km
+
+      def is_goal(town):
+          return town == "G"
+
+      def routes(path):
+          """Yield every loop-free route from path[-1] to the goal."""
+          if is_goal(path[-1]):
+              yield path
+              return
+          for nxt in sorted(roads[path[-1]]):   # the actions available here
+              if nxt not in path:              # never revisit a town on this route
+                  yield from routes(path + [nxt])
+
+      def cost(path):
+          return sum(roads[a][b] for a, b in zip(path, path[1:]))
+
+      for p in routes(["A"]):
+          print("-".join(p).ljust(8), "roads:", len(p) - 1, "  km:", cost(p))
+      ```
+
+      Now add a 9 km road from Fairview to Greyhaven, `("F", "G", 9)`. A fourth route, A-F-G at 11 km, appears, and the cheap first step suddenly starts the best trip. Only the whole route's cost tells you which first step is right.
+    bridges: []
+  - id: search-problems.state-memory
+    title: What must a state remember?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.search-problems
+    markdown: |-
+      Change the errand: collect a parcel in Dunmore on the way to Greyhaven. Is "in Greyhaven" still the goal? Only if you have the parcel. The goal test looks at nothing but the current state, so the town alone no longer describes the situation. The state becomes a pair, (town, parcel collected?):
+
+      | State | Passes the goal test? |
+      | --- | --- |
+      | (Greyhaven, no) | No: the parcel is still in Dunmore |
+      | (Greyhaven, yes) | Yes |
+
+      There are now 7 × 2 = 14 states, and the best trip changes to A → B → D → G (14 km), which passes Dunmore. The old favourite through Cliff would have to add a 4 km trip out to Dunmore and 4 km back: 20 km.
+
+      The rule of thumb: a state must record every detail that changes **which actions are allowed, what they cost, or whether the goal is reached**, and nothing else.
+
+      :::mixup "Put as much as possible in the state, just to be safe."
+      Every extra detail multiplies the number of states. Record fuel in whole litres from 0 to 40, and 14 states become 14 × 41 = 574. That's worth it only if fuel limits which roads you can drive. The radio station changes no action, cost, or goal, so leave it out.
+      :::
+  - id: search-problems.s4
+    title: One small map, an endless tree
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.search-problems
+    markdown: |-
+      The map is a **state graph**: one node (circle) per state and one edge (line) per action. A search algorithm explores it by growing a **search tree**. The root is the start, and each node in the tree stands for a *route* tried so far, so the same town can appear many times.
+
+      Grow the tree from Ashford two roads deep:
+
+      - Depth 0: A
+      - Depth 1: A→B, A→C, A→F
+      - Depth 2: A→B→A, A→B→D, A→B→G, A→C→A, A→C→E, A→F→A
+
+      That's 10 tree nodes for a 7-town map, and three just drive back to Ashford. Nothing stops A→B→A→B→A…, so the tree never ends. Good search algorithms remember which states they've already reached, as the next lesson shows.
+
+      Trees also grow fast. If every state had 10 actions, a tree 5 moves deep would have 10⁵ = 100,000 nodes on its bottom level and 111,111 in all. This rapid growth is the **combinatorial explosion** you met with Shakey's boxes in the history module.
+
+      Your phone's navigation app solves this same kind of problem on a road graph with millions of intersections. It answers in moments because it explores only a sliver of the tree. The next two lessons show how it picks the sliver.
+    bridges: []
+  - id: search-problems.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.search-problems
+    markdown: New maps, errands, and puzzles ask you to design a state, count the states it creates, and spot what a search can and can't consider.
+    takeaway: |-
+      Before you search, write down the start, actions, results, costs, and goal test. A state must remember every detail that changes the moves, the costs, or the goal, and a search can only consider what that description allows.
+  - id: search-problems.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.search-problems
+    markdown: |-
+      A search can consider only the states and actions its model allows. Describe the goal, the costs, and the information each state must remember before choosing a search method.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - search-problems.s1
-    - search-problems.s2
-    - search-problems.s3
-    - search-problems.s4
-    - search-problems.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - search-problems.s1
+        - search-problems.s2
+        - search-problems.s3
+        - search-problems.state-memory
+        - search-problems.s4
+        - search-problems.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     search-problems.recap: search-problems.check
 assessment_families:
-- id: search-problems.base
-  objective_ref: objective.search-problems
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Specify actions and transitions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: search-problems.s2
-  variants:
-  - id: search-problems.base.1
-    prompt: Which component decides whether a candidate state satisfies the task?
-    options:
-    - id: c
-      text: The random seed
-    - id: a
-      text: The goal test
-    - id: b
-      text: Only the file format
-    answer: a
-    feedback: The goal test formalizes success within the search problem.
-  - id: search-problems.base.2
-    prompt: A-B costs 3 and B-G costs 4. Total path cost?
-    options:
-    - id: a
-      text: '7'
-    - id: b
-      text: '4'
-    - id: c
-      text: '12'
-    answer: a
-    feedback: Add transition costs along the path.
-- id: search-problems.transfer
-  objective_ref: objective.search-problems
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Distinguish a search tree from a state graph: trace the inputs, operation, and result before choosing.'
-  remediation_scene: search-problems.s4
-  variants:
-  - id: search-problems.transfer.1
-    prompt: Fuel limits future travel. Is current city alone a sufficient state representation?
-    options:
-    - id: a
-      text: No; fuel or equivalent relevant information must be represented
-    - id: b
-      text: Yes; city names encode fuel automatically
-    - id: c
-      text: Only if the map is colorful
-    answer: a
-    feedback: The state must support correct action and transition predictions.
-  - id: search-problems.transfer.2
-    prompt: The lowest-cost first edge leads to an expensive remainder. What does this show?
-    options:
-    - id: b
-      text: All cost functions are invalid
-    - id: c
-      text: The goal test must be random
-    - id: a
-      text: Local cheapness need not imply lowest total path cost
-    answer: a
-    feedback: Search compares complete consequences rather than only the first move.
+  - id: search-problems.base
+    objective_ref: objective.search-problems
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Specify actions and transitions: trace the inputs, operation, and result before choosing.'
+    remediation_scene: search-problems.s2
+    variants:
+      - id: search-problems.base.1
+        prompt: Which component decides whether a candidate state satisfies the task?
+        options:
+          - id: c
+            text: The random seed
+          - id: a
+            text: The goal test
+          - id: b
+            text: Only the file format
+        answer: a
+        feedback: The goal test formalizes success within the search problem.
+        retired: true
+      - id: search-problems.base.2
+        prompt: A-B costs 3 and B-G costs 4. Total path cost?
+        options:
+          - id: a
+            text: '7'
+          - id: b
+            text: '4'
+          - id: c
+            text: '12'
+        answer: a
+        feedback: Add transition costs along the path.
+        retired: true
+  - id: search-problems.transfer
+    objective_ref: objective.search-problems
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Distinguish a search tree from a state graph: trace the inputs, operation, and result before choosing.'
+    remediation_scene: search-problems.s4
+    variants:
+      - id: search-problems.transfer.1
+        prompt: Fuel limits future travel. Is current city alone a sufficient state representation?
+        options:
+          - id: a
+            text: No; fuel or equivalent relevant information must be represented
+          - id: b
+            text: Yes; city names encode fuel automatically
+          - id: c
+            text: Only if the map is colorful
+        answer: a
+        feedback: The state must support correct action and transition predictions.
+        retired: true
+      - id: search-problems.transfer.2
+        prompt: The lowest-cost first edge leads to an expensive remainder. What does this show?
+        options:
+          - id: b
+            text: All cost functions are invalid
+          - id: c
+            text: The goal test must be random
+          - id: a
+            text: Local cheapness need not imply lowest total path cost
+        answer: a
+        feedback: Search compares complete consequences rather than only the first move.
+        retired: true
+  - id: search-problems.base.v2
+    objective_ref: objective.search-problems
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Name the ingredient the scenario is about (start, actions, results, costs, or goal test), and judge a route by its whole path cost, not its first step or its number of roads.
+    remediation_scene: search-problems.s3
+    variants:
+      - id: search-problems.base.v2.1
+        prompt: 'A hiking app finds three trails to a summit. Trail X: 2 legs, 11 km in total. Trail Y: 4 legs, 9 km in total. Trail Z: 3 legs, 10 km in total, with the shortest first leg. If cost is distance, which is the optimal solution?'
+        options:
+          - id: b
+            text: Trail X, because it has the fewest legs
+          - id: c
+            text: Trail Z, because its first leg is shortest
+          - id: a
+            text: Trail Y, because its total is lowest
+        answer: a
+        feedback: Path cost is the sum over the whole route, and Y's 9 km is lowest. Fewest legs (X) and cheapest first step (Z) are the two tempting shortcuts from the town map, and both pick a longer hike here.
+      - id: search-problems.base.v2.2
+        prompt: 'On the town map, a search tree grown two roads deep contains three separate nodes labelled Ashford. Why?'
+        options:
+          - id: c
+            text: The tree stores one node per road, and Ashford has three roads
+          - id: a
+            text: Each tree node is a route, and three routes end back in Ashford
+          - id: b
+            text: The search must recheck the start each time it goes one level deeper
+        answer: a
+        feedback: Tree nodes are routes (A→B→A, A→C→A, A→F→A), so one town can appear many times. It's a coincidence that Ashford also has three roads; the tree holds routes, not roads.
+      - id: search-problems.base.v2.3
+        prompt: A cycling app's action cost is minutes. Between two villages, a flat 10 km road takes 25 minutes and a hilly 7 km road takes 35 minutes. Which road does the planner prefer?
+        options:
+          - id: b
+            text: The hilly road, since it covers less distance
+          - id: a
+            text: The flat road, since it takes less time
+          - id: c
+            text: Neither one, since they join the same two villages
+        answer: a
+        feedback: The planner minimizes whatever the action cost measures, and here that is minutes, so 25 beats 35. Distance would matter only if kilometres were the cost.
+      - id: search-problems.base.v2.4
+        prompt: A robot vacuum's planner considers 500 possible routes around a room, then picks one. How far has the vacuum moved by the time the planning finishes?
+        options:
+          - id: a
+            text: Not at all, because the routes were imagined
+          - id: c
+            text: The length of the one route it picked
+          - id: b
+            text: The combined length of the routes it tried
+        answer: a
+        feedback: Search explores imagined states in the planner's head. The vacuum moves only when it carries out the chosen route, so trying 500 routes costs computing time, not travel.
+      - id: search-problems.base.v2.5
+        prompt: 'In a sliding-tile puzzle, the planner writes "sliding the tile below the gap up into the gap gives this new board." Which ingredient is that sentence?'
+        options:
+          - id: c
+            text: The goal test, which judges each new board
+          - id: b
+            text: The action cost of sliding one tile
+          - id: a
+            text: The transition model for that action
+        answer: a
+        feedback: The transition model says which state an action leads to, RESULT(s, a). The goal test only asks whether a board is finished, and the cost only says what the slide costs.
+  - id: search-problems.transfer.v2
+    objective_ref: objective.search-problems
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: A state must record exactly the details that change which actions are allowed, what they cost, or whether the goal is reached. A search can't use anything the description leaves out.
+    remediation_scene: search-problems.state-memory
+    variants:
+      - id: search-problems.transfer.v2.1
+        prompt: An elevator planner's state is just the current floor. It keeps skipping a passenger who pressed 7 while the car was at floor 3. What is the state missing?
+        options:
+          - id: b
+            text: The exact second at which each button was pressed
+          - id: a
+            text: Which floors have buttons waiting to be served
+          - id: c
+            text: A higher cost for each floor the car travels past
+        answer: a
+        feedback: The goal (everyone served) depends on which requests are pending, so the state must record them. Exact press times add detail that changes no action or goal, and a cost tweak can't make the planner aware of a request it can't see.
+      - id: search-problems.transfer.v2.2
+        prompt: 'A robot vacuum on a 10 × 10 grid has the goal "every square is clean." Its state records its current square. What else must the state hold?'
+        options:
+          - id: c
+            text: The route it took to reach the current square
+          - id: b
+            text: How many moves it has made since it started
+          - id: a
+            text: Which squares have been cleaned already
+        answer: a
+        feedback: The goal test must be able to tell a clean floor from a dirty one using the state alone. The route taken and the move count are path history and cost, which search tracks separately; they don't say which squares are still dirty.
+      - id: search-problems.transfer.v2.3
+        prompt: 'A farmer must ferry a wolf, a goat, and a cabbage across a river; the boat always travels with the farmer. Which state description is enough to plan with?'
+        options:
+          - id: a
+            text: Which bank the farmer, wolf, goat, and cabbage are on
+          - id: b
+            text: The order in which things have crossed so far
+          - id: c
+            text: Which bank the boat is on right now
+        answer: a
+        feedback: Knowing each one's bank tells you the legal moves, whether anything gets eaten, and whether everyone is across. The crossing order is history, and the boat's bank alone can't tell you whether the goat is safe.
+      - id: search-problems.transfer.v2.4
+        prompt: A city opens a new bridge that would cut 20 minutes from many trips, but the delivery planner's road list hasn't been updated. What will a perfect search algorithm do?
+        options:
+          - id: b
+            text: Find the bridge, since an optimal search checks every road
+          - id: a
+            text: Plan without the bridge, since it isn't one of the actions
+          - id: c
+            text: Find the bridge once it runs long enough to search deeply
+        answer: a
+        feedback: Search can only choose among the actions the problem description lists. Optimal means best among the modelled routes, so the fix is to update the road list, not to search longer.
+      - id: search-problems.transfer.v2.5
+        prompt: A school-bus planner minimizes kilometres. Parents complain that rides take too long because the shortest route crawls through downtown traffic. Which change targets the complaint?
+        options:
+          - id: c
+            text: Switch to a search algorithm that runs faster
+          - id: b
+            text: Add more streets so the planner has more choices
+          - id: a
+            text: Make each action's cost its travel time
+        answer: a
+        feedback: The planner is doing its job; it's optimizing the wrong cost. With minutes as the action cost, a longer but faster road can win. A faster algorithm or more streets would still minimize kilometres.
+  - id: search-problems.calc.v2
+    objective_ref: objective.search-problems
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Multiply the number of possibilities for each detail the state records, for example towns × 2 when you add one yes/no detail.
+    remediation_scene: search-problems.state-memory
+    absolute_tolerance: 0.001
+    variants:
+      - id: search-problems.calc.v2.1
+        prompt: A museum robot can be in any of 6 rooms and is either carrying a painting or not. How many states are there?
+        answer: 12
+        feedback: Each of the 6 rooms pairs with both carrying options, so 6 × 2 = 12. Adding them (6 + 2 = 8) is the common slip.
+      - id: search-problems.calc.v2.2
+        prompt: A courier van can be in any of 7 towns, and each of 2 parcels is either still waiting or already collected. How many states are there?
+        answer: 28
+        feedback: Each parcel doubles the count, so 7 × 2 × 2 = 28. Counting 7 × 2 = 14 forgets that the two parcels vary independently.
+      - id: search-problems.calc.v2.3
+        prompt: A warehouse robot can stand at any of 5 shelves, its gripper is open or closed, and its battery is recorded as low, medium, or high. How many states are there?
+        answer: 30
+        feedback: 5 × 2 × 3 = 30. Every shelf combines with every gripper setting and every battery level.
+      - id: search-problems.calc.v2.4
+        prompt: A farmer, a wolf, a goat, and a cabbage can each be on the left or right bank of a river. Counting unsafe arrangements too, how many states are there?
+        answer: 16
+        feedback: Four independent two-way choices give 2 × 2 × 2 × 2 = 16. Adding (2 + 2 + 2 + 2 = 8) undercounts, because each choice combines with all the others.
+      - id: search-problems.calc.v2.5
+        prompt: A delivery drone can hover over any of 8 rooftops and carries 0, 1, or 2 packages. How many states are there?
+        answer: 24
+        feedback: There are three package counts (0, 1, 2), not two, so 8 × 3 = 24.

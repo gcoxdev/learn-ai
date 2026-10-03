@@ -1,201 +1,422 @@
 schema_version: 0.2-draft
 lesson:
   id: local-search
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Improve a candidate without exploring every path
   state: draft
-  summary: Improve a timetable through small edits, while keeping a good score separate from a valid solution.
+  summary: Fix a clashing school timetable one move at a time, get stuck where every move looks worse, and escape by borrowing a trick from cooling metal.
   slot: M05.8
   category: learning
   sources:
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
+    - title: 'Optimization by Simulated Annealing (Kirkpatrick, Gelatt & Vecchi, 1983)'
+      url: https://doi.org/10.1126/science.220.4598.671
 objectives:
-- id: objective.local-search
-  version: 1-draft
-  statement: Local search changes a current candidate using an objective and neighborhood; restarts, annealing,
-    and constraint handling trade search effort against solution quality.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - local-search.base
-  - local-search.transfer
-  prerequisites:
-  - anyOf:
-    - objective.search-problems
-  - anyOf:
-    - objective.optimization-math
+  - id: objective.local-search
+    version: 2-draft
+    statement: Local search changes a current candidate using an objective and neighborhood; restarts, annealing, and constraint handling trade search effort against solution quality.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - local-search.base.v2
+      - local-search.transfer.v2
+      - local-search.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.search-problems
+      - anyOf:
+          - objective.optimization-math
 scenes:
-- id: local-search.s1
-  title: Improve one proposed timetable
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.local-search
-  markdown: 'A **candidate** is a complete proposed solution, such as a timetable assigning every class a room
-    and time. An **objective** is the score to improve, such as the number of clashes to reduce.
+  - id: local-search.s1
+    title: Improve one proposed timetable
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.local-search
+    markdown: |-
+      A school has four classes, Art, Bio, Chem, and Drama, and two periods, morning and afternoon. Some students take two of the classes, and they can't attend both if the classes run at the same time:
 
+      | Pair | Students taking both |
+      | --- | ---: |
+      | Art and Bio | 1 |
+      | Bio and Chem | 5 |
+      | Chem and Drama | 1 |
+      | Drama and Art | 5 |
 
-    **Local search** starts with a candidate and tries nearby alternatives. Here, “nearby” means reachable
-    through an allowed edit, such as moving one class or swapping two. The aim is a useful final timetable;
-    the sequence of edits usually matters less than the resulting assignment.'
-  text_mode: 'A **candidate** is a complete proposed solution, such as a timetable assigning every class a
-    room and time. An **objective** is the score to improve, such as the number of clashes to reduce.
+      A first attempt puts Art and Bio in the morning and Chem and Drama in the afternoon. Two students now have clashes: the one taking Art and Bio, and the one taking Chem and Drama.
 
+      The search methods earlier in this module built a route step by step. For a timetable, the route doesn't matter; only the finished timetable does. **Local search** keeps one complete **candidate** (here, that first timetable) and repeatedly nudges it. It needs three things:
 
-    **Local search** starts with a candidate and tries nearby alternatives. Here, “nearby” means reachable
-    through an allowed edit, such as moving one class or swapping two. The aim is a useful final timetable;
-    the sequence of edits usually matters less than the resulting assignment.'
-  bridges: []
-- id: local-search.s2
-  title: A local optimum can be misleading
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.local-search
-  markdown: Suppose every single swap worsens a schedule, but changing three assignments together improves
-    it. A greedy hill-climbing method can stop at the single-swap local optimum. The neighborhood definition
-    determines what counts as local. A global optimum is best across all feasible candidates, not only neighboring
-    ones.
-  text_mode: Suppose every single swap worsens a schedule, but changing three assignments together improves
-    it. A greedy hill-climbing method can stop at the single-swap local optimum. The neighborhood definition
-    determines what counts as local. A global optimum is best across all feasible candidates, not only neighboring
-    ones.
-  bridges:
-  - optimization-math
-- id: local-search.s3
-  title: Try another starting point
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.local-search
-  markdown: Random restarts try different initial candidates. Simulated annealing sometimes accepts worse moves,
-    with an acceptance schedule that becomes more selective over time. These methods can help escape local
-    traps, but finite practical runs do not automatically deliver the global optimum. Record the schedule and
-    budget.
-  text_mode: Random restarts try different initial candidates. Simulated annealing sometimes accepts worse
-    moves, with an acceptance schedule that becomes more selective over time. These methods can help escape
-    local traps, but finite practical runs do not automatically deliver the global optimum. Record the schedule
-    and budget.
-  bridges: []
-- id: local-search.s4
-  title: Keep feasibility and value separate
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.local-search
-  markdown: 'A schedule with excellent preference scores can still double-book a room. Hard constraints can
-    be enforced during candidate construction or repair; penalties express violations through a cost but need
-    calibration. Compare feasible quality, runtime, robustness across starts, and the cost of constraint violations.
+      - An **objective**: the score to improve. Here, the number of students with a clash, which we want to push down to 0.
+      - A **neighbourhood**: the small changes allowed. Here, moving one class to the other period.
+      - A rule for choosing which neighbour to move to.
 
+      Local search stores just one candidate, so it scales to problems far too big for a search tree, like timetables with thousands of classes.
+    bridges: []
+  - id: local-search.s2
+    title: Stuck where every move looks worse
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.local-search
+    markdown: |-
+      The simplest rule is **hill climbing**: look at every neighbour, move to the best one if it beats the current candidate, and stop when none does. (When lower is better, it's really hill *descending*, but the name stuck.)
 
-    Suppose schedule A earns 10 preference points but books one room twice; B earns 8 and has no clashes. If
-    room availability is a hard requirement, B is acceptable and A is not. Subtracting only 1 point per clash
-    would still favor A with score 9. That penalty is too weak to express the requirement. Try changing the
-    penalty, then distinguish discouraging a violation from forbidding it.'
-  text_mode: 'A schedule with excellent preference scores can still double-book a room. Hard constraints can
-    be enforced during candidate construction or repair; penalties express violations through a cost but need
-    calibration. Compare feasible quality, runtime, robustness across starts, and the cost of constraint violations.
+      From the first timetable, with 2 clashes, the four neighbours are:
 
+      | Move | New clashes | Change |
+      | --- | ---: | ---: |
+      | Art to the afternoon | 5 + 1 = 6 | +4 |
+      | Bio to the afternoon | 5 + 1 = 6 | +4 |
+      | Chem to the morning | 1 + 5 = 6 | +4 |
+      | Drama to the morning | 1 + 5 = 6 | +4 |
 
-    Suppose schedule A earns 10 preference points but books one room twice; B earns 8 and has no clashes. If
-    room availability is a hard requirement, B is acceptable and A is not. Subtracting only 1 point per clash
-    would still favor A with score 9. That penalty is too weak to express the requirement. Try changing the
-    penalty, then distinguish discouraging a violation from forbidding it.'
-  bridges: []
-- id: local-search.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.local-search
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Local search improves a solution through small edits. A stopping point may be best only among those
-    nearby edits, and a good score does not excuse breaking a hard requirement.
-- id: local-search.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.local-search
-  markdown: Local search improves a solution through small edits. A stopping point may be best only among those
-    nearby edits, and a good score does not excuse breaking a hard requirement.
-  text_mode: Local search improves a solution through small edits. A stopping point may be best only among
-    those nearby edits, and a good score does not excuse breaking a hard requirement.
+      Every move makes things worse, so hill climbing stops at 2 clashes.
+
+      :::predict Is 2 clashes the best this timetable can do?
+      No. Put Art and Chem in one period and Bio and Drama in the other. No pair that shares students runs at the same time, so there are 0 clashes. But getting there takes *two* moves, and the first one, whichever it is, raises the count to 6.
+      :::
+
+      The first timetable is a **local optimum**: better than all its neighbours, but not the best overall. The best timetable of all is the **global optimum**. Which candidates count as "local" depends on the neighbourhood you chose. If "swap two classes' periods" were also allowed, the search would no longer be stuck there, because swapping Bio and Chem gets to 0 in one move.
+    bridges:
+      - optimization-math
+  - id: local-search.s3
+    title: Accept a worse move, sometimes
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.local-search
+    markdown: |-
+      One escape is **random restarts**: run hill climbing again from several random starting timetables and keep the best result. Another is to allow an occasional step uphill.
+
+      **Simulated annealing** borrows its idea from metalwork. When hot metal cools slowly, its atoms have time to settle into an orderly, low-energy arrangement with fewer defects. The algorithm picks a random neighbour. If it's better, it moves there. If it's worse by $\Delta$, it still moves with probability
+
+      $$P(\text{accept}) = e^{-\Delta / T}$$
+
+      where $T$ is a **temperature** that starts high and is lowered a little every step. For our uphill move, $\Delta = 4$:
+
+      | Temperature $T$ | $e^{-4/T}$ |
+      | ---: | ---: |
+      | 4 | 0.37 |
+      | 2 | 0.14 |
+      | 1 | 0.018 |
+      | 0.5 | 0.0003 |
+
+      Early on, a 4-clash step is taken more than a third of the time; late in the run, almost never. Suppose that early on the search accepts "Bio to the afternoon" (2 → 6 clashes). The next move, "Chem to the morning," drops it to 0 ($\Delta = -6$), and it's accepted at once.
+
+      ```python run
+      import math, random
+
+      # Students taking both classes; classes that share students clash if in the same period
+      shared = {("Art", "Bio"): 1, ("Bio", "Chem"): 5, ("Chem", "Drama"): 1, ("Drama", "Art"): 5}
+      PERIODS = ["morning", "afternoon"]
+
+      def clashes(tt):
+          return sum(n for (a, b), n in shared.items() if tt[a] == tt[b])
+
+      def neighbours(tt):                       # move one class to the other period
+          return [{**tt, c: 1 - tt[c]} for c in tt]
+
+      def hill_climb(tt):
+          while True:
+              best = min(neighbours(tt), key=clashes)
+              if clashes(best) >= clashes(tt):
+                  return tt                     # no single move helps: a local optimum
+              tt = best
+
+      def anneal(tt, T=4.0, cooling=0.9, steps=50, seed=1):
+          rng = random.Random(seed)
+          for _ in range(steps):
+              new = rng.choice(neighbours(tt))
+              delta = clashes(new) - clashes(tt)
+              if delta <= 0 or rng.random() < math.exp(-delta / T):
+                  tt = new                      # accept: better, or worse with probability e^(-delta/T)
+              T *= cooling
+          return tt
+
+      start = {"Art": 0, "Bio": 0, "Chem": 1, "Drama": 1}
+      for name, result in [("start", start), ("hill climbing", hill_climb(start)), ("annealing", anneal(start))]:
+          print(f"{name:14} clashes = {clashes(result):2}  ", {c: PERIODS[p] for c, p in result.items()})
+      ```
+
+      Hill climbing stays at 2 clashes; annealing with seed 1 finds 0. Now try seeds 2 to 5. Some runs also end at 2: across seeds 1 to 20, 11 reach 0. That's why practitioners combine the two ideas, running annealing several times with different seeds and keeping the best. Setting `T=0.01` makes annealing refuse every uphill step, so it behaves like hill climbing.
+
+      :::papers Simulated annealing (Kirkpatrick, Gelatt & Vecchi, 1983)
+      Accept a candidate move with probability $\min(1, e^{-\Delta/T})$, where $\Delta = \text{score}(\text{new}) - \text{score}(\text{current})$ for a score you're minimizing, and lower $T$ over time with a cooling schedule, here $T \leftarrow 0.9\,T$ each step. The acceptance rule comes from a 1953 method for simulating physical systems by Metropolis and colleagues. In the table above, $\Delta = 4$ and $T = 4$ give $e^{-1} \approx 0.37$.
+      :::
+    bridges: []
+  - id: local-search.s4
+    title: Keep feasibility and value separate
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.local-search
+    markdown: |-
+      Real timetables mix two kinds of requirement. A **hard constraint** must hold, such as "a room can't host two classes at once." A **soft constraint** is a preference, such as "teachers like free Friday afternoons." Local search needs one number to improve, so a common trick is to subtract a **penalty** for each broken hard constraint.
+
+      Timetable A earns 10 preference points but books one room twice. Timetable B earns 8 and has no double-bookings.
+
+      | Penalty per double-booking | Score of A | Score of B | Search prefers |
+      | ---: | ---: | ---: | --- |
+      | 1 | 10 − 1 = 9 | 8 | A, which is unusable |
+      | 5 | 10 − 5 = 5 | 8 | B |
+
+      With a penalty of 1, the search happily hands back a timetable that can't run. The penalty has to outweigh any preference gain a violation could buy. Better still, never propose moves that break hard constraints: only move a class into a free room.
+
+      :::mixup "The highest-scoring timetable is the one to use."
+      Only among timetables that break no hard constraint. A score mixes preferences with penalties, and a weak penalty lets a pleasant but impossible timetable win. Check feasibility first, then compare scores.
+      :::
+    bridges: []
+  - id: local-search.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.local-search
+    markdown: Seating plans, hospital rotas, tournament schedules, and cooling temperatures ask you to spot a local optimum, compute an acceptance probability, and tell a good score from a usable answer.
+    takeaway: |-
+      Local search improves one candidate by small moves and can get stuck where every move looks worse. Restarts and simulated annealing, which sometimes accepts a worse move with probability e^(−Δ/T), help it escape, and a high score only counts if the hard constraints hold.
+  - id: local-search.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.local-search
+    markdown: |-
+      Local search improves a solution through small edits. A stopping point may be best only among those nearby edits, and a good score does not excuse breaking a hard requirement.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - local-search.s1
-    - local-search.s2
-    - local-search.s3
-    - local-search.s4
-    - local-search.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - local-search.s1
+        - local-search.s2
+        - local-search.s3
+        - local-search.s4
+        - local-search.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     local-search.recap: local-search.check
 assessment_families:
-- id: local-search.base
-  objective_ref: objective.local-search
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'A local optimum can be misleading: trace the inputs, operation, and result before choosing.'
-  remediation_scene: local-search.s2
-  variants:
-  - id: local-search.base.1
-    prompt: What defines a local-search neighborhood?
-    options:
-    - id: c
-      text: Only the processor architecture
-    - id: a
-      text: The allowed small changes to a candidate
-    - id: b
-      text: Every possible dataset in the world
-    answer: a
-    feedback: Neighborhood moves determine which alternatives are examined locally.
-  - id: local-search.base.2
-    prompt: A candidate is best among one-swap neighbors. Is it necessarily globally best?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: Yes, by definition
-    - id: c
-      text: Only if its score is an integer
-    answer: a
-    feedback: A local optimum need not be optimal across all feasible candidates.
-- id: local-search.transfer
-  objective_ref: objective.local-search
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Keep feasibility and value separate: trace the inputs, operation, and result before choosing.'
-  remediation_scene: local-search.s4
-  variants:
-  - id: local-search.transfer.1
-    prompt: Why might simulated annealing accept a worse move?
-    options:
-    - id: a
-      text: To explore beyond a local trap under its schedule
-    - id: b
-      text: Because the objective is never used
-    - id: c
-      text: To guarantee every next step improves
-    answer: a
-    feedback: Controlled acceptance can expand exploration but costs computation.
-  - id: local-search.transfer.2
-    prompt: A high-scoring schedule double-books a room. What distinction matters?
-    options:
-    - id: b
-      text: Only the random seed
-    - id: c
-      text: Only whether the score is positive
-    - id: a
-      text: Objective value versus feasibility
-    answer: a
-    feedback: A good objective score does not replace required constraints.
+  - id: local-search.base
+    objective_ref: objective.local-search
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'A local optimum can be misleading: trace the inputs, operation, and result before choosing.'
+    remediation_scene: local-search.s2
+    variants:
+      - id: local-search.base.1
+        prompt: What defines a local-search neighborhood?
+        options:
+          - id: c
+            text: Only the processor architecture
+          - id: a
+            text: The allowed small changes to a candidate
+          - id: b
+            text: Every possible dataset in the world
+        answer: a
+        feedback: Neighborhood moves determine which alternatives are examined locally.
+        retired: true
+      - id: local-search.base.2
+        prompt: A candidate is best among one-swap neighbors. Is it necessarily globally best?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: Yes, by definition
+          - id: c
+            text: Only if its score is an integer
+        answer: a
+        feedback: A local optimum need not be optimal across all feasible candidates.
+        retired: true
+  - id: local-search.transfer
+    objective_ref: objective.local-search
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Keep feasibility and value separate: trace the inputs, operation, and result before choosing.'
+    remediation_scene: local-search.s4
+    variants:
+      - id: local-search.transfer.1
+        prompt: Why might simulated annealing accept a worse move?
+        options:
+          - id: a
+            text: To explore beyond a local trap under its schedule
+          - id: b
+            text: Because the objective is never used
+          - id: c
+            text: To guarantee every next step improves
+        answer: a
+        feedback: Controlled acceptance can expand exploration but costs computation.
+        retired: true
+      - id: local-search.transfer.2
+        prompt: A high-scoring schedule double-books a room. What distinction matters?
+        options:
+          - id: b
+            text: Only the random seed
+          - id: c
+            text: Only whether the score is positive
+          - id: a
+            text: Objective value versus feasibility
+        answer: a
+        feedback: A good objective score does not replace required constraints.
+        retired: true
+  - id: local-search.base.v2
+    objective_ref: objective.local-search
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Hill climbing moves only to a better neighbour. Simulated annealing also accepts a move that is worse by Δ with probability e^(−Δ/T), which shrinks as the temperature T falls.
+    remediation_scene: local-search.s3
+    variants:
+      - id: local-search.base.v2.1
+        prompt: Every neighbour of the current timetable has more clashes than it does, but a better timetable exists elsewhere. What does hill climbing do?
+        options:
+          - id: b
+            text: Moves to the least-bad neighbour and carries on
+          - id: c
+            text: Starts again from a fresh random timetable
+          - id: a
+            text: Stops and returns the current timetable
+        answer: a
+        feedback: Plain hill climbing only accepts improvements, so at a local optimum it stops. Stepping to a worse neighbour is what annealing sometimes allows, and starting over is a random restart; both are add-ons to plain hill climbing.
+      - id: local-search.base.v2.2
+        prompt: Simulated annealing proposes a move that is worse by Δ = 2 when the temperature is T = 2. What is the chance it accepts the move?
+        options:
+          - id: a
+            text: About 0.37, which is e^(−1)
+          - id: b
+            text: About 0.14, which is e^(−2)
+          - id: c
+            text: Exactly 1, since T is at least Δ
+        answer: a
+        feedback: e^(−Δ/T) = e^(−2/2) = e^(−1) ≈ 0.37. Using e^(−Δ) forgets to divide by T, and worse moves are never certain to be accepted.
+      - id: local-search.base.v2.3
+        prompt: The same worse move (Δ = 3) is proposed once early in a run, at T = 10, and once late, at T = 0.5. How do the acceptance chances compare?
+        options:
+          - id: c
+            text: They're equal, since Δ is the same both times
+          - id: a
+            text: Much likelier early, when the temperature is high
+          - id: b
+            text: Likelier late, once the search has settled down
+        answer: a
+        feedback: Early, e^(−3/10) ≈ 0.74; late, e^(−3/0.5) = e^(−6) ≈ 0.002. The temperature is what makes the same step acceptable early and almost never late.
+      - id: local-search.base.v2.4
+        prompt: In local search, what decides which candidates count as neighbours of the current one?
+        options:
+          - id: b
+            text: Which candidates have scores close to the current one
+          - id: a
+            text: Which small changes you allow from the current one
+          - id: c
+            text: Which candidates the run has visited most recently
+        answer: a
+        feedback: The neighbourhood is defined by the allowed moves, such as "move one class" or "swap two classes." Change the moves and you change which candidates are local optima.
+      - id: local-search.base.v2.5
+        prompt: Simulated annealing proposes a move that lowers the number of clashes from 7 to 4. What does it do?
+        options:
+          - id: c
+            text: Accepts it only while the temperature is high
+          - id: b
+            text: Accepts it with probability e^(−3/T)
+          - id: a
+            text: Accepts it, as it would any improvement
+        answer: a
+        feedback: Improvements are accepted outright; the probability rule applies only to worse moves (Δ > 0). Here Δ = −3, and min(1, e^(3/T)) = 1.
+  - id: local-search.transfer.v2
+    objective_ref: objective.local-search
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask whether the search can escape a local optimum (restarts, annealing, or bigger moves), and whether a high score still breaks a hard constraint.
+    remediation_scene: local-search.s4
+    variants:
+      - id: local-search.transfer.v2.1
+        prompt: A tournament scheduler uses hill climbing. From different starting schedules it stops at quite different scores. What is a cheap way to get better results?
+        options:
+          - id: a
+            text: Run it from several random starts and keep the best
+          - id: b
+            text: Let it run for longer from the very same start
+          - id: c
+            text: Make it stricter about taking only improvements
+        answer: a
+        feedback: Different starts reach different local optima, so random restarts and keeping the best is simple and effective. Hill climbing from one start just stays stuck at the same local optimum, however long it runs.
+      - id: local-search.transfer.v2.2
+        prompt: A scheduler scores preferences minus 1 point per double-booked room. It returns a schedule with 12 preference points and one double-booking over one with 9 points and none. What is the problem?
+        options:
+          - id: c
+            text: Preference points are being added up wrongly
+          - id: a
+            text: The penalty is too small for a hard constraint
+          - id: b
+            text: Local search can't be used for room bookings
+        answer: a
+        feedback: 12 − 1 = 11 beats 9, so the search prefers an unusable schedule. The penalty must outweigh any possible preference gain, or moves that break the rule should be forbidden.
+      - id: local-search.transfer.v2.3
+        prompt: You run simulated annealing but keep the temperature very high the whole time. How does it behave?
+        options:
+          - id: b
+            text: Like hill climbing, which just takes improvements
+          - id: c
+            text: Like exhaustive search, trying each candidate in turn
+          - id: a
+            text: Like a random walk, accepting nearly any move
+        answer: a
+        feedback: With huge T, e^(−Δ/T) is close to 1 for any Δ, so almost every move is accepted and the search wanders. Very low T gives hill climbing.
+      - id: local-search.transfer.v2.4
+        prompt: At a wedding, no single swap of two guests improves the seating plan, but moving three guests at once would. What describes the current plan?
+        options:
+          - id: a
+            text: A local optimum for single-swap moves
+          - id: b
+            text: The global optimum for this seating
+          - id: c
+            text: An infeasible plan that breaks a rule
+        answer: a
+        feedback: It's best among its single-swap neighbours but not overall, since a bigger move improves it. A larger neighbourhood (three-guest moves) would reveal the better plan.
+      - id: local-search.transfer.v2.5
+        prompt: A hospital rota must never leave a ward unstaffed. Which way of handling this rule with local search is safest?
+        options:
+          - id: c
+            text: Subtract a small penalty for each unstaffed shift
+          - id: b
+            text: Leave it out and fix any gaps by hand afterwards
+          - id: a
+            text: Allow only moves that keep every ward staffed
+        answer: a
+        feedback: For a rule that must hold, restricting moves to feasible ones keeps every candidate usable. A small penalty can be outweighed by preferences, and fixing gaps afterwards may undo the search's work.
+  - id: local-search.calc.v2
+    objective_ref: objective.local-search
+    task: base
+    response_type: numeric
+    points: 1
+    hint: A move that is worse by Δ is accepted with probability e^(−Δ/T). Divide Δ by T first, then take e to the minus that.
+    remediation_scene: local-search.s3
+    absolute_tolerance: 0.005
+    variants:
+      - id: local-search.calc.v2.1
+        prompt: Simulated annealing proposes a move that adds 4 clashes (Δ = 4) at temperature T = 4. What is the probability of accepting it? Give a decimal.
+        answer: 0.368
+        feedback: e^(−4/4) = e^(−1) ≈ 0.368.
+      - id: local-search.calc.v2.2
+        prompt: A move is worse by Δ = 2 at temperature T = 1. What is the probability of accepting it? Give a decimal.
+        answer: 0.135
+        feedback: e^(−2/1) = e^(−2) ≈ 0.135.
+      - id: local-search.calc.v2.3
+        prompt: A move is worse by Δ = 3 at temperature T = 6. What is the probability of accepting it? Give a decimal.
+        answer: 0.607
+        feedback: e^(−3/6) = e^(−0.5) ≈ 0.607. At a high temperature, even a sizeable step backwards is usually accepted.
+      - id: local-search.calc.v2.4
+        prompt: A move is worse by Δ = 5 at temperature T = 2. What is the probability of accepting it? Give a decimal.
+        answer: 0.082
+        feedback: e^(−5/2) = e^(−2.5) ≈ 0.082. Using e^(−5 × 2) instead of dividing gives a far smaller number.
+      - id: local-search.calc.v2.5
+        prompt: A move is worse by Δ = 3 at temperature T = 1. What is the probability of accepting it? Give a decimal.
+        answer: 0.05
+        feedback: e^(−3/1) = e^(−3) ≈ 0.050. Late in a run, a step this large is rarely taken.

@@ -219,7 +219,7 @@ test("worked lesson tables keep readable headers and values on mobile", async ({
   await page.setViewportSize({ width: 390, height: 844 });
   await ready(page, "/learn/algorithms-and-programs/");
   await page
-    .getByRole("button", { name: /Scene \d+: Watch the state change/ })
+    .getByRole("button", { name: /Scene \d+: Watch the numbers change/ })
     .click();
   await expect(
     page.getByRole("columnheader", { name: "Weight inspected" }),
@@ -681,7 +681,7 @@ test("beginner weight controls and vocabulary detours explain roles and restore 
 }) => {
   await ready(page, "/learn/weights-and-predictions/");
   await page
-    .getByRole("button", { name: /Scene \d+: Change the dial while/ })
+    .getByRole("button", { name: /Scene \d+: Change the dial, keep the question/ })
     .click();
   await expect(page.getByTestId("weight-result")).toHaveText(
     "3 × 2 = 6 crackers",
@@ -719,13 +719,15 @@ test("beginner weight controls and vocabulary detours explain roles and restore 
   expect(a11y.violations).toEqual([]);
   await ready(page, "/learn/attention/");
   await page
-    .getByRole("button", { name: /Scene \d+: Rehearse the three roles/ })
+    .getByRole("button", { name: /Scene \d+: Why three vectors instead of one\?/ })
     .click();
   await page.locator(".lesson-vocabulary summary").click();
-  const vectorsLink = page.getByRole("button", {
-    name: "Read lesson: Vectors: lists that work together",
-    exact: true,
-  });
+  const vectorsLink = page
+    .getByRole("button", {
+      name: "Read lesson: Vectors: lists that work together",
+      exact: true,
+    })
+    .first();
   await vectorsLink.click();
   await page.getByRole("button", { name: /^Return to / }).click();
   await expect(vectorsLink).toBeFocused();
@@ -737,11 +739,22 @@ test("numeric foundation checks persist in reading mode on the combined closing 
   await ready(page, "/learn/arithmetic/");
   await page.getByRole("button", { name: "Read as a page" }).click();
   await page.getByRole("button", { name: "Begin knowledge check" }).click();
-  await page.getByLabel("Your answer", { exact: true }).fill("12");
-  await page.getByRole("button", { name: "Check answer", exact: true }).click();
-  await expect(
-    page.getByText("Four groups of three contain twelve."),
-  ).toBeVisible();
+  // Answer whichever variant the planner shows, using the authored key.
+  const arithmetic = (data as Curriculum).lessons.find((l) => l.id === "arithmetic")!;
+  const answerShown = async () => {
+    const prompt = (await page.locator(".question-prompt").innerText()).trim();
+    const q = arithmetic.questions.find((q) => !q.retired && q.prompt.trim() === prompt)!;
+    expect(q).toBeTruthy();
+    if (q.options.length) {
+      const option = q.options.find((o) => o.id === q.answers.choice)!;
+      await page.getByLabel(option.text, { exact: true }).check();
+    } else
+      for (const field of q.fields)
+        await page.getByLabel(field.label, { exact: true }).fill(String(q.answers[field.id]));
+    await page.getByRole("button", { name: "Check answer", exact: true }).click();
+    await expect(page.getByText(/saved as a new attempt/).first()).toBeVisible();
+  };
+  await answerShown();
   await expect
     .poll(async () => (await database(page))?.attempts.length)
     .toBe(1);
@@ -750,8 +763,7 @@ test("numeric foundation checks persist in reading mode on the combined closing 
     page.getByRole("button", { name: "Read as a page" }),
   ).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "Next check" }).click();
-  await page.getByLabel("Your answer", { exact: true }).fill("9");
-  await page.getByRole("button", { name: "Check answer", exact: true }).click();
+  await answerShown();
   await page.getByRole("button", { name: "See my result" }).click();
   await expect(page.getByText("One more connection made.")).toBeVisible();
   await expect(
@@ -768,7 +780,7 @@ test("pixel controls distinguish stored values from their interpretation on mobi
   await page.setViewportSize({ width: 390, height: 844 });
   await ready(page, "/learn/digital-representations/");
   await page
-    .getByRole("button", { name: /Scene \d+: Build the smallest picture/ })
+    .getByRole("button", { name: /Scene \d+: Four numbers, several pictures/ })
     .click();
   const reading = page.getByTestId("pixel-reading");
   await expect(reading).toContainText("[0, 1, 1, 0]");

@@ -1,221 +1,516 @@
 schema_version: 0.2-draft
 lesson:
   id: detection-and-segmentation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Locate objects and label their pixels
   state: draft
-  summary: Tell apart naming an object, drawing its box, coloring its pixels, and following it across frames.
+  summary: To blur a stranger's face, "there's a face in this photo" isn't enough. Learn how models draw boxes, remove duplicates, score themselves, and color in exact pixels.
   slot: M12.4
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: 'U-Net: Convolutional Networks for Biomedical Image Segmentation'
-    url: https://arxiv.org/abs/1505.04597
+    - title: Dive into Deep Learning — object detection and bounding boxes
+      url: https://d2l.ai/chapter_computer-vision/bounding-box.html
+    - title: "You Only Look Once: Unified, Real-Time Object Detection (Redmon et al., 2015)"
+      url: https://arxiv.org/abs/1506.02640
+    - title: "Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks (Ren et al., 2015)"
+      url: https://arxiv.org/abs/1506.01497
+    - title: "U-Net: Convolutional Networks for Biomedical Image Segmentation (Ronneberger, Fischer & Brox, 2015)"
+      url: https://arxiv.org/abs/1505.04597
+    - title: "Mask R-CNN (He, Gkioxari, Dollár & Girshick, 2017)"
+      url: https://arxiv.org/abs/1703.06870
+    - title: "Segment Anything (Kirillov et al., 2023)"
+      url: https://arxiv.org/abs/2304.02643
 objectives:
-- id: objective.detection-and-segmentation
-  version: 1-draft
-  statement: Detection predicts object instances and locations, segmentation assigns pixel-level structure,
-    and tracking connects instances over time; each needs task-specific matching and metrics.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - detection-and-segmentation.base
-  - detection-and-segmentation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.convolutional-networks
+  - id: objective.detection-and-segmentation
+    version: 2-draft
+    statement: Detection predicts object instances and locations, segmentation assigns pixel-level structure, and tracking connects instances over time; each needs task-specific matching and metrics.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - detection-and-segmentation.base.v2
+      - detection-and-segmentation.transfer.v2
+      - detection-and-segmentation.calculate
+    prerequisites:
+      - anyOf:
+          - objective.convolutional-networks
 scenes:
-- id: detection-and-segmentation.s1
-  title: What answer do you want from the picture?
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.detection-and-segmentation
-  markdown: 'Take a photograph of two cats. **Classification** might label the image “cat.” **Detection** returns
-    a location, such as a box, for each cat. **Semantic segmentation** labels their pixels as cat pixels; **instance
-    segmentation** also distinguishes cat 1 from cat 2.
+  - id: detection-and-segmentation.s1
+    title: '"There''s a face" isn''t enough to blur it'
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.detection-and-segmentation
+    markdown: |-
+      You're sharing a beach photo, and the photo app offers to blur the strangers behind you. A classifier could say "this photo contains faces", but the blur needs *where* each face is, and exactly which pixels to cover.
 
+      Vision tasks differ mainly in the shape of their answer:
 
-    Across video frames, **tracking** tries to keep each cat’s identity consistent. This becomes harder when
-    they move, cross paths, or hide one another. Such blocking of the view is called **occlusion**. Each task
-    needs a different kind of answer and evaluation.'
-  text_mode: 'Take a photograph of two cats. **Classification** might label the image “cat.” **Detection**
-    returns a location, such as a box, for each cat. **Semantic segmentation** labels their pixels as cat pixels;
-    **instance segmentation** also distinguishes cat 1 from cat 2.
+      | Task | Answer | Photo-app use |
+      | --- | --- | --- |
+      | **Classification** | one label for the whole photo | pet search |
+      | **Detection** | a box and label for each object | find the faces to blur |
+      | **Semantic segmentation** | a class for every pixel | "these pixels are sky" |
+      | **Instance segmentation** | a separate mask for each object | blur *this* stranger, not your friend |
+      | **Tracking** | the same identity across video frames | keep the blur on a face as it moves |
 
+      With two dogs in a photo, semantic segmentation paints both "dog"; instance segmentation says "dog 1" and "dog 2". A box is written as $(x_1, y_1, x_2, y_2)$, its left, top, right, and bottom edges, as in the first lesson of this module.
+    bridges: []
+  - id: detection-and-segmentation.s2
+    title: Score a box with intersection over union
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.detection-and-segmentation
+    markdown: |-
+      The face finder predicts a box at $(10, 10, 50, 50)$. The true face, drawn by a person, is at $(20, 20, 60, 60)$. They look close. How close?
 
-    Across video frames, **tracking** tries to keep each cat’s identity consistent. This becomes harder when
-    they move, cross paths, or hide one another. Such blocking of the view is called **occlusion**. Each task
-    needs a different kind of answer and evaluation.'
-  bridges: []
-- id: detection-and-segmentation.s2
-  title: Measure how much the regions overlap
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.detection-and-segmentation
-  markdown: '**Intersection over union (IoU)** divides the overlapping area of predicted and reference regions
-    by the area they cover together. Suppose each region has area 8 and their overlap is 6. Their union is
-    8 + 8 − 6 = 10: subtract the overlap once because it was counted twice. IoU is therefore 6 / 10 = 0.6.
+      **Intersection over union (IoU)** divides the area the two boxes share by the area they cover together:
 
+      - Each box is 40 × 40, so each has area 1,600.
+      - They overlap from 20 to 50 in both directions: 30 × 30 = 900.
+      - Together they cover $1{,}600 + 1{,}600 - 900 = 2{,}300$. Subtract the overlap once, because it was counted in both boxes.
+      - IoU $= 900 / 2{,}300 \approx 0.391$.
 
-    Evaluation also needs a rule for matching predictions to reference objects and a confidence threshold.
-    Two boxes around the same cat should not count as two detected cats. Good overlap also does not guarantee
-    the predicted category is correct.'
-  text_mode: '**Intersection over union (IoU)** divides the overlapping area of predicted and reference regions
-    by the area they cover together. Suppose each region has area 8 and their overlap is 6. Their union is
-    8 + 8 − 6 = 10: subtract the overlap once because it was counted twice. IoU is therefore 6 / 10 = 0.6.
+      A common rule, used by the PASCAL VOC benchmark, counts a detection as correct only if IoU ≥ 0.5. This box misses despite being only 10 pixels off: IoU is harsh on small objects, and a 10-pixel error that ruins a 40-pixel face barely matters on a 400-pixel dog.
 
+      :::predict The prediction moves to (15, 15, 55, 55), only 5 pixels off. What is the IoU now?
+      The overlap is 35 × 35 = 1,225. The union is $3{,}200 - 1{,}225 = 1{,}975$. IoU $= 1{,}225 / 1{,}975 \approx 0.620$, which now passes the 0.5 bar.
+      :::
+    bridges:
+      - arithmetic
+  - id: detection-and-segmentation.s5
+    title: One face, three boxes, and non-maximum suppression
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.detection-and-segmentation
+    markdown: |-
+      A detector runs a CNN **backbone** over the photo, then a **head** that proposes candidate boxes, each with a score. **YOLO** ("You Only Look Once", Redmon et al., 2015) made this a single pass: it split the photo into a 7 × 7 grid, and each cell predicted boxes and class scores directly, fast enough for live video. **Faster R-CNN** (Ren et al., 2015) works in two stages: first propose regions that might hold objects, then classify and refine each one.
 
-    Evaluation also needs a rule for matching predictions to reference objects and a confidence threshold.
-    Two boxes around the same cat should not count as two detected cats. Good overlap also does not guarantee
-    the predicted category is correct.'
-  bridges:
-  - arithmetic
-- id: detection-and-segmentation.s3
-  title: Recover detail through a U-Net-like structure
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.detection-and-segmentation
-  markdown: 'An encoder reduces spatial resolution while building features. A decoder restores resolution,
-    and skip connections bring aligned features from earlier stages. This can help preserve localization detail
-    for dense outputs. Exact upsampling, channel mixing, and skip conventions vary by implementation.
+      Either way, one face usually gets several overlapping boxes. **Non-maximum suppression (NMS)** cleans them up: keep the highest-scoring box, delete every remaining box whose IoU with it exceeds a threshold (often 0.5), and repeat with what's left.
 
+      | Box | $(x_1, y_1, x_2, y_2)$ | Score | IoU with box 0 | Result |
+      | --- | --- | ---: | ---: | --- |
+      | 0 | (100, 100, 200, 200) | 0.95 | — | keep |
+      | 1 | (110, 105, 210, 205) | 0.90 | 0.747 | drop |
+      | 2 | (300, 120, 380, 200) | 0.85 | 0 | keep (another face) |
+      | 3 | (95, 110, 190, 210) | 0.60 | 0.711 | drop |
 
-    “Dense output” here means an answer at many or all pixel positions. U-Net names the U-shaped diagram of
-    a shrinking encoder and expanding decoder with cross-connections. Restoring resolution does not automatically
-    restore details already discarded; the skip features help supply them.'
-  text_mode: 'An encoder reduces spatial resolution while building features. A decoder restores resolution,
-    and skip connections bring aligned features from earlier stages. This can help preserve localization detail
-    for dense outputs. Exact upsampling, channel mixing, and skip conventions vary by implementation.
+      ```python run
+      import numpy as np
 
+      def iou(a, b):
+          """Boxes are (x1, y1, x2, y2). Overlap area divided by combined area."""
+          w = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+          h = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+          inter = w * h
+          area = lambda r: (r[2] - r[0]) * (r[3] - r[1])
+          return inter / (area(a) + area(b) - inter)
 
-    “Dense output” here means an answer at many or all pixel positions. U-Net names the U-shaped diagram of
-    a shrinking encoder and expanding decoder with cross-connections. Restoring resolution does not automatically
-    restore details already discarded; the skip features help supply them.'
-  bridges: []
-- id: detection-and-segmentation.s4
-  title: Inspect the errors the metric hides
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.detection-and-segmentation
-  markdown: 'A large-region average can hide failures on small objects or thin boundaries. Detection average
-    precision depends on matching and IoU conventions. Tracking introduces identity switches and missed associations
-    beyond per-frame boxes. State annotation rules, ignored regions, and temporal conditions when interpreting
-    scores.
+      print("IoU of the worked example:", round(iou((10, 10, 50, 50), (20, 20, 60, 60)), 3))
 
+      boxes = np.array([(100, 100, 200, 200), (110, 105, 210, 205),
+                        (300, 120, 380, 200), (95, 110, 190, 210)])
+      scores = np.array([0.95, 0.90, 0.85, 0.60])
 
-    An **identity switch** occurs when the tracker labels the first cat as cat 2 after a crossing. Both boxes
-    can be well placed while the tracking identities are wrong. This is why a detection score alone cannot
-    describe a tracking system.'
-  text_mode: 'A large-region average can hide failures on small objects or thin boundaries. Detection average
-    precision depends on matching and IoU conventions. Tracking introduces identity switches and missed associations
-    beyond per-frame boxes. State annotation rules, ignored regions, and temporal conditions when interpreting
-    scores.
+      def nms(boxes, scores, threshold=0.5):
+          order = list(np.argsort(-scores))          # best score first
+          keep = []
+          while order:
+              best = order.pop(0)
+              keep.append(int(best))
+              for other in order[:]:
+                  overlap = iou(boxes[best], boxes[other])
+                  if overlap > threshold:
+                      print(f"  drop box {other} (IoU {overlap:.3f} with box {best})")
+                      order.remove(other)
+          return keep
 
+      print("kept boxes:", nms(boxes, scores))
+      ```
 
-    An **identity switch** occurs when the tracker labels the first cat as cat 2 after a crossing. Both boxes
-    can be well placed while the tracking identities are wrong. This is why a detection score alone cannot
-    describe a tracking system.'
-  bridges: []
-- id: detection-and-segmentation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.detection-and-segmentation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Naming an image, locating objects, labeling pixels, and tracking identities are different tasks.
-    Choose the output and evaluation rules that match the task you want to solve.
-- id: detection-and-segmentation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.detection-and-segmentation
-  markdown: Naming an image, locating objects, labeling pixels, and tracking identities are different tasks.
-    Choose the output and evaluation rules that match the task you want to solve.
-  text_mode: Naming an image, locating objects, labeling pixels, and tracking identities are different tasks.
-    Choose the output and evaluation rules that match the task you want to solve.
+      Try raising the threshold to 0.75: both duplicates survive, so one face gets three blurs. Set it too low, say 0.1, and of two cheek-to-cheek faces, one box can be deleted, leaving that face unblurred.
+    diagram:
+      caption: A single-pass detector. Many candidate boxes come out; NMS keeps one per object.
+      description: The photo goes into a CNN backbone, which produces feature maps for a detection head. The head outputs many candidate boxes, each with a score. Non-maximum suppression removes boxes that overlap a higher-scoring box too much. The remaining boxes, one per face, go to the blur step.
+      nodes:
+        - id: photo
+          label: Photo
+          col: 0
+          row: 0
+          tone: data
+        - id: backbone
+          label: CNN backbone
+          note: feature maps
+          col: 1
+          row: 0
+        - id: head
+          label: Detection head
+          note: box + score per cell
+          col: 2
+          row: 0
+        - id: candidates
+          label: Candidate boxes
+          note: several per face
+          col: 3
+          row: 0
+          tone: data
+        - id: nms
+          label: Non-max suppression
+          note: drop IoU > 0.5
+          col: 3
+          row: 1
+          tone: accent
+        - id: blur
+          label: Blur each face
+          note: one box per face
+          col: 2
+          row: 1
+          tone: warn
+      edges:
+        - from: photo
+          to: backbone
+        - from: backbone
+          to: head
+        - from: head
+          to: candidates
+        - from: candidates
+          to: nms
+        - from: nms
+          to: blur
+          label: kept
+  - id: detection-and-segmentation.s4
+    title: Mean average precision, and the errors it hides
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.detection-and-segmentation
+    markdown: |-
+      How good is a face detector overall? Two ratios come first. **Precision** is the fraction of returned boxes that are real faces; **recall** is the fraction of real faces that got a box. A test photo has 3 real faces and the detector returns 4 boxes. Sort them by score and mark each as a true positive (IoU ≥ 0.5 with a face not yet matched) or a false positive:
+
+      | Rank | Match? | Precision so far | Recall so far |
+      | ---: | --- | ---: | ---: |
+      | 1 | true positive | 1/1 = 1.00 | 1/3 |
+      | 2 | true positive | 2/2 = 1.00 | 2/3 |
+      | 3 | false positive | 2/3 = 0.67 | 2/3 |
+      | 4 | true positive | 3/4 = 0.75 | 3/3 |
+
+      **Average precision (AP)** averages the precision at each rank where a new face was found: $(1.00 + 1.00 + 0.75)/3 \approx 0.917$. It rewards finding every face *and* ranking correct boxes first. **Mean average precision (mAP)**, the standard detector score, averages AP over classes (faces, dogs, signs). COCO, the most-used benchmark, also averages over IoU thresholds from 0.5 to 0.95, so sloppy boxes cost points. Compare mAP only within one benchmark, since the details differ.
+
+      One mAP can hide what matters, so split it by object size: small, distant faces are usually weakest. Video needs its own check: an **identity switch** happens when two people cross and the tracker swaps their labels. Every box can be perfect while the blur jumps to the wrong person.
+    bridges: []
+  - id: detection-and-segmentation.s3
+    title: Masks with a U-shaped network
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.detection-and-segmentation
+    markdown: |-
+      A box also blurs a slice of background. A clean blur needs a **mask**, a yes/no answer for every pixel: an output as large as the input, from a CNN that shrinks its grid as it learns *what* is there.
+
+      **U-Net** (Ronneberger, Fischer & Brox, 2015, built for microscope images of cells) has two halves. The **encoder** is an ordinary CNN that halves the grid while adding channels; the **decoder** upsamples back to full size. **Skip connections** copy each encoder map across to the decoder stage of the same size, stacked channel-wise, so the decoder gets deep "this is a face" features *and* sharp early edges.
+
+      :::mixup "Upsampling the small feature map is enough to recover sharp boundaries."
+      Upsampling 64 × 64 to 256 × 256 spreads each value over a 4 × 4 block, so edges come out blocky. Pooling threw the detail away; skip connections put it back.
+      :::
+
+      For instance masks, **Mask R-CNN** (He et al., 2017) added a small mask branch to Faster R-CNN: for each detected box, predict which pixels inside it belong to that object. **Segment Anything (SAM)** (Kirillov et al., 2023), trained on over 1 billion masks from 11 million images, goes further: click a point on almost any object and it returns a mask. Tap a stranger, and the photo app gets a mask to blur.
+    diagram:
+      caption: A U-Net for face masks. The encoder shrinks, the decoder grows, and skip connections carry fine detail across.
+      description: A 256 × 256 photo enters the encoder, which produces 256 × 256 × 64 features, then pools to 128 × 128 × 128, then to a 64 × 64 × 256 bottleneck. The decoder upsamples to 128 × 128 × 128 and then 256 × 256 × 64. Skip connections join the 128 × 128 encoder stage to the 128 × 128 decoder stage, and the 256 × 256 encoder stage to the 256 × 256 decoder stage. A 1 × 1 convolution turns the final features into a 256 × 256 face mask.
+      nodes:
+        - id: photo
+          label: Photo
+          note: 256 × 256 × 3
+          col: 0
+          row: 0
+          tone: data
+        - id: e1
+          label: Encoder
+          note: 256 × 256 × 64
+          col: 0
+          row: 1
+        - id: e2
+          label: Encoder
+          note: 128 × 128 × 128
+          col: 1
+          row: 2
+        - id: bottleneck
+          label: Bottleneck
+          note: 64 × 64 × 256
+          col: 2
+          row: 3
+          tone: accent
+        - id: d2
+          label: Decoder
+          note: 128 × 128 × 128
+          col: 3
+          row: 2
+        - id: d1
+          label: Decoder
+          note: 256 × 256 × 64
+          col: 4
+          row: 1
+        - id: mask
+          label: Face mask
+          note: 256 × 256 × 1
+          col: 4
+          row: 0
+          tone: warn
+      edges:
+        - from: photo
+          to: e1
+        - from: e1
+          to: e2
+          label: pool ÷ 2
+        - from: e2
+          to: bottleneck
+          label: pool ÷ 2
+        - from: bottleneck
+          to: d2
+          label: upsample × 2
+        - from: d2
+          to: d1
+          label: upsample × 2
+        - from: d1
+          to: mask
+          label: 1 × 1 conv
+        - from: e1
+          to: d1
+          label: skip connection
+          dashed: true
+        - from: e2
+          to: d2
+          label: skip connection
+          dashed: true
+  - id: detection-and-segmentation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.detection-and-segmentation
+    markdown: Compute IoU for fresh pairs of boxes, then choose the right output and metric for a parking-lot counter, a road-scene labeler, and a sports-video tracker.
+    takeaway: |-
+      Pick the answer's shape first: a label, boxes, pixel masks, or tracked identities. Boxes are matched by IoU, duplicates are removed with NMS, and mAP rewards finding every object with the right boxes ranked first.
+  - id: detection-and-segmentation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.detection-and-segmentation
+    markdown: |-
+      Naming an image, locating objects, labeling pixels, and tracking identities are different tasks. Choose the output and evaluation rules that match the task you want to solve.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - detection-and-segmentation.s1
-    - detection-and-segmentation.s2
-    - detection-and-segmentation.s3
-    - detection-and-segmentation.s4
-    - detection-and-segmentation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - detection-and-segmentation.s1
+        - detection-and-segmentation.s2
+        - detection-and-segmentation.s5
+        - detection-and-segmentation.s4
+        - detection-and-segmentation.s3
+        - detection-and-segmentation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     detection-and-segmentation.recap: detection-and-segmentation.check
 assessment_families:
-- id: detection-and-segmentation.base
-  objective_ref: objective.detection-and-segmentation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Measure overlap with a box example: trace the inputs, operation, and result before choosing.'
-  remediation_scene: detection-and-segmentation.s2
-  variants:
-  - id: detection-and-segmentation.base.1
-    prompt: Intersection area 4 and union area 8 give what IoU?
-    options:
-    - id: c
-      text: '4'
-    - id: a
-      text: '0.5'
-    - id: b
-      text: '2'
-    answer: a
-    feedback: IoU is intersection divided by union.
-  - id: detection-and-segmentation.base.2
-    prompt: What distinguishes instance segmentation from semantic segmentation?
-    options:
-    - id: a
-      text: It separates individual objects within the same category
-    - id: b
-      text: It never uses pixels
-    - id: c
-      text: It predicts only one label for the entire image
-    answer: a
-    feedback: Instance identity is added to category-level labeling.
-- id: detection-and-segmentation.transfer
-  objective_ref: objective.detection-and-segmentation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Inspect the errors the metric hides: trace the inputs, operation, and result before choosing.'
-  remediation_scene: detection-and-segmentation.s4
-  variants:
-  - id: detection-and-segmentation.transfer.1
-    prompt: Two predicted boxes match the same single reference object. Should both automatically count as
-      true positives?
-    options:
-    - id: a
-      text: No; evaluation needs a one-to-one matching convention
-    - id: b
-      text: Yes; more boxes always improve recall without cost
-    - id: c
-      text: Only if boxes have the same color
-    answer: a
-    feedback: Duplicate predictions must be handled by the stated matching protocol.
-  - id: detection-and-segmentation.transfer.2
-    prompt: A tracker finds boxes accurately but swaps identities between frames. What task-specific failure
-      occurred?
-    options:
-    - id: b
-      text: Only a classification error on the whole video
-    - id: c
-      text: A guarantee that tracking is solved
-    - id: a
-      text: An identity association error
-    answer: a
-    feedback: Temporal identity consistency is separate from per-frame localization.
+  - id: detection-and-segmentation.base
+    objective_ref: objective.detection-and-segmentation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Measure overlap with a box example: trace the inputs, operation, and result before choosing.'
+    remediation_scene: detection-and-segmentation.s2
+    variants:
+      - id: detection-and-segmentation.base.1
+        prompt: Intersection area 4 and union area 8 give what IoU?
+        options:
+          - id: c
+            text: '4'
+          - id: a
+            text: '0.5'
+          - id: b
+            text: '2'
+        answer: a
+        feedback: IoU is intersection divided by union.
+        retired: true
+      - id: detection-and-segmentation.base.2
+        prompt: What distinguishes instance segmentation from semantic segmentation?
+        options:
+          - id: a
+            text: It separates individual objects within the same category
+          - id: b
+            text: It never uses pixels
+          - id: c
+            text: It predicts only one label for the entire image
+        answer: a
+        feedback: Instance identity is added to category-level labeling.
+        retired: true
+  - id: detection-and-segmentation.transfer
+    objective_ref: objective.detection-and-segmentation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Inspect the errors the metric hides: trace the inputs, operation, and result before choosing.'
+    remediation_scene: detection-and-segmentation.s4
+    variants:
+      - id: detection-and-segmentation.transfer.1
+        prompt: Two predicted boxes match the same single reference object. Should both automatically count as true positives?
+        options:
+          - id: a
+            text: No; evaluation needs a one-to-one matching convention
+          - id: b
+            text: Yes; more boxes always improve recall without cost
+          - id: c
+            text: Only if boxes have the same color
+        answer: a
+        feedback: Duplicate predictions must be handled by the stated matching protocol.
+        retired: true
+      - id: detection-and-segmentation.transfer.2
+        prompt: A tracker finds boxes accurately but swaps identities between frames. What task-specific failure occurred?
+        options:
+          - id: b
+            text: Only a classification error on the whole video
+          - id: c
+            text: A guarantee that tracking is solved
+          - id: a
+            text: An identity association error
+        answer: a
+        feedback: Temporal identity consistency is separate from per-frame localization.
+        retired: true
+  - id: detection-and-segmentation.base.v2
+    objective_ref: objective.detection-and-segmentation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Trace the step exactly. IoU is overlap ÷ combined area; NMS keeps the best box and drops its heavy overlaps; AP averages precision at each newly found object; skip connections carry early detail to the decoder.
+    remediation_scene: detection-and-segmentation.s5
+    variants:
+      - id: detection-and-segmentation.base.v2.1
+        prompt: "NMS with threshold 0.5 sees three boxes: A (score 0.9), B (0.8, IoU 0.6 with A), and C (0.7, IoU 0.2 with A and 0.1 with B). Which boxes remain?"
+        options:
+          - id: c
+            text: Only A, since B and C both have lower scores than A
+          - id: a
+            text: A and C, since only B overlaps A by more than 0.5
+          - id: b
+            text: A, B, and C, since each box has a score above 0.5
+        answer: a
+        feedback: NMS removes a box only if it overlaps a kept, higher-scoring box by more than the threshold; B does (0.6), C doesn't (0.2). A lower score alone never removes a box, and the 0.5 threshold applies to IoU, not to scores.
+      - id: detection-and-segmentation.base.v2.2
+        prompt: Two boxes each have area 100, and their overlap is 50. A student computes IoU = 50 / 200 = 0.25. What went wrong?
+        options:
+          - id: b
+            text: IoU should divide by the smaller box's area, giving 0.5
+          - id: c
+            text: IoU should divide the overlap by itself, giving 1
+          - id: a
+            text: The overlap was counted twice; the union is 150, giving 0.33
+        answer: a
+        feedback: The union is 100 + 100 − 50 = 150, because the shared area is inside both boxes. Dividing by the smaller box's area is a different, more forgiving measure.
+      - id: detection-and-segmentation.base.v2.3
+        prompt: A photo shows three sheep. What does instance segmentation give that semantic segmentation doesn't?
+        options:
+          - id: a
+            text: A separate mask for each sheep, so they can be counted
+          - id: b
+            text: A box around each sheep instead of a pixel mask
+          - id: c
+            text: One label, "sheep", for the whole photo at once
+        answer: a
+        feedback: Semantic segmentation labels every sheep pixel "sheep" without saying which sheep; instance segmentation separates them. Boxes are detection, and one label for the photo is classification.
+      - id: detection-and-segmentation.base.v2.4
+        prompt: A U-Net-style model's masks have blocky, blurred edges. Its designer had removed the skip connections. Why did that hurt?
+        options:
+          - id: c
+            text: The encoder can no longer shrink the grid, so it runs out of memory
+          - id: a
+            text: The decoder lost the sharp early features that pooling discarded
+          - id: b
+            text: The network can no longer produce an output as large as the photo
+        answer: a
+        feedback: Upsampling alone can only spread coarse values over larger blocks; skip connections bring back the full-resolution edges from early layers. The decoder can still reach full size without skips, just with blurry detail.
+  - id: detection-and-segmentation.transfer.v2
+    objective_ref: objective.detection-and-segmentation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Start with the answer the user needs (a count, a region, exact pixels, or identity over time), then pick the task and the metric that match it.
+    remediation_scene: detection-and-segmentation.s4
+    variants:
+      - id: detection-and-segmentation.transfer.v2.1
+        prompt: A city wants to count how many cars are in each parking-lot camera image. Which output fits best?
+        options:
+          - id: b
+            text: Semantic segmentation, labeling each pixel as car or not car
+          - id: a
+            text: Detection, giving one box per car that can be counted
+          - id: c
+            text: Classification, labeling each image "cars present" or not
+        answer: a
+        feedback: A count needs one result per object, which detection gives. Semantic segmentation merges touching cars into one car region, and classification only says whether any cars are present.
+      - id: detection-and-segmentation.transfer.v2.2
+        prompt: A sports-video system draws accurate boxes around every player, but player numbers jump between players after they cross. Which measurement will reveal this?
+        options:
+          - id: c
+            text: Mean average precision computed on each frame separately
+          - id: b
+            text: The average IoU of the player boxes across the whole video
+          - id: a
+            text: A count of identity switches along each player's track
+        answer: a
+        feedback: Per-frame mAP and IoU score the boxes, which are fine here; the failure is in linking boxes over time. Identity switches measure exactly that.
+      - id: detection-and-segmentation.transfer.v2.3
+        prompt: A crowd-counting detector keeps undercounting where people stand shoulder to shoulder. Its NMS threshold is 0.3. What is a likely cause?
+        options:
+          - id: a
+            text: The low threshold deletes real neighbors whose boxes overlap a bit
+          - id: b
+            text: The low threshold keeps too many duplicate boxes per person
+          - id: c
+            text: NMS merges nearby boxes into one larger box around the group
+        answer: a
+        feedback: With a 0.3 threshold, a correct box that overlaps a neighbor's by more than 0.3 is treated as a duplicate and removed. A low threshold removes more boxes, not fewer, and NMS deletes boxes rather than merging them.
+      - id: detection-and-segmentation.transfer.v2.4
+        prompt: A hospital wants to measure a tumor's area in each scan, to the square millimeter. Which output should the model give?
+        options:
+          - id: c
+            text: A box around the tumor, since its area is easy to compute
+          - id: b
+            text: A "tumor present" probability, since doctors need the risk
+          - id: a
+            text: A pixel mask of the tumor, whose pixels can be added up
+        answer: a
+        feedback: Area needs the exact outline, and a mask gives it pixel by pixel. A box also counts the healthy tissue in its corners, overstating irregular shapes, and a probability says nothing about size.
+  - id: detection-and-segmentation.calculate
+    objective_ref: objective.detection-and-segmentation
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Find the overlap's width and height from the inner edges (larger left, smaller right; larger top, smaller bottom). Then IoU = overlap ÷ (area A + area B − overlap).
+    remediation_scene: detection-and-segmentation.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: detection-and-segmentation.calculate.1
+        prompt: Box A is (0, 0, 10, 10) and box B is (5, 0, 15, 10). What is their IoU? Give a decimal.
+        answer: 0.333
+        feedback: The overlap is 5 × 10 = 50. The union is 100 + 100 − 50 = 150. IoU = 50 / 150 ≈ 0.333.
+      - id: detection-and-segmentation.calculate.2
+        prompt: Box A is (10, 10, 30, 30) and box B is (20, 20, 40, 40). What is their IoU? Give a decimal.
+        answer: 0.143
+        feedback: The overlap is 10 × 10 = 100. The union is 400 + 400 − 100 = 700. IoU = 100 / 700 ≈ 0.143.
+      - id: detection-and-segmentation.calculate.3
+        prompt: Box A is (0, 0, 20, 10) and box B is (0, 0, 10, 10), inside it. What is their IoU? Give a decimal.
+        answer: 0.5
+        feedback: B lies inside A, so the overlap is B's area, 100, and the union is A's area, 200. IoU = 100 / 200 = 0.5.
+      - id: detection-and-segmentation.calculate.4
+        prompt: Box A is (0, 0, 6, 6) and box B is (3, 3, 9, 9). What is their IoU? Give a decimal.
+        answer: 0.143
+        feedback: The overlap is 3 × 3 = 9. The union is 36 + 36 − 9 = 63. IoU = 9 / 63 ≈ 0.143.
+      - id: detection-and-segmentation.calculate.5
+        prompt: Box A is (0, 0, 10, 10) and box B is (2, 2, 12, 12). What is their IoU? Give a decimal.
+        answer: 0.471
+        feedback: The overlap runs from 2 to 10 both ways, 8 × 8 = 64. The union is 100 + 100 − 64 = 136. IoU = 64 / 136 ≈ 0.471, just under the usual 0.5 bar even though the boxes are only 2 pixels apart.

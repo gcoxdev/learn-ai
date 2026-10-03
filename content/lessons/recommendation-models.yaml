@@ -1,211 +1,417 @@
 schema_version: 0.2-draft
 lesson:
   id: recommendation-models
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Estimate what a person may find useful
   state: draft
-  summary: Recommend books from interaction patterns while separating missing evidence from dislike.
+  summary: In 2006 Netflix offered a million dollars for better movie predictions. Learn the idea that helped win it, giving every person and every item a short taste vector, and how to judge the lists it makes.
   slot: M08.7
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: Dive into Deep Learning — authors’ open textbook
+      url: https://d2l.ai/
+    - title: "Matrix Factorization Techniques for Recommender Systems (Koren, Bell & Volinsky, 2009)"
+      url: https://doi.org/10.1109/MC.2009.263
+    - title: "Cumulated Gain-Based Evaluation of IR Techniques (Järvelin & Kekäläinen, 2002)"
+      url: https://doi.org/10.1145/582415.582418
 objectives:
-- id: objective.recommendation-models
-  version: 1-draft
-  statement: Collaborative filtering and ranking models use interaction patterns or item content; sparse observations,
-    cold starts, and the chosen objective shape recommendations.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - recommendation-models.base
-  - recommendation-models.transfer
-  prerequisites:
-  - anyOf:
-    - objective.pca-and-factorization
-  - anyOf:
-    - objective.classification-metrics
+  - id: objective.recommendation-models
+    version: 2-draft
+    statement: Collaborative filtering and ranking models use interaction patterns or item content; sparse observations, cold starts, and the chosen objective shape recommendations.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - recommendation-models.base.v2
+      - recommendation-models.transfer.v2
+      - recommendation-models.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.pca-and-factorization
+      - anyOf:
+          - objective.classification-metrics
 scenes:
-- id: recommendation-models.s1
-  title: The observations are interactions
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.recommendation-models
-  markdown: 'A recommendation table can record users, items, and ratings or clicks. Most user-item pairs are
-    unobserved. An absent click may mean lack of exposure rather than dislike. The task could be rating prediction,
-    click ranking, discovery, or long-term usefulness; these are different objectives.
+  - id: recommendation-models.s1
+    title: A table that is 99% empty
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.recommendation-models
+    markdown: |-
+      In October 2006, Netflix released about 100 million movie ratings from roughly 480,000 customers and offered \$1 million to anyone who could predict ratings 10% more accurately than its own system. Picture those ratings as one giant table, a row per customer and a column per movie. About 99% of the cells are blank, because nobody rates more than a sliver of a catalog.
 
+      A blank is not a dislike. It usually means the person never saw the movie. Treat blanks as one-star ratings and the model learns that everyone hates everything they haven't found yet.
 
-    **Collaborative filtering** uses patterns across people''s interactions: people who liked some of the same
-    items may like related ones. **Content-based** methods instead use item descriptions or features. A **sparse**
-    table has many missing entries. Missing is not the same as a zero-star rating, because the person may never
-    have seen the item.'
-  text_mode: 'A recommendation table can record users, items, and ratings or clicks. Most user-item pairs are
-    unobserved. An absent click may mean lack of exposure rather than dislike. The task could be rating prediction,
-    click ranking, discovery, or long-term usefulness; these are different objectives.
+      There are two broad ways to fill in blanks:
 
+      - **Collaborative filtering** uses patterns across people. If Ben rates books much like Ana does, Ben's other favorites are good bets for Ana, even if the system knows nothing about the books themselves.
+      - **Content-based** methods use descriptions of the items, such as genre, author, or cast, to find things like what you already liked.
 
-    **Collaborative filtering** uses patterns across people''s interactions: people who liked some of the same
-    items may like related ones. **Content-based** methods instead use item descriptions or features. A **sparse**
-    table has many missing entries. Missing is not the same as a zero-star rating, because the person may never
-    have seen the item.'
-  bridges: []
-- id: recommendation-models.s2
-  title: Score a user and an item with small vectors
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.recommendation-models
-  markdown: '**Matrix factorization** represents each user and item with a **vector**, an ordered list of numbers.
-    Their **dot product** multiplies matching entries and adds the results. User [1, 2] and item [3, 1] give
-    1 × 3 + 2 × 1 = 5.
+      We'll follow a tiny version: four readers in a book club, two mysteries, two romances, and one blank. Ana has never rated *Romance 2*. Should the club recommend it to her?
 
+      | | Mystery 1 | Mystery 2 | Romance 1 | Romance 2 |
+      | --- | ---: | ---: | ---: | ---: |
+      | Ana | 5 | 4 | 1 | ? |
+      | Ben | 4 | 5 | 1 | 2 |
+      | Cho | 1 | 2 | 5 | 4 |
+      | Dev | 2 | 1 | 4 | 5 |
+    bridges: []
+  - id: recommendation-models.s2
+    title: A taste vector for every reader and every book
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.recommendation-models
+    markdown: |-
+      **Matrix factorization** gives each reader a short list of numbers, a **user vector**, and each book one too, an **item vector**. The predicted rating is their dot product: multiply matching entries and add. It's the same trick as the PCA lesson, a big table rewritten as the product of two thin ones, except now most of the table is missing.
 
-    This is a match score, not automatically five stars or a probability. Added bias terms can capture general
-    user or item tendencies. Shared factors help the model use patterns across observed interactions, though
-    the learned coordinates need not correspond to named interests.'
-  text_mode: '**Matrix factorization** represents each user and item with a **vector**, an ordered list of
-    numbers. Their **dot product** multiplies matching entries and adds the results. User [1, 2] and item [3,
-    1] give 1 × 3 + 2 × 1 = 5.
+      Suppose the two numbers happened to mean "likes mysteries" and "likes romance." Ana's vector might be [2, 0.5], and *Romance 2*'s [0.2, 2]. The prediction is 2 × 0.2 + 0.5 × 2 = 1.4: a weak match, because the book scores high on the one taste Ana lacks.
 
+      In practice nobody names the factors. The model learns whatever numbers best reproduce the ratings it has, and the factors often line up only loosely with genres. Real systems also add **bias terms**: an overall average, a per-user offset for people who rate everything high, and a per-item offset for books everyone loves.
 
-    This is a match score, not automatically five stars or a probability. Added bias terms can capture general
-    user or item tendencies. Shared factors help the model use patterns across observed interactions, though
-    the learned coordinates need not correspond to named interests.'
-  bridges:
-  - vectors
-- id: recommendation-models.s3
-  title: Handle a new user or item
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.recommendation-models
-  markdown: 'Collaborative signals are weak for a new user or item: the cold-start problem. Content features,
-    declared preferences, exploration, or popularity baselines can supply initial evidence. Each fallback has
-    tradeoffs. Popularity can be useful while reinforcing exposure concentration.'
-  text_mode: 'Collaborative signals are weak for a new user or item: the cold-start problem. Content features,
-    declared preferences, exploration, or popularity baselines can supply initial evidence. Each fallback has
-    tradeoffs. Popularity can be useful while reinforcing exposure concentration.'
-  bridges: []
-- id: recommendation-models.s4
-  title: Evaluate the ranking that users receive
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.recommendation-models
-  markdown: 'Metrics such as recall at k or discounted gain examine ranked lists, but candidate generation
-    and exposure policy affect the task. Split data by time where appropriate and avoid future interactions
-    leaking into features. Evaluate novelty, coverage, and user outcomes alongside immediate clicks.
+      $$\hat r_{ui} = \mu + b_u + b_i + p_u \cdot q_i$$
 
+      With average $\mu = 3.5$, Ana's offset $b_u = 0.2$ (she rates a little high), and the book's offset $b_i = -0.3$, the baseline guess is 3.4. With biases in the model, the vectors learn only each person's departure from that baseline, so a poor match shows up as a negative dot product: $p_u \cdot q_i = -1.5$ gives 3.4 − 1.5 = 1.9.
+    bridges:
+      - vectors
+  - id: recommendation-models.learn
+    title: Learn the vectors from the ratings you have
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.recommendation-models
+    markdown: |-
+      Start every vector at small random numbers. For each rated cell, compute the error $e = r - p_u \cdot q_i$, then nudge both vectors to shrink it, the gradient-descent step from earlier lessons. Blank cells contribute nothing. A small penalty keeps the vectors from growing just to memorize a few ratings.
 
-    **Recall at k** asks what fraction of the relevant items appear in the first k recommendations. If there
-    are four known relevant books and the top five include two, recall at five is 2/4. **Discounted gain**
-    gives more credit to relevant items near the top. Neither measure tells you how an unshown book would have
-    been received without additional evidence.'
-  text_mode: 'Metrics such as recall at k or discounted gain examine ranked lists, but candidate generation
-    and exposure policy affect the task. Split data by time where appropriate and avoid future interactions
-    leaking into features. Evaluate novelty, coverage, and user outcomes alongside immediate clicks.
+      ```python run
+      import numpy as np
 
+      # Ratings (1-5) from four readers for two mysteries and two romances; 0 = not rated
+      R = np.array([[5, 4, 1, 0],    # Ana hasn't rated Romance 2
+                    [4, 5, 1, 2],    # Ben
+                    [1, 2, 5, 4],    # Cho
+                    [2, 1, 4, 5]],   # Dev
+                   dtype=float)
+      rated = R > 0
 
-    **Recall at k** asks what fraction of the relevant items appear in the first k recommendations. If there
-    are four known relevant books and the top five include two, recall at five is 2/4. **Discounted gain**
-    gives more credit to relevant items near the top. Neither measure tells you how an unshown book would have
-    been received without additional evidence.'
-  bridges: []
-- id: recommendation-models.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.recommendation-models
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Recommendations can use patterns in people’s interactions or features of the items. Remember that
-    an unobserved interaction may mean the item was never shown, not that it was disliked.
-- id: recommendation-models.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.recommendation-models
-  markdown: Recommendations can use patterns in people’s interactions or features of the items. Remember that
-    an unobserved interaction may mean the item was never shown, not that it was disliked.
-  text_mode: Recommendations can use patterns in people’s interactions or features of the items. Remember that
-    an unobserved interaction may mean the item was never shown, not that it was disliked.
+      rng = np.random.default_rng(0)
+      U = rng.normal(0, 0.5, (4, 2))    # one 2-number taste vector per reader
+      V = rng.normal(0, 0.5, (4, 2))    # one 2-number vector per book
+      lr, lam = 0.05, 0.02              # learning rate and regularization strength
+
+      for step in range(301):
+          E = np.where(rated, R - U @ V.T, 0)          # errors on rated cells only
+          if step % 100 == 0:
+              loss = (E ** 2).sum() + lam * ((U ** 2).sum() + (V ** 2).sum())
+              print(f"step {step:3d}: loss {loss:.3f}")
+          U, V = U + lr * (E @ V - lam * U), V + lr * (E.T @ U - lam * V)
+
+      print("predicted table:\n", np.round(U @ V.T, 1))
+      print("Ana's predicted rating for Romance 2:", round(float(U[0] @ V[3]), 2))
+      ```
+
+      Ana's predicted rating for *Romance 2* is 2.03: don't recommend it. The model never compared genres. It noticed that Ana rates like Ben, and Ben gave the book a 2.
+
+      :::predict Change Ben's rating of Romance 2 from 2 to 5. What happens to Ana's prediction?
+      It jumps to 5.09 (a little past the scale, since nothing clips it). Ben is Ana's taste twin, so his opinion carries straight over. That's collaborative filtering in one number. Setting `lam` to 1.0 instead shrinks every vector, pulling all the predictions toward the middle: Ana's falls to 1.83.
+      :::
+
+      :::papers Regularized matrix factorization
+      Koren, Bell, and Volinsky (2009) summarize the method as minimizing, over the set $\kappa$ of rated cells,
+
+      $$\sum_{(u,i) \in \kappa} \left(r_{ui} - p_u \cdot q_i\right)^2 + \lambda \left(\lVert p_u \rVert^2 + \lVert q_i \rVert^2\right)$$
+
+      with updates $p_u \leftarrow p_u + \eta\,(e_{ui}\,q_i - \lambda\,p_u)$ and $q_i \leftarrow q_i + \eta\,(e_{ui}\,p_u - \lambda\,q_i)$. In the code, $\eta$ is `lr` = 0.05 and $\lambda$ is `lam` = 0.02.
+      :::
+
+      :::story The Netflix Prize
+      The prize ran from 2006 to 2009. Early on, a blogger writing as Simon Funk explained how he used this kind of factorization to climb the leaderboard, and factorization became a core ingredient for the leading teams. In 2009 the team BellKor's Pragmatic Chaos passed the 10% mark and won, with a blend of many models.
+      :::
+    bridges: []
+  - id: recommendation-models.s3
+    title: The reader with no ratings yet
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.recommendation-models
+    markdown: |-
+      A new member joins the club with an empty row. Factorization has no ratings to fit her vector to, so it stays meaningless noise. That's the **cold-start problem**, and new books have it too. Common fixes:
+
+      - **Ask.** Have her rate five books at sign-up, and fit her vector to those.
+      - **Use content.** Place a new book using its genre, author, and blurb until ratings arrive.
+      - **Start with popular items**, then switch to personal picks as her first ratings come in.
+
+      Popular picks are a safe start but a poor habit. Lean on them too long and the already-popular books collect all the new ratings, a loop the next lesson follows closely.
+    bridges: []
+  - id: recommendation-models.s4
+    title: Judge the list, not the rating
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.recommendation-models
+    markdown: |-
+      People see a short ranked list, not predicted ratings. So hide some of each person's later ratings, recommend from earlier data only, and score the list.
+
+      Say Ana later loved four books: B, E, F, and H. The system's top five was B, C, E, X, Y.
+
+      - **Recall@k** is the fraction of the loved books that appear in the top k. Two of the four made the top five, so recall@5 = 2 / 4 = 0.5.
+      - **nDCG** (normalized discounted cumulative gain) also rewards putting hits near the top. Each hit at position $i$ earns $1/\log_2(i+1)$: B at position 1 earns 1, and E at position 3 earns 0.5, so DCG = 1.5. The best possible list would put all four at the top, earning 1 + 0.63 + 0.5 + 0.43 = 2.56. So nDCG = 1.5 / 2.56 = 0.59.
+
+      :::predict Swap C and E, so the list is B, E, C, X, Y. What happens to recall@5 and nDCG?
+      Recall@5 stays 0.5, since the same two books are in the list. nDCG rises to 0.64, because E moved from position 3 (worth 0.5) to position 2 (worth 0.63). Recall asks what made the list; nDCG also asks how high.
+      :::
+
+      Split the data by time, training on ratings before a date and testing on those after. A random split lets next month's ratings help predict last month's, and scores look better than they will after launch.
+    bridges: []
+  - id: recommendation-models.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.recommendation-models
+    markdown: A music app's new users, a bookshop's new titles, a leaky offline test, and several dot products and ranking scores test whether you can build a recommender and judge its lists.
+    takeaway: |-
+      Matrix factorization gives every user and item a short vector, learned from the ratings that exist, and predicts a blank as their dot product. Blanks aren't dislikes, new users need a fallback, and the ranked list is what you should measure.
+  - id: recommendation-models.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.recommendation-models
+    markdown: |-
+      Recommendations can use patterns in people’s interactions or features of the items. Remember that an unobserved interaction may mean the item was never shown, not that it was disliked.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - recommendation-models.s1
-    - recommendation-models.s2
-    - recommendation-models.s3
-    - recommendation-models.s4
-    - recommendation-models.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - recommendation-models.s1
+        - recommendation-models.s2
+        - recommendation-models.learn
+        - recommendation-models.s3
+        - recommendation-models.s4
+        - recommendation-models.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     recommendation-models.recap: recommendation-models.check
 assessment_families:
-- id: recommendation-models.base
-  objective_ref: objective.recommendation-models
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Factor a sparse preference table: trace the inputs, operation, and result before choosing.'
-  remediation_scene: recommendation-models.s2
-  variants:
-  - id: recommendation-models.base.1
-    prompt: User vector [2, 1] and item vector [1, 3] give what dot-product score?
-    options:
-    - id: c
-      text: '3'
-    - id: a
-      text: '5'
-    - id: b
-      text: '6'
-    answer: a
-    feedback: 'Multiply matching coordinates and sum: 2 + 3.'
-  - id: recommendation-models.base.2
-    prompt: What is a cold-start problem?
-    options:
-    - id: a
-      text: Limited interaction evidence for a new user or item
-    - id: b
-      text: Only a computer boot delay
-    - id: c
-      text: An absence of any possible baseline
-    answer: a
-    feedback: Collaborative patterns need observations that may not yet exist.
-- id: recommendation-models.transfer
-  objective_ref: objective.recommendation-models
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate the ranking that users receive: trace the inputs, operation, and result before choosing.'
-  remediation_scene: recommendation-models.s4
-  variants:
-  - id: recommendation-models.transfer.1
-    prompt: An item has no clicks because it was never shown. Is that evidence of dislike?
-    options:
-    - id: a
-      text: Not by itself; exposure is missing
-    - id: b
-      text: Yes; all unobserved pairs are negative preferences
-    - id: c
-      text: Only if the item is expensive
-    answer: a
-    feedback: Observation depends on the recommendation and exposure process.
-  - id: recommendation-models.transfer.2
-    prompt: A recommender predicts ratings well but ranks useful items poorly. What distinction matters?
-    options:
-    - id: b
-      text: Every metric measures the same thing
-    - id: c
-      text: Only the number of parameters matters
-    - id: a
-      text: The training target and actual ranking objective differ
-    answer: a
-    feedback: A useful recommender must be evaluated on its delivered task.
+  - id: recommendation-models.base
+    objective_ref: objective.recommendation-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Factor a sparse preference table: trace the inputs, operation, and result before choosing.'
+    remediation_scene: recommendation-models.s2
+    variants:
+      - id: recommendation-models.base.1
+        prompt: User vector [2, 1] and item vector [1, 3] give what dot-product score?
+        options:
+          - id: c
+            text: '3'
+          - id: a
+            text: '5'
+          - id: b
+            text: '6'
+        answer: a
+        feedback: 'Multiply matching coordinates and sum: 2 + 3.'
+        retired: true
+      - id: recommendation-models.base.2
+        prompt: What is a cold-start problem?
+        options:
+          - id: a
+            text: Limited interaction evidence for a new user or item
+          - id: b
+            text: Only a computer boot delay
+          - id: c
+            text: An absence of any possible baseline
+        answer: a
+        feedback: Collaborative patterns need observations that may not yet exist.
+        retired: true
+  - id: recommendation-models.transfer
+    objective_ref: objective.recommendation-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate the ranking that users receive: trace the inputs, operation, and result before choosing.'
+    remediation_scene: recommendation-models.s4
+    variants:
+      - id: recommendation-models.transfer.1
+        prompt: An item has no clicks because it was never shown. Is that evidence of dislike?
+        options:
+          - id: a
+            text: Not by itself; exposure is missing
+          - id: b
+            text: Yes; all unobserved pairs are negative preferences
+          - id: c
+            text: Only if the item is expensive
+        answer: a
+        feedback: Observation depends on the recommendation and exposure process.
+        retired: true
+      - id: recommendation-models.transfer.2
+        prompt: A recommender predicts ratings well but ranks useful items poorly. What distinction matters?
+        options:
+          - id: b
+            text: Every metric measures the same thing
+          - id: c
+            text: Only the number of parameters matters
+          - id: a
+            text: The training target and actual ranking objective differ
+        answer: a
+        feedback: A useful recommender must be evaluated on its delivered task.
+        retired: true
+  - id: recommendation-models.base.v2
+    objective_ref: objective.recommendation-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Matrix factorization predicts a blank as the dot product of a user vector and an item vector, learned only from the cells that were actually rated.
+    remediation_scene: recommendation-models.learn
+    variants:
+      - id: recommendation-models.base.v2.1
+        prompt: When training matrix factorization, why does the loss add up errors only over the cells that have ratings?
+        options:
+          - id: a
+            text: Adding up the blank cells would make each step too slow
+          - id: c
+            text: A blank means "not rated," not a rating of zero
+          - id: b
+            text: Blank cells already count as one-star ratings elsewhere
+        answer: c
+        feedback: Most blanks are items the person never saw, so scoring them as zeros would teach the model that people dislike everything new. Speed is a side benefit, not the reason.
+      - id: recommendation-models.base.v2.2
+        prompt: What does the regularization term λ(‖p‖² + ‖q‖²) do in matrix factorization?
+        options:
+          - id: a
+            text: It keeps vectors small so they can't memorize a few ratings
+          - id: b
+            text: It rounds each prediction to the nearest whole star
+          - id: c
+            text: It fills each blank cell with that column's average
+        answer: a
+        feedback: The penalty makes large vectors costly, so the model prefers broad patterns over fitting every rating exactly. Raising λ pulls all predictions toward the middle, as the code showed.
+      - id: recommendation-models.base.v2.3
+        prompt: A user's vector is [2, 0], and a book's vector is [0, 3]. Their dot product is 0. What does that say?
+        options:
+          - id: c
+            text: The user gave the book a rating of zero stars
+          - id: a
+            text: No one in the data has rated this book yet
+          - id: b
+            text: The book scores only on a factor this user doesn't weigh
+        answer: b
+        feedback: 2 × 0 + 0 × 3 = 0, so the book's strength lies on the second factor, which this user ignores. A dot product is a predicted match, not an observed rating.
+      - id: recommendation-models.base.v2.4
+        prompt: A site suggests a cookbook to you because readers whose past ratings match yours loved it, though you've never read a cookbook. Which approach is this?
+        options:
+          - id: b
+            text: A content-based recommender that matches genres
+          - id: c
+            text: Collaborative filtering based on similar readers
+          - id: a
+            text: A popularity list showing the site's best sellers
+        answer: c
+        feedback: The link comes from people with similar ratings, not from the book's genre, which is what collaborative filtering uses. A content-based method would stick to genres you've read, and a popularity list ignores your ratings.
+      - id: recommendation-models.base.v2.5
+        prompt: Some users rate almost everything 4 or 5 stars, and others rarely give more than 3. Which part of the model handles that?
+        options:
+          - id: a
+            text: A per-user bias term added to every prediction
+          - id: c
+            text: A larger λ, so every vector shrinks toward zero
+          - id: b
+            text: More factors in each user and item vector
+        answer: a
+        feedback: A user bias b_u shifts all of that user's predictions up or down, leaving the vectors free to model taste. Shrinking vectors or adding factors doesn't target a person's overall rating habit.
+  - id: recommendation-models.transfer.v2
+    objective_ref: objective.recommendation-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what evidence the model actually has. Blanks are unseen rather than disliked, new users and items need another source, and what users see is a ranked list.
+    remediation_scene: recommendation-models.s4
+    variants:
+      - id: recommendation-models.transfer.v2.1
+        prompt: A new user signs up for a music app and hasn't played anything yet. What should the app recommend first?
+        options:
+          - id: c
+            text: Songs picked from a random starting vector for the user
+          - id: b
+            text: Nothing personal until the user has rated 50 songs
+          - id: a
+            text: Popular songs plus a quick "pick a few artists" step
+        answer: a
+        feedback: With no interactions, factorization has nothing to fit. Asking for a few preferences and starting from popular picks gives useful evidence quickly. A random vector gives random picks, and waiting for 50 ratings loses the user.
+      - id: recommendation-models.transfer.v2.2
+        prompt: A bookshop adds a new novel that nobody has rated. How can it start recommending the book sensibly?
+        options:
+          - id: a
+            text: Hold it back from lists until ratings come in
+          - id: b
+            text: Use its genre, author, and blurb to find its likely readers
+          - id: c
+            text: Give it the mean of the book vectors so it scores middling
+        answer: b
+        feedback: Content features give the new book a starting place until ratings arrive. Holding it back means it never collects ratings, and an average vector recommends it weakly to everyone rather than strongly to the right readers.
+      - id: recommendation-models.transfer.v2.3
+        prompt: A recommender tested on a random 10% of ratings scores well offline but disappoints after launch. Which change to the evaluation would most likely have warned the team?
+        options:
+          - id: a
+            text: Test on a larger random sample of ratings
+          - id: b
+            text: Report RMSE instead of recall@10
+          - id: c
+            text: Train on earlier ratings and test on later ones
+        answer: c
+        feedback: A random split lets future ratings help predict past ones, which live systems can't do. A time split mimics launch. A bigger random sample keeps the leak, and switching metrics doesn't remove it.
+      - id: recommendation-models.transfer.v2.4
+        prompt: A new model cuts rating error (RMSE) by 3%, but recall@10 on the same users doesn't change. What is the best reading?
+        options:
+          - id: c
+            text: The recall calculation must contain a bug
+          - id: a
+            text: Better ratings on average needn't change the top ten
+          - id: b
+            text: Recall will catch up once the model runs longer
+        answer: a
+        feedback: RMSE averages over all rated cells, most of which never reach anyone's top ten. Users see the ranked list, so recall and nDCG are the measures that matter here.
+      - id: recommendation-models.transfer.v2.5
+        prompt: A streaming service's data show that one user has never watched a horror film. How should training treat those blank cells?
+        options:
+          - id: c
+            text: As one-star ratings, since the user avoided horror
+          - id: b
+            text: As unknown, since the user may never have been shown horror
+          - id: a
+            text: As average ratings, so horror is neither pushed nor hidden
+        answer: b
+        feedback: A blank usually means "not seen," which may reflect what was shown rather than taste. Filling blanks with one star or with averages invents ratings the user never gave.
+  - id: recommendation-models.calc.v2
+    objective_ref: objective.recommendation-models
+    task: base
+    response_type: numeric
+    points: 1
+    hint: A dot product multiplies matching entries and adds them. Recall@k is hits in the top k over all relevant items; in nDCG a hit at position i earns 1 / log₂(i + 1).
+    remediation_scene: recommendation-models.s4
+    variants:
+      - id: recommendation-models.calc.v2.1
+        prompt: A user vector is [2, 1] and an item vector is [1.5, 3]. What is the predicted score, their dot product?
+        answer: 6
+        feedback: 2 × 1.5 + 1 × 3 = 3 + 3 = 6.
+      - id: recommendation-models.calc.v2.2
+        prompt: A model has overall average 3.5, user bias +0.5, item bias −0.3, and a dot product of 0.4. What rating does it predict? Give one decimal place.
+        answer: 4.1
+        feedback: 3.5 + 0.5 − 0.3 + 0.4 = 4.1.
+      - id: recommendation-models.calc.v2.3
+        prompt: A user later liked 4 items. Three of them appear in the system's top 5. What is recall@5? Give two decimal places.
+        answer: 0.75
+        feedback: Recall@5 = hits in the top 5 over all liked items = 3 / 4 = 0.75.
+      - id: recommendation-models.calc.v2.4
+        prompt: A user liked exactly 2 items. The top-3 list has them at positions 2 and 3, with a miss at position 1. What is nDCG@3? Give two decimal places.
+        answer: 0.69
+        feedback: DCG = 1/log₂3 + 1/log₂4 = 0.631 + 0.5 = 1.131. The ideal list puts both hits first, 1 + 0.631 = 1.631. nDCG = 1.131 / 1.631 ≈ 0.69.
+      - id: recommendation-models.calc.v2.5
+        prompt: 'One gradient step with λ = 0: the rating is 4, the user vector is [1, 1], the item vector is [1, 2], and the learning rate is 0.1. After p ← p + 0.1 × e × q, what is the user vector''s second entry? Give one decimal place.'
+        answer: 1.2
+        feedback: The prediction is 1 + 2 = 3, so e = 4 − 3 = 1. The second entry becomes 1 + 0.1 × 1 × 2 = 1.2.
+    absolute_tolerance: 0.01

@@ -1,210 +1,386 @@
 schema_version: 0.2-draft
 lesson:
   id: neural-ordinary-differential-equations
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn a vector field and let a solver define continuous depth
   state: draft
-  summary: Learn a rule for continuous change and follow it with a numerical solver.
+  summary: A ResNet is secretly Euler's method with a step size of 1. Shrink the step to zero and you get a network with no layers at all, just a learned rule for change and a solver.
   slot: M37.7
   category: learning
   sources:
-  - title: Neural Ordinary Differential Equations
-    url: https://arxiv.org/abs/1806.07366
+    - title: "Neural Ordinary Differential Equations (Chen, Rubanova, Bettencourt & Duvenaud, 2018)"
+      url: https://arxiv.org/abs/1806.07366
+    - title: "FFJORD: Free-form Continuous Dynamics for Scalable Reversible Generative Models (Grathwohl et al., 2019)"
+      url: https://arxiv.org/abs/1810.01367
+    - title: "Deep Residual Learning for Image Recognition (He, Zhang, Ren & Sun, 2015)"
+      url: https://arxiv.org/abs/1512.03385
 objectives:
-- id: objective.neural-ordinary-differential-equations
-  version: 1-draft
-  statement: Neural ODEs parameterize a state derivative and integrate it with a numerical solver; solver tolerance,
-    evaluation count, and gradient method affect accuracy, memory, and training behavior.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - neural-ordinary-differential-equations.base
-  - neural-ordinary-differential-equations.transfer
-  prerequisites:
-  - anyOf:
-    - objective.dynamics-and-noise
-  - anyOf:
-    - objective.automatic-differentiation
-  - anyOf:
-    - objective.residuals-normalization-dropout
+  - id: objective.neural-ordinary-differential-equations
+    version: 2-draft
+    statement: Neural ODEs parameterize a state derivative and integrate it with a numerical solver; solver tolerance, evaluation count, and gradient method affect accuracy, memory, and training behavior.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - neural-ordinary-differential-equations.base.v2
+      - neural-ordinary-differential-equations.transfer.v2
+      - neural-ordinary-differential-equations.calculate
+    prerequisites:
+      - anyOf:
+          - objective.dynamics-and-noise
+      - anyOf:
+          - objective.automatic-differentiation
+      - anyOf:
+          - objective.residuals-normalization-dropout
 scenes:
-- id: neural-ordinary-differential-equations.s1
-  title: Move from residual steps to a field
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.neural-ordinary-differential-equations
-  markdown: 'An **ordinary differential equation**, or **ODE**, describes how a state changes along one independent
-    variable, here t. A neural ODE uses a learned function to describe the rate of change of state h:
+  - id: neural-ordinary-differential-equations.s1
+    title: A ResNet is Euler's method in disguise
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.neural-ordinary-differential-equations
+    markdown: |-
+      Every block of a residual network, from the lesson on helping learning signals travel, computes
 
+      $$h_{k+1} = h_k + f(h_k;\,\theta_k)$$
 
-    dh/dt = f(h, t, parameters).
+      Now look at **Euler's method** for an **ordinary differential equation (ODE)**, a rule $dh/dt = f(h, t)$ for how a state changes: $h(t + \Delta t) \approx h(t) + \Delta t\, f(h(t), t)$. Set $\Delta t = 1$ and they're the same formula. A ResNet is Euler's method with one step per block.
 
+      Try it with a toy block that adds 10% each time, $f(h) = 0.1\,h$. Start at $h = 1$; ten blocks give $1.1^{10} = 2.594$. That's also exactly ten Euler steps of size 0.1 for the ODE $dh/dt = h$, whose true answer at $t = 1$ is $e = 2.718$.
 
-    A residual block adds a learned change in one discrete step. A neural ODE instead asks a numerical solver
-    to follow this learned rate to a later state. The resulting “continuous depth” still runs through finite
-    numerical computations on a computer.'
-  text_mode: 'An **ordinary differential equation**, or **ODE**, describes how a state changes along one independent
-    variable, here t. A neural ODE uses a learned function to describe the rate of change of state h:
+      In 2018 Ricky Chen, Yulia Rubanova, Jesse Bettencourt, and David Duvenaud took the idea literally. A **neural ODE** makes the rate of change itself a neural network,
 
+      $$\frac{dh}{dt} = f(h, t;\,\theta)$$
 
-    dh/dt = f(h, t, parameters).
+      and computes the output by handing $f$ to an ODE solver, which follows it from $h(0)$, the input, to $h(T)$. There are no layers to count. How many times $f$ gets evaluated, the network's effective depth, is up to the solver. Their paper won a best paper award at NeurIPS 2018.
+    bridges:
+      - residuals-normalization-dropout
+  - id: neural-ordinary-differential-equations.s2
+    title: "Euler versus RK4: same budget, different accuracy"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.neural-ordinary-differential-equations
+    markdown: |-
+      As module 22's flow-matching lesson showed, Euler's method is **first order**: halve the step, halve the error. Better solvers look at the slope several times per step. The classic **fourth-order Runge–Kutta method (RK4)** samples it four times:
 
+      $$k_1 = f(h),\ \ k_2 = f\!\big(h + \tfrac{\Delta t}{2}k_1\big),\ \ k_3 = f\!\big(h + \tfrac{\Delta t}{2}k_2\big),\ \ k_4 = f(h + \Delta t\,k_3)$$
+      $$h_\text{next} = h + \tfrac{\Delta t}{6}\,(k_1 + 2k_2 + 2k_3 + k_4)$$
 
-    A residual block adds a learned change in one discrete step. A neural ODE instead asks a numerical solver
-    to follow this learned rate to a later state. The resulting “continuous depth” still runs through finite
-    numerical computations on a computer.'
-  bridges:
-  - dynamics-and-noise
-- id: neural-ordinary-differential-equations.s2
-  title: Trace a simple Euler approximation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.neural-ordinary-differential-equations
-  markdown: 'Take a known change rule, dh/dt = h, starting from h = 1. Its current rate of increase equals
-    its current value.
+      One step of size 0.1 on $dh/dt = h$ from $h = 1$: $k_1 = 1$, $k_2 = 1.05$, $k_3 = 1.0525$, $k_4 = 1.10525$, so $h_\text{next} = 1 + \frac{0.1}{6} \times 6.31025 = 1.1051708$. The exact value is $e^{0.1} = 1.1051709$. Euler's single step gives 1.1, off by 0.005.
 
+      ```python run
+      import math
 
-    With step size 0.1, an **Euler step** gives 1 + 0.1 × 1 = 1.1. The next gives 1.1 + 0.1 × 1.1 = 1.21.
+      def f(t, h):                     # the known ODE dh/dt = h, so h(t) = e^t
+          return h
 
+      def euler_step(t, h, dt):
+          return h + dt * f(t, h)      # 1 evaluation of f per step
 
-    The exact solution at t = 0.2 is exp(0.2), about 1.2214. The difference, about 0.0114, comes from the numerical
-    approximation even though the rule is known exactly. With a learned field, model error adds another possible
-    source of discrepancy.'
-  text_mode: 'Take a known change rule, dh/dt = h, starting from h = 1. Its current rate of increase equals
-    its current value.
+      def rk4_step(t, h, dt):          # 4 evaluations of f per step
+          k1 = f(t, h)
+          k2 = f(t + dt / 2, h + dt / 2 * k1)
+          k3 = f(t + dt / 2, h + dt / 2 * k2)
+          k4 = f(t + dt, h + dt * k3)
+          return h + dt / 6 * (k1 + 2 * k2 + 2 * k3 + k4)
 
+      def solve(step, n):              # integrate from t = 0 to t = 1 in n equal steps
+          h, dt = 1.0, 1.0 / n
+          for i in range(n):
+              h = step(i * dt, h, dt)
+          return h
 
-    With step size 0.1, an **Euler step** gives 1 + 0.1 × 1 = 1.1. The next gives 1.1 + 0.1 × 1.1 = 1.21.
+      exact = math.e
+      print(" steps   Euler error   RK4 error    (f evaluations: Euler n, RK4 4n)")
+      for n in [10, 20, 40, 80]:
+          print(f"{n:6d}   {abs(solve(euler_step, n) - exact):.2e}     {abs(solve(rk4_step, n) - exact):.2e}")
+      ```
 
+      :::predict Doubling the steps halves Euler's error. What does it do to RK4's?
+      It divides it by about 16, since $2^4 = 16$: from $2.08 \times 10^{-6}$ at 10 steps to $1.36 \times 10^{-7}$ at 20. Compare at equal cost: 40 Euler steps (40 evaluations) miss by 0.0332, while 10 RK4 steps (also 40 evaluations) miss by 0.000002, about 16,000 times less.
+      :::
 
-    The exact solution at t = 0.2 is exp(0.2), about 1.2214. The difference, about 0.0114, comes from the numerical
-    approximation even though the rule is known exactly. With a learned field, model error adds another possible
-    source of discrepancy.'
-  bridges:
-  - dynamics-and-noise
-  - derivatives
-- id: neural-ordinary-differential-equations.s3
-  title: Differentiate through the solution
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.neural-ordinary-differential-equations
-  markdown: Training can differentiate a discretized solver computation or use sensitivity/adjoint approaches.
-    Memory and recomputation tradeoffs depend on the method. Reversing a numerically integrated trajectory
-    can be unstable or inaccurate; the continuous adjoint ideal does not remove every practical numerical issue.
-  text_mode: Training can differentiate a discretized solver computation or use sensitivity/adjoint approaches.
-    Memory and recomputation tradeoffs depend on the method. Reversing a numerically integrated trajectory
-    can be unstable or inaccurate; the continuous adjoint ideal does not remove every practical numerical issue.
-  bridges:
-  - chain-rule
-- id: neural-ordinary-differential-equations.s4
-  title: Measure adaptive computation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.neural-ordinary-differential-equations
-  markdown: A solver may use more function evaluations for difficult or stiff dynamics. Report tolerance, solver,
-    evaluation count, runtime, and task quality. Continuous depth does not mean unlimited computation at zero
-    cost, and changing tolerances can alter both predictions and training gradients.
-  text_mode: A solver may use more function evaluations for difficult or stiff dynamics. Report tolerance,
-    solver, evaluation count, runtime, and task quality. Continuous depth does not mean unlimited computation
-    at zero cost, and changing tolerances can alter both predictions and training gradients.
-  bridges: []
-- id: neural-ordinary-differential-equations.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.neural-ordinary-differential-equations
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A neural ODE learns a rule for continuous change, and a numerical solver follows it. Solver accuracy,
-    evaluation count, and gradient method affect the resulting model.
-- id: neural-ordinary-differential-equations.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.neural-ordinary-differential-equations
-  markdown: A neural ODE learns a rule for continuous change, and a numerical solver follows it. Solver accuracy,
-    evaluation count, and gradient method affect the resulting model.
-  text_mode: A neural ODE learns a rule for continuous change, and a numerical solver follows it. Solver accuracy,
-    evaluation count, and gradient method affect the resulting model.
+      Change `f` to return `-2 * h` and `exact` to `math.exp(-2)`, then rerun: RK4's advantage holds.
+    bridges:
+      - dynamics-and-noise
+  - id: neural-ordinary-differential-equations.s4
+    title: Let the solver choose the depth
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.neural-ordinary-differential-equations
+    markdown: |-
+      Neural ODE libraries usually use an **adaptive solver**, such as the Dormand–Prince method. Each step, it estimates its own error by comparing two answers of different accuracy. If the error exceeds a **tolerance** you set, it retries with a smaller step; if the error is tiny, it takes a bigger one next time.
+
+      So the cost of one forward pass is the **number of function evaluations (NFE)**, and it isn't fixed. Smooth dynamics need few evaluations; twisty ones need many. Chen and colleagues saw NFE climb during training as the learned $f$ grew more complicated. That gives you two dials a ResNet doesn't have: tighten the tolerance for accuracy, or loosen it for speed, without retraining.
+
+      :::mixup "Continuous depth means infinitely many layers, so a neural ODE is infinitely expressive."
+      The solver still runs a finite number of evaluations of one network $f$, with a single set of weights shared across all of time. In one dimension, ODE trajectories can't even cross each other, so a neural ODE can't learn a map that swaps the order of two inputs, such as $h \mapsto -h$. The usual fix is to add extra dimensions to the state.
+      :::
+
+      This is where neural ODEs earn their keep. **Irregularly sampled time series**, such as a patient's lab results taken at random hours, are awkward for an RNN that expects evenly spaced steps. A neural ODE can simply integrate to whatever time the next measurement arrives. Rubanova, Chen, and Duvenaud's latent ODE (2019) was built for exactly that.
+  - id: neural-ordinary-differential-equations.s3
+    title: "The adjoint: gradients by running time backward"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.neural-ordinary-differential-equations
+    markdown: |-
+      To train, you need $dL/d\theta$. The direct way is to backpropagate through every solver step, as in the automatic differentiation lesson. That works, but it stores every intermediate state, so memory grows with the number of evaluations.
+
+      Chen and colleagues popularized the **adjoint method**, borrowed from optimal control. Define the adjoint $a(t) = \partial L / \partial h(t)$: how much the loss would change if you nudged the state at time $t$. It obeys its own ODE, which you solve *backward* from $t = T$ to 0, recomputing $h(t)$ backward alongside it instead of storing it:
+
+      $$\frac{da}{dt} = -\,a\,\frac{\partial f}{\partial h}, \qquad \frac{dL}{d\theta} = \int_0^T a(t)\,\frac{\partial f}{\partial \theta}\,dt$$
+
+      Check it on a case with an exact answer: $dh/dt = \theta h$, $h(0) = 1$, and $L = h(T)$. Then $h(t) = e^{\theta t}$ and $L = e^{\theta T}$, so directly $dL/d\theta = T e^{\theta T}$. Via the adjoint: $a(T) = 1$ and $da/dt = -\theta a$, so $a(t) = e^{\theta (T - t)}$. With $\partial f / \partial \theta = h$, the integrand is $a(t)\,h(t) = e^{\theta T}$, the same at every moment, and the integral is $T e^{\theta T}$. With $\theta = 0.5$ and $T = 1$, both give $1.6487$.
+
+      The payoff is memory that stays constant however many steps the solver takes. The cost is a second solve, and for dynamics that are hard to run backward, the recomputed $h(t)$ can drift from the forward one. When that happens, fall back to backpropagating through the solver, or save a few checkpoints along the way.
+    bridges:
+      - automatic-differentiation
+  - id: neural-ordinary-differential-equations.s5
+    title: "Continuous normalizing flows: density that changes smoothly"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.neural-ordinary-differential-equations
+    markdown: |-
+      Module 22's lesson on normalizing flows stretched a bell curve and watched its height drop by the stretch factor. A neural ODE is a stretch that happens continuously, and the density follows a simple rule, the **instantaneous change of variables**:
+
+      $$\frac{d \log p(h(t))}{dt} = -\operatorname{tr}\!\left(\frac{\partial f}{\partial h}\right)$$
+
+      Here $\operatorname{tr}$ is the trace, the sum of the diagonal entries of $f$'s derivative matrix. In one dimension with $f(h) = a\,h$, the trace is just $a$, so $\log p$ falls at rate $a$. Run for time $T = 1$ with $a = \ln 2 \approx 0.693$: every point moves to twice its distance from 0, and the density is halved, exactly as the flow lesson's stretch by 2 required.
+
+      A generative model built this way is a **continuous normalizing flow (CNF)**. Ordinary flows need special layers whose determinant is cheap; a CNF needs only a trace. FFJORD (Grathwohl and colleagues, 2019) made that trace cheap for big networks with a random estimate. Training a CNF by solving the ODE at every step is still slow. Flow matching, from module 22, trains the same kind of vector field by plain regression, with no solving during training. Stable Diffusion 3 was trained with a variant of it called rectified flow, and at generation time it's still an ODE solver following a learned field.
+    bridges:
+      - flows-and-energy-models
+  - id: neural-ordinary-differential-equations.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.neural-ordinary-differential-equations
+    markdown: Euler and RK4 steps to compute, plus a hospital's irregular lab readings, a memory-starved training run, and a solver budget, test whether you can run and train a learned ODE.
+    takeaway: |-
+      A neural ODE learns dh/dt = f(h, t; θ), and a solver follows it; a ResNet is the special case of Euler steps of size 1. Higher-order and adaptive solvers buy accuracy per evaluation, and the adjoint method trains with constant memory by solving backward in time.
+  - id: neural-ordinary-differential-equations.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.neural-ordinary-differential-equations
+    markdown: |-
+      A neural ODE learns a rule for continuous change, and a numerical solver follows it. Solver accuracy, evaluation count, and gradient method affect the resulting model.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - neural-ordinary-differential-equations.s1
-    - neural-ordinary-differential-equations.s2
-    - neural-ordinary-differential-equations.s3
-    - neural-ordinary-differential-equations.s4
-    - neural-ordinary-differential-equations.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - neural-ordinary-differential-equations.s1
+        - neural-ordinary-differential-equations.s2
+        - neural-ordinary-differential-equations.s4
+        - neural-ordinary-differential-equations.s3
+        - neural-ordinary-differential-equations.s5
+        - neural-ordinary-differential-equations.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     neural-ordinary-differential-equations.recap: neural-ordinary-differential-equations.check
 assessment_families:
-- id: neural-ordinary-differential-equations.base
-  objective_ref: objective.neural-ordinary-differential-equations
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a simple Euler approximation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: neural-ordinary-differential-equations.s2
-  variants:
-  - id: neural-ordinary-differential-equations.base.1
-    prompt: Euler step for dh/dt=h, h=1, step 0.1 gives what?
-    options:
-    - id: b
-      text: '2'
-    - id: c
-      text: '0.1'
-    - id: a
-      text: '1.1'
-    answer: a
-    feedback: Add step size times the derivative.
-  - id: neural-ordinary-differential-equations.base.2
-    prompt: Does a continuous-depth model run without numerical discretization?
-    options:
-    - id: c
-      text: Only if the network is small
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: A computer uses a concrete solver.
-- id: neural-ordinary-differential-equations.transfer
-  objective_ref: objective.neural-ordinary-differential-equations
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Measure adaptive computation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: neural-ordinary-differential-equations.s4
-  variants:
-  - id: neural-ordinary-differential-equations.transfer.1
-    prompt: What can tighter solver tolerances change?
-    options:
-    - id: c
-      text: Nothing in execution
-    - id: a
-      text: Accuracy, function evaluations, runtime, and gradients
-    - id: b
-      text: Only the model name
-    answer: a
-    feedback: Numerical settings affect the solution approximation.
-  - id: neural-ordinary-differential-equations.transfer.2
-    prompt: Does an adjoint method eliminate all numerical or memory tradeoffs?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only for learned dynamics
-    answer: a
-    feedback: Practical sensitivity calculations have assumptions and costs.
+  - id: neural-ordinary-differential-equations.base
+    objective_ref: objective.neural-ordinary-differential-equations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a simple Euler approximation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: neural-ordinary-differential-equations.s2
+    variants:
+      - id: neural-ordinary-differential-equations.base.1
+        prompt: Euler step for dh/dt=h, h=1, step 0.1 gives what?
+        options:
+          - id: b
+            text: '2'
+          - id: c
+            text: '0.1'
+          - id: a
+            text: '1.1'
+        answer: a
+        feedback: Add step size times the derivative.
+        retired: true
+      - id: neural-ordinary-differential-equations.base.2
+        prompt: Does a continuous-depth model run without numerical discretization?
+        options:
+          - id: c
+            text: Only if the network is small
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: A computer uses a concrete solver.
+        retired: true
+  - id: neural-ordinary-differential-equations.transfer
+    objective_ref: objective.neural-ordinary-differential-equations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Measure adaptive computation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: neural-ordinary-differential-equations.s4
+    variants:
+      - id: neural-ordinary-differential-equations.transfer.1
+        prompt: What can tighter solver tolerances change?
+        options:
+          - id: c
+            text: Nothing in execution
+          - id: a
+            text: Accuracy, function evaluations, runtime, and gradients
+          - id: b
+            text: Only the model name
+        answer: a
+        feedback: Numerical settings affect the solution approximation.
+        retired: true
+      - id: neural-ordinary-differential-equations.transfer.2
+        prompt: Does an adjoint method eliminate all numerical or memory tradeoffs?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only for learned dynamics
+        answer: a
+        feedback: Practical sensitivity calculations have assumptions and costs.
+        retired: true
+  - id: neural-ordinary-differential-equations.base.v2
+    objective_ref: objective.neural-ordinary-differential-equations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Match each piece: a residual block is one Euler step of size 1; Euler's error scales with Δt and RK4's with Δt⁴; cost is counted in evaluations of f, not in steps."
+    remediation_scene: neural-ordinary-differential-equations.s2
+    variants:
+      - id: neural-ordinary-differential-equations.base.v2.1
+        prompt: A residual block computes h + f(h). Which numerical method does a stack of such blocks match?
+        options:
+          - id: b
+            text: RK4, since each block samples the slope several times
+          - id: a
+            text: Euler's method with a step size of 1 per block
+          - id: c
+            text: An adaptive solver, since each block has its own weights
+        answer: a
+        feedback: h + 1 × f(h) is exactly an Euler step with Δt = 1. Each block evaluates f once, and the number of blocks is fixed rather than chosen by an error estimate.
+      - id: neural-ordinary-differential-equations.base.v2.2
+        prompt: Going from 20 to 40 steps, Euler's error on an ODE falls from 0.065 to about 0.033. Roughly what happens to RK4's error over the same change?
+        options:
+          - id: c
+            text: It halves too, since both solvers use the same steps
+          - id: b
+            text: It falls by a factor of 4, since RK4 uses 4 slopes
+          - id: a
+            text: It falls by a factor of about 16, since RK4 is fourth order
+        answer: a
+        feedback: A fourth-order method's error scales with Δt⁴, so halving the step divides it by 2⁴ = 16. Using four slopes per step is what achieves that order; the factor isn't 4.
+      - id: neural-ordinary-differential-equations.base.v2.3
+        prompt: A neural ODE uses an adaptive solver. During training, its forward passes get slower and slower. What is the most likely reason?
+        options:
+          - id: a
+            text: The learned dynamics grew more complex, so the solver needs more evaluations
+          - id: b
+            text: Training added new layers to the network, making each evaluation slower
+          - id: c
+            text: The adjoint method stores more states as training goes on
+        answer: a
+        feedback: An adaptive solver shrinks its steps when f changes quickly, so NFE rises as the learned field gets twistier. The network f itself doesn't grow, and the adjoint's memory doesn't grow with training.
+      - id: neural-ordinary-differential-equations.base.v2.4
+        prompt: What does the adjoint method trade to train a neural ODE with constant memory?
+        options:
+          - id: b
+            text: It skips the gradient for θ and updates the initial state instead
+          - id: a
+            text: It solves a second ODE backward, recomputing states instead of storing them
+          - id: c
+            text: It switches to Euler steps, since those can be reversed exactly
+        answer: a
+        feedback: The adjoint and the state are integrated backward together, so no forward states need saving. That second solve costs time, and it still gives the full gradient for θ.
+  - id: neural-ordinary-differential-equations.transfer.v2
+    objective_ref: objective.neural-ordinary-differential-equations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Ask what the setting needs: arbitrary time points (an ODE integrates to any t), low memory (the adjoint), or accuracy per evaluation (higher-order or adaptive solvers)."
+    remediation_scene: neural-ordinary-differential-equations.s4
+    variants:
+      - id: neural-ordinary-differential-equations.transfer.v2.1
+        prompt: A hospital's lab results arrive at irregular times, sometimes 2 hours apart and sometimes 30. Why might a neural ODE model suit this data?
+        options:
+          - id: a
+            text: It can integrate the state forward to whatever time the next result arrives
+          - id: b
+            text: It needs no training data, since the solver supplies the dynamics
+          - id: c
+            text: It forces results into equal time steps, which removes the gaps
+        answer: a
+        feedback: An ODE solver can stop at any time point, so uneven gaps are natural. An RNN expects evenly spaced steps; forcing the data onto a grid means inventing or discarding values. The dynamics are still learned from data.
+      - id: neural-ordinary-differential-equations.transfer.v2.2
+        prompt: Training a neural ODE by backpropagating through a solver runs out of GPU memory, because the solver takes thousands of steps. What change targets this?
+        options:
+          - id: c
+            text: Switch from RK4 to Euler, since Euler steps are cheaper
+          - id: b
+            text: Loosen the tolerance until the solver takes a single step
+          - id: a
+            text: Compute gradients with the adjoint method instead
+        answer: a
+        feedback: The adjoint method keeps memory constant regardless of step count. Switching to Euler usually needs more steps for the same accuracy, and one huge step would wreck the solution.
+      - id: neural-ordinary-differential-equations.transfer.v2.3
+        prompt: A team can afford 40 evaluations of f per forward pass. Which solver setup should give the most accurate result on smooth dynamics?
+        options:
+          - id: b
+            text: 40 Euler steps, since more steps means a finer path
+          - id: a
+            text: 10 RK4 steps, since its error shrinks much faster with step size
+          - id: c
+            text: 1 Euler step of size T, repeated 40 times to average the result
+        answer: a
+        feedback: At equal cost, 10 RK4 steps beat 40 Euler steps by orders of magnitude on smooth problems (in the lesson, 0.000002 against 0.033). Repeating an identical step gives an identical answer.
+      - id: neural-ordinary-differential-equations.transfer.v2.4
+        prompt: A one-dimensional neural ODE fails to learn a map that sends 1 to −1 and −1 to 1. What is the likely reason?
+        options:
+          - id: a
+            text: In one dimension, ODE paths can't cross, so the order can't flip
+          - id: b
+            text: The solver's tolerance is too loose to reach the targets
+          - id: c
+            text: The adjoint method can't handle negative numbers
+        answer: a
+        feedback: Two trajectories of the same ODE can't pass through the same point at the same time, so in 1-D the points can't swap order. Adding extra dimensions to the state lets paths go around each other.
+  - id: neural-ordinary-differential-equations.calculate
+    objective_ref: objective.neural-ordinary-differential-equations
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "One Euler step: h_next = h + Δt × f(h). Do the steps one at a time, using the new h each time."
+    remediation_scene: neural-ordinary-differential-equations.s2
+    absolute_tolerance: 0.001
+    variants:
+      - id: neural-ordinary-differential-equations.calculate.1
+        prompt: For dh/dt = h, starting at h = 1, take one Euler step with Δt = 0.2. What is h?
+        answer: 1.2
+        feedback: h = 1 + 0.2 × 1 = 1.2.
+      - id: neural-ordinary-differential-equations.calculate.2
+        prompt: For dh/dt = h, starting at h = 1, take two Euler steps with Δt = 0.2. What is h?
+        answer: 1.44
+        feedback: 1 → 1.2 → 1.2 + 0.2 × 1.2 = 1.44. The exact value, e^0.4, is about 1.492.
+      - id: neural-ordinary-differential-equations.calculate.3
+        prompt: For dh/dt = −2h, starting at h = 3, take one Euler step with Δt = 0.1. What is h?
+        answer: 2.4
+        feedback: f(3) = −6, so h = 3 + 0.1 × (−6) = 2.4.
+      - id: neural-ordinary-differential-equations.calculate.4
+        prompt: A residual block computes h + f(h) with f(h) = 0.5h − 1. Starting at h = 4, what does it output?
+        answer: 5
+        feedback: f(4) = 2 − 1 = 1, so the block outputs 4 + 1 = 5. That's one Euler step with Δt = 1.
+      - id: neural-ordinary-differential-equations.calculate.5
+        prompt: For dh/dt = h + t, starting at h = 1 when t = 0, take one Euler step with Δt = 0.5, then a second. What is h after both?
+        answer: 2.5
+        feedback: Step 1 uses f = 1 + 0 = 1, so h = 1.5 at t = 0.5. Step 2 uses f = 1.5 + 0.5 = 2, so h = 1.5 + 0.5 × 2 = 2.5.

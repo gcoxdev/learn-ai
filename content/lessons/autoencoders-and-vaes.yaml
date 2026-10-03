@@ -1,236 +1,460 @@
 schema_version: 0.2-draft
 lesson:
   id: autoencoders-and-vaes
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn a latent representation and a way back to data
   state: draft
-  summary: Compress an example, reconstruct it, and see what extra structure helps a model generate from new
-    latent samples.
+  summary: Squeeze a doodle into two numbers and rebuild it. Then pick two random numbers and decode a doodle nobody drew. Learn the one-line trick and the one penalty that make the second part work.
   slot: M22.3
   category: learning
   sources:
-  - title: Auto-Encoding Variational Bayes
-    url: https://arxiv.org/abs/1312.6114
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: Auto-Encoding Variational Bayes (Kingma & Welling, 2013)
+      url: https://arxiv.org/abs/1312.6114
+    - title: Stochastic Backpropagation and Approximate Inference in Deep Generative Models (Rezende, Mohamed & Wierstra, 2014)
+      url: https://arxiv.org/abs/1401.4082
+    - title: An Introduction to Variational Autoencoders (Kingma & Welling, 2019)
+      url: https://arxiv.org/abs/1906.02691
+    - title: "Deep Learning, chapter 14: Autoencoders (Goodfellow, Bengio & Courville, 2016)"
+      url: https://www.deeplearningbook.org/contents/autoencoders.html
 objectives:
-- id: objective.autoencoders-and-vaes
-  version: 1-draft
-  statement: Autoencoders reconstruct inputs through a latent representation; variational autoencoders learn
-    a probabilistic encoder and decoder with a prior-matching term that supports principled latent sampling.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - autoencoders-and-vaes.base
-  - autoencoders-and-vaes.transfer
-  prerequisites:
-  - anyOf:
-    - objective.generative-models
-  - anyOf:
-    - objective.random-variables
+  - id: objective.autoencoders-and-vaes
+    version: 2-draft
+    statement: Autoencoders reconstruct inputs through a latent representation; variational autoencoders learn a probabilistic encoder and decoder with a prior-matching term that supports principled latent sampling.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - autoencoders-and-vaes.base.v2
+      - autoencoders-and-vaes.transfer.v2
+      - autoencoders-and-vaes.calculate
+    prerequisites:
+      - anyOf:
+          - objective.generative-models
+      - anyOf:
+          - objective.random-variables
 scenes:
-- id: autoencoders-and-vaes.s1
-  title: Compress and reconstruct
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.autoencoders-and-vaes
-  markdown: 'An **autoencoder** learns two operations. Its **encoder** turns input x into an internal code
-    z, called a **latent representation**. Its **decoder** turns z back into a reconstruction of x.
+  - id: autoencoders-and-vaes.s1
+    title: Squeeze 784 numbers through two
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.autoencoders-and-vaes
+    markdown: |-
+      A 28 × 28 doodle is 784 brightness values. Train a network to squeeze those 784 numbers down to just two, then rebuild all 784 from the two. If the rebuilt doodle looks like the original, those two numbers captured something essential.
 
+      That network is an **autoencoder**, which you met in module 8 as an anomaly detector. Its **encoder** maps the input $x$ to a short **code** $z$, also called the **latent representation**. Its **decoder** maps $z$ back to a reconstruction $\hat{x}$. Training minimizes the **reconstruction error**, such as the squared difference between $x$ and $\hat{x}$. The narrow middle, the **bottleneck**, forces the code to keep what matters most.
 
-    A bottleneck, or another constraint, limits what the code can carry so the system cannot simply copy every
-    detail. The reconstruction loss measures which details it preserves under that scoring rule.
+      Now try to *generate*: pick a random point, say $z = (3.1, -0.4)$, and decode it. With a plain autoencoder you usually get a smudge. Training only asked the decoder to handle the codes of real doodles, and those codes can sit on scattered islands with empty sea between them. Nothing taught the decoder what to draw in the sea.
 
+      :::mixup "An autoencoder that rebuilds its inputs well is a good generator."
+      Rebuilding only tests codes the encoder actually produced. A generator needs every region you might sample from to decode into something sensible, and a plain autoencoder never trains on those regions.
+      :::
+    bridges: []
+  - id: autoencoders-and-vaes.s2
+    title: Encode to a cloud, not a point
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.autoencoders-and-vaes
+    markdown: |-
+      The **variational autoencoder**, or **VAE** (Kingma & Welling, 2013; Rezende, Mohamed & Wierstra independently, 2014), fixes the sea with two changes.
 
-    Good reconstruction does not guarantee that random codes will produce useful samples. An ordinary autoencoder
-    may have learned to decode only a small part of the possible code space.'
-  text_mode: 'An **autoencoder** learns two operations. Its **encoder** turns input x into an internal code
-    z, called a **latent representation**. Its **decoder** turns z back into a reconstruction of x.
+      First, the encoder outputs a small cloud instead of a point. For each latent coordinate it outputs a **mean** $\mu$ and a **standard deviation** $\sigma$, describing the bell curve $q(z \mid x) = \mathcal{N}(\mu, \sigma^2)$. For one cat doodle it might say $\mu = 1.0$, $\sigma = 0.5$: "this doodle's code is around 1.0, give or take 0.5." During training the decoder gets a random $z$ from that cloud, so it learns to handle a whole neighborhood, not one exact point.
 
+      Second, a penalty pulls every cloud toward a fixed **prior**, $p(z) = \mathcal{N}(0, 1)$, the **standard normal** bell curve (mean 0, standard deviation 1). The clouds then overlap and fill the region around 0 with no gaps. To generate, sample $z$ from the prior and decode it: every such point lies in territory the decoder has trained on.
+    diagram:
+      caption: A VAE during training. The dashed path is how it generates new doodles afterwards.
+      description: A doodle x goes to the encoder, which outputs a mean mu and a standard deviation sigma. Random noise epsilon, drawn from a standard normal, joins them to form z equals mu plus sigma times epsilon. The decoder turns z into a rebuilt doodle, scored by the reconstruction term. The KL term pulls mu and sigma toward the standard normal prior. To generate, sample z from the prior and send it straight to the decoder.
+      nodes:
+        - id: x
+          label: Doodle x
+          note: 784 pixels
+          col: 0
+          row: 0
+        - id: encoder
+          label: Encoder
+          col: 1
+          row: 0
+        - id: musigma
+          label: μ = 1.0, σ = 0.5
+          note: KL term pulls toward N(0, 1)
+          col: 2
+          row: 0
+          tone: accent
+        - id: z
+          label: z = μ + σ·ε
+          col: 3
+          row: 0
+          tone: data
+        - id: decoder
+          label: Decoder
+          col: 4
+          row: 0
+        - id: xhat
+          label: Rebuilt doodle x̂
+          note: reconstruction term
+          col: 5
+          row: 0
+        - id: eps
+          label: ε from N(0, 1)
+          note: random noise, no gradient needed
+          col: 3
+          row: 1
+          tone: muted
+        - id: prior
+          label: Prior N(0, 1)
+          note: sample here to generate
+          col: 4
+          row: 1
+          tone: warn
+      edges:
+        - from: x
+          to: encoder
+        - from: encoder
+          to: musigma
+        - from: musigma
+          to: z
+        - from: eps
+          to: z
+        - from: z
+          to: decoder
+        - from: decoder
+          to: xhat
+        - from: prior
+          to: decoder
+          label: generate
+          dashed: true
+    bridges:
+      - random-variables
+  - id: autoencoders-and-vaes.s3
+    title: A random draw you can differentiate
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.autoencoders-and-vaes
+    markdown: |-
+      Training needs gradients to flow from the reconstruction error back through $z$ into the encoder's $\mu$ and $\sigma$. But "draw $z$ at random from $\mathcal{N}(\mu, \sigma^2)$" is a dice roll, and you can't ask how a dice roll changes when you nudge $\mu$.
 
-    A bottleneck, or another constraint, limits what the code can carry so the system cannot simply copy every
-    detail. The reconstruction loss measures which details it preserves under that scoring rule.
+      The **reparameterization trick** moves the randomness to the side. Draw $\varepsilon$ (epsilon) from the fixed standard normal, then compute
 
+      $$z = \mu + \sigma \cdot \varepsilon$$
 
-    Good reconstruction does not guarantee that random codes will produce useful samples. An ordinary autoencoder
-    may have learned to decode only a small part of the possible code space.'
-  bridges: []
-- id: autoencoders-and-vaes.s2
-  title: Make the latent probabilistic
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.autoencoders-and-vaes
-  markdown: 'A **variational autoencoder**, or **VAE**, makes the latent code probabilistic. Its encoder proposes
-    a distribution of codes for each input, called an **approximate posterior**. A common encoder outputs a
-    mean and a scale; a sampled code then goes to the decoder.
+      With $\mu = 1.0$, $\sigma = 0.5$, and a draw $\varepsilon = 0.4$: $z = 1.0 + 0.5 \times 0.4 = 1.2$. The result has exactly the distribution $\mathcal{N}(\mu, \sigma^2)$, but now $z$ is ordinary arithmetic on $\mu$ and $\sigma$. Its derivatives are simple: $\partial z / \partial \mu = 1$ and $\partial z / \partial \sigma = \varepsilon = 0.4$. Backpropagation treats $\varepsilon$ as a fixed input for this step, just like a pixel.
 
+      :::predict Keep ε = 0.4. If training nudges σ from 0.5 up to 0.6, how much does z move? And if it nudges μ up by 0.1?
+      $z$ becomes $1.0 + 0.6 \times 0.4 = 1.24$, up by 0.04, which is $\varepsilon \times 0.1$. Nudging $\mu$ by 0.1 moves $z$ by exactly 0.1. Those two rates, 0.4 and 1, are the gradients the encoder receives.
+      :::
 
-    A **prior** describes codes before a particular input is observed. For fresh generation, sample a code
-    from this prior and decode it.
+      In practice the encoder outputs $\log \sigma^2$ rather than $\sigma$, so any real number it produces gives a valid positive $\sigma$.
+    bridges: []
+  - id: autoencoders-and-vaes.s5
+    title: "The ELBO: rebuild well, stay near the prior"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.autoencoders-and-vaes
+    markdown: |-
+      The two pressures combine into one objective, the **evidence lower bound (ELBO)** from the Bayesian learning lesson in module 6. Here the unknowns are each doodle's code:
 
+      :::papers The VAE objective (Kingma & Welling, 2013)
+      $$\text{ELBO}(x) = \underbrace{\mathbb{E}_{q(z \mid x)}\big[\log p(x \mid z)\big]}_{\text{reconstruction}} \;-\; \underbrace{\mathrm{KL}\big(q(z \mid x)\,\|\,p(z)\big)}_{\text{stay near the prior}} \;\le\; \log p(x)$$
 
-    Training must connect these two uses. The **evidence lower bound**, or **ELBO**, balances expected reconstruction
-    log likelihood with a divergence penalty between the approximate posterior and the prior. It is a computable
-    lower bound on the model''s log probability of the observed data. This gives a principled training objective,
-    though useful samples still depend on what the model learns.'
-  text_mode: 'A **variational autoencoder**, or **VAE**, makes the latent code probabilistic. Its encoder proposes
-    a distribution of codes for each input, called an **approximate posterior**. A common encoder outputs a
-    mean and a scale; a sampled code then goes to the decoder.
+      Training maximizes the ELBO. The first term rewards decoding $z$ back into $x$; with squared error, it's the usual reconstruction loss with a minus sign. The second is the **KL divergence**, the mismatch between the cloud and the prior. For one Gaussian coordinate against $\mathcal{N}(0, 1)$ it has a closed form:
 
+      $$\mathrm{KL} = \tfrac{1}{2}\big(\mu^2 + \sigma^2 - 1 - \ln \sigma^2\big)$$
+      :::
 
-    A **prior** describes codes before a particular input is observed. For fresh generation, sample a code
-    from this prior and decode it.
+      For our cat doodle, $\mu = 1.0$ and $\sigma = 0.5$:
 
+      $$\mathrm{KL} = \tfrac{1}{2}\big(1 + 0.25 - 1 - \ln 0.25\big) = \tfrac{1}{2}(0.25 + 1.386) = 0.818$$
 
-    Training must connect these two uses. The **evidence lower bound**, or **ELBO**, balances expected reconstruction
-    log likelihood with a divergence penalty between the approximate posterior and the prior. It is a computable
-    lower bound on the model''s log probability of the observed data. This gives a principled training objective,
-    though useful samples still depend on what the model learns.'
-  bridges:
-  - random-variables
-- id: autoencoders-and-vaes.s3
-  title: Reparameterize a toy sample
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.autoencoders-and-vaes
-  markdown: 'For a Gaussian latent, write z = mean + scale×epsilon, where epsilon is sampled from a standard
-    normal distribution. Mean two, scale one-half, and epsilon minus one produce z = 1.5. This expresses randomness
-    separately so gradients can reach the encoder’s mean and scale.
+      The $\mu^2$ part charges for sitting away from 0; the $\sigma^2 - 1 - \ln\sigma^2$ part charges for a cloud narrower or wider than 1. It is zero only at $\mu = 0, \sigma = 1$. With several latent coordinates, add their KLs.
 
+      The code checks this formula by sampling, and confirms that gradients reach $\mu$ and $\sigma$ through $z$:
 
-    A **standard normal** distribution is bell-shaped with mean zero and standard deviation one. Epsilon, ε,
-    names the sampled random value. The mean and scale can be differentiated while treating this random draw
-    as the supplied noise for that calculation. The scale must follow the recipe''s valid positive parameterization.'
-  text_mode: 'For a Gaussian latent, write z = mean + scale×epsilon, where epsilon is sampled from a standard
-    normal distribution. Mean two, scale one-half, and epsilon minus one produce z = 1.5. This expresses randomness
-    separately so gradients can reach the encoder’s mean and scale.
+      ```python run
+      import numpy as np
 
+      def kl(mu, sigma):          # KL( N(mu, sigma^2) || N(0, 1) ), closed form
+          return 0.5 * (mu**2 + sigma**2 - 1 - np.log(sigma**2))
 
-    A **standard normal** distribution is bell-shaped with mean zero and standard deviation one. Epsilon, ε,
-    names the sampled random value. The mean and scale can be differentiated while treating this random draw
-    as the supplied noise for that calculation. The scale must follow the recipe''s valid positive parameterization.'
-  bridges: []
-- id: autoencoders-and-vaes.s4
-  title: Understand the tradeoff
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.autoencoders-and-vaes
-  markdown: 'A stronger prior-matching term can make random sampling easier while reducing reconstruction detail
-    or contributing to posterior collapse. Latent interpolation can be useful without every intermediate representing
-    a real object. Evaluate reconstruction, sample diversity, and downstream usefulness under the actual loss
-    and decoder.
+      for mu, sigma in [(0, 1), (1, 0.5), (2, 1), (0, 0.5), (0, 2)]:
+          print(f"mu={mu}, sigma={sigma}: KL = {kl(mu, sigma):.3f}")
 
+      # Reparameterize: z = mu + sigma * eps, with eps drawn from N(0, 1)
+      rng = np.random.default_rng(0)
+      mu, sigma = 1.0, 0.5
+      eps = rng.standard_normal(200_000)
+      z = mu + sigma * eps
 
-    **Posterior collapse** is a failure in which the latent carries little input-specific information and the
-    decoder effectively ignores it. A reasonable-looking reconstruction loss alone may miss this. Inspect whether
-    changing the latent changes meaningful output and whether the intended information is retained.'
-  text_mode: 'A stronger prior-matching term can make random sampling easier while reducing reconstruction
-    detail or contributing to posterior collapse. Latent interpolation can be useful without every intermediate
-    representing a real object. Evaluate reconstruction, sample diversity, and downstream usefulness under
-    the actual loss and decoder.
+      # Check the KL by averaging log q(z) - log p(z) over the samples
+      log_q = -0.5 * eps**2 - np.log(sigma) - 0.5 * np.log(2 * np.pi)
+      log_p = -0.5 * z**2 - 0.5 * np.log(2 * np.pi)
+      print(f"sampled KL estimate: {np.mean(log_q - log_p):.3f}")
 
+      # Gradients flow through z: for loss = z**2, d loss/d mu = 2z, d loss/d sigma = 2z * eps
+      print(f"avg d(z^2)/d mu    = {np.mean(2 * z):.3f}   (exact 2*mu    = {2 * mu})")
+      print(f"avg d(z^2)/d sigma = {np.mean(2 * z * eps):.3f}   (exact 2*sigma = {2 * sigma})")
+      ```
 
-    **Posterior collapse** is a failure in which the latent carries little input-specific information and the
-    decoder effectively ignores it. A reasonable-looking reconstruction loss alone may miss this. Inspect whether
-    changing the latent changes meaningful output and whether the intended information is retained.'
-  bridges: []
-- id: autoencoders-and-vaes.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.autoencoders-and-vaes
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: An autoencoder reconstructs inputs through a code. A VAE also learns how input-specific code distributions
-    relate to a prior used for fresh generation.
-- id: autoencoders-and-vaes.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.autoencoders-and-vaes
-  markdown: An autoencoder reconstructs inputs through a code. A VAE also learns how input-specific code distributions
-    relate to a prior used for fresh generation.
-  text_mode: An autoencoder reconstructs inputs through a code. A VAE also learns how input-specific code distributions
-    relate to a prior used for fresh generation.
+      The sampled estimate, 0.817, matches the formula's 0.818. A narrow cloud at the center, $(0, 0.5)$, costs 0.318; a wide one, $(0, 2)$, costs 0.807. Try $\mu = -1$: the cost is the same as $\mu = 1$, because only the distance from 0 matters.
+    bridges: []
+  - id: autoencoders-and-vaes.s4
+    title: Too much KL, too little KL
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.autoencoders-and-vaes
+    markdown: |-
+      The two ELBO terms pull against each other, and the balance shows up in the samples.
+
+      | If the KL term wins too much | If reconstruction wins too much |
+      | --- | --- |
+      | Every cloud sits at $\mu = 0$, $\sigma = 1$ and carries no information about its doodle | Clouds shrink to tiny points far apart, back to a plain autoencoder |
+      | The decoder learns to ignore $z$: **posterior collapse** | Random samples from the prior land in the sea and decode to smudges |
+
+      Posterior collapse is easy to miss, since the loss can look fine. Test for it directly: decode two very different $z$ values and see whether the doodle changes. VAE samples also tend to look blurry, because a decoder trained with squared error averages over the doodles each cloud could mean. The **β-VAE** (Higgins et al., 2017) multiplies the KL term by a weight β to move this balance on purpose. Setting β above 1 costs some reconstruction detail but tends to make separate coordinates capture separate factors, such as a stroke's thickness and its slant.
+
+      You'll meet the VAE's encoder and decoder again. The token models in the previous lesson used a discrete cousin, VQ-VAE. Stable Diffusion, in the latent diffusion lesson, uses a VAE-style autoencoder with only a light KL penalty, purely to shrink images before generating.
+    bridges: []
+  - id: autoencoders-and-vaes.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.autoencoders-and-vaes
+    markdown: Gaussian KLs to compute by hand, reparameterization arithmetic, and a face generator, a music model, and a collapsed decoder test whether you can train and diagnose a VAE.
+    takeaway: |-
+      A VAE encodes each input to a small Gaussian cloud, samples from it with z = μ + σε so gradients flow, and trains on reconstruction minus a KL penalty that keeps every cloud near the prior you sample from.
+  - id: autoencoders-and-vaes.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.autoencoders-and-vaes
+    markdown: |-
+      An autoencoder reconstructs inputs through a code. A VAE also learns how input-specific code distributions relate to a prior used for fresh generation.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - autoencoders-and-vaes.s1
-    - autoencoders-and-vaes.s2
-    - autoencoders-and-vaes.s3
-    - autoencoders-and-vaes.s4
-    - autoencoders-and-vaes.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - autoencoders-and-vaes.s1
+        - autoencoders-and-vaes.s2
+        - autoencoders-and-vaes.s3
+        - autoencoders-and-vaes.s5
+        - autoencoders-and-vaes.s4
+        - autoencoders-and-vaes.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     autoencoders-and-vaes.recap: autoencoders-and-vaes.check
 assessment_families:
-- id: autoencoders-and-vaes.base
-  objective_ref: objective.autoencoders-and-vaes
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Make the latent probabilistic: trace the inputs, operation, and result before choosing.'
-  remediation_scene: autoencoders-and-vaes.s2
-  variants:
-  - id: autoencoders-and-vaes.base.1
-    prompt: Does a plain autoencoder guarantee meaningful samples from arbitrary random latent codes?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only with a small file size
-    answer: a
-    feedback: Reconstruction training alone need not organize unused latent regions.
-  - id: autoencoders-and-vaes.base.2
-    prompt: Mean 2, scale 0.5, epsilon -1 give z what?
-    options:
-    - id: b
-      text: '2.5'
-    - id: c
-      text: '-1.5'
-    - id: a
-      text: '1.5'
-    answer: a
-    feedback: Compute 2 + 0.5×(-1).
-- id: autoencoders-and-vaes.transfer
-  objective_ref: objective.autoencoders-and-vaes
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Understand the tradeoff: trace the inputs, operation, and result before choosing.'
-  remediation_scene: autoencoders-and-vaes.s4
-  variants:
-  - id: autoencoders-and-vaes.transfer.1
-    prompt: What does the VAE prior-matching term compare?
-    options:
-    - id: b
-      text: Only two output image file names
-    - id: c
-      text: Only model runtime
-    - id: a
-      text: Approximate latent posterior and chosen prior
-    answer: a
-    feedback: It regularizes the probabilistic latent representation.
-  - id: autoencoders-and-vaes.transfer.2
-    prompt: Can stronger latent regularization trade away reconstruction detail?
-    options:
-    - id: c
-      text: Only if the decoder is removed
-    - id: a
-      text: 'Yes'
-    - id: b
-      text: 'No'
-    answer: a
-    feedback: Training balances competing terms.
+  - id: autoencoders-and-vaes.base
+    objective_ref: objective.autoencoders-and-vaes
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Make the latent probabilistic: trace the inputs, operation, and result before choosing.'
+    remediation_scene: autoencoders-and-vaes.s2
+    variants:
+      - id: autoencoders-and-vaes.base.1
+        prompt: Does a plain autoencoder guarantee meaningful samples from arbitrary random latent codes?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only with a small file size
+        answer: a
+        feedback: Reconstruction training alone need not organize unused latent regions.
+        retired: true
+      - id: autoencoders-and-vaes.base.2
+        prompt: Mean 2, scale 0.5, epsilon -1 give z what?
+        options:
+          - id: b
+            text: '2.5'
+          - id: c
+            text: '-1.5'
+          - id: a
+            text: '1.5'
+        answer: a
+        feedback: Compute 2 + 0.5×(-1).
+        retired: true
+  - id: autoencoders-and-vaes.transfer
+    objective_ref: objective.autoencoders-and-vaes
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Understand the tradeoff: trace the inputs, operation, and result before choosing.'
+    remediation_scene: autoencoders-and-vaes.s4
+    variants:
+      - id: autoencoders-and-vaes.transfer.1
+        prompt: What does the VAE prior-matching term compare?
+        options:
+          - id: b
+            text: Only two output image file names
+          - id: c
+            text: Only model runtime
+          - id: a
+            text: Approximate latent posterior and chosen prior
+        answer: a
+        feedback: It regularizes the probabilistic latent representation.
+        retired: true
+      - id: autoencoders-and-vaes.transfer.2
+        prompt: Can stronger latent regularization trade away reconstruction detail?
+        options:
+          - id: c
+            text: Only if the decoder is removed
+          - id: a
+            text: 'Yes'
+          - id: b
+            text: 'No'
+        answer: a
+        feedback: Training balances competing terms.
+        retired: true
+  - id: autoencoders-and-vaes.base.v2
+    objective_ref: objective.autoencoders-and-vaes
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Keep the three pieces apart: the encoder's μ and σ describe a cloud, z = μ + σε samples from it with the randomness in ε, and the KL term pulls the cloud toward N(0, 1)."
+    remediation_scene: autoencoders-and-vaes.s3
+    variants:
+      - id: autoencoders-and-vaes.base.v2.1
+        prompt: An encoder outputs μ = 2 and σ = 0.5, and the noise draw is ε = −1. What is z?
+        options:
+          - id: b
+            text: '2.5, from μ + σ'
+          - id: a
+            text: '1.5, from 2 + 0.5 × (−1)'
+          - id: c
+            text: '−1, from the noise draw alone'
+        answer: a
+        feedback: z = μ + σε = 2 + 0.5 × (−1) = 1.5. Adding σ ignores the draw, and ε alone ignores what the encoder said about this input.
+      - id: autoencoders-and-vaes.base.v2.2
+        prompt: Why does a VAE write z = μ + σε instead of sampling z directly from N(μ, σ²)?
+        options:
+          - id: c
+            text: It makes z less random, so training is more stable
+          - id: b
+            text: It forces z to have mean 0 and standard deviation 1
+          - id: a
+            text: It makes z a differentiable function of μ and σ
+        answer: a
+        feedback: With the randomness moved into ε, ∂z/∂μ = 1 and ∂z/∂σ = ε, so gradients reach the encoder. z has exactly the same distribution, N(μ, σ²), as before; only ε has mean 0 and standard deviation 1.
+      - id: autoencoders-and-vaes.base.v2.3
+        prompt: With ε = 0.4 held fixed, σ rises from 0.5 to 0.6. By how much does z change?
+        options:
+          - id: a
+            text: 'Up by 0.04, since ∂z/∂σ = ε'
+          - id: b
+            text: 'Up by 0.1, the same as the change in σ'
+          - id: c
+            text: 'Not at all, since only μ moves z'
+        answer: a
+        feedback: z changes by ε × Δσ = 0.4 × 0.1 = 0.04. A change in μ moves z one-for-one; a change in σ is scaled by the noise draw.
+      - id: autoencoders-and-vaes.base.v2.4
+        prompt: Which statement describes the two parts of the ELBO that a VAE maximizes?
+        options:
+          - id: b
+            text: Reconstruction plus the KL, so both terms push the same way
+          - id: a
+            text: Reconstruction minus the KL from each cloud to the prior
+          - id: c
+            text: The KL between the decoder output and the input image
+        answer: a
+        feedback: ELBO = E[log p(x | z)] − KL(q(z | x) ‖ p(z)). The KL is subtracted, so it acts as a penalty that pulls clouds toward the prior. The KL compares latent distributions, not images.
+      - id: autoencoders-and-vaes.base.v2.5
+        prompt: Why can a VAE generate new samples from N(0, 1) when a plain autoencoder usually can't?
+        options:
+          - id: c
+            text: Its decoder is larger, so it can draw from any code at all
+          - id: a
+            text: The KL penalty packs the training clouds around 0, so the decoder has seen that region
+          - id: b
+            text: Its encoder memorizes the training set, so random codes point to real inputs
+        answer: a
+        feedback: Pulling every cloud toward N(0, 1) fills the region you sample from with codes the decoder has trained on. Decoder size doesn't help with regions it never saw, and memorizing would defeat the purpose.
+  - id: autoencoders-and-vaes.transfer.v2
+    objective_ref: objective.autoencoders-and-vaes
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide which ELBO term is winning. Too much KL and the code stops carrying information; too little and the codes spread out, leaving gaps the decoder never learned.
+    remediation_scene: autoencoders-and-vaes.s4
+    variants:
+      - id: autoencoders-and-vaes.transfer.v2.1
+        prompt: A VAE for faces rebuilds training faces sharply, but faces decoded from random N(0, 1) samples are smudges. What is the likely cause?
+        options:
+          - id: c
+            text: The KL term is too strong, so every code is the same
+          - id: b
+            text: The decoder is too small to draw a face from a code
+          - id: a
+            text: The KL term is too weak, so codes don't fill the prior's region
+        answer: a
+        feedback: Sharp reconstructions but bad prior samples mean the codes sit away from where you sample, like a plain autoencoder. A strong KL would blur the reconstructions too, and a too-small decoder couldn't rebuild faces sharply.
+      - id: autoencoders-and-vaes.transfer.v2.2
+        prompt: A music VAE's decoder gives the same tune whatever z you feed it, though its training loss looks fine. What has happened, and how do you confirm it?
+        options:
+          - id: a
+            text: Posterior collapse; vary z and compare the tunes
+          - id: b
+            text: Overfitting; check the loss on held-out tunes
+          - id: c
+            text: Mode collapse; add more songs from rare genres
+        answer: a
+        feedback: A decoder that ignores z is posterior collapse, where the KL term won. Varying z and checking the output tests it directly. Held-out loss may look normal, and mode collapse is the GAN failure you'll meet next.
+      - id: autoencoders-and-vaes.transfer.v2.3
+        prompt: An engineer wants a latent space where one coordinate controls a font's weight and another its slant. Which change to a VAE is most commonly tried?
+        options:
+          - id: b
+            text: Remove the KL term so each code can be more precise
+          - id: a
+            text: Raise the weight on the KL term (a β-VAE)
+          - id: c
+            text: Replace the Gaussian prior with the training data
+        answer: a
+        feedback: A β above 1 pushes harder toward the factorized N(0, 1) prior, which tends to encourage separate coordinates for separate factors, at some cost to reconstruction. Removing the KL gives a plain autoencoder with no pressure on the coordinates.
+      - id: autoencoders-and-vaes.transfer.v2.4
+        prompt: A sensor-data VAE's encoder outputs σ values that sometimes come out negative, crashing training. What is the standard fix?
+        options:
+          - id: c
+            text: Clip ε to be positive so σε can't go negative
+          - id: b
+            text: Take the absolute value of μ before sampling z
+          - id: a
+            text: Have the encoder output log σ², then take σ = exp(½ log σ²)
+        answer: a
+        feedback: Predicting log σ² lets the network output any real number while σ stays positive. Clipping ε changes the distribution of z, and μ may be any sign.
+  - id: autoencoders-and-vaes.calculate
+    objective_ref: objective.autoencoders-and-vaes
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Use KL = ½(μ² + σ² − 1 − ln σ²). Square σ first, and remember ln σ² is negative when σ < 1.
+    remediation_scene: autoencoders-and-vaes.s5
+    absolute_tolerance: 0.01
+    variants:
+      - id: autoencoders-and-vaes.calculate.1
+        prompt: An encoder outputs μ = 2 and σ = 1 for one latent coordinate. What is its KL divergence from N(0, 1)?
+        answer: 2
+        feedback: ½(4 + 1 − 1 − ln 1) = ½ × 4 = 2. With σ = 1 only the μ² term remains.
+      - id: autoencoders-and-vaes.calculate.2
+        prompt: An encoder outputs μ = 0 and σ = 0.5. What is the KL divergence from N(0, 1)? (ln 0.25 ≈ −1.386)
+        answer: 0.318
+        feedback: ½(0 + 0.25 − 1 + 1.386) = ½ × 0.636 = 0.318. A cloud narrower than the prior costs something even at the center.
+      - id: autoencoders-and-vaes.calculate.3
+        prompt: An encoder outputs μ = 1 and σ = 2. What is the KL divergence from N(0, 1)? (ln 4 ≈ 1.386)
+        answer: 1.307
+        feedback: ½(1 + 4 − 1 − 1.386) = ½ × 2.614 = 1.307.
+      - id: autoencoders-and-vaes.calculate.4
+        prompt: An encoder outputs μ = −1 and σ = 1. What is the KL divergence from N(0, 1)?
+        answer: 0.5
+        feedback: ½(1 + 1 − 1 − 0) = 0.5. The sign of μ doesn't matter, only its distance from 0.
+      - id: autoencoders-and-vaes.calculate.5
+        prompt: A two-coordinate latent has (μ, σ) = (1, 1) and (0, 1). What is the total KL divergence from N(0, 1)?
+        answer: 0.5
+        feedback: The first coordinate costs ½(1 + 1 − 1 − 0) = 0.5; the second, at the prior itself, costs 0. Coordinates add, for a total of 0.5.

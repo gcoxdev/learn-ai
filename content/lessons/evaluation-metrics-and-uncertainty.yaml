@@ -1,192 +1,425 @@
 schema_version: 0.2-draft
 lesson:
   id: evaluation-metrics-and-uncertainty
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Measure the behavior that the task actually needs
   state: draft
-  summary: Choose useful measurements and show how uncertain they are.
+  summary: The new support bot beats the old one 78% to 75% on 200 questions. Is it better? Learn to score free-text answers and put honest error bars on the result.
   slot: M28.1
   category: learning
   sources:
-  - title: HELM
-    url: https://arxiv.org/abs/2211.09110
-  - title: Calibration of Modern Neural Networks
-    url: https://arxiv.org/abs/1706.04599
+    - title: "SQuAD: 100,000+ Questions for Machine Comprehension of Text (Rajpurkar et al., 2016), source of the exact-match and token-F1 conventions"
+      url: https://arxiv.org/abs/1606.05250
+    - title: "Adding Error Bars to Evals: A Statistical Approach to Language Model Evaluations (Miller, 2024)"
+      url: https://arxiv.org/abs/2411.00640
+    - title: "Quantifying Language Models' Sensitivity to Spurious Features in Prompt Design (Sclar et al., 2023)"
+      url: https://arxiv.org/abs/2310.11324
+    - title: "Holistic Evaluation of Language Models (HELM) (Liang et al., 2022)"
+      url: https://arxiv.org/abs/2211.09110
+    - title: "On Calibration of Modern Neural Networks (Guo et al., 2017)"
+      url: https://arxiv.org/abs/1706.04599
 objectives:
-- id: objective.evaluation-metrics-and-uncertainty
-  version: 1-draft
-  statement: Evaluation connects task goals to metrics, baselines, and uncertainty; accuracy, calibration,
-    coverage, and cost answer different questions and can move in different directions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - evaluation-metrics-and-uncertainty.base
-  - evaluation-metrics-and-uncertainty.transfer
-  prerequisites:
-  - anyOf:
-    - objective.classification-metrics
-  - anyOf:
-    - objective.calibrated-decisions
-  - anyOf:
-    - objective.research-reporting
+  - id: objective.evaluation-metrics-and-uncertainty
+    version: 2-draft
+    statement: Evaluation connects task goals to metrics, baselines, and uncertainty; accuracy, calibration, coverage, and cost answer different questions and can move in different directions.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - evaluation-metrics-and-uncertainty.base.v2
+      - evaluation-metrics-and-uncertainty.transfer.v2
+      - evaluation-metrics-and-uncertainty.calculate
+    prerequisites:
+      - anyOf:
+          - objective.classification-metrics
+      - anyOf:
+          - objective.calibrated-decisions
+      - anyOf:
+          - objective.research-reporting
 scenes:
-- id: evaluation-metrics-and-uncertainty.s1
-  title: Start with a decision-relevant metric
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.evaluation-metrics-and-uncertainty
-  markdown: Classification may need precision and recall, forecasting may need absolute error, and generation
-    may need verified task success. A metric is a chosen measurement, not the goal itself. Include a simple
-    baseline and identify which errors matter most for the application.
-  text_mode: Classification may need precision and recall, forecasting may need absolute error, and generation
-    may need verified task success. A metric is a chosen measurement, not the goal itself. Include a simple
-    baseline and identify which errors matter most for the application.
-  bridges: []
-- id: evaluation-metrics-and-uncertainty.s2
-  title: Separate accuracy from calibration
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.evaluation-metrics-and-uncertainty
-  markdown: Among cases assigned probability 0.8, calibration asks whether roughly 80 percent are correct under
-    the evaluation conditions. A model can rank cases well but overstate confidence. Calibration can vary by
-    subgroup and distribution, and a small bucket gives an uncertain estimate.
-  text_mode: Among cases assigned probability 0.8, calibration asks whether roughly 80 percent are correct
-    under the evaluation conditions. A model can rank cases well but overstate confidence. Calibration can
-    vary by subgroup and distribution, and a small bucket gives an uncertain estimate.
-  bridges: []
-- id: evaluation-metrics-and-uncertainty.s3
-  title: Quantify sampling uncertainty
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.evaluation-metrics-and-uncertainty
-  markdown: 'A score from 20 examples is generally less precise than one from a representative larger sample.
-    Confidence intervals or bootstrap comparisons need assumptions about independence and sampling. If many
-    examples come from one document or user, account for clustering rather than treating every item as independent.
+  - id: evaluation-metrics-and-uncertainty.s1
+    title: Three scorers, three verdicts on one answer
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.evaluation-metrics-and-uncertainty
+    markdown: |-
+      Kestrel Mobile, a phone carrier, wants a new model behind its support assistant. On a test set of 200 real customer questions, the current model, **A**, answers 150 correctly (75%). The candidate, **B**, answers 156 (78%). This module follows Kestrel's evaluation team as they decide whether B should ship. Their first question: what counts as "correct" in a free-text answer?
 
+      Take one question: "How much is the Travel Pass?" The reference answer is "\$10 per month." B replies, "It costs \$10 a month." Here are three ways to score that reply:
 
-    With 16 correct answers out of 20, observed accuracy is 80%; changing one result moves it by five percentage
-    points. With 160 out of 200, observed accuracy is still 80%, but one result moves it by only half a point.
-    More independent, representative cases usually give a steadier estimate. Two hundred paraphrases of one
-    question do not supply the same evidence as two hundred independently chosen questions.'
-  text_mode: 'A score from 20 examples is generally less precise than one from a representative larger sample.
-    Confidence intervals or bootstrap comparisons need assumptions about independence and sampling. If many
-    examples come from one document or user, account for clustering rather than treating every item as independent.
+      | Metric | How it scores | Score for B's reply |
+      | --- | --- | --- |
+      | **Exact match (EM)** | 1 if the normalized reply equals the reference, else 0 | 0 |
+      | **Token F1** | Word overlap between reply and reference | 0.57 |
+      | **Model-graded** | A judge model reads reply, reference, and a rubric | correct |
 
+      *Normalized* means lowercased, with punctuation and the words "a", "an", and "the" removed. That's the convention from the SQuAD reading benchmark (Rajpurkar et al., 2016). Token F1 is the harmonic mean of precision (shared words ÷ reply words) and recall (shared words ÷ reference words). "10" and "month" are shared, so precision is 2/4, recall is 2/3, and F1 = 0.57.
 
-    With 16 correct answers out of 20, observed accuracy is 80%; changing one result moves it by five percentage
-    points. With 160 out of 200, observed accuracy is still 80%, but one result moves it by only half a point.
-    More independent, representative cases usually give a steadier estimate. Two hundred paraphrases of one
-    question do not supply the same evidence as two hundred independently chosen questions.'
-  bridges: []
-- id: evaluation-metrics-and-uncertainty.s4
-  title: Report a useful profile
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.evaluation-metrics-and-uncertainty
-  markdown: Show relevant quality metrics with latency, cost, and coverage or abstention behavior. Include
-    failures and uncertainty instead of selecting only favorable numbers. A single aggregate ranking can hide
-    tradeoffs that change which model is appropriate for a particular task.
-  text_mode: Show relevant quality metrics with latency, cost, and coverage or abstention behavior. Include
-    failures and uncertainty instead of selecting only favorable numbers. A single aggregate ranking can hide
-    tradeoffs that change which model is appropriate for a particular task.
-  bridges: []
-- id: evaluation-metrics-and-uncertainty.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.evaluation-metrics-and-uncertainty
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Choose measurements that match the task. Report uncertainty and a profile of quality, confidence,
-    coverage, and cost rather than relying on one score.
-- id: evaluation-metrics-and-uncertainty.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.evaluation-metrics-and-uncertainty
-  markdown: Choose measurements that match the task. Report uncertainty and a profile of quality, confidence,
-    coverage, and cost rather than relying on one score.
-  text_mode: Choose measurements that match the task. Report uncertainty and a profile of quality, confidence,
-    coverage, and cost rather than relying on one score.
+      ```python run
+      import re
+      from collections import Counter
+
+      def normalize(text):
+          text = re.sub(r"[^\w\s]", " ", text.lower())          # drop punctuation
+          return [w for w in text.split() if w not in {"a", "an", "the"}]
+
+      def exact_match(pred, ref):
+          return int(normalize(pred) == normalize(ref))
+
+      def token_f1(pred, ref):
+          p, r = normalize(pred), normalize(ref)
+          common = sum((Counter(p) & Counter(r)).values())
+          if common == 0:
+              return 0.0
+          precision, recall = common / len(p), common / len(r)
+          return 2 * precision * recall / (precision + recall)
+
+      ref = "$10 per month"
+      for pred in ["$10 per month.", "It costs $10 a month", "$15 per month"]:
+          print(f"{pred!r:24} EM = {exact_match(pred, ref)}   F1 = {token_f1(pred, ref):.2f}")
+      ```
+
+      :::predict Which reply gets the higher token F1: the correct "It costs \$10 a month" or the wrong "\$15 per month"?
+      The wrong one, 0.67 against 0.57. "\$15 per month" shares two of the reference's three words ("per" and "month"), while the correct reply spends half its words on "it costs". Word overlap can't tell a wrong price from a right one. So LLM evaluations usually keep EM for short, fixed-format answers (a plan code, a number) and use a judge with a rubric for the rest. Judges make their own mistakes; the lesson on human and model judges measures them.
+      :::
+
+      When the output is a decision, such as handing a chat to a human, the precision and recall from module 7 still apply.
+    bridges: []
+  - id: evaluation-metrics-and-uncertainty.s2
+    title: 78% on 200 questions, give or take what?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.evaluation-metrics-and-uncertainty
+    markdown: |-
+      The lesson on controlled experiments showed that an accuracy measured on $n$ independent items has a **standard error** (the typical wobble from which items happened to be drawn) of $\sqrt{\hat p(1-\hat p)/n}$. A 95% confidence interval reaches about 1.96 standard errors either side. For B:
+
+      $$\text{SE} = \sqrt{\frac{0.78 \times 0.22}{200}} = \sqrt{0.000858} = 0.0293, \qquad 1.96 \times 0.0293 = 0.057$$
+
+      So B scores 78% ± 5.7 points, roughly 72% to 84%. A's 75% carries ± 6.0.
+
+      ```python run
+      import math
+
+      def ci95(correct, n):
+          p = correct / n
+          se = math.sqrt(p * (1 - p) / n)          # binomial standard error
+          return p, se, 1.96 * se
+
+      for name, correct, n in [("Model A", 150, 200), ("Model B", 156, 200), ("Model B", 624, 800)]:
+          p, se, half = ci95(correct, n)
+          print(f"{name}: {correct}/{n} = {p:.1%}  SE {se:.4f}  95% CI {p - half:.1%} to {p + half:.1%} (±{half * 100:.1f} pts)")
+
+      # The gap between two independent scores has its own, larger wobble
+      pa, pb, n = 0.75, 0.78, 200
+      se_gap = math.sqrt(pa * (1 - pa) / n + pb * (1 - pb) / n)
+      print(f"gap {pb - pa:+.1%}, 95% CI ±{1.96 * se_gap * 100:.1f} pts")
+
+      # Items needed for the gap's half-width to shrink to 3 points
+      n_needed = 1.96**2 * (pa * (1 - pa) + pb * (1 - pb)) / 0.03**2
+      print(f"items per model for ±3 pts: {math.ceil(n_needed)}")
+      ```
+
+      :::predict Kestrel grows the test set to 800 questions and B still scores 78%. How wide is the interval now?
+      ±2.9 points, half as wide. Four times the items halve the error, because $n$ sits under a square root. The program's third line shows it.
+      :::
+
+      :::papers Error bars for an eval score
+      $$\hat p = \frac{1}{n}\sum_{i=1}^{n} s_i, \qquad \text{SE}(\hat p) = \sqrt{\frac{\hat p\,(1-\hat p)}{n}}, \qquad \text{CI}_{95} = \hat p \pm 1.96\,\text{SE}$$
+
+      Here $s_i$ is 1 if item $i$ is correct and 0 if not: $n = 200$, $\hat p = 0.78$. For scores between 0 and 1, such as token F1, replace $\hat p(1-\hat p)$ with the sample variance of the $s_i$. Miller (2024), "Adding Error Bars to Evals," argues that every LLM eval score should carry this standard error.
+      :::
+    bridges: []
+  - id: evaluation-metrics-and-uncertainty.s3
+    title: Three points apart, and no winner
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.evaluation-metrics-and-uncertainty
+    markdown: |-
+      B leads by 3 points, but both scores wobble, and the wobbles add. The standard error of the gap is $\sqrt{\text{SE}_A^2 + \text{SE}_B^2} = \sqrt{0.0306^2 + 0.0293^2} = 0.042$, so the gap is 3 ± 8.3 points. Anything from B being 5 points worse to 11 points better fits the data.
+
+      To pin a 3-point gap down to ± 3, the program says Kestrel would need about 1,500 questions per model. That's why a benchmark of a few hundred items can't separate models that are a few points apart. The next lesson shows a cheaper fix: score both models on the *same* questions and compare them item by item.
+
+      Check independence too. Kestrel's 200 questions come from 200 different conversations. Ten questions from each of 20 chats would tend to succeed or fail together, and the honest interval would be closer to one built from 20 items.
+
+      :::mixup "B scored 78.0 and A scored 75.0, so B is the better model."
+      The decimal point implies a precision the test doesn't have. On 200 items, any gap well inside ± 8 points is a tie until more evidence arrives.
+      :::
+    bridges: []
+  - id: evaluation-metrics-and-uncertainty.variance
+    title: Change the prompt wording, lose four points
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.evaluation-metrics-and-uncertainty
+    markdown: |-
+      The item sample isn't the only source of wobble. Kestrel runs B nine times on the same 200 questions: three prompt templates (the same instructions, worded and formatted differently) crossed with three random seeds for sampling.
+
+      | Template | Seed 1 | Seed 2 | Seed 3 | Mean |
+      | --- | ---: | ---: | ---: | ---: |
+      | T1: plain instructions | 78.0 | 77.0 | 78.5 | 77.8 |
+      | T2: bulleted rules | 74.5 | 75.5 | 75.0 | 75.0 |
+      | T3: rules plus one example | 80.0 | 79.0 | 79.5 | 79.5 |
+
+      Seeds move the score by about a point. The template moves it by 4.5 points, more than B's whole lead over A. Had the team tested B only with T3 and A only with T2, they would have reported a gap that is mostly prompt formatting.
+
+      This is common. Sclar et al. (2023) changed only formatting details, such as separators, capitalization, and spacing, in few-shot prompts. With LLaMA-2-13B, accuracy differed by as much as 76 points between formats.
+
+      Kestrel's rule: both models get the same templates and sampling settings, at least three seeds, and a reported mean and spread across templates. The templates are fixed before any scores are seen, because picking the best one afterwards brings back the winner's curse from module 9.
+    bridges: []
+  - id: evaluation-metrics-and-uncertainty.s4
+    title: A release scorecard, not one number
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.evaluation-metrics-and-uncertainty
+    markdown: |-
+      Accuracy answers one question. A release decision needs several, and they can point in different directions. Kestrel's scorecard:
+
+      | Measure | A (current) | B (candidate) |
+      | --- | ---: | ---: |
+      | Accuracy, 200 questions | 75% ± 6.0 | 78% ± 5.7 |
+      | Calibration error (ECE) | 0.04 | 0.11 |
+      | Recall on chats needing a human | 0.90 | 0.82 |
+      | Median reply time | 1.2 s | 2.1 s |
+      | Cost per 1,000 chats | \$0.80 | \$1.40 |
+
+      **Expected calibration error (ECE)**, from the lesson on calibrated decisions, averages the gap between how confident a model says it is and how often it's right. B's confidence is less honest, and it misses more chats that need a person.
+
+      :::key The decision
+      The team keeps A for now. B's accuracy lead is inside the noise, and it is worse on calibration, hand-offs, speed, and cost. Their next step is 600 more test questions, scored on both models. The next lesson shows why comparing the models question by question makes 800 enough to see a real 3-point gain.
+      :::
+    bridges: []
+  - id: evaluation-metrics-and-uncertainty.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.evaluation-metrics-and-uncertainty
+    markdown: Compute a few error bars by hand, then judge a legal-research model, a worksheet-based tutor, a math grader, and two vendors' leaderboard claims.
+    takeaway: |-
+      Score free text with a metric that matches the answer format, and put a standard error on every score. On a few hundred items, a gap of a few points is usually noise.
+  - id: evaluation-metrics-and-uncertainty.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.evaluation-metrics-and-uncertainty
+    markdown: |-
+      Choose measurements that match the task. Report uncertainty and a profile of quality, confidence, coverage, and cost rather than relying on one score.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - evaluation-metrics-and-uncertainty.s1
-    - evaluation-metrics-and-uncertainty.s2
-    - evaluation-metrics-and-uncertainty.s3
-    - evaluation-metrics-and-uncertainty.s4
-    - evaluation-metrics-and-uncertainty.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - evaluation-metrics-and-uncertainty.s1
+        - evaluation-metrics-and-uncertainty.s2
+        - evaluation-metrics-and-uncertainty.s3
+        - evaluation-metrics-and-uncertainty.variance
+        - evaluation-metrics-and-uncertainty.s4
+        - evaluation-metrics-and-uncertainty.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     evaluation-metrics-and-uncertainty.recap: evaluation-metrics-and-uncertainty.check
 assessment_families:
-- id: evaluation-metrics-and-uncertainty.base
-  objective_ref: objective.evaluation-metrics-and-uncertainty
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Separate accuracy from calibration: trace the inputs, operation, and result before choosing.'
-  remediation_scene: evaluation-metrics-and-uncertainty.s2
-  variants:
-  - id: evaluation-metrics-and-uncertainty.base.1
-    prompt: What does 0.8 calibration mean across comparable cases?
-    options:
-    - id: c
-      text: Every individual prediction is guaranteed
-    - id: a
-      text: About 80 percent correctness among those predictions
-    - id: b
-      text: Exactly 80 percent confidence on every task
-    answer: a
-    feedback: Calibration is a frequency relationship under defined conditions.
-  - id: evaluation-metrics-and-uncertainty.base.2
-    prompt: Can accuracy improve while confidence calibration worsens?
-    options:
-    - id: a
-      text: 'Yes'
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if labels are missing
-    answer: a
-    feedback: Different metrics capture different properties.
-- id: evaluation-metrics-and-uncertainty.transfer
-  objective_ref: objective.evaluation-metrics-and-uncertainty
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Report a useful profile: trace the inputs, operation, and result before choosing.'
-  remediation_scene: evaluation-metrics-and-uncertainty.s4
-  variants:
-  - id: evaluation-metrics-and-uncertainty.transfer.1
-    prompt: Why account for many test examples from one document?
-    options:
-    - id: a
-      text: Their errors may be correlated
-    - id: b
-      text: They automatically count as unrelated samples
-    - id: c
-      text: Document identity never matters
-    answer: a
-    feedback: Dependence changes uncertainty estimates.
-  - id: evaluation-metrics-and-uncertainty.transfer.2
-    prompt: What makes a baseline useful?
-    options:
-    - id: b
-      text: It must always be the largest model
-    - id: c
-      text: It replaces all uncertainty estimates
-    - id: a
-      text: It shows whether added complexity improves the relevant task
-    answer: a
-    feedback: A baseline anchors practical value.
+  - id: evaluation-metrics-and-uncertainty.base
+    objective_ref: objective.evaluation-metrics-and-uncertainty
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Separate accuracy from calibration: trace the inputs, operation, and result before choosing.'
+    remediation_scene: evaluation-metrics-and-uncertainty.s2
+    variants:
+      - id: evaluation-metrics-and-uncertainty.base.1
+        prompt: What does 0.8 calibration mean across comparable cases?
+        options:
+          - id: c
+            text: Every individual prediction is guaranteed
+          - id: a
+            text: About 80 percent correctness among those predictions
+          - id: b
+            text: Exactly 80 percent confidence on every task
+        answer: a
+        feedback: Calibration is a frequency relationship under defined conditions.
+        retired: true
+      - id: evaluation-metrics-and-uncertainty.base.2
+        prompt: Can accuracy improve while confidence calibration worsens?
+        options:
+          - id: a
+            text: 'Yes'
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if labels are missing
+        answer: a
+        feedback: Different metrics capture different properties.
+        retired: true
+  - id: evaluation-metrics-and-uncertainty.transfer
+    objective_ref: objective.evaluation-metrics-and-uncertainty
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Report a useful profile: trace the inputs, operation, and result before choosing.'
+    remediation_scene: evaluation-metrics-and-uncertainty.s4
+    variants:
+      - id: evaluation-metrics-and-uncertainty.transfer.1
+        prompt: Why account for many test examples from one document?
+        options:
+          - id: a
+            text: Their errors may be correlated
+          - id: b
+            text: They automatically count as unrelated samples
+          - id: c
+            text: Document identity never matters
+        answer: a
+        feedback: Dependence changes uncertainty estimates.
+        retired: true
+      - id: evaluation-metrics-and-uncertainty.transfer.2
+        prompt: What makes a baseline useful?
+        options:
+          - id: b
+            text: It must always be the largest model
+          - id: c
+            text: It replaces all uncertainty estimates
+          - id: a
+            text: It shows whether added complexity improves the relevant task
+        answer: a
+        feedback: A baseline anchors practical value.
+
+        retired: true
+  - id: evaluation-metrics-and-uncertainty.base.v2
+    objective_ref: objective.evaluation-metrics-and-uncertainty
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask what could make this score different on a fresh draw of items, prompts, or seeds, and whether the metric can tell a right answer from a wrong one that shares its words.
+    remediation_scene: evaluation-metrics-and-uncertainty.s2
+    variants:
+      - id: evaluation-metrics-and-uncertainty.base.v2.1
+        prompt: A support bot must reply with a plan code such as "TRV10", which is pasted straight into a billing system. Which scoring method fits best?
+        options:
+          - id: b
+            text: Token F1, so that a near-miss code still earns partial credit
+          - id: a
+            text: Exact match after normalization, since only the precise code works
+          - id: c
+            text: A judge model, so that reworded versions of the code are accepted
+        answer: a
+        feedback: A billing field accepts one exact string, so exact match measures what matters. Partial credit from F1 would reward codes that fail in the billing system, and a judge's tolerance for rewording is a liability here.
+      - id: evaluation-metrics-and-uncertainty.base.v2.2
+        prompt: Against the reference "$10 per month", token F1 gives 0.67 to the wrong reply "$15 per month" and 0.57 to the correct reply "It costs $10 a month". What does this show?
+        options:
+          - id: c
+            text: The reference is too short and should list every acceptable wording
+          - id: b
+            text: F1 penalizes longer replies, so the correct reply was too wordy
+          - id: a
+            text: Word overlap rewards shared wording, not whether the fact is right
+        answer: a
+        feedback: F1 counts shared words, and the wrong price shares more of them. Length plays a part, but the real problem is that overlap can't see that "15" is a wrong number, so fact-bearing free text needs a judge or a stricter check.
+      - id: evaluation-metrics-and-uncertainty.base.v2.3
+        prompt: A model answers 156 of 200 independent test questions correctly. Roughly what is the 95% confidence interval for its accuracy?
+        options:
+          - id: a
+            text: About 72% to 84%, from ±1.96 standard errors
+          - id: c
+            text: About 77.5% to 78.5%, since one item is 0.5 points
+          - id: b
+            text: Exactly 78%, since every question was scored
+        answer: a
+        feedback: "SE = √(0.78 × 0.22 / 200) ≈ 0.029, and 1.96 × 0.029 ≈ 5.7 points. One item's weight (0.5 points) is the resolution of the score, not its uncertainty: a fresh set of 200 questions could easily land 5 points away."
+      - id: evaluation-metrics-and-uncertainty.base.v2.4
+        prompt: A model is run with three prompt templates and three seeds each. Template means are 77.8, 75.0, and 79.5, and seeds move the score by under a point within a template. What is the largest source of variation?
+        options:
+          - id: b
+            text: The sampling seed, since generation is random each time
+          - id: c
+            text: The item sample, since only 200 questions were used
+          - id: a
+            text: The prompt template, which moves the mean by 4.5 points
+        answer: a
+        feedback: The template means span 75.0 to 79.5, far more than the one-point seed spread. The item sample adds uncertainty too, but all nine runs used the same 200 items, so it can't explain the differences between them.
+  - id: evaluation-metrics-and-uncertainty.transfer.v2
+    objective_ref: objective.evaluation-metrics-and-uncertainty
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Before trusting a comparison, check the size of the gap against its error bar, whether the items are independent, and whether both systems ran under the same prompts and settings.
+    remediation_scene: evaluation-metrics-and-uncertainty.s3
+    variants:
+      - id: evaluation-metrics-and-uncertainty.transfer.v2.1
+        prompt: A new legal-research model scores 64% and the old one 61%, each on its own 150 independent questions. A colleague wants to announce the improvement. What is the best response?
+        options:
+          - id: c
+            text: Announce it, since 3 points exceeds each model's standard error
+          - id: a
+            text: Hold off, since the gap's error bar is about ±11 points here
+          - id: b
+            text: Rerun both models with a new seed and announce if the gap holds
+        answer: a
+        feedback: "Each score has SE ≈ 0.039, so the gap's SE is about √2 × 0.039 ≈ 0.055, or ±11 points at 95%. Comparing the gap to a single model's SE understates the noise, and a new seed doesn't change which 150 questions were drawn."
+      - id: evaluation-metrics-and-uncertainty.transfer.v2.2
+        prompt: A tutoring bot is tested on 300 questions from 30 worksheets, 10 per worksheet, and questions on one worksheet tend to be all right or all wrong. How does this affect a confidence interval computed as if the 300 were independent?
+        options:
+          - id: a
+            text: It is too narrow; the evidence is closer to 30 items than 300
+          - id: b
+            text: It is too wide; related questions confirm one another's results
+          - id: c
+            text: It is unaffected; the formula depends only on n and accuracy
+        answer: a
+        feedback: Questions that succeed or fail together carry less independent evidence, so the true uncertainty is larger than the naive formula says. The formula only uses n and accuracy because it assumes independence, and that assumption fails here.
+      - id: evaluation-metrics-and-uncertainty.transfer.v2.3
+        prompt: A math benchmark's reference answers are integers. A model replies "So the total is 42." and the reference is "42". How should the scorer handle it?
+        options:
+          - id: b
+            text: Use token F1, giving partial credit for the matching number
+          - id: c
+            text: Ask a judge model whether the reasoning sounds convincing
+          - id: a
+            text: Extract the final number, then apply exact match to it
+        answer: a
+        feedback: The answer has a precise format, so pulling out the final number and checking it exactly is reliable and cheap. F1 would give a wrong number partial credit for shared words, and a judge that grades persuasive reasoning can pass wrong answers.
+      - id: evaluation-metrics-and-uncertainty.transfer.v2.4
+        prompt: Two vendors report scores of 71.2 and 70.4 on the same multiple-choice benchmark, each using its own prompt template. What should you do before comparing them?
+        options:
+          - id: c
+            text: Compare the numbers directly, since the questions were identical
+          - id: a
+            text: Rerun both under the same templates and settings, over several seeds
+          - id: b
+            text: Ask each vendor for more decimal places to separate the scores
+        answer: a
+        feedback: Prompt format alone can move scores by several points, more than this 0.8-point gap. The same questions don't make the conditions equal, and extra decimal places add no precision to a noisy measurement.
+  - id: evaluation-metrics-and-uncertainty.calculate
+    objective_ref: objective.evaluation-metrics-and-uncertainty
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Standard error = √(p(1 − p)/n) with p as a decimal. Multiply by 1.96, then by 100 to get percentage points."
+    remediation_scene: evaluation-metrics-and-uncertainty.s2
+    absolute_tolerance: 0.15
+    variants:
+      - id: evaluation-metrics-and-uncertainty.calculate.1
+        prompt: A model scores 80% on 100 independent questions. What is the half-width of the 95% confidence interval, in percentage points?
+        answer: 7.8
+        feedback: "SE = √(0.8 × 0.2 / 100) = √0.0016 = 0.04, and 1.96 × 0.04 = 0.078, or ±7.8 points."
+      - id: evaluation-metrics-and-uncertainty.calculate.2
+        prompt: A model scores 90% on 400 independent questions. What is the half-width of the 95% confidence interval, in percentage points?
+        answer: 2.9
+        feedback: "SE = √(0.9 × 0.1 / 400) = √0.000225 = 0.015, and 1.96 × 0.015 = 0.0294, or ±2.9 points."
+      - id: evaluation-metrics-and-uncertainty.calculate.3
+        prompt: A model scores 60% on 200 independent questions. What is the half-width of the 95% confidence interval, in percentage points?
+        answer: 6.8
+        feedback: "SE = √(0.6 × 0.4 / 200) = √0.0012 ≈ 0.0346, and 1.96 × 0.0346 ≈ 0.068, or ±6.8 points."
+      - id: evaluation-metrics-and-uncertainty.calculate.4
+        prompt: A model scores 50% on 1,000 independent questions. What is the half-width of the 95% confidence interval, in percentage points?
+        answer: 3.1
+        feedback: "SE = √(0.5 × 0.5 / 1000) = √0.00025 ≈ 0.0158, and 1.96 × 0.0158 ≈ 0.031, or ±3.1 points. Accuracies near 50% have the widest intervals for a given n."
+      - id: evaluation-metrics-and-uncertainty.calculate.5
+        prompt: A model scores 70% on 50 independent questions. What is the half-width of the 95% confidence interval, in percentage points?
+        answer: 12.7
+        feedback: "SE = √(0.7 × 0.3 / 50) = √0.0042 ≈ 0.0648, and 1.96 × 0.0648 ≈ 0.127, or ±12.7 points. Fifty items can barely tell 60% from 80%."

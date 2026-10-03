@@ -1,207 +1,393 @@
 schema_version: 0.2-draft
 lesson:
   id: tokenization-tradeoffs
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: One vocabulary does not divide every language equally
   state: draft
-  summary: Compare how different text rules divide names, languages, numbers, and code before interpreting
-    token counts or scores.
+  summary: Say "good morning" in Hindi and a tokenizer may charge you many times more than in English. See where the gap comes from, what it costs, and how to measure fairly.
   slot: M14.7
   category: learning
   sources:
-  - title: Speech and Language Processing — authors’ draft
-    url: https://web.stanford.edu/~jurafsky/slp3/
+    - title: Language Model Tokenizers Introduce Unfairness Between Languages (Petrov et al., 2023)
+      url: https://arxiv.org/abs/2305.15425
+    - title: "Do All Languages Cost the Same? Tokenization in the Era of Commercial Language Models (Ahia et al., 2023)"
+      url: https://arxiv.org/abs/2305.13707
+    - title: "LLaMA: Open and Efficient Foundation Language Models (Touvron et al., 2023), section 2.1 on the tokenizer"
+      url: https://arxiv.org/abs/2302.13971
+    - title: Unicode Standard Annex #15 — Unicode Normalization Forms
+      url: https://unicode.org/reports/tr15/
+    - title: Speech and Language Processing, 3rd edition draft (Jurafsky & Martin)
+      url: https://web.stanford.edu/~jurafsky/slp3/
 objectives:
-- id: objective.tokenization-tradeoffs
-  version: 1-draft
-  statement: Tokenization affects sequence length, rare strings, multilingual coverage, code, and cost; compare
-    the encoded units and normalization before comparing model metrics.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - tokenization-tradeoffs.base
-  - tokenization-tradeoffs.transfer
-  prerequisites:
-  - anyOf:
-    - objective.tokenizer-training
+  - id: objective.tokenization-tradeoffs
+    version: 2-draft
+    statement: Tokenization affects sequence length, rare strings, multilingual coverage, code, and cost; compare the encoded units and normalization before comparing model metrics.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - tokenization-tradeoffs.base.v2
+      - tokenization-tradeoffs.transfer.v2
+      - tokenization-tradeoffs.cost
+    prerequisites:
+      - anyOf:
+          - objective.tokenizer-training
 scenes:
-- id: tokenization-tradeoffs.s1
-  title: The same amount of text can use different token counts
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.tokenization-tradeoffs
-  markdown: A vocabulary shaped mainly by one writing system can segment another into many smaller pieces.
-    Token count therefore does not map to a fixed number of words or characters across languages. Longer encoded
-    sequences use more context space and can change computational cost.
-  text_mode: A vocabulary shaped mainly by one writing system can segment another into many smaller pieces.
-    Token count therefore does not map to a fixed number of words or characters across languages. Longer encoded
-    sequences use more context space and can change computational cost.
-  bridges: []
-- id: tokenization-tradeoffs.s2
-  title: Rare strings expose the segmentation rules
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tokenization-tradeoffs
-  markdown: Names, identifiers, numbers, and code can split in unintuitive ways. Two numbers with similar numerical
-    value may have unrelated token sequences. A language model sees the resulting IDs, so exact copying or
-    arithmetic can be affected by representation as well as training. Tokenization alone does not explain every
-    such failure.
-  text_mode: Names, identifiers, numbers, and code can split in unintuitive ways. Two numbers with similar
-    numerical value may have unrelated token sequences. A language model sees the resulting IDs, so exact copying
-    or arithmetic can be affected by representation as well as training. Tokenization alone does not explain
-    every such failure.
-  bridges:
-  - information-theory
-- id: tokenization-tradeoffs.s3
-  title: Normalization can remove distinctions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tokenization-tradeoffs
-  markdown: 'Case folding, whitespace handling, Unicode normalization, or byte-level processing can change
-    the input representation. For ordinary search some changes are useful; for source code or exact identifiers
-    they may destroy relevant distinctions. State whether decoding can reconstruct the original bytes exactly
-    under the chosen convention.
+  - id: tokenization-tradeoffs.s1
+    title: Same greeting, twelve times the tokens
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.tokenization-tradeoffs
+    markdown: |-
+      Two people send a chatbot the same short message, one in English and one in Hindi. Priced per token, the Hindi message can cost several times as much, and it fills the model's context faster. Nothing about Hindi is harder; the tokenizer just learned fewer pieces for it.
 
+      Recall how BPE picks merges: by frequency in its training text. If that text is mostly English, the merges build whole English words, while other scripts stay split into small pieces, down to single bytes. The toy below makes the effect extreme: it learned only a few English words and spells everything else in UTF-8 bytes.
 
-    **Case folding** treats forms such as A and a as equivalent. **Unicode** is a standard for representing
-    text characters; its normalization rules can make some different character sequences use a common form.
-    This may help search but change exact text. The code names “Rate” and “rate” can be distinct, so test the
-    intended round trip rather than assuming cleanup is harmless.'
-  text_mode: 'Case folding, whitespace handling, Unicode normalization, or byte-level processing can change
-    the input representation. For ordinary search some changes are useful; for source code or exact identifiers
-    they may destroy relevant distinctions. State whether decoding can reconstruct the original bytes exactly
-    under the chosen convention.
+      ```python run
+      # a toy tokenizer that learned whole English words, and falls back to bytes
+      known = {"good", "morning", "thank", "you", "very", "much"}
 
+      def count_tokens(text):
+          total = 0
+          for word in text.split():
+              total += 1 if word in known else len(word.encode("utf-8"))
+          return total
 
-    **Case folding** treats forms such as A and a as equivalent. **Unicode** is a standard for representing
-    text characters; its normalization rules can make some different character sequences use a common form.
-    This may help search but change exact text. The code names “Rate” and “rate” can be distinct, so test the
-    intended round trip rather than assuming cleanup is harmless.'
-  bridges: []
-- id: tokenization-tradeoffs.s4
-  title: Compare under meaningful units
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tokenization-tradeoffs
-  markdown: 'Report bytes, characters, words under a definition, and tokens where relevant. Per-token perplexity
-    and context limits are tokenizer-dependent. Evaluate multilingual tasks and rare strings directly, including
-    successful reconstruction and application behavior. A larger vocabulary trades shorter sequences against
-    parameter, training, and coverage considerations.
+      greetings = {
+          "English":  "good morning",
+          "Spanish":  "buenos días",
+          "Greek":    "καλημέρα",
+          "Russian":  "доброе утро",
+          "Hindi":    "सुप्रभात",
+          "Japanese": "おはようございます",
+      }
+      base = count_tokens(greetings["English"])
+      for lang, text in greetings.items():
+          n = count_tokens(text)
+          print(f"{lang:9} {n:3} tokens   {n / base:5.1f}x English")
+      ```
 
+      English takes 2 tokens; Hindi takes 24, twelve times as many, because each Devanagari character is 3 bytes. A real tokenizer lands in between, since it learned some merges for every common language. Add "buenos" and "días" to `known` and watch Spanish drop to 2.
 
-    **Perplexity** summarizes how much probability a language model gives the actual next tokens. If one tokenizer
-    represents a word with one token and another with three, the per-token averages concern different units.
-    Compare the same underlying text with an explicitly compatible normalization, such as likelihood per byte
-    where appropriate, and inspect real task performance too.'
-  text_mode: 'Report bytes, characters, words under a definition, and tokens where relevant. Per-token perplexity
-    and context limits are tokenizer-dependent. Evaluate multilingual tasks and rare strings directly, including
-    successful reconstruction and application behavior. A larger vocabulary trades shorter sequences against
-    parameter, training, and coverage considerations.
+      :::story Measuring the gap
+      In 2023, Aleksandar Petrov and colleagues tokenized the same sentences, translated into many languages, with popular tokenizers. For some language pairs the translation took up to 15 times as many tokens. Even tokenizers that work on characters or bytes showed large gaps, because scripts differ in how many bytes or characters they need. Ahia and colleagues reached a similar conclusion the same year about the cost of commercial language-model APIs.
+      :::
+    bridges: []
+  - id: tokenization-tradeoffs.s2
+    title: Numbers, names, and code split strangely
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization-tradeoffs
+    markdown: |-
+      The same frequency rule shapes other text. Merges favor strings that were common in training, so:
 
+      | Text | What can happen |
+      | --- | --- |
+      | Numbers | A common year like "1998" may be one token while "1839" becomes "18" + "39", so digits in the same column (thousands, hundreds…) land in different token positions from one number to the next |
+      | Rare names | "Oyelaran" may split into four or five pieces, making it easier to misspell when copied |
+      | Code | Four spaces of indentation might be one token or four, depending on whether runs of spaces were merged |
 
-    **Perplexity** summarizes how much probability a language model gives the actual next tokens. If one tokenizer
-    represents a word with one token and another with three, the per-token averages concern different units.
-    Compare the same underlying text with an explicitly compatible normalization, such as likelihood per byte
-    where appropriate, and inspect real task performance too.'
-  bridges: []
-- id: tokenization-tradeoffs.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.tokenization-tradeoffs
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Token counts depend on the vocabulary, splitting rules, and text being encoded. Use compatible
-    units and test real tasks before comparing context limits or prediction scores.
-- id: tokenization-tradeoffs.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.tokenization-tradeoffs
-  markdown: Token counts depend on the vocabulary, splitting rules, and text being encoded. Use compatible
-    units and test real tasks before comparing context limits or prediction scores.
-  text_mode: Token counts depend on the vocabulary, splitting rules, and text being encoded. Use compatible
-    units and test real tasks before comparing context limits or prediction scores.
+      Tokenizer designers work around some of these. The LLaMA and PaLM tokenizers split every number into single digits, so each digit is always its own token, the same way every time.
+
+      :::mixup "If a model gets arithmetic wrong, the tokenizer is to blame."
+      Odd splits make some tasks harder, but models also fail at arithmetic for reasons unrelated to tokens. To test the tokenizer's part, compare the same task with numbers written in a form that splits cleanly, such as digits separated by spaces.
+      :::
+    bridges:
+      - information-theory
+  - id: tokenization-tradeoffs.s3
+    title: Cleaning text can erase differences
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization-tradeoffs
+    markdown: |-
+      Many tokenizers first **normalize** text: rewrite it into a standard form so that things that look the same are stored the same. As the lesson on how computers store text showed, "é" can be one code point or an "e" plus a separate accent mark. **Unicode normalization** rules turn both into one form. A stronger rule, NFKC, also turns the "ﬁ" ligature into "f" + "i" and full-width "Ａ" into plain "A". **Case folding**, treating "A" and "a" as the same, goes further still.
+
+      ```python run
+      import unicodedata as ud
+
+      one = "café"          # é as one code point
+      two = "café"         # e + a separate accent mark
+      print(one, two, "equal?", one == two, " lengths:", len(one), len(two))
+      print("after NFC, equal?", ud.normalize("NFC", one) == ud.normalize("NFC", two))
+
+      for s in ["ﬁle", "Ａ１", "Rate"]:
+          print(repr(s), "-> NFKC:", repr(ud.normalize("NFKC", s)),
+                " -> lowercased:", repr(ud.normalize("NFKC", s).lower()))
+      ```
+
+      For search, merging these is helpful: someone typing "cafe" probably wants "café." For code it's harmful: `Rate` and `rate` can be two different variables, and lowercasing merges them. For legal quotes, turning "ﬁ" into "fi" means the decoded text no longer matches the original. Before choosing a tokenizer, encode and decode a sample of your own text and check that it comes back exactly as it went in.
+    bridges: []
+  - id: tokenization-tradeoffs.s4
+    title: Compare per byte, not per token
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization-tradeoffs
+    markdown: |-
+      Two models are tested on the same 100-byte paragraph. Each reports the perplexity you met in the counting lesson, but on its own tokens:
+
+      | | Model A | Model B |
+      | --- | ---: | ---: |
+      | Tokens for the paragraph | 25 | 50 |
+      | Total surprise (bits) | 50 | 60 |
+      | Bits per token | 2.0 | 1.2 |
+      | Perplexity per token ($2^{\text{bits/token}}$) | 4.0 | 2.3 |
+      | **Bits per byte** | **0.50** | **0.60** |
+
+      :::predict Which model predicts the paragraph better?
+      Model A. Per token, B looks far better (perplexity 2.3 against 4.0), but B cut the text into twice as many, smaller pieces, and small pieces are easier to guess. Counting the total surprise over the same 100 bytes, A needs 50 bits and B needs 60. A is better.
+      :::
+
+      :::papers Bits per byte
+      $$\text{BPB} = \frac{-\sum_{i} \log_2 P(t_i \mid t_{<i})}{\text{number of UTF-8 bytes in the text}}$$
+
+      The top is the model's total surprise over all its tokens $t_i$, whatever its tokenizer; the bottom depends only on the text. So bits per byte (or per character) can compare models with different tokenizers, while perplexity per token can't.
+      :::
+    bridges: []
+  - id: tokenization-tradeoffs.s5
+    title: Budget for the gap
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization-tradeoffs
+    markdown: |-
+      Suppose you run a support assistant in English and Tamil, with an 8,000-token context. A help article is 1,500 tokens in English, and your measurements show the Tamil version takes 3 times as many.
+
+      | | English | Tamil |
+      | --- | ---: | ---: |
+      | Tokens per article | 1,500 | 4,500 |
+      | Whole articles that fit in 8,000 tokens | 5 | 1 |
+      | Cost per article, at a fixed price per token | 1× | 3× |
+      | Time to generate a reply of the same length | 1× | about 3× |
+
+      Tamil users get one-fifth of the reference material, pay three times as much, and wait longer, for the same content. Your options include a model whose tokenizer was trained on more Tamil text, a larger context budget for Tamil, or shorter retrieved passages. Whatever you choose, start by measuring tokens per message on real traffic in each language, since published averages may not match your users.
+    bridges: []
+  - id: tokenization-tradeoffs.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.tokenization-tradeoffs
+    markdown: Work out token budgets and bits per byte, then advise a Hindi support bot, a Thai app, a code-search tool, and a legal archive.
+    takeaway: |-
+      A tokenizer trained mostly on one language splits others into more pieces, which costs money, context, and time. Compare models per byte rather than per token, and check that normalization keeps the distinctions your task needs.
+  - id: tokenization-tradeoffs.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.tokenization-tradeoffs
+    markdown: |-
+      Token counts depend on the vocabulary, splitting rules, and text being encoded. Use compatible units and test real tasks before comparing context limits or prediction scores.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - tokenization-tradeoffs.s1
-    - tokenization-tradeoffs.s2
-    - tokenization-tradeoffs.s3
-    - tokenization-tradeoffs.s4
-    - tokenization-tradeoffs.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - tokenization-tradeoffs.s1
+        - tokenization-tradeoffs.s2
+        - tokenization-tradeoffs.s3
+        - tokenization-tradeoffs.s4
+        - tokenization-tradeoffs.s5
+        - tokenization-tradeoffs.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     tokenization-tradeoffs.recap: tokenization-tradeoffs.check
 assessment_families:
-- id: tokenization-tradeoffs.base
-  objective_ref: objective.tokenization-tradeoffs
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Rare strings expose the segmentation rules: trace the inputs, operation, and result before choosing.'
-  remediation_scene: tokenization-tradeoffs.s2
-  variants:
-  - id: tokenization-tradeoffs.base.1
-    prompt: Does one token always equal one word?
-    options:
-    - id: c
-      text: Only if the vocabulary is large
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Tokens can be characters, bytes, subwords, words, or other units depending on the tokenizer.
-  - id: tokenization-tradeoffs.base.2
-    prompt: Why can multilingual token counts differ for similarly sized messages?
-    options:
-    - id: a
-      text: The vocabulary and segmentation fit languages differently
-    - id: b
-      text: All languages have identical segmentation by definition
-    - id: c
-      text: Only the network depth changes
-    answer: a
-    feedback: Training distribution and writing-system structure affect tokenization.
-- id: tokenization-tradeoffs.transfer
-  objective_ref: objective.tokenization-tradeoffs
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compare under meaningful units: trace the inputs, operation, and result before choosing.'
-  remediation_scene: tokenization-tradeoffs.s4
-  variants:
-  - id: tokenization-tradeoffs.transfer.1
-    prompt: Case normalization is applied to case-sensitive code identifiers. What is a risk?
-    options:
-    - id: a
-      text: Distinct identifiers can become indistinguishable
-    - id: b
-      text: The code necessarily becomes more correct
-    - id: c
-      text: Only token colors change
-    answer: a
-    feedback: Normalization must preserve distinctions required by the task.
-  - id: tokenization-tradeoffs.transfer.2
-    prompt: Two models have the same token context limit but different tokenizers. Do they necessarily fit
-      the same amount of text?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only for long documents
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Context measured in tokens depends on the segmentation convention.
+  - id: tokenization-tradeoffs.base
+    objective_ref: objective.tokenization-tradeoffs
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Rare strings expose the segmentation rules: trace the inputs, operation, and result before choosing.'
+    remediation_scene: tokenization-tradeoffs.s2
+    variants:
+      - id: tokenization-tradeoffs.base.1
+        retired: true
+        prompt: Does one token always equal one word?
+        options:
+          - id: c
+            text: Only if the vocabulary is large
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Tokens can be characters, bytes, subwords, words, or other units depending on the tokenizer.
+      - id: tokenization-tradeoffs.base.2
+        retired: true
+        prompt: Why can multilingual token counts differ for similarly sized messages?
+        options:
+          - id: a
+            text: The vocabulary and segmentation fit languages differently
+          - id: b
+            text: All languages have identical segmentation by definition
+          - id: c
+            text: Only the network depth changes
+        answer: a
+        feedback: Training distribution and writing-system structure affect tokenization.
+  - id: tokenization-tradeoffs.transfer
+    objective_ref: objective.tokenization-tradeoffs
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compare under meaningful units: trace the inputs, operation, and result before choosing.'
+    remediation_scene: tokenization-tradeoffs.s4
+    variants:
+      - id: tokenization-tradeoffs.transfer.1
+        retired: true
+        prompt: Case normalization is applied to case-sensitive code identifiers. What is a risk?
+        options:
+          - id: a
+            text: Distinct identifiers can become indistinguishable
+          - id: b
+            text: The code necessarily becomes more correct
+          - id: c
+            text: Only token colors change
+        answer: a
+        feedback: Normalization must preserve distinctions required by the task.
+      - id: tokenization-tradeoffs.transfer.2
+        retired: true
+        prompt: Two models have the same token context limit but different tokenizers. Do they necessarily fit the same amount of text?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only for long documents
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Context measured in tokens depends on the segmentation convention.
+  - id: tokenization-tradeoffs.base.v2
+    objective_ref: objective.tokenization-tradeoffs
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Merges follow the tokenizer's training text, per-token scores depend on how big the tokens are, and normalization can merge strings your task treats as different.
+    remediation_scene: tokenization-tradeoffs.s1
+    variants:
+      - id: tokenization-tradeoffs.base.v2.1
+        prompt: With a typical GPT-style tokenizer, why does the same sentence often take many more tokens in Amharic than in English?
+        options:
+          - id: b
+            text: Amharic words carry more meaning, so each needs more tokens
+          - id: a
+            text: Little Amharic was in its training text, so few merges cover it
+          - id: c
+            text: The Ethiopic script can't be stored as UTF-8 bytes
+        answer: a
+        feedback: BPE merges follow frequency in the tokenizer's training text, so a rarely seen language stays split into small pieces, sometimes single bytes. The sentences carry the same meaning, and Ethiopic characters encode fine in UTF-8, at 3 bytes each.
+      - id: tokenization-tradeoffs.base.v2.2
+        prompt: On the same test text, model A (50,000-token vocabulary) reports perplexity 12 and model B (8,000-token vocabulary) reports 20. What can you conclude?
+        options:
+          - id: a
+            text: Nothing yet; compare bits per byte or per character instead
+          - id: b
+            text: A predicts the text better, since 12 is lower than 20
+          - id: c
+            text: B predicts better, since small vocabularies are harder
+        answer: a
+        feedback: Each perplexity averages over that model's own tokens, and the two tokenizers cut the text into different numbers of pieces. Dividing total surprise by the same number of bytes puts them on one scale.
+      - id: tokenization-tradeoffs.base.v2.3
+        prompt: A code-search tool lowercases every identifier before tokenizing. What can go wrong?
+        options:
+          - id: c
+            text: The code gets longer, since lowercase letters take more bytes
+          - id: b
+            text: Nothing, since programming languages ignore letter case
+          - id: a
+            text: Different names like Rate and rate become the same tokens
+        answer: a
+        feedback: Many languages treat Rate and rate as different variables, so case folding merges things the task needs to keep apart. Lowercase and uppercase English letters each take one byte.
+      - id: tokenization-tradeoffs.base.v2.4
+        prompt: A tokenizer stores "1998" as one token but "1839" as "18" + "39". Why can this make column addition harder for a model?
+        options:
+          - id: b
+            text: The model reads 1998 as larger because its token ID is larger
+          - id: a
+            text: Digits in the same column land in different token positions
+          - id: c
+            text: Numbers split into pieces can't be encoded as bytes at all
+        answer: a
+        feedback: To add, you line up units, tens, hundreds; inconsistent splits hide that alignment. Token IDs carry no size, and any split can still be encoded. Splitting every number into single digits, as LLaMA does, keeps the columns consistent.
+  - id: tokenization-tradeoffs.transfer.v2
+    objective_ref: objective.tokenization-tradeoffs
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Convert the problem into tokens. More tokens for the same content means less fits in the context, each request costs more, and replies take longer.
+    remediation_scene: tokenization-tradeoffs.s5
+    variants:
+      - id: tokenization-tradeoffs.transfer.v2.1
+        prompt: A company launches its English support bot in Hindi with the same 4,000-token context budget. Hindi users say it "forgets" earlier messages much sooner. What is the most likely reason?
+        options:
+          - id: a
+            text: Hindi text uses more tokens, so fewer messages fit in the budget
+          - id: b
+            text: The model's memory was tuned for English grammar during training
+          - id: c
+            text: Hindi speakers write longer messages than English speakers do
+        answer: a
+        feedback: The budget counts tokens, and the same conversation takes more tokens in Hindi, so older messages drop out sooner. The bot has no separate memory tuned to English, and nothing suggests the users write more.
+      - id: tokenization-tradeoffs.transfer.v2.2
+        prompt: You're choosing between two language models for a Thai customer-service app. What should you measure first?
+        options:
+          - id: b
+            text: The size of each vocabulary, since bigger is fairer
+          - id: c
+            text: English benchmark scores, since they predict Thai well
+          - id: a
+            text: Tokens per message on real Thai traffic, and task quality
+        answer: a
+        feedback: Token counts on your own Thai text set cost and context use, and task tests show quality. A big vocabulary may still include few Thai pieces, and English scores say little about Thai.
+      - id: tokenization-tradeoffs.transfer.v2.3
+        prompt: An API charges the same price per token for every language. What does this mean for users writing the same content in a poorly covered language?
+        options:
+          - id: a
+            text: They pay more, since their text needs more tokens
+          - id: b
+            text: They pay the same, since each token has one price
+          - id: c
+            text: They pay less, since their tokens are smaller pieces
+        answer: a
+        feedback: The bill is price × tokens, and the same message takes more tokens in a poorly covered language. Equal price per token is not equal price per message.
+      - id: tokenization-tradeoffs.transfer.v2.4
+        prompt: A tokenizer applies NFKC normalization. A legal archive needs exact quotes from documents containing "ﬁ" ligatures and full-width digits. What is the risk?
+        options:
+          - id: c
+            text: NFKC doubles the number of bytes in each character
+          - id: a
+            text: Decoded text may not match the original characters
+          - id: b
+            text: The model will refuse to read the ligature characters
+        answer: a
+        feedback: NFKC rewrites "ﬁ" as "fi" and full-width digits as ordinary ones, so decoding gives back different characters from the source. It doesn't inflate bytes, and the model never sees the original characters to refuse them.
+  - id: tokenization-tradeoffs.cost
+    objective_ref: objective.tokenization-tradeoffs
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Multiply the English token count by the ratio to get the other language's count, then divide the budget by it (rounding down for whole items) or multiply by the price. For bits per byte, divide the total bits by the number of bytes, not tokens.
+    remediation_scene: tokenization-tradeoffs.s5
+    absolute_tolerance: 0.01
+    variants:
+      - id: tokenization-tradeoffs.cost.1
+        prompt: A document is 2,000 tokens in English. The same text in Tamil takes 3.5 times as many tokens. How many tokens is the Tamil version?
+        answer: 7000
+        feedback: 2,000 × 3.5 = 7,000 tokens. In an 8,000-token context, the English version leaves room for three more copies; the Tamil version leaves room for none.
+      - id: tokenization-tradeoffs.cost.2
+        prompt: A context holds 16,000 tokens. A manual chapter is 1,800 tokens in English and takes 2.5 times as many in Amharic. How many whole Amharic chapters fit?
+        answer: 3
+        feedback: Each Amharic chapter is 1,800 × 2.5 = 4,500 tokens, and 16,000 ÷ 4,500 ≈ 3.6, so 3 whole chapters fit. In English, 8 would fit.
+      - id: tokenization-tradeoffs.cost.3
+        prompt: A service charges 2 cents per 1,000 tokens. A reply is 600 tokens in English and takes 4 times as many tokens in Burmese. What does the Burmese reply cost, in cents?
+        answer: 4.8
+        feedback: 600 × 4 = 2,400 tokens, and 2,400 ÷ 1,000 × 2 = 4.8 cents, against 1.2 cents in English.
+      - id: tokenization-tradeoffs.cost.4
+        prompt: A model's total surprise on a 150-byte paragraph is 90 bits, spread over 30 tokens. What is its score in bits per byte?
+        answer: 0.6
+        feedback: 90 bits ÷ 150 bytes = 0.6 bits per byte. Dividing by the 30 tokens instead gives 3 bits per token, which depends on the tokenizer.

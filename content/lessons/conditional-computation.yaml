@@ -4,196 +4,461 @@ lesson:
   version: 0.3.0-draft
   title: Give each token a selected route through some parameters
   state: draft
-  summary: Let each token use selected subnetworks while distinguishing stored capacity from work done for
-    that token.
+  summary: Mixtral stores 47 billion parameters but uses about 13 billion for each word it reads. See how routing tokens to a few "experts" buys a bigger model without more work per token.
   slot: M18.1
   category: learning
   sources:
-  - title: Sparsely-Gated Mixture-of-Experts
-    url: https://arxiv.org/abs/1701.06538
-  - title: Switch Transformers
-    url: https://arxiv.org/abs/2101.03961
+    - title: "Adaptive Mixtures of Local Experts (Jacobs, Jordan, Nowlan & Hinton, 1991)"
+      url: https://doi.org/10.1162/neco.1991.3.1.79
+    - title: "Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer (Shazeer et al., 2017)"
+      url: https://arxiv.org/abs/1701.06538
+    - title: "GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding (Lepikhin et al., 2020)"
+      url: https://arxiv.org/abs/2006.16668
+    - title: "Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity (Fedus, Zoph & Shazeer, 2021)"
+      url: https://arxiv.org/abs/2101.03961
+    - title: "Mixtral of Experts (Jiang et al., 2024)"
+      url: https://arxiv.org/abs/2401.04088
 objectives:
-- id: objective.conditional-computation
-  version: 1-draft
-  statement: Conditional computation activates input-dependent parts of a network; sparse MoE layers commonly
-    replace dense feed-forward blocks while retaining shared transformer computation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - conditional-computation.base
-  - conditional-computation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.transformer-block-components
+  - id: objective.conditional-computation
+    version: 2-draft
+    statement: Conditional computation activates input-dependent parts of a network; sparse MoE layers commonly replace dense feed-forward blocks while retaining shared transformer computation.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - conditional-computation.base.v2
+      - conditional-computation.transfer.v2
+      - conditional-computation.calculate
+    prerequisites:
+      - anyOf:
+          - objective.transformer-block-components
 scenes:
-- id: conditional-computation.s1
-  title: Store several expert networks, run a selected few
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.conditional-computation
-  markdown: '**MoE** stands for **mixture of experts**. Here each expert is a neural subnetwork. A learned
-    **router** chooses which experts process a token’s representation. All experts belong to one model, even
-    when a token uses only some of them.
+  - id: conditional-computation.s1
+    title: A 47-billion-parameter model that works like a 13-billion one
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.conditional-computation
+    markdown: |-
+      In December 2023, Mistral AI released Mixtral 8x7B. It stores about 47 billion parameters, yet each token it reads uses only about 13 billion of them. Its authors reported that it matched or beat Llama 2 70B on the benchmarks they tested, with about five times fewer parameters at work per token.
 
+      How can a model use only part of itself? The trick is **conditional computation**: the input decides which parts of the network run. An ordinary **dense** layer runs all of its weights on every token. Mixtral's layers instead hold several feed-forward networks with separate weights, called **experts**, plus a small **router** that looks at each token's vector and picks which experts will process it. The design is called a **mixture of experts (MoE)**.
 
-    This execution is **sparse** because only part of the expert computation runs for each token, not because
-    most stored weights must be zero. A dense feed-forward block, by comparison, applies the same learned transformation
-    to every token.'
-  text_mode: '**MoE** stands for **mixture of experts**. Here each expert is a neural subnetwork. A learned
-    **router** chooses which experts process a token’s representation. All experts belong to one model, even
-    when a token uses only some of them.
+      | | Dense feed-forward layer | MoE layer in Mixtral |
+      | --- | --- | --- |
+      | Feed-forward networks stored | 1 | 8 experts |
+      | Networks run per token | 1 | 2, picked by the router |
+      | Who decides the path | Nobody: every token takes the same one | The router, token by token |
 
+      Despite the name, an expert is a block of weights, not a specialist that knows a subject.
+    bridges: []
+  - id: conditional-computation.s2
+    title: Swap the feed-forward block for a set of experts
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.conditional-computation
+    markdown: |-
+      Recall the transformer block from module 15: attention mixes information *across* tokens, then a feed-forward network transforms *each token on its own*. Because the feed-forward step treats every token separately, nothing stops two tokens from using different feed-forward weights. That makes it the natural place for experts.
 
-    This execution is **sparse** because only part of the expert computation runs for each token, not because
-    most stored weights must be zero. A dense feed-forward block, by comparison, applies the same learned transformation
-    to every token.'
-  bridges: []
-- id: conditional-computation.s2
-  title: Locate the sparse part
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.conditional-computation
-  markdown: A transformer can keep attention, normalization, and residual pathways shared while replacing selected
-    feed-forward blocks with MoE layers. Sparsity in the expert block does not imply that every model operation
-    is sparse. Different layers can use different experts or remain dense.
-  text_mode: A transformer can keep attention, normalization, and residual pathways shared while replacing
-    selected feed-forward blocks with MoE layers. Sparsity in the expert block does not imply that every model
-    operation is sparse. Different layers can use different experts or remain dense.
-  bridges: []
-- id: conditional-computation.s3
-  title: Trace two token routes
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.conditional-computation
-  markdown: 'Suppose four experts exist and top-one routing chooses expert two for token A and expert four
-    for token B. Both tokens still pass through the shared parts of the layer. Their chosen experts process
-    vector representations, not necessarily human-readable topic labels or complete conversational requests.
+      So an MoE transformer keeps attention, normalization, and the residual connection as before, shared by every token. Only the feed-forward block is replaced, by a router plus $N$ experts, of which each token uses $k$. Mixtral has $N = 8$ and $k = 2$ in every layer. Some models swap only every other feed-forward block.
 
+      :::papers The MoE layer in one line
+      $$y = \sum_{i \in \mathcal{T}} g_i(x)\, E_i(x)$$
 
-    Token A and token B can select different experts while all model weights remain fixed. This is input-dependent
-    inference. During training, feedback can update the router and selected computation under the training
-    recipe. Choosing a new path on a request is not the same as creating or retraining an expert.'
-  text_mode: 'Suppose four experts exist and top-one routing chooses expert two for token A and expert four
-    for token B. Both tokens still pass through the shared parts of the layer. Their chosen experts process
-    vector representations, not necessarily human-readable topic labels or complete conversational requests.
+      $x$ is the token's vector, $E_i$ is expert $i$ (a feed-forward network), $\mathcal{T}$ is the set of $k$ experts the router chose, and $g_i(x)$ is the router's weight for expert $i$. For one Mixtral token, $\mathcal{T}$ might be {expert 2, expert 7} with weights 0.69 and 0.31. The next lesson shows where those weights come from.
+      :::
+    diagram:
+      caption: One token through an MoE transformer layer. Only the feed-forward part is routed.
+      description: The token vector passes through attention and normalization, which are shared and run for every token. It then reaches the router, which scores all eight experts. The router sends the token to its two chosen experts with gate weights 0.69 and 0.31; the six other experts are skipped for this token. The two expert outputs go to a weighted sum, which is added to the residual stream and passed to the next block.
+      nodes:
+        - id: token
+          label: Token vector
+          col: 0
+          row: 1
+        - id: attn
+          label: Attention + norm
+          note: shared, runs for every token
+          col: 1
+          row: 1
+        - id: router
+          label: Router
+          note: scores 8 experts, keeps 2
+          col: 2
+          row: 1
+          tone: accent
+        - id: e2
+          label: Expert 2
+          note: chosen
+          col: 3
+          row: 0
+          tone: data
+        - id: e7
+          label: Expert 7
+          note: chosen
+          col: 3
+          row: 1
+          tone: data
+        - id: rest
+          label: 6 other experts
+          note: skipped for this token
+          col: 3
+          row: 2
+          tone: muted
+        - id: sum
+          label: Weighted sum
+          col: 4
+          row: 1
+          tone: accent
+        - id: out
+          label: Add to residual stream
+          note: on to the next block
+          col: 5
+          row: 1
+      edges:
+        - from: token
+          to: attn
+        - from: attn
+          to: router
+        - from: router
+          to: e2
+          label: gate 0.69
+        - from: router
+          to: e7
+          label: gate 0.31
+        - from: router
+          to: rest
+          label: not run
+          dashed: true
+        - from: e2
+          to: sum
+        - from: e7
+          to: sum
+        - from: sum
+          to: out
+  - id: conditional-computation.budget
+    title: Eight times the weights, twice the work
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.conditional-computation
+    markdown: |-
+      Let's put numbers on one Mixtral layer. Each expert is a gated feed-forward network (SwiGLU, from the lesson on transformer blocks in module 15) with three weight matrices of size 4,096 × 14,336. That is
 
+      $$3 \times 4{,}096 \times 14{,}336 = 176{,}160{,}768 \approx 176\text{M parameters per expert.}$$
 
-    Token A and token B can select different experts while all model weights remain fixed. This is input-dependent
-    inference. During training, feedback can update the router and selected computation under the training
-    recipe. Choosing a new path on a request is not the same as creating or retraining an expert.'
-  bridges: []
-- id: conditional-computation.s4
-  title: Treat specialization as evidence
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.conditional-computation
-  markdown: The word expert names a parameterized subnetwork. Training may produce patterns in its assignments,
-    but it need not correspond neatly to a profession, language, or fact database. Analyze actual routing and
-    interventions before assigning semantic roles. Sparse capacity brings routing and communication costs alongside
-    potential compute savings.
-  text_mode: The word expert names a parameterized subnetwork. Training may produce patterns in its assignments,
-    but it need not correspond neatly to a profession, language, or fact database. Analyze actual routing and
-    interventions before assigning semantic roles. Sparse capacity brings routing and communication costs alongside
-    potential compute savings.
-  bridges: []
-- id: conditional-computation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.conditional-computation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A sparse MoE layer chooses part of its computation for each token. The unselected experts still
-    exist in the model, and shared operations may still run for every token.
-- id: conditional-computation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.conditional-computation
-  markdown: A sparse MoE layer chooses part of its computation for each token. The unselected experts still
-    exist in the model, and shared operations may still run for every token.
-  text_mode: A sparse MoE layer chooses part of its computation for each token. The unselected experts still
-    exist in the model, and shared operations may still run for every token.
+      Multiplying a vector by a matrix costs about 2 floating-point operations (FLOPs) per weight: one multiply and one add. So running one expert on one token costs about 352 million FLOPs.
+
+      | Design | Feed-forward weights stored | Weights used per token | FLOPs per token |
+      | --- | ---: | ---: | ---: |
+      | Dense: 1 network | 176M | 176M | 352M |
+      | MoE: 8 experts, top-2 | 1,409M | 352M | 705M |
+
+      The layer stores 8 times the weights but does only 2 times the work. The router itself is tiny: one 4,096 × 8 matrix, about 33,000 weights.
+
+      :::predict Keep the same expert size but use 64 experts, still picking 2. What happens to storage and to work?
+      Storage grows to 64 × 176M ≈ 11.3 billion weights in this one layer. Work per token doesn't change at all: still 2 experts, about 705M FLOPs. Stored parameters grow with the number of experts $N$; work per token grows with $k$.
+      :::
+
+  - id: conditional-computation.s3
+    title: Trace three tokens through four experts
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.conditional-computation
+    markdown: |-
+      Here is a tiny MoE layer: four experts, each a 4 × 4 matrix, and a router that scores them. Each word goes to its single best expert (top-1).
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(0)
+      d, N = 4, 4                                  # vector width, number of experts
+      experts = rng.normal(size=(N, d, d))         # four small "feed-forward" matrices
+      W_r = rng.normal(size=(d, N))                # the router: one column per expert
+      tokens = {"The": rng.normal(size=d), "cat": rng.normal(size=d),
+                "sat": rng.normal(size=d)}
+
+      multiplies = 0                               # expert work only
+      for word, x in tokens.items():
+          scores = x @ W_r
+          e = int(np.argmax(scores))               # top-1: run only the best expert
+          y = x @ experts[e]
+          multiplies += d * d
+          print(f"{word:>4}: scores {scores.round(2)} -> expert E{e + 1}")
+
+      print("expert multiplies used:  ", multiplies)
+      print("if all 4 experts ran:   ", len(tokens) * N * d * d)
+      print("expert weights stored:  ", experts.size)
+      ```
+
+      "The" goes to expert 2; "cat" and "sat" go to expert 4. The tokens use 48 expert multiplies instead of 192, yet all 64 expert weights stay stored (the router adds 16 multiplies per token). Change the seed from 0 to 1 and watch the routes change.
+
+      :::mixup "The router picks experts for the whole prompt."
+      It picks for each token, in each MoE layer, separately. Words in one sentence can take different experts, as "The" and "cat" did here. Mixtral has 32 layers, so a single token makes 32 separate routing choices on its way through the model.
+      :::
+  - id: conditional-computation.s4
+    title: Experts aren't subject specialists
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.conditional-computation
+    markdown: |-
+      It's tempting to picture a biology expert and a coding expert. Training doesn't ask for that: router and experts learn together, and each token goes wherever that lowers the training loss.
+
+      The Mixtral authors checked. Expert choices on arXiv papers, PubMed biology abstracts, and philosophy papers were very similar; only a synthetic math dataset looked a little different. The patterns they did find looked like syntax: "self" in Python and "Question" in English often went to the same expert, indentation tokens were routed consistently, and consecutive tokens often shared an expert.
+
+      :::mixup "Expert 5 handles most of our code tokens, so it's the coding expert."
+      A skewed count is a starting point, not a job title. Before naming an expert, compare its share across many kinds of text and see what changes when you switch it off.
+      :::
+    bridges: []
+  - id: conditional-computation.history
+    title: From 1991 to trillion-parameter models
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.conditional-computation
+    markdown: |-
+      The idea is older than transformers:
+
+      | Year | Work | What it added |
+      | --- | --- | --- |
+      | 1991 | Jacobs, Jordan, Nowlan & Hinton, "Adaptive Mixtures of Local Experts" | A learned gating network splits training cases among small expert networks. Every expert still ran on every input. |
+      | 2017 | Shazeer et al., "Outrageously Large Neural Networks" | *Sparse* gating: run only the top $k$ experts. Thousands of experts between LSTM layers, up to 137 billion parameters. |
+      | 2020 | GShard (Lepikhin et al.) | Top-2 MoE inside a Transformer: a 600-billion-parameter translation model trained on 2,048 TPU v3 accelerators in 4 days. |
+      | 2021 | Switch Transformer (Fedus, Zoph & Shazeer) | Top-1 routing. Up to 7 times faster pretraining than dense T5 at equal compute; up to 1.6 trillion parameters. |
+
+      Mixtral (2023) and DeepSeek-V3 (2024, 671 billion parameters with 37 billion active per token) brought the design into widely used open-weight language models.
+
+      Saving compute this way creates new jobs: pick experts well, get tokens to them, keep any one from being swamped, and hold every expert in memory even when idle. The rest of this module takes these in turn, starting with how the router picks.
+  - id: conditional-computation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.conditional-computation
+    markdown: Count stored versus used experts, trace routing one token at a time, and judge claims about a "coding expert" and a bigger model on a fixed budget.
+    takeaway: |-
+      An MoE layer stores many expert networks but runs only the few its router picks for each token. Total parameters can grow while the work per token stays almost the same.
+  - id: conditional-computation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.conditional-computation
+    markdown: |-
+      A sparse MoE layer chooses part of its computation for each token. The unselected experts still exist in the model, and shared operations may still run for every token.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - conditional-computation.s1
-    - conditional-computation.s2
-    - conditional-computation.s3
-    - conditional-computation.s4
-    - conditional-computation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - conditional-computation.s1
+        - conditional-computation.s2
+        - conditional-computation.budget
+        - conditional-computation.s3
+        - conditional-computation.s4
+        - conditional-computation.history
+        - conditional-computation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     conditional-computation.recap: conditional-computation.check
 assessment_families:
-- id: conditional-computation.base
-  objective_ref: objective.conditional-computation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Locate the sparse part: trace the inputs, operation, and result before choosing.'
-  remediation_scene: conditional-computation.s2
-  variants:
-  - id: conditional-computation.base.1
-    prompt: What is an expert in this context?
-    options:
-    - id: a
-      text: A learned subnetwork
-    - id: b
-      text: A human consultant queried for each token
-    - id: c
-      text: A guaranteed topic database
-    answer: a
-    feedback: Expert refers to model parameters and computation.
-  - id: conditional-computation.base.2
-    prompt: Must sparse experts make attention sparse too?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only when top-one is used
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Different parts of a layer have different execution patterns.
-- id: conditional-computation.transfer
-  objective_ref: objective.conditional-computation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Treat specialization as evidence: trace the inputs, operation, and result before choosing.'
-  remediation_scene: conditional-computation.s4
-  variants:
-  - id: conditional-computation.transfer.1
-    prompt: Two tokens choose different experts. Must they be different user requests?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only with separate tokenizers
-    - id: a
-      text: No; routing can differ within one sequence
-    answer: a
-    feedback: Routing commonly operates on token representations.
-  - id: conditional-computation.transfer.2
-    prompt: An expert receives many code tokens. What does that establish?
-    options:
-    - id: c
-      text: That other experts cannot process code
-    - id: a
-      text: A routing association requiring further analysis
-    - id: b
-      text: Exclusive ownership of all coding knowledge
-    answer: a
-    feedback: Assignment patterns alone do not prove exclusive semantic function.
+  - id: conditional-computation.base
+    objective_ref: objective.conditional-computation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Locate the sparse part: trace the inputs, operation, and result before choosing.'
+    remediation_scene: conditional-computation.s2
+    variants:
+      - id: conditional-computation.base.1
+        prompt: What is an expert in this context?
+        options:
+          - id: a
+            text: A learned subnetwork
+          - id: b
+            text: A human consultant queried for each token
+          - id: c
+            text: A guaranteed topic database
+        answer: a
+        feedback: Expert refers to model parameters and computation.
+        retired: true
+      - id: conditional-computation.base.2
+        prompt: Must sparse experts make attention sparse too?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only when top-one is used
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Different parts of a layer have different execution patterns.
+        retired: true
+  - id: conditional-computation.transfer
+    objective_ref: objective.conditional-computation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Treat specialization as evidence: trace the inputs, operation, and result before choosing.'
+    remediation_scene: conditional-computation.s4
+    variants:
+      - id: conditional-computation.transfer.1
+        prompt: Two tokens choose different experts. Must they be different user requests?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only with separate tokenizers
+          - id: a
+            text: No; routing can differ within one sequence
+        answer: a
+        feedback: Routing commonly operates on token representations.
+        retired: true
+      - id: conditional-computation.transfer.2
+        prompt: An expert receives many code tokens. What does that establish?
+        options:
+          - id: c
+            text: That other experts cannot process code
+          - id: a
+            text: A routing association requiring further analysis
+          - id: b
+            text: Exclusive ownership of all coding knowledge
+        answer: a
+        feedback: Assignment patterns alone do not prove exclusive semantic function.
+        retired: true
+  - id: conditional-computation.base.v2
+    objective_ref: objective.conditional-computation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Separate what is stored from what runs. Every expert's weights sit in the layer, but the router picks only k of them for each token, and attention stays shared.
+    remediation_scene: conditional-computation.s2
+    variants:
+      - id: conditional-computation.base.v2.1
+        prompt: A team converts a dense transformer into an MoE transformer in the usual way. Which part of each converted block becomes a set of experts?
+        options:
+          - id: b
+            text: The attention sublayer, so each token looks at fewer earlier words
+          - id: c
+            text: The embedding table, so each word in the vocabulary gets its own expert
+          - id: a
+            text: The feed-forward sublayer, which transforms each token on its own
+        answer: a
+        feedback: The feed-forward step treats every token separately, so tokens can use different weights there. Attention mixes information across tokens and stays shared; the embedding table is a lookup, not the part that gets routed.
+      - id: conditional-computation.base.v2.2
+        prompt: 'In one MoE layer, the token "The" is sent to expert 2 while "cat", from the same sentence, is sent to expert 4. What does this show?'
+        options:
+          - id: c
+            text: Expert 4 has learned what animals are, so it takes animal words
+          - id: a
+            text: The router makes a separate choice for each token's vector
+          - id: b
+            text: The sentence was split into two requests before reaching the layer
+        answer: a
+        feedback: The router scores each token's vector on its own, so words in one sentence can take different experts. Nothing split the request, and a single routing choice says little about meaning; measured routing in real models tracks syntax more than topic.
+      - id: conditional-computation.base.v2.3
+        prompt: A token passes through one Mixtral MoE layer, which has 8 experts and picks the top 2. Which describes that layer for this token?
+        options:
+          - id: b
+            text: 2 experts are stored in the layer, and the other 6 are loaded on demand
+          - id: a
+            text: 8 experts are stored in the layer, and 2 of them run on this token
+          - id: c
+            text: 8 experts run on the token, and the router keeps the best 2 outputs
+        answer: a
+        feedback: All 8 experts' weights live in the layer; the router chooses 2 before any expert runs. Running all 8 and discarding 6 outputs would throw away the savings that make MoE worthwhile.
+      - id: conditional-computation.base.v2.4
+        prompt: How did the 1991 "Adaptive Mixtures of Local Experts" differ from the 2017 sparsely-gated MoE layer?
+        options:
+          - id: a
+            text: In 1991 every expert ran on every input, and the gate weighted their outputs
+          - id: c
+            text: In 1991 the experts were rule-based programs written by human specialists
+          - id: b
+            text: In 1991 there was no gating network, so every expert's output counted equally
+        answer: a
+        feedback: The 1991 system had a learned gating network, but all experts computed on each case. Shazeer et al. (2017) kept only the top k experts, which is what saves compute. The 1991 experts were small neural networks, not hand-written rules.
+  - id: conditional-computation.transfer.v2
+    objective_ref: objective.conditional-computation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what changes the stored parameters (how many experts there are) and what changes the work per token (how many each token uses), and what evidence a claim about an expert would need.
+    remediation_scene: conditional-computation.s4
+    variants:
+      - id: conditional-computation.transfer.v2.1
+        prompt: An analyst finds that expert 5 in layer 12 receives 40% of the code tokens in a test set. A manager wants to call it "the coding expert" in the model's documentation. What is the best next step?
+        options:
+          - id: b
+            text: Accept the name, since training pushes each expert to own one topic
+          - id: a
+            text: Compare its share across kinds of text and test what breaks without it
+          - id: c
+            text: Accept the name only if expert 5 also gets 40% of the math tokens
+        answer: a
+        feedback: A skewed count is a clue, not a job description. Training doesn't assign topics, and Mixtral's analysis found routing tracked syntax more than subject, so measure across domains and try switching the expert off before naming it.
+      - id: conditional-computation.transfer.v2.2
+        prompt: A team wants a model with many more parameters, but the arithmetic per token must stay about the same as their current dense model. Which change fits?
+        options:
+          - id: c
+            text: Double the width of the feed-forward block in each layer
+          - id: b
+            text: Add eight more attention heads to each transformer layer
+          - id: a
+            text: Replace each feed-forward block with 8 copies and route each token to 1
+        answer: a
+        feedback: With top-1 routing each token still runs one feed-forward network, so the work per token barely changes while stored feed-forward weights grow eightfold. Wider blocks or extra heads add parameters and add work for every token.
+      - id: conditional-computation.transfer.v2.3
+        prompt: An image classifier splits each photo into patches and uses MoE layers on the patch vectors. A patch of sky and a patch of a dog come from the same photo. Which statement is right?
+        options:
+          - id: a
+            text: The two patches can go to different experts, since routing is per patch
+          - id: b
+            text: Both patches must share experts, since they belong to one input image
+          - id: c
+            text: The router chooses experts once per photo, based on its predicted label
+        answer: a
+        feedback: Routing works on each token's vector, and here each patch is a token. One photo can spread across many experts, just as the words of one sentence can.
+      - id: conditional-computation.transfer.v2.4
+        prompt: Model A has 8 experts per MoE layer and model B has 32, with the same expert size, and both route each token to 2. How do they compare?
+        options:
+          - id: c
+            text: B does about 4 times the expert work per token as A
+          - id: a
+            text: Same expert work per token, but B stores 4 times the expert weights
+          - id: b
+            text: B does a quarter of A's work, since each expert sees fewer tokens
+        answer: a
+        feedback: Work per token depends on k, which is 2 in both. The number of experts sets how many weights are stored. Each expert in B does see fewer tokens, but each token still runs exactly two experts.
+  - id: conditional-computation.calculate
+    objective_ref: objective.conditional-computation
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Stored expert parameters are (number of experts) × (size of one expert). Parameters used per token are k × (size of one expert).
+    remediation_scene: conditional-computation.budget
+    absolute_tolerance: 1
+    variants:
+      - id: conditional-computation.calculate.1
+        prompt: An MoE layer has 16 experts of 50 million parameters each and routes each token to the top 2. How many million expert parameters does one token use in this layer?
+        answer: 100
+        feedback: 2 experts × 50 million = 100 million. The other 14 experts are stored but idle for this token.
+      - id: conditional-computation.calculate.2
+        prompt: The same layer has 16 experts of 50 million parameters each. How many million expert parameters must be stored for the layer?
+        answer: 800
+        feedback: 16 × 50 million = 800 million. Every expert is stored, whichever ones a given token uses.
+      - id: conditional-computation.calculate.3
+        prompt: A dense feed-forward block with 120 million parameters is replaced by 8 copies of itself, with top-1 routing. How many million feed-forward parameters does each token use?
+        answer: 120
+        feedback: Top-1 means one copy runs, so each token uses 120 million, the same as before. Storage grows to 8 × 120 = 960 million.
+      - id: conditional-computation.calculate.4
+        prompt: A 40-token sentence passes through one MoE layer with top-2 routing. How many token-to-expert runs happen in that layer?
+        answer: 80
+        feedback: Each of the 40 tokens runs 2 experts, so 40 × 2 = 80 expert runs, however the tokens spread across experts.
+      - id: conditional-computation.calculate.5
+        prompt: One expert has 176 million parameters, and a matrix multiply costs about 2 FLOPs per weight. With top-2 routing, about how many million FLOPs does one token spend in the experts of this layer?
+        answer: 704
+        feedback: 2 experts × 176 million weights × 2 FLOPs = 704 million FLOPs, about twice one dense feed-forward block. (The lesson's table shows 705M because it uses the unrounded 176.16M.)

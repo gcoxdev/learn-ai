@@ -1,196 +1,447 @@
 schema_version: 0.2-draft
 lesson:
   id: attribution-and-counterfactual-explanations
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Ask what an explanation method actually measures
   state: draft
-  summary: Explain a model’s prediction without confusing that explanation with a cause in the world.
+  summary: The model sent this chat to a human. Which words made it do that? Split the credit with gradients and Shapley values, and learn the test that some famous saliency maps fail.
   slot: M28.6
   category: learning
   sources:
-  - title: Integrated Gradients
-    url: https://arxiv.org/abs/1703.01365
-  - title: LIME
-    url: https://arxiv.org/abs/1602.04938
-  - title: Counterfactual Explanations
-    url: https://arxiv.org/abs/1711.00399
+    - title: "Axiomatic Attribution for Deep Networks (Sundararajan et al., 2017), which introduced integrated gradients"
+      url: https://arxiv.org/abs/1703.01365
+    - title: "A Unified Approach to Interpreting Model Predictions (Lundberg & Lee, 2017), which introduced SHAP"
+      url: https://arxiv.org/abs/1705.07874
+    - title: "Sanity Checks for Saliency Maps (Adebayo et al., 2018)"
+      url: https://arxiv.org/abs/1810.03292
+    - title: "Not Just a Black Box: Learning Important Features Through Propagating Activation Differences (Shrikumar et al., 2016), on gradient × input"
+      url: https://arxiv.org/abs/1605.01713
+    - title: Counterfactual Explanations
+      url: https://arxiv.org/abs/1711.00399
+    - title: LIME
+      url: https://arxiv.org/abs/1602.04938
 objectives:
-- id: objective.attribution-and-counterfactual-explanations
-  version: 1-draft
-  statement: Feature attributions and counterfactual explanations summarize model behavior under specified
-    baselines or perturbations; they do not automatically identify real-world causes or feasible interventions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - attribution-and-counterfactual-explanations.base
-  - attribution-and-counterfactual-explanations.transfer
-  prerequisites:
-  - anyOf:
-    - objective.automatic-differentiation
-  - anyOf:
-    - objective.controlled-experiments
+  - id: objective.attribution-and-counterfactual-explanations
+    version: 2-draft
+    statement: Attributions and counterfactuals describe how a model responds to chosen baselines or changes; they don't by themselves reveal real-world causes or actions that are actually possible.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - attribution-and-counterfactual-explanations.base.v2
+      - attribution-and-counterfactual-explanations.transfer.v2
+      - attribution-and-counterfactual-explanations.ig
+      - attribution-and-counterfactual-explanations.shapley
+    prerequisites:
+      - anyOf:
+          - objective.automatic-differentiation
+      - anyOf:
+          - objective.controlled-experiments
 scenes:
-- id: attribution-and-counterfactual-explanations.s1
-  title: Attribute a prediction relative to a reference
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.attribution-and-counterfactual-explanations
-  markdown: 'Gradient-based methods examine local sensitivity, while integrated gradients accumulate sensitivity
-    along a path from a baseline input. Perturbation methods fit or compare outputs around selected changes.
-    The baseline, path, and neighborhood define the question being answered.
+  - id: attribution-and-counterfactual-explanations.s1
+    title: Why did the model flag this chat?
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.attribution-and-counterfactual-explanations
+    markdown: |-
+      Besides answering, Kestrel's assistant runs a small model that decides when to hand a chat to a human. Supervisors want to know *why* a chat was flagged. Start with a simple linear version. Its score is
 
+      $$s = 0.2 \times \text{minutes waiting} + 0.5 \times \text{angry words}$$
 
-    For the toy model f(x₁, x₂) = 2x₁ + x₂, input [3, 1] gives 7. Relative to baseline [0, 0], integrated gradients
-    assigns 6 to the first input and 1 to the second; they sum to the output difference 7. Relative to [1,
-    0], the contributions are 4 and 1, summing to 7 − 2 = 5. The changed explanation answers a changed reference
-    question. It does not establish that changing x₁ in the real world causes the predicted outcome.'
-  text_mode: 'Gradient-based methods examine local sensitivity, while integrated gradients accumulate sensitivity
-    along a path from a baseline input. Perturbation methods fit or compare outputs around selected changes.
-    The baseline, path, and neighborhood define the question being answered.
+      A chat with a 3-minute wait and 2 angry words scores $0.6 + 1.0 = 1.6$. An **attribution** splits a prediction into credit for each input feature. For a linear model the split is obvious: waiting earned 0.6, angry words 1.0.
 
+      The simplest general method is **gradient × input**: multiply each feature by the model's slope with respect to it. Here the slopes are 0.2 and 0.5, giving $0.2 \times 3 = 0.6$ and $0.5 \times 2 = 1.0$ again.
 
-    For the toy model f(x₁, x₂) = 2x₁ + x₂, input [3, 1] gives 7. Relative to baseline [0, 0], integrated gradients
-    assigns 6 to the first input and 1 to the second; they sum to the output difference 7. Relative to [1,
-    0], the contributions are 4 and 1, summing to 7 − 2 = 5. The changed explanation answers a changed reference
-    question. It does not establish that changing x₁ in the real world causes the predicted outcome.'
-  bridges: []
-- id: attribution-and-counterfactual-explanations.s2
-  title: Trace a sensitivity example
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attribution-and-counterfactual-explanations
-  markdown: If a model’s output changes sharply when one pixel value changes slightly, that pixel has high
-    local sensitivity under the chosen point. This does not prove the pixel represents the human concept most
-    responsible for the decision. Saturation and correlated features can complicate interpretation.
-  text_mode: If a model’s output changes sharply when one pixel value changes slightly, that pixel has high
-    local sensitivity under the chosen point. This does not prove the pixel represents the human concept most
-    responsible for the decision. Saturation and correlated features can complicate interpretation.
-  bridges:
-  - derivatives
-  - integrals-density
-- id: attribution-and-counterfactual-explanations.s3
-  title: Construct a model counterfactual
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attribution-and-counterfactual-explanations
-  markdown: A counterfactual explanation might find an input change that flips the model’s output. It must
-    respect feasible, meaningful, and permitted changes to be actionable. Changing an immutable attribute or
-    creating an impossible feature combination may explain a decision boundary without offering a valid real-world
-    action.
-  text_mode: A counterfactual explanation might find an input change that flips the model’s output. It must
-    respect feasible, meaningful, and permitted changes to be actionable. Changing an immutable attribute or
-    creating an impossible feature combination may explain a decision boundary without offering a valid real-world
-    action.
-  bridges: []
-- id: attribution-and-counterfactual-explanations.s4
-  title: Validate explanation stability and scope
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attribution-and-counterfactual-explanations
-  markdown: Compare plausible baselines and perturbations, test whether important-feature removal affects behavior,
-    and inspect artifacts. An explanation of the model’s function is distinct from a causal explanation of
-    the world that produced its data. State which claim the method and evidence support.
-  text_mode: Compare plausible baselines and perturbations, test whether important-feature removal affects
-    behavior, and inspect artifacts. An explanation of the model’s function is distinct from a causal explanation
-    of the world that produced its data. State which claim the method and evidence support.
-  bridges: []
-- id: attribution-and-counterfactual-explanations.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.attribution-and-counterfactual-explanations
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: An attribution or counterfactual explains a model under chosen reference conditions. Check those
-    conditions before interpreting it as a cause or a practical action.
-- id: attribution-and-counterfactual-explanations.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.attribution-and-counterfactual-explanations
-  markdown: An attribution or counterfactual explains a model under chosen reference conditions. Check those
-    conditions before interpreting it as a cause or a practical action.
-  text_mode: An attribution or counterfactual explains a model under chosen reference conditions. Check those
-    conditions before interpreting it as a cause or a practical action.
+      Every attribution is credit *relative to something*: a **baseline** input that stands for "nothing to explain." Above, the baseline is a calm chat with no wait, where $s = 0$. Change the baseline and the question changes.
+
+      :::predict Take the baseline to be a typical chat instead: a 2-minute wait and no angry words (score 0.4). How much credit does each feature get now?
+      Waiting gets $0.2 \times (3 - 2) = 0.2$, and angry words still get $0.5 \times (2 - 0) = 1.0$. Together they explain $1.6 - 0.4 = 1.2$, the gap from a *typical* chat rather than from a calm one. Neither answer is wrong. They answer different questions.
+      :::
+    bridges: []
+  - id: attribution-and-counterfactual-explanations.s2
+    title: When the gradient goes flat
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attribution-and-counterfactual-explanations
+    markdown: |-
+      Real scores saturate. Suppose Kestrel caps its escalation score at 1: $f = \min(1,\; 0.2\,\text{wait} + 0.5\,\text{angry})$. The same chat now scores 1, the maximum. Just above the cap the slope is zero, so gradient × input gives both features zero credit, even though together they raised the score from 0 to 1.
+
+      **Integrated gradients** (Sundararajan et al., 2017) fixes this. Walk in a straight line from the baseline to the input, average the gradient along the way, and multiply by how far each feature moved. On the walk from (0, 0) to (3, 2), the score reaches the cap 62.5% of the way along. Until then the slopes are 0.2 and 0.5; after it, 0. So the average slopes are $0.2 \times 0.625 = 0.125$ and $0.5 \times 0.625 = 0.3125$. Multiply by the distances 3 and 2 to get 0.375 and 0.625, which add up to exactly 1.
+
+      ```python run
+      import numpy as np
+
+      w = np.array([0.2, 0.5])              # weights for (minutes waiting, angry words)
+
+      def f(x):                             # escalation score, capped at 1
+          return min(1.0, w @ x)
+
+      def grad(x):                          # slope is w below the cap, 0 above it
+          return w if w @ x < 1 else np.zeros(2)
+
+      x = np.array([3.0, 2.0])              # this chat: 3 minutes, 2 angry words
+      baseline = np.zeros(2)                # a calm chat with no wait
+
+      print("f(x) =", f(x), "  f(baseline) =", f(baseline))
+      print("gradient x input:    ", grad(x) * x)
+
+      steps = 1000                          # average the gradient along the straight path
+      alphas = (np.arange(steps) + 0.5) / steps
+      avg_grad = np.mean([grad(baseline + a * (x - baseline)) for a in alphas], axis=0)
+      ig = (x - baseline) * avg_grad
+      print("integrated gradients:", ig.round(3), "  sum =", ig.sum().round(3))
+      ```
+
+      Try `x = np.array([1.0, 0.5])`, a chat below the cap. There the path never saturates, and integrated gradients matches gradient × input.
+
+      :::papers Integrated gradients
+      $$\text{IG}_i(x) = (x_i - x'_i) \int_0^1 \frac{\partial f\big(x' + \alpha (x - x')\big)}{\partial x_i}\, d\alpha$$
+
+      $x'$ is the baseline (0, 0), $\alpha$ runs from baseline to input, and the integral is the average slope, 0.125 for waiting. The attributions satisfy **completeness**: they sum to $f(x) - f(x') = 1 - 0 = 1$. For a linear model the slope is the constant $w_i$, so $\text{IG}_i = w_i (x_i - x'_i)$, as in the first scene.
+      :::
+    bridges:
+      - derivatives
+      - integrals-density
+  - id: attribution-and-counterfactual-explanations.shapley
+    title: Split the credit like a team bonus
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attribution-and-counterfactual-explanations
+    markdown: |-
+      Features can interact. Kestrel's newer escalation model uses three yes/no features: a long wait (W), negative words (N), and the word "cancel" (C). Negative words *plus* "cancel" signal a customer about to leave, so together they add more than their separate effects. The table shows the model's escalation probability when only some features take this chat's values and the rest are set to a calm baseline:
+
+      | Features on | none | W | N | C | W, N | W, C | N, C | all |
+      | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+      | Probability | 0.10 | 0.20 | 0.30 | 0.40 | 0.40 | 0.50 | 0.80 | 0.90 |
+
+      How should the 0.80 rise be split? Lloyd Shapley's 1953 answer from game theory is to add the features one at a time in every possible order, record each feature's gain when it joins, and average. Take N. Added before C, it gains 0.20 (for example, 0.30 − 0.10). Added after C, it gains 0.40 (0.80 − 0.40). Half of the six orders put it after C, so its **Shapley value** is 0.30.
+
+      ```python run
+      from itertools import permutations
+
+      # Escalation probability when only some features are at this chat's values
+      # (the rest at a calm baseline). W = long wait, N = negative words, C = says "cancel".
+      v = {"": 0.10, "W": 0.20, "N": 0.30, "C": 0.40,
+           "WN": 0.40, "WC": 0.50, "NC": 0.80, "WNC": 0.90}
+
+      def value(features):
+          return v["".join(sorted(features, key="WNC".index))]
+
+      players = "WNC"
+      orders = list(permutations(players))
+      for p in players:
+          gains = []
+          for order in orders:                      # add features one at a time
+              before = order[:order.index(p)]
+              gains.append(value(before + (p,)) - value(before))
+          print(f"{p}: marginal gains {[round(g, 2) for g in gains]}  Shapley = {sum(gains) / len(gains):.2f}")
+      print(f"total = {v['WNC'] - v['']:.2f} (full prediction minus baseline)")
+      ```
+
+      W gets 0.10, N 0.30, and C 0.40, which sum to 0.80. The 0.20 interaction bonus is split evenly between N and C.
+
+      :::papers The Shapley formula
+      $$\phi_i = \sum_{S \subseteq F \setminus \{i\}} \frac{|S|!\,(|F| - |S| - 1)!}{|F|!}\,\big[v(S \cup \{i\}) - v(S)\big]$$
+
+      $F$ is the set of features, and $v(S)$ is the prediction with only the features in $S$ switched on. For N: $\tfrac{2}{6}(0.20) + \tfrac{1}{6}(0.20) + \tfrac{1}{6}(0.40) + \tfrac{2}{6}(0.40) = 0.30$. **SHAP** (Lundberg and Lee, 2017) applies this to model predictions, filling in "switched-off" features from background data. With many features, it estimates the sum instead of listing every subset.
+      :::
+    bridges: []
+  - id: attribution-and-counterfactual-explanations.s3
+    title: What would have changed the decision?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attribution-and-counterfactual-explanations
+    markdown: |-
+      Customers don't want credit splits. They want to know what to do. Kestrel's phone-financing model scores applicants as
+
+      $$\text{score} = 2 \times \text{years as a customer} + 0.5 \times \text{on-time months} - 3 \times \text{missed payments}$$
+
+      and approves at 6 or more. Priya has been a customer for 1 year, with 10 on-time months and 1 missed payment: $2 + 5 - 3 = 4$, so she's declined.
+
+      A **counterfactual explanation** names a small change to the input that would flip the decision (Wachter et al., 2017). Three candidates:
+
+      | If Priya had… | Score | Useful to her? |
+      | --- | ---: | --- |
+      | no missed payment | 7 | No: the past can't be changed |
+      | 4 more on-time months | 6 | Yes: "pay on time for four more months" |
+      | 1 more year as a customer | 6 | Yes, but only by waiting |
+
+      The smallest change, one fewer missed payment, is useless as advice. So counterfactual searches are limited to features the person can act on, and must never suggest changing things like age. Kestrel's letter says: "Four more months of on-time payments would qualify you."
+    bridges: []
+  - id: attribution-and-counterfactual-explanations.s4
+    title: The test some saliency maps fail
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attribution-and-counterfactual-explanations
+    markdown: |-
+      Attribution methods for images produce **saliency maps**: heat maps showing which pixels mattered. Some look convincing. Adebayo et al. (2018) asked a blunt question: do these maps depend on the model at all?
+
+      Their **model randomization test** replaces a trained network's weights with random numbers, layer by layer, and recomputes the maps. A faithful explanation should change completely, because the model no longer knows anything. Plain gradients passed. But some popular methods, including Guided Backprop, produced nearly the same maps for the random network. They were mostly highlighting edges in the image, which looks plausible and says little about what the model learned.
+
+      :::mixup "The explanation highlights the sensible parts, so it must be right."
+      An edge detector highlights the dog in a dog photo too, and it knows nothing about dogs. Test the method: randomize the model and see whether the explanation changes.
+      :::
+
+      Kestrel runs the same check on its escalation model before showing attributions to supervisors: with randomized weights, "cancel" should stop lighting up. It does, so the team ships the explanations with the model.
+    bridges: []
+  - id: attribution-and-counterfactual-explanations.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.attribution-and-counterfactual-explanations
+    markdown: Compute integrated gradients and Shapley values by hand, then judge explanations for a loan model, a skin-lesion classifier, a spam filter, and a housing-price model.
+    takeaway: |-
+      An attribution splits a prediction relative to a baseline: integrated gradients averages the slope along the path, and Shapley values average each feature's gain over every order. Check that the explanation changes when the model does, and offer counterfactuals a person can act on.
+  - id: attribution-and-counterfactual-explanations.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.attribution-and-counterfactual-explanations
+    markdown: |-
+      An attribution or counterfactual explains a model under chosen reference conditions. Check those conditions before interpreting it as a cause or a practical action.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - attribution-and-counterfactual-explanations.s1
-    - attribution-and-counterfactual-explanations.s2
-    - attribution-and-counterfactual-explanations.s3
-    - attribution-and-counterfactual-explanations.s4
-    - attribution-and-counterfactual-explanations.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - attribution-and-counterfactual-explanations.s1
+        - attribution-and-counterfactual-explanations.s2
+        - attribution-and-counterfactual-explanations.shapley
+        - attribution-and-counterfactual-explanations.s3
+        - attribution-and-counterfactual-explanations.s4
+        - attribution-and-counterfactual-explanations.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     attribution-and-counterfactual-explanations.recap: attribution-and-counterfactual-explanations.check
 assessment_families:
-- id: attribution-and-counterfactual-explanations.base
-  objective_ref: objective.attribution-and-counterfactual-explanations
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a sensitivity example: trace the inputs, operation, and result before choosing.'
-  remediation_scene: attribution-and-counterfactual-explanations.s2
-  variants:
-  - id: attribution-and-counterfactual-explanations.base.1
-    prompt: What affects integrated-gradient attribution?
-    options:
-    - id: c
-      text: Only output formatting
-    - id: a
-      text: The baseline and integration path as well as the model
-    - id: b
-      text: Only the feature names
-    answer: a
-    feedback: Attribution is relative to a specified computation.
-  - id: attribution-and-counterfactual-explanations.base.2
-    prompt: Does high pixel sensitivity identify a human-interpretable cause automatically?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the gradient is positive
-    answer: a
-    feedback: Local numerical sensitivity and semantic causality differ.
-- id: attribution-and-counterfactual-explanations.transfer
-  objective_ref: objective.attribution-and-counterfactual-explanations
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Validate explanation stability and scope: trace the inputs, operation, and result before choosing.'
-  remediation_scene: attribution-and-counterfactual-explanations.s4
-  variants:
-  - id: attribution-and-counterfactual-explanations.transfer.1
-    prompt: Why can a model-flipping counterfactual be unusable?
-    options:
-    - id: a
-      text: It may require infeasible or impermissible feature changes
-    - id: b
-      text: Every input change is actionable
-    - id: c
-      text: It always identifies a real intervention
-    answer: a
-    feedback: Actionability needs constraints beyond flipping a prediction.
-  - id: attribution-and-counterfactual-explanations.transfer.2
-    prompt: Is explaining a model’s decision boundary identical to explaining real-world causation?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only for neural networks
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: The model can encode correlations rather than causal mechanisms.
+  - id: attribution-and-counterfactual-explanations.base
+    objective_ref: objective.attribution-and-counterfactual-explanations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a sensitivity example: trace the inputs, operation, and result before choosing.'
+    remediation_scene: attribution-and-counterfactual-explanations.s2
+    variants:
+      - id: attribution-and-counterfactual-explanations.base.1
+        prompt: What affects integrated-gradient attribution?
+        options:
+          - id: c
+            text: Only output formatting
+          - id: a
+            text: The baseline and integration path as well as the model
+          - id: b
+            text: Only the feature names
+        answer: a
+        feedback: Attribution is relative to a specified computation.
+        retired: true
+      - id: attribution-and-counterfactual-explanations.base.2
+        prompt: Does high pixel sensitivity identify a human-interpretable cause automatically?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the gradient is positive
+        answer: a
+        feedback: Local numerical sensitivity and semantic causality differ.
+        retired: true
+  - id: attribution-and-counterfactual-explanations.transfer
+    objective_ref: objective.attribution-and-counterfactual-explanations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Validate explanation stability and scope: trace the inputs, operation, and result before choosing.'
+    remediation_scene: attribution-and-counterfactual-explanations.s4
+    variants:
+      - id: attribution-and-counterfactual-explanations.transfer.1
+        prompt: Why can a model-flipping counterfactual be unusable?
+        options:
+          - id: a
+            text: It may require infeasible or impermissible feature changes
+          - id: b
+            text: Every input change is actionable
+          - id: c
+            text: It always identifies a real intervention
+        answer: a
+        feedback: Actionability needs constraints beyond flipping a prediction.
+        retired: true
+      - id: attribution-and-counterfactual-explanations.transfer.2
+        prompt: Is explaining a model’s decision boundary identical to explaining real-world causation?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only for neural networks
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: The model can encode correlations rather than causal mechanisms.
+
+        retired: true
+  - id: attribution-and-counterfactual-explanations.base.v2
+    objective_ref: objective.attribution-and-counterfactual-explanations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Every attribution is measured from a baseline, and integrated gradients must add up to f(input) − f(baseline). A faithful explanation should change when the model changes.
+    remediation_scene: attribution-and-counterfactual-explanations.s2
+    variants:
+      - id: attribution-and-counterfactual-explanations.base.v2.1
+        prompt: For the same chat, "minutes waiting" gets 0.6 credit relative to a calm chat and 0.2 relative to a typical chat. Why do the two attributions differ?
+        options:
+          - id: b
+            text: One of the two must have used the wrong gradient
+          - id: a
+            text: Each measures the gap from a different baseline chat
+          - id: c
+            text: The model's weights changed between the two runs
+        answer: a
+        feedback: Attribution is credit relative to a baseline. The typical chat already waits 2 minutes, so only 1 extra minute (0.2 credit) needs explaining. The model and its gradient are the same in both cases.
+      - id: attribution-and-counterfactual-explanations.base.v2.2
+        prompt: A capped score sits at its maximum, and gradient × input gives every feature zero credit. What does integrated gradients do differently?
+        options:
+          - id: a
+            text: It averages the slope along the path from the baseline, not just at the input
+          - id: b
+            text: It takes a much larger step to get past the flat region at the input
+          - id: c
+            text: It replaces the gradient with each feature's raw value at the input
+        answer: a
+        feedback: The slope is zero only near the input. Along the path from the baseline it was positive until the cap, so the average slope, times the distance moved, gives each feature its share. No bigger step or raw values are involved.
+      - id: attribution-and-counterfactual-explanations.base.v2.3
+        prompt: A model predicts 0.9 for an input and 0.2 for the baseline. What must the integrated-gradients attributions add up to?
+        options:
+          - id: c
+            text: 0.9, the prediction for the input
+          - id: a
+            text: 0.7, the input minus the baseline
+          - id: b
+            text: 1.0, since attributions are shares
+        answer: a
+        feedback: "Completeness says the attributions sum to f(x) − f(x′) = 0.9 − 0.2 = 0.7. They explain the change from the baseline, not the whole prediction, and they aren't normalized to 1."
+      - id: attribution-and-counterfactual-explanations.base.v2.4
+        prompt: After a network's trained weights are replaced with random ones, a saliency method's maps look almost unchanged. What does this show?
+        options:
+          - id: b
+            text: The method is robust, since good explanations stay stable
+          - id: c
+            text: The random network learned the same features by chance
+          - id: a
+            text: The maps depend little on what the model actually learned
+        answer: a
+        feedback: This is Adebayo et al.'s model randomization test. A random network has learned nothing, so a faithful explanation must change. Maps that don't change are mostly reflecting the input image, for example its edges.
+  - id: attribution-and-counterfactual-explanations.transfer.v2
+    objective_ref: objective.attribution-and-counterfactual-explanations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the explanation is relative to, whether a person could act on it, and whether it has passed a check that it depends on the model.
+    remediation_scene: attribution-and-counterfactual-explanations.s3
+    variants:
+      - id: attribution-and-counterfactual-explanations.transfer.v2.1
+        prompt: A declined loan applicant is told, "You would have been approved if you were 8 years older." What is wrong with this explanation?
+        options:
+          - id: a
+            text: Age can't be acted on, so the search should use changeable features
+          - id: b
+            text: Nothing, if it is the smallest change that flips the decision
+          - id: c
+            text: It should report age's attribution score instead of a change
+        answer: a
+        feedback: A counterfactual is meant to be advice, and nobody can become older on request. Being the smallest change doesn't make it useful, and an attribution score for age wouldn't tell the applicant what to do either.
+      - id: attribution-and-counterfactual-explanations.transfer.v2.2
+        prompt: A skin-lesion classifier's saliency maps highlight the lesion borders. What should be checked before showing the maps to doctors?
+        options:
+          - id: c
+            text: Whether dermatologists agree the highlighted areas look sensible
+          - id: a
+            text: Whether the maps change when the model's weights are randomized
+          - id: b
+            text: Whether the maps are sharper than those from a rival method
+        answer: a
+        feedback: Borders are edges, and some methods highlight edges whatever the model does. The randomization test shows whether the maps depend on the model. Looking sensible and looking sharp are what an edge detector would also achieve.
+      - id: attribution-and-counterfactual-explanations.transfer.v2.3
+        prompt: In a spam filter, the word "free" alone raises the spam score by 0.1 over a baseline, "prize" alone by 0.1, and both together by 0.5. How do Shapley values split the 0.5?
+        options:
+          - id: b
+            text: 0.1 each, leaving 0.3 for the pair that isn't assigned
+          - id: c
+            text: 0.4 to whichever word appears first in the email
+          - id: a
+            text: 0.25 each, sharing the interaction bonus evenly
+        answer: a
+        feedback: "Each word gains 0.1 when added first and 0.4 when added second, so its average is 0.25. Shapley values always add up to the full 0.5, and word order in the email doesn't enter the calculation."
+      - id: attribution-and-counterfactual-explanations.transfer.v2.4
+        prompt: A house-price model's explanation says a home's size contributed +$80,000 to its predicted price. What is that number measured relative to?
+        options:
+          - id: a
+            text: A chosen baseline, such as an average-sized house
+          - id: b
+            text: The price the same house sold for last year
+          - id: c
+            text: A house of zero size, which every method assumes
+        answer: a
+        feedback: Attributions compare the input with a baseline, and the baseline has to be stated. Many tools use an average house or background data. A zero-size house is one possible baseline, but not a universal default, and past sale prices aren't part of the calculation.
+  - id: attribution-and-counterfactual-explanations.ig
+    objective_ref: objective.attribution-and-counterfactual-explanations
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "IG for feature i = (x_i − x′_i) × the average of ∂f/∂x_i along the straight path from x′ to x. For a linear model the slope is constant, so IG_i = w_i (x_i − x′_i)."
+    remediation_scene: attribution-and-counterfactual-explanations.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: attribution-and-counterfactual-explanations.ig.1
+        prompt: "f(x) = 3x₁ + 2x₂. With input (4, 1) and baseline (0, 0), what is the integrated-gradients attribution for x₁?"
+        answer: 12
+        feedback: "The slope for x₁ is always 3, so IG₁ = 3 × (4 − 0) = 12. With x₂'s 2, the total is 14 = f(4, 1) − f(0, 0)."
+      - id: attribution-and-counterfactual-explanations.ig.2
+        prompt: "f(x) = 0.5x₁ − 2x₂. With input (6, 3) and baseline (2, 1), what is the integrated-gradients attribution for x₂?"
+        answer: -4
+        feedback: "IG₂ = −2 × (3 − 1) = −4. Moving x₂ away from the baseline pushed the output down."
+      - id: attribution-and-counterfactual-explanations.ig.3
+        prompt: "f(x) = 1.5x₁ + 4x₂ + x₃. With input (2, 0.5, 7) and baseline (0, 0, 5), what is the integrated-gradients attribution for x₃?"
+        answer: 2
+        feedback: "IG₃ = 1 × (7 − 5) = 2. Only the distance from the baseline counts, not the raw value 7."
+      - id: attribution-and-counterfactual-explanations.ig.4
+        prompt: "f(x) = min(1, 0.25x₁ + 0.25x₂). With input (4, 4) and baseline (0, 0), what is the integrated-gradients attribution for x₁?"
+        answer: 0.5
+        feedback: "Along the path the sum 0.25x₁ + 0.25x₂ = 2α reaches the cap at α = 0.5. The slope is 0.25 before that and 0 after, so the average is 0.125, and IG₁ = 4 × 0.125 = 0.5. Both features get 0.5, summing to f(x) − f(x′) = 1."
+      - id: attribution-and-counterfactual-explanations.ig.5
+        prompt: "f(x) = x₁ × x₂. With input (2, 3) and baseline (0, 0), what is the integrated-gradients attribution for x₁?"
+        answer: 3
+        feedback: "Along the path (2α, 3α), ∂f/∂x₁ = x₂ = 3α, whose average over α from 0 to 1 is 1.5. IG₁ = 2 × 1.5 = 3. By the same steps IG₂ = 3, summing to f = 6. Gradient × input would give 6 each, 12 in total, which overcounts."
+  - id: attribution-and-counterfactual-explanations.shapley
+    objective_ref: objective.attribution-and-counterfactual-explanations
+    task: base
+    response_type: numeric
+    points: 1
+    hint: List every order in which the features can be added. In each, record the chosen feature's gain when it joins, then average those gains.
+    remediation_scene: attribution-and-counterfactual-explanations.shapley
+    absolute_tolerance: 0.01
+    variants:
+      - id: attribution-and-counterfactual-explanations.shapley.1
+        prompt: "Two features, A and B. v(none) = 0, v(A) = 4, v(B) = 2, v(A and B) = 10. What is A's Shapley value?"
+        answer: 6
+        feedback: "A added first gains 4 − 0 = 4. A added after B gains 10 − 2 = 8. The average is (4 + 8)/2 = 6, and B gets 4, for a total of 10."
+      - id: attribution-and-counterfactual-explanations.shapley.2
+        prompt: "Two features, A and B. v(none) = 1, v(A) = 3, v(B) = 5, v(A and B) = 5. What is B's Shapley value?"
+        answer: 3
+        feedback: "B first gains 5 − 1 = 4. B after A gains 5 − 3 = 2. The average is 3. A gets (2 + 0)/2 = 1, and 3 + 1 = 4 = 5 − 1."
+      - id: attribution-and-counterfactual-explanations.shapley.3
+        prompt: "Two features, A and B. v(none) = 0.2, v(A) = 0.5, v(B) = 0.2, v(A and B) = 0.9. What is B's Shapley value?"
+        answer: 0.2
+        feedback: "B alone adds nothing (0.2 − 0.2 = 0), but after A it adds 0.9 − 0.5 = 0.4. The average is 0.2. B earns credit only through its interaction with A."
+      - id: attribution-and-counterfactual-explanations.shapley.4
+        prompt: "Three features. v(none) = 0; each single feature gives 1; A and B give 2, A and C give 2, B and C give 4; all three give 5. What is B's Shapley value?"
+        answer: 2
+        feedback: "Over the six orders, B gains 1 when first (two orders), 1 after A alone, 3 after C alone, and 3 after both A and C (two orders): (1 + 1 + 1 + 3 + 3 + 3)/6 = 2. C also gets 2 and A gets 1, totalling 5."

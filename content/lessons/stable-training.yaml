@@ -4,214 +4,341 @@ lesson:
   version: 0.3.0-draft
   title: Keep signals and gradients in a usable range
   state: draft
-  summary: Keep the numbers flowing through a network large enough to be useful and small enough to remain
-    stable.
+  summary: Stack fifty layers and the signal fades to nothing or explodes into the tens of thousands. See how initialization, normalization, and number formats keep a deep network's numbers usable.
   slot: M10.7
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: Deep Learning — numerical computation
-    url: https://www.deeplearningbook.org/contents/numerical.html
+    - title: Dive into Deep Learning — authors’ open textbook
+      url: https://d2l.ai/
+    - title: Deep Learning — numerical computation
+      url: https://www.deeplearningbook.org/contents/numerical.html
+    - title: Delving Deep into Rectifiers (He et al., 2015)
+      url: https://arxiv.org/abs/1502.01852
+    - title: Batch Normalization (Ioffe & Szegedy, 2015)
+      url: https://arxiv.org/abs/1502.03167
+    - title: Layer Normalization (Ba, Kiros & Hinton, 2016)
+      url: https://arxiv.org/abs/1607.06450
 objectives:
-- id: objective.stable-training
-  version: 1-draft
-  statement: Initialization, normalization, activation choice, and numerical precision influence signal scale
-    and optimization; stability requires inspecting their interaction rather than relying on one default.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - stable-training.base
-  - stable-training.transfer
-  prerequisites:
-  - anyOf:
-    - objective.penalties-and-clipping
-  - anyOf:
-    - objective.numerical-computing
-  - anyOf:
-    - objective.neurons
+  - id: objective.stable-training
+    version: 3-draft
+    statement: Initialization, normalization, activation choice, and numerical precision influence signal scale and optimization; stability requires inspecting their interaction rather than relying on one default.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - stable-training.base.v2
+      - stable-training.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.penalties-and-clipping
+      - anyOf:
+          - objective.numerical-computing
+      - anyOf:
+          - objective.neurons
 scenes:
-- id: stable-training.s1
-  title: Choose useful starting weights
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.stable-training
-  markdown: 'An **activation** is the value produced by a unit. **Fan-in** counts its inputs; **fan-out** counts
-    where its output goes next. The scale of starting weights affects how these activations and their gradients
-    grow or shrink through the network.
+  - id: stable-training.s1
+    title: Fifty layers of photocopies
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.stable-training
+    markdown: |-
+      Photocopy a photo, then copy the copy, fifty times over. If each copy comes out a little lighter, the last one is blank; a little darker, and it's solid black. A deep network does the same to its numbers: every layer multiplies them by its weights, so a small error in each layer's scale compounds with depth.
 
+      Each layer passes on **activations**, the numbers its units output. During training, gradients travel back through the same layers in reverse. If each layer shrinks its input by a factor of 0.5, then after 10 layers the signal is 0.5¹⁰ ≈ 0.001 of its original size. If each layer doubles it, 10 layers give 2¹⁰ = 1,024. Gradients that shrink to nearly nothing are **vanishing gradients**, and the early layers barely learn. Gradients that blow up are **exploding gradients**, and training breaks.
 
-    If hidden units begin identically in a symmetric calculation, they may keep receiving identical updates.
-    Random initialization can break that symmetry. Initialization schemes also account for connection counts
-    and activation behavior so the starting signals are neither too small nor too large.'
-  text_mode: 'An **activation** is the value produced by a unit. **Fan-in** counts its inputs; **fan-out**
-    counts where its output goes next. The scale of starting weights affects how these activations and their
-    gradients grow or shrink through the network.
+      Run a 50-layer ReLU network with random weights, drawn at three different scales, and watch the typical activation size every 10 layers:
 
+      ```python run
+      import numpy as np
 
-    If hidden units begin identically in a symmetric calculation, they may keep receiving identical updates.
-    Random initialization can break that symmetry. Initialization schemes also account for connection counts
-    and activation behavior so the starting signals are neither too small nor too large.'
-  bridges: []
-- id: stable-training.s2
-  title: Watch repeated multiplication
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.stable-training
-  markdown: 'A chain that repeatedly multiplies sensitivity by 0.5 shrinks it: after ten factors the multiplier
-    is about 0.001. Repeated factors of 2 amplify it to 1024. Real networks are more complex, but this illustrates
-    vanishing and exploding gradients. Nonlinear activation derivatives and normalization influence the chain.'
-  text_mode: 'A chain that repeatedly multiplies sensitivity by 0.5 shrinks it: after ten factors the multiplier
-    is about 0.001. Repeated factors of 2 amplify it to 1024. Real networks are more complex, but this illustrates
-    vanishing and exploding gradients. Nonlinear activation derivatives and normalization influence the chain.'
-  bridges:
-  - numerical-computing
-- id: stable-training.s3
-  title: Be clear about what gets normalized
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.stable-training
-  markdown: '**Normalization** adjusts values using statistics such as their center and spread. **Batch normalization**
-    usually calculates these across examples in a training batch, including relevant spatial positions. It
-    typically uses stored running estimates during evaluation.
+      rng = np.random.default_rng(0)
+      width, depth = 256, 50
+      x0 = rng.normal(size=(100, width))          # 100 examples, 256 features each
 
+      for name, var in [("too small (1/n)", 1 / width),
+                        ("He (2/n)       ", 2 / width),
+                        ("too big (3/n)  ", 3 / width)]:
+          x, sizes = x0, []
+          for layer in range(1, depth + 1):
+              W = rng.normal(0, np.sqrt(var), size=(width, width))
+              x = np.maximum(0, x @ W)            # linear layer, then ReLU
+              if layer % 10 == 0:
+                  sizes.append(f"{np.sqrt(np.mean(x**2)):.1e}")
+          print(name, "activation size at layers 10..50:", sizes)
+      ```
 
-    **Layer normalization** instead calculates statistics across selected features within one example. The
-    methods therefore differ in which values influence one another and what state they store. Check the axes
-    and training/evaluation mode when tracing the calculation.'
-  text_mode: '**Normalization** adjusts values using statistics such as their center and spread. **Batch normalization**
-    usually calculates these across examples in a training batch, including relevant spatial positions. It
-    typically uses stored running estimates during evaluation.
+      With weight variance 1/n, where n is the number of inputs to each unit, the signal fades to about 2 × 10⁻⁸ by layer 50. With 3/n it grows to about 18,000. With 2/n it holds steady near 0.6. The per-layer factors are mild, roughly 0.71 and 1.22, but fifty layers turn them into silence and overflow. Try 2.2/n or 1.8/n to see how narrow the safe band is.
+    bridges: []
+  - id: stable-training.s2
+    title: Pick the starting scale on purpose
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.stable-training
+    markdown: |-
+      Why 2/n? A unit adds up n inputs, each multiplied by a random weight. Adding n random terms multiplies the variance by n, so weights with variance 1/n cancel that growth. ReLU then zeroes about half its inputs, halving the average squared size, and the extra factor of 2 cancels that.
 
+      A unit's number of inputs is its **fan-in**; the number of units its output feeds is its **fan-out**. Two standard recipes set the starting weights from them:
 
-    **Layer normalization** instead calculates statistics across selected features within one example. The
-    methods therefore differ in which values influence one another and what state they store. Check the axes
-    and training/evaluation mode when tracing the calculation.'
-  bridges: []
-- id: stable-training.s4
-  title: Inspect finite values and distributions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.stable-training
-  markdown: 'Monitor activation ranges, gradient norms, optimizer state, and the first nonfinite operation.
-    Lower precision saves resources but can overflow or underflow. Residual paths, sensible initialization,
-    clipping, and stable formulas can help. They do not remove the need to verify shapes, targets, and loss
-    reductions.
+      :::papers Xavier and He initialization
+      Draw each weight at random with mean 0 and variance
 
+      $$\text{Xavier (Glorot \& Bengio, 2010):}\;\; \operatorname{Var}(W) = \frac{2}{n_{\text{in}} + n_{\text{out}}} \qquad \text{He (He et al., 2015):}\;\; \operatorname{Var}(W) = \frac{2}{n_{\text{in}}}$$
 
-    **Overflow** means a result exceeds the number format''s range. **Underflow** means a very small value
-    loses precision or becomes zero. A **nonfinite** result is infinity or “not a number,” often displayed
-    as NaN. If the first nonfinite result appears while taking a logarithm of zero, changing the network''s
-    size is not the first repair; inspect that operation and the values entering it.'
-  text_mode: 'Monitor activation ranges, gradient norms, optimizer state, and the first nonfinite operation.
-    Lower precision saves resources but can overflow or underflow. Residual paths, sensible initialization,
-    clipping, and stable formulas can help. They do not remove the need to verify shapes, targets, and loss
-    reductions.
+      Xavier balances the forward and backward passes for activations like tanh, which are roughly linear near zero. He initialization is built for ReLU, and it's the 2/n setting that held steady above. For our layers with $n_{\text{in}} = 256$, He gives variance 2/256 ≈ 0.0078, a standard deviation of about 0.088.
+      :::
 
+      Why random, and not every weight set to 0.088? Two hidden units that start with identical weights compute identical outputs and receive identical gradients, so they stay identical forever, and the layer acts like one unit. Random starting values break that **symmetry**.
 
-    **Overflow** means a result exceeds the number format''s range. **Underflow** means a very small value
-    loses precision or becomes zero. A **nonfinite** result is infinity or “not a number,” often displayed
-    as NaN. If the first nonfinite result appears while taking a logarithm of zero, changing the network''s
-    size is not the first repair; inspect that operation and the values entering it.'
-  bridges: []
-- id: stable-training.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.stable-training
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Check the scale of activations and gradients throughout training. Initialization, normalization,
-    and numerical precision interact; find where the values first become unusable.
-- id: stable-training.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.stable-training
-  markdown: Check the scale of activations and gradients throughout training. Initialization, normalization,
-    and numerical precision interact; find where the values first become unusable.
-  text_mode: Check the scale of activations and gradients throughout training. Initialization, normalization,
-    and numerical precision interact; find where the values first become unusable.
+      Very deep networks add a second safeguard. A **residual connection**, the key idea in ResNet (He et al., 2015), adds each block's input straight to its output: $x + f(x)$. The gradient then has a path back through the "+ x" that isn't multiplied by the block's weights, a big part of why networks with a hundred or more layers became trainable.
+
+      :::mixup "If early layers' gradients vanish, just raise the learning rate."
+      The learning rate scales every layer's step equally. If the first layer's gradient is a million times smaller than the last layer's, any rate big enough to move the first layer blows up the last. Fix the scale where it goes wrong: initialization, normalization, or residual connections.
+      :::
+  - id: stable-training.s3
+    title: Batch norm and layer norm rescale different things
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.stable-training
+    markdown: |-
+      Good initialization sets the right scale at step 0, but the weights keep changing. **Normalization** layers reset the scale throughout training: subtract the average, divide by the spread, then let the network re-stretch the result with two learned numbers.
+
+      $$y = \gamma\,\frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} + \beta$$
+
+      Here $\mu$ is the mean, $\sigma^2$ the variance, $\epsilon$ a tiny number that prevents division by zero, and $\gamma$, $\beta$ the learned scale and shift. For one example with features $x = [2, 4, 6, 8]$: $\mu = 5$, $\sigma^2 = (9 + 1 + 1 + 9)/4 = 5$, and the normalized values are $(x - 5)/\sqrt{5} \approx [-1.34, -0.45, 0.45, 1.34]$. Their mean is 0 and their spread is 1, whatever scale they arrived at.
+
+      The two famous variants differ only in *which numbers* go into $\mu$ and $\sigma^2$:
+
+      | | **Batch normalization** (Ioffe & Szegedy, 2015) | **Layer normalization** (Ba, Kiros & Hinton, 2016) |
+      | --- | --- | --- |
+      | Averages over | One feature, across all examples in the batch | All features, within one example |
+      | During evaluation | Uses running averages saved during training | Same calculation as in training |
+      | Batch of 1 | Breaks: a single example has no spread | Works fine |
+      | Typical home | Convolutional image networks | Transformers and recurrent networks |
+
+      Our [2, 4, 6, 8] calculation was layer norm: four features of one example. Batch norm would instead take feature 1 from every example in the batch and normalize those together.
+
+      :::predict A batch-norm model scores well in training, but gives strange predictions when you evaluate it one example at a time. What's the likely cause?
+      It's probably still in training mode, normalizing with statistics from the current batch. With one example, a feature's "batch mean" is its own value, so it normalizes to 0 and its information is gone. Evaluation mode uses the running averages saved during training instead. Forgetting the switch (`model.eval()` in PyTorch) is a classic bug.
+      :::
+  - id: stable-training.s4
+    title: Find the first number that broke
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.stable-training
+    markdown: |-
+      Computers store numbers in fixed-size formats with limits. **Overflow** is a result too big for the format; it becomes infinity. **Underflow** is a result too close to zero; it becomes exactly 0. Once an infinity appears, operations like ∞ − ∞ or 0 × ∞ produce **NaN** ("not a number"), and NaN spreads through every calculation it touches.
+
+      | Format | Bits | Largest value | Digits of precision | Used for |
+      | --- | ---: | --- | --- | --- |
+      | float32 | 32 | about 3 × 10³⁸ | about 7 | The safe default |
+      | float16 | 16 | 65,504 | about 3 | Fast training, with care |
+      | bfloat16 | 16 | about 3 × 10³⁸ | about 2–3 | Fast training with float32's range |
+
+      A 16-bit number takes half the memory of a 32-bit one and computes much faster on modern accelerators, so large models usually train with 16-bit formats. But in float16, $e^{12} \approx 163{,}000$ is already infinity, and a gradient of 10⁻⁸ becomes 0. **Mixed-precision training** keeps a float32 master copy of the weights and multiplies the loss by a large factor before the backward pass (*loss scaling*), so small gradients don't underflow. bfloat16 keeps float32's range and gives up digits instead, which is why many large language models are trained in it.
+
+      When the loss turns into NaN, find the *first* operation that produced a non-finite value, and look at its inputs. Common culprits:
+
+      - log(0) = −∞, from a probability that rounded to exactly 0. Compute log-probabilities directly instead.
+      - A softmax of large scores such as 1,000, which overflows. Subtract the largest score first; the result is mathematically identical.
+      - Dividing by a variance of 0. That's what the $\epsilon$ in the normalization formula is for.
+    bridges: []
+  - id: stable-training.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.stable-training
+    markdown: Compute He initialization scales for new layers, then diagnose fading signals, a batch-norm evaluation bug, a float16 overflow, and a NaN hunt.
+    takeaway: |-
+      Check the scale of activations and gradients throughout training. Initialization, normalization, and numerical precision interact; find where the values first become unusable.
+  - id: stable-training.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.stable-training
+    markdown: |-
+      Check the scale of activations and gradients throughout training. Initialization, normalization, and numerical precision interact; find where the values first become unusable.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - stable-training.s1
-    - stable-training.s2
-    - stable-training.s3
-    - stable-training.s4
-    - stable-training.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - stable-training.s1
+        - stable-training.s2
+        - stable-training.s3
+        - stable-training.s4
+        - stable-training.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     stable-training.recap: stable-training.check
 assessment_families:
-- id: stable-training.base
-  objective_ref: objective.stable-training
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Watch repeated multiplication: trace the inputs, operation, and result before choosing.'
-  remediation_scene: stable-training.s2
-  variants:
-  - id: stable-training.base.1
-    prompt: Ten repeated factors of 2 amplify a sensitivity by what?
-    options:
-    - id: c
-      text: '100'
-    - id: a
-      text: '1024'
-    - id: b
-      text: '20'
-    answer: a
-    feedback: The product is 2¹⁰.
-  - id: stable-training.base.2
-    prompt: Why can identical initialization be problematic for symmetric hidden units?
-    options:
-    - id: a
-      text: They can keep receiving identical updates
-    - id: b
-      text: It guarantees independent features
-    - id: c
-      text: It removes every optimization issue
-    answer: a
-    feedback: Symmetry can prevent units from learning different roles.
-- id: stable-training.transfer
-  objective_ref: objective.stable-training
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Inspect finite values and distributions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: stable-training.s4
-  variants:
-  - id: stable-training.transfer.1
-    prompt: A batch-normalized model behaves differently after switching to evaluation mode. Is that necessarily
-      a bug?
-    options:
-    - id: a
-      text: No; the statistic convention can change between modes
-    - id: b
-      text: Yes; modes can never affect outputs
-    - id: c
-      text: Only if it has one layer
-    answer: a
-    feedback: Batch normalization commonly uses different statistics in training and evaluation.
-  - id: stable-training.transfer.2
-    prompt: Loss becomes nonfinite. What is a useful diagnostic target?
-    options:
-    - id: b
-      text: Only the final printed number
-    - id: c
-      text: A larger output vocabulary immediately
-    - id: a
-      text: The first invalid intermediate and its inputs
-    answer: a
-    feedback: Tracing the earliest failure helps identify numerical or modeling causes.
+  - id: stable-training.base
+    objective_ref: objective.stable-training
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Multiply the per-layer factor by itself once for every layer.
+    remediation_scene: stable-training.s2
+    variants:
+      - id: stable-training.base.1
+        retired: true
+        prompt: Ten repeated factors of 2 amplify a sensitivity by what?
+        options:
+          - id: c
+            text: '100'
+          - id: a
+            text: '1024'
+          - id: b
+            text: '20'
+        answer: a
+        feedback: The product is 2¹⁰.
+      - id: stable-training.base.2
+        retired: true
+        prompt: Why can identical initialization be problematic for symmetric hidden units?
+        options:
+          - id: a
+            text: They can keep receiving identical updates
+          - id: b
+            text: It guarantees independent features
+          - id: c
+            text: It removes every optimization issue
+        answer: a
+        feedback: Symmetry can prevent units from learning different roles.
+  - id: stable-training.transfer
+    objective_ref: objective.stable-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Trace the numbers back to the first place they became too big, too small, or not a number.
+    remediation_scene: stable-training.s4
+    variants:
+      - id: stable-training.transfer.1
+        retired: true
+        prompt: A batch-normalized model behaves differently after switching to evaluation mode. Is that necessarily a bug?
+        options:
+          - id: a
+            text: No; the statistic convention can change between modes
+          - id: b
+            text: Yes; modes can never affect outputs
+          - id: c
+            text: Only if it has one layer
+        answer: a
+        feedback: Batch normalization commonly uses different statistics in training and evaluation.
+      - id: stable-training.transfer.2
+        retired: true
+        prompt: Loss becomes nonfinite. What is a useful diagnostic target?
+        options:
+          - id: b
+            text: Only the final printed number
+          - id: c
+            text: A larger output vocabulary immediately
+          - id: a
+            text: The first invalid intermediate and its inputs
+        answer: a
+        feedback: Tracing the earliest failure helps identify numerical or modeling causes.
+  - id: stable-training.base.v2
+    objective_ref: objective.stable-training
+    task: base
+    response_type: numeric
+    points: 1
+    absolute_tolerance: 0.001
+    hint: He initialization sets the weight variance to 2 ÷ fan-in. The standard deviation is the square root of that variance.
+    remediation_scene: stable-training.s2
+    variants:
+      - id: stable-training.base.v2.1
+        prompt: A ReLU layer has 512 inputs per unit. Using He initialization, what standard deviation should its starting weights have?
+        answer: 0.0625
+        feedback: The variance is 2/512 = 0.00390625, and its square root is 0.0625. Reporting the variance itself instead of its square root would give a scale 16 times too small.
+      - id: stable-training.base.v2.2
+        prompt: A ReLU layer has 200 inputs per unit. Using He initialization, what standard deviation should its starting weights have?
+        answer: 0.1
+        feedback: The variance is 2/200 = 0.01, and its square root is 0.1. Using 1/200 (dropping ReLU's factor of 2) gives about 0.071, which makes the signal shrink layer by layer.
+      - id: stable-training.base.v2.3
+        prompt: A ReLU layer has 50 inputs per unit. Using He initialization, what standard deviation should its starting weights have?
+        answer: 0.2
+        feedback: The variance is 2/50 = 0.04, and its square root is 0.2. Fewer inputs mean each weight can be larger without the sum growing.
+      - id: stable-training.base.v2.4
+        prompt: A ReLU layer has 8 inputs per unit. Using He initialization, what standard deviation should its starting weights have?
+        answer: 0.5
+        feedback: The variance is 2/8 = 0.25, and its square root is 0.5. Stopping at the variance, 0.25, would halve the scale.
+  - id: stable-training.transfer.v2
+    objective_ref: objective.stable-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Find where the scale went wrong (the starting weights, the normalization statistics, or the number format), and fix it at that point rather than downstream.
+    remediation_scene: stable-training.s4
+    variants:
+      - id: stable-training.transfer.v2.1
+        retired: true
+        prompt: In a 40-layer ReLU network, the gradient reaching the first layer is about 10⁻⁹ of the gradient at the last layer. The weights were drawn with variance 1/fan-in. Which change targets the cause?
+        options:
+          - id: b
+            text: Raise the learning rate so the first layers move faster
+          - id: a
+            text: Switch to He initialization, with variance 2 ÷ fan-in
+          - id: c
+            text: Clip the gradient norm so the last layers can't dominate
+        answer: a
+        feedback: Variance 1/n loses about half the squared signal at every ReLU layer, which compounds over 40 layers. He initialization cancels that loss. A higher learning rate would blow up the later layers, and clipping shrinks gradients rather than restoring small ones.
+      - id: stable-training.transfer.v2.2
+        prompt: A batch-norm image classifier gives sensible results on batches of 64, but nonsense when a web service feeds it one photo at a time. What is the most likely cause?
+        options:
+          - id: c
+            text: Single photos are harder to classify than full batches
+          - id: a
+            text: It's still normalizing with batch statistics, not saved averages
+          - id: b
+            text: Batch norm must be replaced by layer norm before any serving
+        answer: a
+        feedback: In training mode, each photo is normalized with statistics from that one photo instead of the training data, which distorts or wipes out its features. Evaluation mode uses the saved running averages. Layer norm would also avoid this, but it isn't required; the mode switch is the fix.
+      - id: stable-training.transfer.v2.3
+        prompt: A model trains fine in float32 but its loss becomes infinite within minutes in float16. The first infinity appears inside a softmax whose scores reach about 20. What is the best fix?
+        options:
+          - id: a
+            text: Subtract the largest score before taking exponentials
+          - id: b
+            text: Lower the learning rate so the scores stay smaller
+          - id: c
+            text: Add more layers so the network can spread out its scores
+        answer: a
+        feedback: e²⁰ is about 485 million, far beyond float16's maximum of 65,504. Subtracting the largest score makes the biggest exponential e⁰ = 1 and gives the identical softmax. A smaller learning rate might delay the overflow but wouldn't remove it.
+      - id: stable-training.transfer.v2.4
+        prompt: A training loss suddenly prints NaN at step 8,000. What should you look at first?
+        options:
+          - id: c
+            text: The final loss value and how it changed over the last steps
+          - id: b
+            text: The first operation in that step to produce a non-finite value
+          - id: a
+            text: The model's width, since wider layers are more likely to fail
+        answer: b
+        feedback: NaN spreads through everything after it, so the final loss only tells you something broke. The first non-finite value, and the inputs to that operation (a log of 0, an overflow, a division by zero), point at the cause.
+      - id: stable-training.transfer.v2.5
+        prompt: Someone initializes every weight in a hidden layer to exactly 0.05. After training, all 128 units in that layer have identical weights. Why?
+        options:
+          - id: a
+            text: Identical units get identical gradients, so they never diverge
+          - id: b
+            text: The value 0.05 is too small, so the gradients vanished
+          - id: c
+            text: The learning rate was too low for the units to separate
+        answer: a
+        feedback: With equal starting weights, every unit computes the same output and receives the same update, so the symmetry is never broken. Random initialization fixes it. A different constant or learning rate would still keep the units identical.
+      - id: stable-training.transfer.v2.6
+        prompt: In a 40-layer ReLU network whose weights were drawn with variance 1/fan-in, the gradient reaching the first layer is about a millionth of the gradient at the last layer. Which change targets the cause?
+        options:
+          - id: b
+            text: Raise the learning rate so the first layers move faster
+          - id: c
+            text: Clip the gradient norm so the last layers can't dominate
+          - id: a
+            text: Switch to He initialization, with variance 2 ÷ fan-in
+        answer: a
+        feedback: With variance 1/fan-in, each ReLU layer keeps only about half the squared signal, so the gradient shrinks by about 0.707 per layer; 0.707⁴⁰ is roughly a millionth. He initialization doubles the variance to cancel that loss. A higher learning rate would blow up the later layers, and clipping only shrinks gradients.

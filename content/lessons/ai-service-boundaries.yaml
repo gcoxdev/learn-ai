@@ -4,203 +4,411 @@ lesson:
   version: 0.3.0-draft
   title: Build a reliable request path around local or remote inference
   state: draft
-  summary: Follow a request through the programs surrounding the model.
+  summary: On a snowy Monday the model vendor slows to 20-second replies, and the chat widget just spins. Design the timeouts, fallbacks, and limits that keep visitors answered anyway.
   slot: M33.5
   category: learning
   sources:
-  - title: Hidden Technical Debt in ML Systems
-    url: https://research.google/pubs/hidden-technical-debt-in-machine-learning-systems/
-  - title: NIST AI Risk Management Framework
-    url: https://www.nist.gov/itl/ai-risk-management-framework
+    - title: Google SRE Book, "Addressing Cascading Failures"
+      url: https://sre.google/sre-book/addressing-cascading-failures/
+    - title: Google SRE Book, "Handling Overload"
+      url: https://sre.google/sre-book/handling-overload/
+    - title: RFC 6585, which defines HTTP status 429 Too Many Requests
+      url: https://www.rfc-editor.org/rfc/rfc6585
+    - title: Idempotent requests (Stripe API reference)
+      url: https://docs.stripe.com/api/idempotent_requests
+    - title: Hidden Technical Debt in Machine Learning Systems (Sculley et al., NeurIPS 2015)
+      url: https://papers.nips.cc/paper/5656-hidden-technical-debt-in-machine-learning-systems
 objectives:
-- id: objective.ai-service-boundaries
-  version: 1-draft
-  statement: AI services coordinate APIs, queues, caches, timeouts, and tool boundaries; request identity,
-    authorization, and failure semantics determine whether the surrounding application behaves reliably.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - ai-service-boundaries.base
-  - ai-service-boundaries.transfer
-  prerequisites:
-  - anyOf:
-    - objective.production-data-and-model-artifacts
-  - anyOf:
-    - objective.tool-contracts-and-state
-  - anyOf:
-    - objective.batching-streaming-and-cache-management
+  - id: objective.ai-service-boundaries
+    version: 2-draft
+    statement: Design the service around a model call, with a response contract, a timeout budget, a fallback ladder, rate limits, correct cache keys, and idempotent retries, so the application behaves well when the model is slow, busy, or wrong.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - ai-service-boundaries.base.v2
+      - ai-service-boundaries.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.production-data-and-model-artifacts
+      - anyOf:
+          - objective.tool-contracts-and-state
+      - anyOf:
+          - objective.batching-streaming-and-cache-management
 scenes:
-- id: ai-service-boundaries.s1
-  title: Draw the full request path
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.ai-service-boundaries
-  markdown: 'A request may pass from a client to an application, then to a retriever, a local or remote model,
-    and output validation before a result returns. An **API**, or **application programming interface**, defines
-    how programs request these operations and receive their results.
+  - id: ai-service-boundaries.s1
+    title: The snowy Monday
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.ai-service-boundaries
+    markdown: |-
+      On the first snowy Monday of the year, every branch posts a late opening, and questions pour in. At 9:05 the model vendor's service slows to 20-second replies. Linden's chat widget spins for 20 seconds, then shows nothing. The phones light up.
 
+      The model was fine. The service around it wasn't designed for a slow model. Each arrow in the diagram is a boundary between programs, and each boundary can be slow, busy, or fail. An **API** (application programming interface) is how one program asks another for something. Its **contract** says exactly what goes in, what comes back, and what each kind of failure looks like. Linden's assistant promises the widget a reply in this shape, every time:
 
-    Each boundary adds possible delay or failure. Specify the data format, the identity making the request,
-    and which component authorizes actions and handles retries.'
-  text_mode: 'A request may pass from a client to an application, then to a retriever, a local or remote model,
-    and output validation before a result returns. An **API**, or **application programming interface**, defines
-    how programs request these operations and receive their results.
+      ```json
+      {"status": "answered", "answer": "Eastside opens at 11 today.",
+       "sources": ["closures#eastside"], "release": "r16"}
+      ```
 
+      `status` can also be `"fallback"`. An output check rejects any model reply that doesn't fit the contract (a missing source, a malformed time) before the visitor sees it.
+    bridges: []
+    diagram:
+      caption: One question's path. Every arrow is a boundary with its own delay and failure modes.
+      description: The visitor's chat widget sends a question to the assistant API, which checks identity and rate limits and holds a 4-second deadline. The assistant API calls the retriever for closures-page chunks and the vendor's model API with a 3-second timeout, and can call the holds API with an idempotency key. The model's reply goes through an output check that enforces the contract before reaching the visitor. On a timeout, the assistant API sends a fallback reply instead.
+      nodes:
+        - id: widget
+          label: Visitor's chat widget
+          col: 0
+          row: 1
+        - id: api
+          label: Assistant API
+          note: identity, rate limit, 4 s deadline
+          col: 1
+          row: 1
+          tone: accent
+        - id: retriever
+          label: Retriever
+          note: closures-page chunks
+          col: 2
+          row: 0
+          tone: data
+        - id: model
+          label: Vendor model API
+          note: 3 s timeout
+          col: 2
+          row: 1
+        - id: holds
+          label: Holds API
+          note: idempotency key
+          col: 2
+          row: 2
+          tone: warn
+        - id: check
+          label: Output check
+          note: fits the contract?
+          col: 3
+          row: 1
+        - id: fallback
+          label: Fallback reply
+          note: passage or phone number
+          col: 1
+          row: 2
+          tone: muted
+      edges:
+        - from: widget
+          to: api
+          label: asks
+        - from: api
+          to: retriever
+        - from: api
+          to: model
+          label: prompt
+        - from: api
+          to: holds
+          label: place hold
+        - from: model
+          to: check
+        - from: api
+          to: fallback
+          label: on timeout
+          dashed: true
+  - id: ai-service-boundaries.timeouts
+    title: Budget the timeouts
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.ai-service-boundaries
+    markdown: |-
+      Start from the visitor. Linden decides a visitor should get *something* within 4 seconds. That end-to-end **deadline** is a budget, and each step spends part of it. The p95 times come from the dashboard:
 
-    Each boundary adds possible delay or failure. Specify the data format, the identity making the request,
-    and which component authorizes actions and handles retries.'
-  bridges: []
-- id: ai-service-boundaries.s2
-  title: Use queues and limits deliberately
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.ai-service-boundaries
-  markdown: 'A **queue** holds requests waiting for service. It can absorb bursts, but a growing queue also
-    means longer waits. **Backpressure** asks earlier stages to slow down or stop accepting work when later
-    stages cannot keep up.
+      | Step | p95 time |
+      | --- | ---: |
+      | Identity and rate-limit check | 0.05 s |
+      | Retrieve closures chunks | 0.30 s |
+      | Model call | 2.40 s |
+      | Output check | 0.10 s |
+      | **Total** | **2.85 s** |
 
+      A **timeout** is how long a caller waits before giving up. Linden sets the model call's timeout at 3 s: long enough for 95% of normal calls, short enough to leave time for a fallback.
 
-    Use capacity limits, deadlines, and cancellation to avoid spending work on requests that are no longer
-    useful. If a learner cancels a long answer, passing that cancellation through the queue and model call
-    can stop unnecessary generation.
+      :::predict When the model call times out at 3 s, should the service retry it once?
+      No. The retry would start at about 3.35 s and could run until 6.35 s, far past the 4 s deadline. With 0.65 s left, the right move is the fallback. Passing the *remaining* time down to each call, so no step waits past the deadline, is called **deadline propagation**.
+      :::
 
+      Giving up isn't the same as stopping. After a timeout, the service must also cancel the model call, or the vendor keeps generating (and billing) an answer nobody will read.
 
-    A timeout and a cancellation are different: failing to receive a result does not necessarily stop the operation
-    that is producing it.'
-  text_mode: 'A **queue** holds requests waiting for service. It can absorb bursts, but a growing queue also
-    means longer waits. **Backpressure** asks earlier stages to slow down or stop accepting work when later
-    stages cannot keep up.
+      :::mixup "Retries make a service more reliable."
+      Up to a point. When a service is slow because it's overloaded, every client retrying multiplies its load, and a slowdown becomes an outage, a pattern the Google SRE book calls a cascading failure. Retry sparingly, with backoff, and never past the deadline.
+      :::
+  - id: ai-service-boundaries.fallback
+    title: Fall back one step at a time
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.ai-service-boundaries
+    markdown: |-
+      **Graceful degradation** means offering a smaller but still useful service when a part fails, rather than failing completely. Linden's assistant has a ladder:
 
+      1. **Full answer**: retrieved chunks plus the model's reply, with a source.
+      2. **Model slow or down**: show the retrieved closures-page passage itself. "Here's what the closures page says about Eastside: *opening at 11 today because of snow.*"
+      3. **Retriever down too**: show the static hours banner and the front desk number.
 
-    Use capacity limits, deadlines, and cancellation to avoid spending work on requests that are no longer
-    useful. If a learner cancels a long answer, passing that cancellation through the queue and model call
-    can stop unnecessary generation.
+      On the snowy Monday, with this ladder in place, a visitor would get step 2 about 3.4 seconds after asking, and it would be correct, because the passage is the source. Each step down gives up some convenience but never invents facts. That's the test for a good fallback: it can be less helpful, but it must not be less true.
+  - id: ai-service-boundaries.s2
+    title: Rate limits, and what to do at the limit
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.ai-service-boundaries
+    markdown: |-
+      Model vendors cap how much you can send. A **rate limit** is a maximum number of requests (or tokens) per time window; above it, the vendor rejects calls, usually with HTTP status 429, "Too Many Requests." Many services enforce it with a **token bucket**: the bucket refills at the allowed rate, each request takes a token, and a full bucket can absorb a short burst.
 
+      Linden's plan allows 60 requests a minute. On the snowy Monday, 90 questions a minute arrive for ten minutes:
 
-    A timeout and a cancellation are different: failing to receive a result does not necessarily stop the operation
-    that is producing it.'
-  bridges: []
-- id: ai-service-boundaries.s3
-  title: Cache with the right identity
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.ai-service-boundaries
-  markdown: A cache key may need model revision, prompt, retrieval version, user scope, and relevant decoding
-    settings. Reusing an answer under changed permissions or evidence can be incorrect. Distinguish deterministic
-    artifact reuse from approximate semantic caching that may change answer quality.
-  text_mode: A cache key may need model revision, prompt, retrieval version, user scope, and relevant decoding
-    settings. Reusing an answer under changed permissions or evidence can be incorrect. Distinguish deterministic
-    artifact reuse from approximate semantic caching that may change answer quality.
-  bridges: []
-- id: ai-service-boundaries.s4
-  title: Design explicit failure behavior
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.ai-service-boundaries
-  markdown: Timeouts, partial streams, malformed output, and unavailable tools need bounded recovery or clear
-    user-facing states. Retrying an external write can duplicate effects unless the operation supports idempotency
-    or outcome checks. A model API succeeding does not establish that the whole user workflow completed.
-  text_mode: Timeouts, partial streams, malformed output, and unavailable tools need bounded recovery or clear
-    user-facing states. Retrying an external write can duplicate effects unless the operation supports idempotency
-    or outcome checks. A model API succeeding does not establish that the whole user workflow completed.
-  bridges: []
-- id: ai-service-boundaries.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.ai-service-boundaries
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Trace the whole request across services. Clear identities, limits, cancellation, caching rules,
-    and recovery behavior make the surrounding application reliable.
-- id: ai-service-boundaries.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.ai-service-boundaries
-  markdown: Trace the whole request across services. Clear identities, limits, cancellation, caching rules,
-    and recovery behavior make the surrounding application reliable.
-  text_mode: Trace the whole request across services. Clear identities, limits, cancellation, caching rules,
-    and recovery behavior make the surrounding application reliable.
+      ```python run
+      limit_per_min = 60      # vendor's request limit
+      arrivals_per_min = 90   # snow-day peak
+      minutes = 10
+
+      bucket = limit_per_min  # a token bucket starts full
+      sent = shed = 0
+      for second in range(minutes * 60):
+          bucket = min(limit_per_min, bucket + limit_per_min / 60)   # refill
+          arriving = arrivals_per_min / 60                            # 1.5 per second
+          ok = min(bucket, arriving)
+          bucket -= ok
+          sent += ok
+          shed += arriving - ok
+      print(f"questions: {sent + shed:.0f}, sent to model: {sent:.0f}, need a fallback: {shed:.0f}")
+      print(f"share on fallback: {shed / (sent + shed):.0%}")
+      ```
+
+      The full bucket soaks up the first two minutes; after that, a third of questions can't reach the model, so 27% of the ten minutes' questions need a fallback. Set `minutes = 60` and the share climbs to 32%, close to that third. Rather than let them fail, the service sends them to fallback step 2, or to the cache below. Linden also sets its *own* limit of 10 questions a minute per visitor, so one runaway script can't spend everyone's quota.
+    bridges: []
+  - id: ai-service-boundaries.s3
+    title: Cache with the right key
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.ai-service-boundaries
+    markdown: |-
+      On snow days a third of all questions are some version of "what time does my branch open today?" Caching those answers saves vendor calls and quota. A cache stores each answer under a **cache key**, and everything that can change the right answer must be in the key.
+
+      Linden's first key was just the branch name. On Sunday, the cache served Saturday's "opens at 9" for a branch that doesn't open until 1 on Sundays. The fixed key includes the branch, the date, and the release (which pins the index and prompt). Anything personal, such as a visitor's holds, never goes in a shared cache at all. This isn't the key/value or prefix cache from the serving module, which saves work *inside* one model call; an answer cache skips the call entirely.
+    bridges: []
+  - id: ai-service-boundaries.s4
+    title: Retry actions only with an idempotency key
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.ai-service-boundaries
+    markdown: |-
+      Answers are safe to retry; actions aren't. When a visitor says "put a hold on *Wintering* for me," the assistant calls the holds API. If that call times out, the hold may or may not have been placed: the timeout says only that the reply never arrived.
+
+      Retrying blindly creates duplicates. Linden places about 400 holds a day through the assistant; if 2% of calls time out and each is retried blindly, that's up to 8 duplicate holds a day, one for every timed-out call that had in fact gone through. The fix, from the lesson "Give tools clear inputs, results, and state," is an **idempotency key**: one unique ID per intended hold, sent with every retry, so the holds API recognizes a repeat and returns the original result instead of placing a second hold.
+
+      Across the whole path, the rule is the same: know what each boundary promises, how long you'll wait, what you'll do when it fails, and whether trying again is safe.
+    bridges: []
+  - id: ai-service-boundaries.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.ai-service-boundaries
+    markdown: A food-delivery app, a hospital scheduling bot, a shopping search, and a city chatbot with one very busy user test whether you can design the service around a model.
+    takeaway: Spend a deadline across the request path, time out and fall back rather than retry past it, degrade to smaller but still true answers, respect rate limits, key caches on everything that changes the answer, and retry actions only with an idempotency key.
+  - id: ai-service-boundaries.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.ai-service-boundaries
+    markdown: |-
+      Trace the whole request across services. Clear identities, limits, cancellation, caching rules, and recovery behavior make the surrounding application reliable.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - ai-service-boundaries.s1
-    - ai-service-boundaries.s2
-    - ai-service-boundaries.s3
-    - ai-service-boundaries.s4
-    - ai-service-boundaries.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - ai-service-boundaries.s1
+        - ai-service-boundaries.timeouts
+        - ai-service-boundaries.fallback
+        - ai-service-boundaries.s2
+        - ai-service-boundaries.s3
+        - ai-service-boundaries.s4
+        - ai-service-boundaries.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     ai-service-boundaries.recap: ai-service-boundaries.check
 assessment_families:
-- id: ai-service-boundaries.base
-  objective_ref: objective.ai-service-boundaries
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Use queues and limits deliberately: trace the inputs, operation, and result before choosing.'
-  remediation_scene: ai-service-boundaries.s2
-  variants:
-  - id: ai-service-boundaries.base.1
-    prompt: What can an unbounded queue do during overload?
-    options:
-    - id: c
-      text: Remove all capacity constraints
-    - id: a
-      text: Accumulate delay and stale work
-    - id: b
-      text: Guarantee constant latency
-    answer: a
-    feedback: Backlog grows when arrivals exceed service capacity.
-  - id: ai-service-boundaries.base.2
-    prompt: Why include evidence version in some answer-cache keys?
-    options:
-    - id: a
-      text: The supported answer can change when documents change
-    - id: b
-      text: Only to lengthen the key
-    - id: c
-      text: Versions never affect meaning
-    answer: a
-    feedback: Cache validity depends on its inputs.
-- id: ai-service-boundaries.transfer
-  objective_ref: objective.ai-service-boundaries
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Design explicit failure behavior: trace the inputs, operation, and result before choosing.'
-  remediation_scene: ai-service-boundaries.s4
-  variants:
-  - id: ai-service-boundaries.transfer.1
-    prompt: What can make retrying a write unsafe for correctness?
-    options:
-    - id: a
-      text: The first attempt may already have taken effect
-    - id: b
-      text: Writes never have side effects
-    - id: c
-      text: Every timeout proves no execution
-    answer: a
-    feedback: Ambiguous outcomes can cause duplicates.
-  - id: ai-service-boundaries.transfer.2
-    prompt: Does a successful model API call prove workflow completion?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the response is streamed
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Other stages and outcome conditions still matter.
+  - id: ai-service-boundaries.base
+    objective_ref: objective.ai-service-boundaries
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Use queues and limits deliberately: trace the inputs, operation, and result before choosing.'
+    remediation_scene: ai-service-boundaries.s2
+    variants:
+      - id: ai-service-boundaries.base.1
+        prompt: What can an unbounded queue do during overload?
+        options:
+          - id: c
+            text: Remove all capacity constraints
+          - id: a
+            text: Accumulate delay and stale work
+          - id: b
+            text: Guarantee constant latency
+        answer: a
+        feedback: Backlog grows when arrivals exceed service capacity.
+        retired: true
+      - id: ai-service-boundaries.base.2
+        prompt: Why include evidence version in some answer-cache keys?
+        options:
+          - id: a
+            text: The supported answer can change when documents change
+          - id: b
+            text: Only to lengthen the key
+          - id: c
+            text: Versions never affect meaning
+        answer: a
+        feedback: Cache validity depends on its inputs.
+        retired: true
+  - id: ai-service-boundaries.transfer
+    objective_ref: objective.ai-service-boundaries
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Design explicit failure behavior: trace the inputs, operation, and result before choosing.'
+    remediation_scene: ai-service-boundaries.s4
+    variants:
+      - id: ai-service-boundaries.transfer.1
+        prompt: What can make retrying a write unsafe for correctness?
+        options:
+          - id: a
+            text: The first attempt may already have taken effect
+          - id: b
+            text: Writes never have side effects
+          - id: c
+            text: Every timeout proves no execution
+        answer: a
+        feedback: Ambiguous outcomes can cause duplicates.
+        retired: true
+      - id: ai-service-boundaries.transfer.2
+        prompt: Does a successful model API call prove workflow completion?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the response is streamed
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Other stages and outcome conditions still matter.
+        retired: true
+  - id: ai-service-boundaries.base.v2
+    objective_ref: objective.ai-service-boundaries
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Add up the time budget, ask what changes the right answer (for cache keys), and ask whether repeating a call could repeat an effect.
+    remediation_scene: ai-service-boundaries.timeouts
+    variants:
+      - id: ai-service-boundaries.base.v2.1
+        prompt: A service promises a reply within 4 s. Retrieval and checks take about 0.35 s, and the model call has a 3 s timeout. The model call just timed out. What should the service do?
+        options:
+          - id: b
+            text: Retry the model call once with the same 3 s timeout
+          - id: a
+            text: Send the fallback reply now and cancel the model call
+          - id: c
+            text: Raise the model timeout to 10 s so slow calls can finish
+        answer: a
+        feedback: About 0.65 s is left, so a retry would overrun the deadline by nearly 3 s. The fallback fits the budget, and cancelling stops paying for an answer nobody will read. A 10 s timeout just recreates the spinning widget.
+      - id: ai-service-boundaries.base.v2.2
+        prompt: A cache stores answers to "what time does the branch close today?" keyed only by branch name. What goes wrong?
+        options:
+          - id: c
+            text: Answers for one branch are shown to visitors of another branch
+          - id: b
+            text: The cache fills up with rarely asked questions and slows down
+          - id: a
+            text: An answer cached on one day is served on a day with other hours
+        answer: a
+        feedback: Closing time depends on the date, so the date must be in the key, along with the release that pins the index. The branch is already in the key, so branches don't mix.
+      - id: ai-service-boundaries.base.v2.3
+        prompt: The assistant asks the holds API to place a hold, and the call times out. What should it do next?
+        options:
+          - id: a
+            text: Retry with the same idempotency key so a repeat is recognized
+          - id: b
+            text: Retry with a fresh request, since the timeout means it failed
+          - id: c
+            text: Tell the visitor it failed and ask them to try again later
+        answer: a
+        feedback: A timeout means the reply didn't arrive, not that nothing happened. Reusing the key lets the holds API return the original result if the hold was placed. A fresh request, or the visitor trying again, can create a duplicate hold.
+      - id: ai-service-boundaries.base.v2.4
+        prompt: A vendor allows 200,000 tokens a minute. At peak, 90 questions a minute arrive, each using about 3,000 tokens. What happens without shedding or queueing?
+        options:
+          - id: b
+            text: Demand is 90 requests a minute, so a token limit is not involved
+          - id: c
+            text: Demand is 270,000 tokens an hour, well inside the minute limit
+          - id: a
+            text: Demand is 270,000 tokens a minute, so about a quarter is rejected
+        answer: a
+        feedback: 90 × 3,000 = 270,000 tokens a minute, 70,000 over the limit, so roughly 70,000 ÷ 270,000 ≈ 26% of requests get 429 errors unless the service sheds or queues them. Token limits apply alongside request limits, per minute, not per hour.
+  - id: ai-service-boundaries.transfer.v2
+    objective_ref: objective.ai-service-boundaries
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Find the boundary that failed, then choose the response that stays within the deadline, keeps the answer true, and doesn't repeat an effect.
+    remediation_scene: ai-service-boundaries.fallback
+    variants:
+      - id: ai-service-boundaries.transfer.v2.1
+        prompt: A food-delivery app uses a model to write a friendly summary of each order. The model API is down. Which response is best?
+        options:
+          - id: c
+            text: Hold each order until the model API has recovered
+          - id: a
+            text: Show the plain list of ordered items, without a summary
+          - id: b
+            text: Retry the model every second until a summary arrives
+        answer: a
+        feedback: The plain list is less friendly but completely accurate, which is what graceful degradation means. Holding orders or retrying in a loop turns a cosmetic failure into a broken service.
+      - id: ai-service-boundaries.transfer.v2.2
+        prompt: A clinic's scheduling bot sometimes gets model replies that are missing the required "time" field. What should the service do with such a reply?
+        options:
+          - id: a
+            text: Reject it at the output check, then repair or fall back
+          - id: b
+            text: Pass it on, since the model usually gets the time right
+          - id: c
+            text: Fill in the missing time with the most common slot
+        answer: a
+        feedback: The contract promises a complete reply, so the output check must stop malformed ones. Passing it on breaks the caller, and guessing a time invents a fact about someone's appointment.
+      - id: ai-service-boundaries.transfer.v2.3
+        prompt: A shop's product search gives up on the model after 2 s and shows plain results, but each abandoned model call keeps generating for another 15 s. What is missing?
+        options:
+          - id: b
+            text: A longer search timeout of about 20 s
+          - id: c
+            text: A cache for the most popular searches
+          - id: a
+            text: Cancelling the model call on timeout
+        answer: a
+        feedback: A timeout stops the caller waiting, not the work. Without cancellation, every abandoned call still uses capacity and money. A longer timeout makes shoppers wait, and a cache helps only repeat searches.
+      - id: ai-service-boundaries.transfer.v2.4
+        prompt: One user's script sends 500 questions a minute to a city's chatbot and uses up the shared vendor quota, so other residents get errors. Which fix targets the cause?
+        options:
+          - id: c
+            text: A shorter model timeout on each request
+          - id: b
+            text: A bigger vendor quota for the whole city
+          - id: a
+            text: A per-user rate limit at the city's gateway
+        answer: a
+        feedback: The problem is one client taking everyone's share, so limit each client before calls reach the vendor. A bigger quota just gives the script more to spend, and shorter timeouts don't reduce the number of calls.

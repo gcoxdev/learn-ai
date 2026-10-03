@@ -1,221 +1,455 @@
 schema_version: 0.2-draft
 lesson:
   id: model-parallel-training
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Split a model across devices in different ways
   state: draft
-  summary: Split either one calculation or a sequence of layers across devices, then account for the waiting
-    this creates.
+  summary: When one model won't fit on one GPU, you can slice each layer or stack the layers across GPUs. Each choice has a price, and you can calculate it.
   slot: M17.4
   category: learning
   sources:
-  - title: Megatron-LM
-    url: https://arxiv.org/abs/1909.08053
-  - title: GPipe
-    url: https://arxiv.org/abs/1811.06965
-  - title: DeepSeek-V3 Technical Report
-    url: https://arxiv.org/abs/2412.19437
+    - title: "Megatron-LM: Training Multi-Billion Parameter Language Models Using Model Parallelism (Shoeybi et al., 2019)"
+      url: https://arxiv.org/abs/1909.08053
+    - title: "GPipe: Efficient Training of Giant Neural Networks using Pipeline Parallelism (Huang et al., 2018)"
+      url: https://arxiv.org/abs/1811.06965
+    - title: "Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM (Narayanan et al., 2021)"
+      url: https://arxiv.org/abs/2104.04473
+    - title: DeepSeek-V3 Technical Report
+      url: https://arxiv.org/abs/2412.19437
 objectives:
-- id: objective.model-parallel-training
-  version: 1-draft
-  statement: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution;
-    each arrangement introduces specific communication and scheduling costs.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - model-parallel-training.base
-  - model-parallel-training.transfer
-  prerequisites:
-  - anyOf:
-    - objective.data-parallel-training
-  - anyOf:
-    - objective.tensor-shape-tracing
+  - id: objective.model-parallel-training
+    version: 2-draft
+    statement: Tensor, pipeline, context, and expert parallelism divide different dimensions of model execution; each arrangement introduces specific communication and scheduling costs.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - model-parallel-training.base.v2
+      - model-parallel-training.transfer.v2
+      - model-parallel-training.calculate
+    prerequisites:
+      - anyOf:
+          - objective.data-parallel-training
+      - anyOf:
+          - objective.tensor-shape-tracing
 scenes:
-- id: model-parallel-training.s1
-  title: Divide a calculation or divide its stages
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.model-parallel-training
-  markdown: 'A **tensor** is a multidimensional array of numbers. **Tensor parallelism** gives devices pieces
-    of one large operation—for example, different output columns of a layer’s matrix multiplication—and combines
-    the required results.
+  - id: model-parallel-training.s1
+    title: Slice each layer across GPUs
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.model-parallel-training
+    markdown: |-
+      Data parallelism gives every GPU a full copy of the model, so it can't help when one copy doesn't fit. The team's 7B model needs about 130 GB and each GPU has 80. They need to cut the model itself into pieces. There are two natural cuts: slice every layer, or stack groups of layers on different GPUs.
 
+      **Tensor parallelism** slices every layer. Take the MLP block of a GPT-style transformer layer: $Z = \text{GELU}(XA)\,B$, where $A$ widens each token's vector from 4,096 to 16,384 numbers and $B$ shrinks it back. Megatron-LM (Shoeybi et al., NVIDIA, 2019) split it across two GPUs like this:
 
-    **Pipeline parallelism** assigns consecutive layer groups to different devices. In a two-layer model, one
-    device could hold the first layer and another the second. That is different from dividing the first layer’s
-    columns between them.
+      1. Split $A$ **by columns**: GPU 1 gets the first 8,192 output columns, GPU 2 the rest. Each computes its half of $XA$ in full, so it can apply GELU on its own. GELU works one number at a time, so the halves never need to meet.
+      2. Split $B$ **by rows** to match: each GPU multiplies its half of the hidden vector by its half of $B$, producing a *partial* $Z$.
+      3. One all-reduce adds the two partial results. Every GPU now holds the full $Z$.
 
+      That's one all-reduce in the forward pass and one in the backward pass per block. Attention splits the same way, with whole heads on each GPU. Megatron-LM trained an 8.3-billion-parameter model on 512 GPUs with 8-way tensor parallelism inside each server.
 
-    Both arrangements spread one example’s computation across devices. They introduce communication and dependencies
-    as well as more available hardware.'
-  text_mode: 'A **tensor** is a multidimensional array of numbers. **Tensor parallelism** gives devices pieces
-    of one large operation—for example, different output columns of a layer’s matrix multiplication—and combines
-    the required results.
+      ```python run
+      import numpy as np
 
+      rng = np.random.default_rng(0)
+      d, f, tokens, T = 8, 32, 3, 2        # model width, MLP width, tokens, tensor-parallel GPUs
+      X = rng.standard_normal((tokens, d))
+      A = rng.standard_normal((d, f))      # first MLP weight
+      B = rng.standard_normal((f, d))      # second MLP weight
+      gelu = lambda z: 0.5 * z * (1 + np.tanh(0.7978845608 * (z + 0.044715 * z**3)))
 
-    **Pipeline parallelism** assigns consecutive layer groups to different devices. In a two-layer model, one
-    device could hold the first layer and another the second. That is different from dividing the first layer’s
-    columns between them.
+      full = gelu(X @ A) @ B               # one GPU does the whole MLP
 
+      A_parts = np.split(A, T, axis=1)     # GPU t gets a block of A's columns...
+      B_parts = np.split(B, T, axis=0)     # ...and the matching block of B's rows
+      partials = [gelu(X @ A_t) @ B_t for A_t, B_t in zip(A_parts, B_parts)]  # no talking
+      tp = sum(partials)                   # the single all-reduce
 
-    Both arrangements spread one example’s computation across devices. They introduce communication and dependencies
-    as well as more available hardware.'
-  bridges: []
-- id: model-parallel-training.s2
-  title: Fill a pipeline with microbatches
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.model-parallel-training
-  markdown: 'Imagine layers A and B on separate devices. After device A finishes microbatch one, it can process
-    microbatch two while device B processes one. Start-up, drain, and dependency gaps create pipeline bubbles.
-    Smaller microbatches can improve scheduling but increase overhead or reduce kernel efficiency.
+      print("max difference from one GPU:", np.abs(full - tp).max())
+      print("weights per GPU:", A_parts[0].size + B_parts[0].size, "of", A.size + B.size)
+      ```
 
+      Set `T = 4` or `T = 8`: the answer still matches to rounding error while each GPU's share of the weights shrinks. The price is two all-reduces per layer in the forward pass (one for attention, one for the MLP) and two more in backward, for every microbatch. So tensor parallelism stays inside one machine, on the fast NVLink connections between its 8 GPUs.
+    bridges: []
+  - id: model-parallel-training.s2
+    title: Stack the layers and mind the bubble
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.model-parallel-training
+    markdown: |-
+      **Pipeline parallelism** makes the other cut: layers 1–8 on GPU 1, layers 9–16 on GPU 2, and so on. Each GPU passes its output activations to the next, like stations on an assembly line. Only activations at stage boundaries travel, so the traffic is light.
 
-    Assume each stage takes one time unit. At time 1, A processes microbatch 1 while B waits. At time 2, A
-    processes 2 and B processes 1. After A finishes the last microbatch, B still has work to drain. These idle
-    start/end periods are **bubbles**. More devices do not remove the data dependencies.'
-  text_mode: 'Imagine layers A and B on separate devices. After device A finishes microbatch one, it can process
-    microbatch two while device B processes one. Start-up, drain, and dependency gaps create pipeline bubbles.
-    Smaller microbatches can improve scheduling but increase overhead or reduce kernel efficiency.
+      The catch is waiting. With a whole batch at once, GPU 2 idles until GPU 1 finishes, then GPU 1 idles while the others work. GPipe (Huang et al., Google, 2018) fixed most of this by cutting the batch into $m$ **microbatches** that follow each other down the pipe. Here is a 4-stage pipeline with 4 microbatches (F2 means "forward pass of microbatch 2"):
 
+      | Time slot | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+      | --- | --- | --- | --- | --- | --- | --- | --- |
+      | GPU 1 (layers 1–8) | F1 | F2 | F3 | F4 | · | · | · |
+      | GPU 2 (layers 9–16) | · | F1 | F2 | F3 | F4 | · | · |
+      | GPU 3 (layers 17–24) | · | · | F1 | F2 | F3 | F4 | · |
+      | GPU 4 (layers 25–32) | · | · | · | F1 | F2 | F3 | F4 |
 
-    Assume each stage takes one time unit. At time 1, A processes microbatch 1 while B waits. At time 2, A
-    processes 2 and B processes 1. After A finishes the last microbatch, B still has work to drain. These idle
-    start/end periods are **bubbles**. More devices do not remove the data dependencies.'
-  bridges: []
-- id: model-parallel-training.s3
-  title: Partition context or experts
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.model-parallel-training
-  markdown: Context parallelism distributes sequence positions while communicating the information attention
-    needs. Expert parallelism distributes different expert networks and sends routed tokens to their owners.
-    Long context and sparse expert models therefore create different communication patterns, even when parameter
-    totals look similar.
-  text_mode: Context parallelism distributes sequence positions while communicating the information attention
-    needs. Expert parallelism distributes different expert networks and sends routed tokens to their owners.
-    Long context and sparse expert models therefore create different communication patterns, even when parameter
-    totals look similar.
-  bridges: []
-- id: model-parallel-training.s4
-  title: Compose strategies around hardware
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.model-parallel-training
-  markdown: 'A real run can combine data, tensor, pipeline, and other parallel dimensions. Frequent communication
-    often benefits from fast nearby links; cross-node transfers can dominate. Draw which tensors move, their
-    sizes, and their timing before claiming that adding devices will scale linearly.
+      Each GPU works 4 of 7 slots. The idle dots, while the pipe fills and drains, are the **pipeline bubble**. The backward pass runs the same pattern in reverse, with the same idle share.
 
+      :::papers Bubble fraction for a GPipe schedule
+      With $p$ stages and $m$ microbatches, the forward sweep takes $m + p - 1$ slots and each GPU is busy for $m$ of them, so the idle fraction is
 
-    A **node** is a machine that can contain several accelerators. Communication inside that machine and between
-    machines can have different speeds. Draw the required transfers on the layer diagram, then ask whether
-    the saved computation exceeds the new waiting time.'
-  text_mode: 'A real run can combine data, tensor, pipeline, and other parallel dimensions. Frequent communication
-    often benefits from fast nearby links; cross-node transfers can dominate. Draw which tensors move, their
-    sizes, and their timing before claiming that adding devices will scale linearly.
+      $$\text{bubble} = \frac{p-1}{m+p-1}$$
 
+      For $p = 4, m = 4$: 3/7 ≈ 42.9%, as in the table. GPipe's authors found the bubble becomes small once $m \ge 4p$. Narayanan et al. (2021) write the same cost as $(p-1)/m$, the bubble time relative to the useful time.
+      :::
 
-    A **node** is a machine that can contain several accelerators. Communication inside that machine and between
-    machines can have different speeds. Draw the required transfers on the layer diagram, then ask whether
-    the saved computation exceeds the new waiting time.'
-  bridges: []
-- id: model-parallel-training.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.model-parallel-training
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: 'Parallel methods divide different things: examples, tensor operations, layer stages, context positions,
-    or experts. Draw the required transfers to understand the costs of each choice.'
-- id: model-parallel-training.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.model-parallel-training
-  markdown: 'Parallel methods divide different things: examples, tensor operations, layer stages, context positions,
-    or experts. Draw the required transfers to understand the costs of each choice.'
-  text_mode: 'Parallel methods divide different things: examples, tensor operations, layer stages, context
-    positions, or experts. Draw the required transfers to understand the costs of each choice.'
+      :::predict Keep 4 stages but use 16 microbatches. What fraction is bubble?
+      3/(16 + 3) = 3/19 ≈ 15.8%. At 32 microbatches it's 3/35 ≈ 8.6%. More microbatches help, but each one is either smaller (fewer tokens per weight read, lower arithmetic intensity) or the global batch grows.
+      :::
+
+      ```python run
+      def schedule(p, m):
+          """GPipe forward sweep: p stages, m microbatches, one time slot per stage."""
+          slots = m + p - 1
+          for stage in range(p):
+              row = [f"F{t - stage + 1}" if 0 <= t - stage < m else "." for t in range(slots)]
+              print(f"GPU {stage + 1}: " + " ".join(f"{c:>3}" for c in row))
+          idle = p * slots - p * m
+          print(f"bubble: {idle} of {p * slots} slots = {idle / (p * slots):.1%};"
+                f" (p-1)/(m+p-1) = {(p - 1) / (m + p - 1):.1%}\n")
+
+      schedule(p=4, m=4)
+      schedule(p=4, m=16)
+      ```
+
+      Try `p=8, m=8`: nearly half the time is bubble. Then find the smallest `m` that gets `p=4` down to 10% or less (it's 27).
+    bridges: []
+  - id: model-parallel-training.s3
+    title: Split the sequence or the experts
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.model-parallel-training
+    markdown: |-
+      Two more cuts matter for particular models.
+
+      **Context parallelism** splits a long sequence's positions across GPUs, so a 128,000-token sequence's activations don't all live on one GPU. Attention still needs every query to see the keys and values it's allowed to attend to, so GPUs pass key and value blocks among themselves.
+
+      **Expert parallelism** applies to mixture-of-experts models, where each token is routed to a few of many expert MLPs. Different experts live on different GPUs, and every layer sends each token to the GPUs holding its chosen experts and back. The mixture-of-experts module covers this all-to-all traffic in detail.
+    bridges: []
+  - id: model-parallel-training.s4
+    title: Combine them into 3-D parallelism
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.model-parallel-training
+    markdown: |-
+      Real runs combine the cuts, placing each where its traffic fits the hardware. A **node** is one machine; the team has 32 nodes of 8 GPUs. Inside a node, GPUs talk over NVLink; between nodes, over a slower network. Here is one layout for the team, called **3-D parallelism** because it uses three cuts at once:
+
+      | Cut | Size | Traffic | Where it runs |
+      | --- | ---: | --- | --- |
+      | Tensor | 2 | Two all-reduces per layer forward, two backward | Inside a node |
+      | Pipeline | 4 | Activations at 3 stage boundaries | Inside a node |
+      | Data | 32 | One gradient all-reduce per step | Across nodes |
+
+      2 × 4 × 32 = 256 GPUs. Each node holds one complete replica, split 2-way by tensor and 4-way by pipeline, so each GPU keeps 1/8 of the model states: 112 GB ÷ 8 = 14 GB. Only the gradient exchange crosses the slower network, and the data-parallel lesson showed how to hide it.
+
+      :::mixup "Twice the GPUs, half the time."
+      Each cut adds a cost: tensor parallelism adds all-reduces inside every layer, pipelines add a bubble, and data parallelism adds a gradient exchange and a larger global batch. Before scaling, write down which tensors move, how big they are, and over which link.
+      :::
+    diagram:
+      caption: One node of the team's 3-D layout. Four pipeline stages of two tensor-parallel GPUs each hold one full replica; each stage all-reduces gradients with the same stage on the 31 other nodes, which work on different data.
+      description: Stage 1 (GPUs 1–2, layers 1–8) sends activations to stage 2 (GPUs 3–4, layers 9–16), which sends to stage 3 (GPUs 5–6, layers 17–24), which sends to stage 4 (GPUs 7–8, layers 25–32). Within each stage the two GPUs split every layer by tensor parallelism over NVLink. Dashed arrows run from stages 1 and 2 to a box for those same stages on the 31 other nodes, and from stages 3 and 4 to a box for theirs. Every stage all-reduces its gradients over the network with its counterparts, as data parallelism.
+      nodes:
+        - id: st1
+          label: "Stage 1: GPUs 1–2"
+          note: layers 1–8
+          col: 0
+          row: 0
+          tone: accent
+        - id: st2
+          label: "Stage 2: GPUs 3–4"
+          note: layers 9–16
+          col: 0
+          row: 1
+          tone: accent
+        - id: st3
+          label: "Stage 3: GPUs 5–6"
+          note: layers 17–24
+          col: 0
+          row: 2
+          tone: accent
+        - id: st4
+          label: "Stage 4: GPUs 7–8"
+          note: layers 25–32
+          col: 0
+          row: 3
+          tone: accent
+        - id: peers
+          label: Stages 1 and 2
+          note: on the 31 other nodes
+          col: 2
+          row: 1
+          tone: muted
+        - id: peers2
+          label: Stages 3 and 4
+          note: on the 31 other nodes
+          col: 2
+          row: 2
+          tone: muted
+      edges:
+        - from: st1
+          to: st2
+          label: activations
+        - from: st2
+          to: st3
+          label: activations
+        - from: st3
+          to: st4
+          label: activations
+        - from: st1
+          to: peers
+          dashed: true
+        - from: st2
+          to: peers
+          label: gradient all-reduce
+          dashed: true
+        - from: st3
+          to: peers2
+          label: gradient all-reduce
+          dashed: true
+        - from: st4
+          to: peers2
+          dashed: true
+    bridges: []
+  - id: model-parallel-training.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.model-parallel-training
+    markdown: Bubble fractions to compute, a Megatron-style split, a two-machine layout, a slow pipeline stage, and a mixture-of-experts model test whether you can pick the right cut and predict its cost.
+    takeaway: |-
+      Tensor parallelism slices each layer and needs all-reduces inside it, so it stays within a node. Pipeline parallelism stacks layers and leaves a bubble of (p − 1)/(m + p − 1). Real runs combine them with data parallelism.
+  - id: model-parallel-training.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.model-parallel-training
+    markdown: |-
+      Parallel methods divide different things: examples, tensor operations, layer stages, context positions, or experts. Draw the required transfers to understand the costs of each choice.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - model-parallel-training.s1
-    - model-parallel-training.s2
-    - model-parallel-training.s3
-    - model-parallel-training.s4
-    - model-parallel-training.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - model-parallel-training.s1
+        - model-parallel-training.s2
+        - model-parallel-training.s3
+        - model-parallel-training.s4
+        - model-parallel-training.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     model-parallel-training.recap: model-parallel-training.check
 assessment_families:
-- id: model-parallel-training.base
-  objective_ref: objective.model-parallel-training
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Fill a pipeline with microbatches: trace the inputs, operation, and result before choosing.'
-  remediation_scene: model-parallel-training.s2
-  variants:
-  - id: model-parallel-training.base.1
-    prompt: Splitting matrix output columns is which strategy?
-    options:
-    - id: a
-      text: Tensor parallelism
-    - id: b
-      text: Only data parallelism
-    - id: c
-      text: Only dataset shuffling
-    answer: a
-    feedback: Tensor parallelism partitions an operation’s tensors.
-  - id: model-parallel-training.base.2
-    prompt: What is a pipeline bubble?
-    options:
-    - id: b
-      text: An additional learned layer
-    - id: c
-      text: A duplicate training label
-    - id: a
-      text: An idle interval caused by pipeline dependencies or filling/draining
-    answer: a
-    feedback: Scheduling leaves some stages waiting.
-- id: model-parallel-training.transfer
-  objective_ref: objective.model-parallel-training
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compose strategies around hardware: trace the inputs, operation, and result before choosing.'
-  remediation_scene: model-parallel-training.s4
-  variants:
-  - id: model-parallel-training.transfer.1
-    prompt: Sending token activations to devices holding selected experts is what?
-    options:
-    - id: b
-      text: Pure data replication
-    - id: c
-      text: Tokenizer training
-    - id: a
-      text: Expert parallelism
-    answer: a
-    feedback: Expert ownership determines routed activation transfers.
-  - id: model-parallel-training.transfer.2
-    prompt: Does doubling devices guarantee halved runtime?
-    options:
-    - id: c
-      text: Only parameter count matters
-    - id: a
-      text: No; communication and scheduling can limit scaling
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Additional hardware changes both capacity and coordination costs.
+  - id: model-parallel-training.base
+    objective_ref: objective.model-parallel-training
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Fill a pipeline with microbatches: trace the inputs, operation, and result before choosing.'
+    remediation_scene: model-parallel-training.s2
+    variants:
+      - id: model-parallel-training.base.1
+        prompt: Splitting matrix output columns is which strategy?
+        options:
+          - id: a
+            text: Tensor parallelism
+          - id: b
+            text: Only data parallelism
+          - id: c
+            text: Only dataset shuffling
+        answer: a
+        feedback: Tensor parallelism partitions an operation’s tensors.
+        retired: true
+      - id: model-parallel-training.base.2
+        prompt: What is a pipeline bubble?
+        options:
+          - id: b
+            text: An additional learned layer
+          - id: c
+            text: A duplicate training label
+          - id: a
+            text: An idle interval caused by pipeline dependencies or filling/draining
+        answer: a
+        feedback: Scheduling leaves some stages waiting.
+        retired: true
+  - id: model-parallel-training.transfer
+    objective_ref: objective.model-parallel-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compose strategies around hardware: trace the inputs, operation, and result before choosing.'
+    remediation_scene: model-parallel-training.s4
+    variants:
+      - id: model-parallel-training.transfer.1
+        prompt: Sending token activations to devices holding selected experts is what?
+        options:
+          - id: b
+            text: Pure data replication
+          - id: c
+            text: Tokenizer training
+          - id: a
+            text: Expert parallelism
+        answer: a
+        feedback: Expert ownership determines routed activation transfers.
+        retired: true
+      - id: model-parallel-training.transfer.2
+        prompt: Does doubling devices guarantee halved runtime?
+        options:
+          - id: c
+            text: Only parameter count matters
+          - id: a
+            text: No; communication and scheduling can limit scaling
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Additional hardware changes both capacity and coordination costs.
+        retired: true
+  - id: model-parallel-training.base.v2
+    objective_ref: objective.model-parallel-training
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Tensor parallelism splits the matrices inside a layer and must add partial results every layer; pipeline parallelism splits the stack of layers and idles while the pipe fills and drains.
+    remediation_scene: model-parallel-training.s2
+    variants:
+      - id: model-parallel-training.base.v2.1
+        prompt: In a Megatron-style tensor-parallel MLP, why is the first weight matrix split by columns rather than by rows?
+        options:
+          - id: b
+            text: Column blocks take less memory than row blocks of the same matrix
+          - id: a
+            text: Each GPU gets complete values for its columns, so GELU runs locally
+          - id: c
+            text: Row splitting would require each GPU to store extra bias terms
+        answer: a
+        feedback: A column split gives each GPU finished pre-activations for its share of the hidden units, and GELU acts on each number separately, so no communication is needed until the row-split second matrix. A row split would leave partial sums, and GELU of a partial sum is wrong. Both blocks hold the same number of weights.
+      - id: model-parallel-training.base.v2.2
+        prompt: A GPipe-style pipeline has 4 stages and processes 4 microbatches per step. What fraction of each GPU's time is bubble?
+        options:
+          - id: c
+            text: 1/4, one slot per stage
+          - id: b
+            text: 3/4, all but one stage
+          - id: a
+            text: 3/7, three idle slots of seven
+        answer: a
+        feedback: The sweep takes m + p − 1 = 7 slots and each GPU works m = 4 of them, so (p − 1)/(m + p − 1) = 3/7 ≈ 43% is idle.
+      - id: model-parallel-training.base.v2.3
+        prompt: With the number of pipeline stages fixed, which change shrinks the bubble fraction?
+        options:
+          - id: a
+            text: Splitting each step's batch into more microbatches
+          - id: b
+            text: Moving to a faster link between neighboring stages
+          - id: c
+            text: Adding more stages so that each holds fewer layers
+        answer: a
+        feedback: The bubble is (p − 1)/(m + p − 1), so raising m shrinks it. Adding stages raises p and makes it worse, and a faster link speeds up transfers but doesn't remove the fill-and-drain idle time.
+      - id: model-parallel-training.base.v2.4
+        prompt: Which kind of parallelism puts an all-reduce inside every transformer layer, which is why it's normally kept within one machine?
+        options:
+          - id: b
+            text: Pipeline parallelism
+          - id: c
+            text: Data parallelism
+          - id: a
+            text: Tensor parallelism
+        answer: a
+        feedback: Tensor parallelism must add partial results in every MLP and attention block, forward and backward. Pipelines send activations only at stage boundaries, and data parallelism exchanges gradients once per step.
+  - id: model-parallel-training.transfer.v2
+    objective_ref: objective.model-parallel-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Match each cut to its traffic. Put the chattiest cut on the fastest links, and remember that a pipeline runs at the pace of its slowest stage.
+    remediation_scene: model-parallel-training.s4
+    variants:
+      - id: model-parallel-training.transfer.v2.1
+        prompt: A lab has two machines of 4 GPUs each, fast links inside each machine and a slow network between them. It wants 4-way tensor and 2-way pipeline parallelism. Which placement fits?
+        options:
+          - id: a
+            text: Each tensor-parallel group inside one machine; the two pipeline stages on different machines
+          - id: b
+            text: Each tensor-parallel group spread across both machines; each pipeline stage inside one
+          - id: c
+            text: Alternate the machines within every group so both kinds of traffic cross the network
+        answer: a
+        feedback: Tensor parallelism all-reduces inside every layer, so it needs the fast in-machine links. A pipeline sends only boundary activations, which the slow network can carry.
+      - id: model-parallel-training.transfer.v2.2
+        prompt: A team trains on 128,000-token documents. Even with tensor parallelism, one sequence's activations don't fit on a GPU. Which technique spreads the positions of a single sequence across GPUs?
+        options:
+          - id: c
+            text: Data parallelism, giving each GPU a different document
+          - id: a
+            text: Context parallelism, passing key and value blocks around
+          - id: b
+            text: Pipeline parallelism, giving each GPU different layers
+        answer: a
+        feedback: Context parallelism splits the sequence dimension and exchanges keys and values so attention still sees every allowed pair. Data parallelism still needs a whole sequence per GPU, and a pipeline stage still holds all positions for its layers.
+      - id: model-parallel-training.transfer.v2.3
+        prompt: A mixture-of-experts model has 64 expert MLPs per layer, and each token is sent to 2 of them. Which arrangement places experts on different GPUs and routes tokens to them?
+        options:
+          - id: b
+            text: Tensor parallelism, slicing each expert's matrices by columns
+          - id: c
+            text: Pipeline parallelism, placing different expert layers on each GPU
+          - id: a
+            text: Expert parallelism, with all-to-all traffic that sends tokens out and back
+        answer: a
+        feedback: Expert parallelism assigns whole experts to GPUs and ships each token to the GPUs of its chosen experts, then back. Slicing experts or stacking layers doesn't match the per-token routing.
+      - id: model-parallel-training.transfer.v2.4
+        prompt: In a 4-stage pipeline, stage 3 holds the heaviest layers and takes 1.5 times as long per microbatch as the other stages. What happens to the pipeline?
+        options:
+          - id: c
+            text: The other stages run at full speed while only stage 3's work lags behind
+          - id: a
+            text: Every stage ends up moving at stage 3's pace, so the layers need rebalancing
+          - id: b
+            text: The faster stages automatically take over some of stage 3's layers
+        answer: a
+        feedback: Microbatches can't leave stage 3 faster than it processes them, so stage 4 waits for it and stages 1–2 soon stall too. A running pipeline doesn't move layers between stages; the team must reassign layers so each stage takes about the same time.
+  - id: model-parallel-training.calculate
+    objective_ref: objective.model-parallel-training
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Bubble fraction = (p − 1)/(m + p − 1), with p stages and m microbatches; give percentages to one decimal place. For 3-D layouts, total GPUs = tensor × pipeline × data."
+    remediation_scene: model-parallel-training.s2
+    absolute_tolerance: 0.2
+    variants:
+      - id: model-parallel-training.calculate.1
+        prompt: A pipeline has 4 stages and 16 microbatches per step. What percentage of the time is bubble?
+        answer: 15.8
+        feedback: 3 ÷ (16 + 3) = 3/19 ≈ 15.8%.
+      - id: model-parallel-training.calculate.2
+        prompt: A pipeline has 8 stages and 8 microbatches per step. What percentage of the time is bubble?
+        answer: 46.7
+        feedback: 7 ÷ (8 + 7) = 7/15 ≈ 46.7%. With as many stages as microbatches, nearly half the time is idle.
+      - id: model-parallel-training.calculate.3
+        prompt: A pipeline has 2 stages and 8 microbatches per step. What percentage of the time is bubble?
+        answer: 11.1
+        feedback: 1 ÷ (8 + 1) = 1/9 ≈ 11.1%.
+      - id: model-parallel-training.calculate.4
+        prompt: A pipeline has 4 stages. What is the smallest number of microbatches that brings the bubble down to 10% or less?
+        answer: 27
+        feedback: You need 3/(m + 3) ≤ 0.1, so m + 3 ≥ 30 and m ≥ 27. With 26 microbatches the bubble is 3/29 ≈ 10.3%.
+      - id: model-parallel-training.calculate.5
+        prompt: A 512-GPU run uses 8-way tensor parallelism and 4-way pipeline parallelism. How many data-parallel replicas does it have?
+        answer: 16
+        feedback: 512 ÷ (8 × 4) = 16 replicas, each spread over 32 GPUs.
+      - id: model-parallel-training.calculate.6
+        prompt: A 13-billion-parameter model needs 16 bytes per parameter of model states. Split 4-way by tensor and 2-way by pipeline, how many GB of model states does each GPU hold?
+        answer: 26
+        feedback: 13 billion × 16 = 208 GB in total, divided across 4 × 2 = 8 GPUs = 26 GB each. Data parallelism doesn't divide it further; every replica holds its own copy.

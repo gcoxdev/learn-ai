@@ -1,209 +1,442 @@
 schema_version: 0.2-draft
 lesson:
   id: generative-adversarial-learning
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Train a generator against a learned discriminator
   state: draft
-  summary: Train a sample generator using feedback from another learned network, then check realism and coverage
-    separately.
+  summary: A forger learns by fooling a detective who keeps getting sharper. That game produced the first photorealistic fake faces, and a famous way of failing. Work out the detective's best strategy exactly.
   slot: M22.4
   category: learning
   sources:
-  - title: Generative Adversarial Networks
-    url: https://arxiv.org/abs/1406.2661
-  - title: Wasserstein GAN
-    url: https://arxiv.org/abs/1701.07875
+    - title: Generative Adversarial Networks (Goodfellow et al., 2014)
+      url: https://arxiv.org/abs/1406.2661
+    - title: Wasserstein GAN (Arjovsky, Chintala & Bottou, 2017)
+      url: https://arxiv.org/abs/1701.07875
+    - title: A Style-Based Generator Architecture for Generative Adversarial Networks (StyleGAN; Karras, Laine & Aila, 2018)
+      url: https://arxiv.org/abs/1812.04948
+    - title: Diffusion Models Beat GANs on Image Synthesis (Dhariwal & Nichol, 2021)
+      url: https://arxiv.org/abs/2105.05233
 objectives:
-- id: objective.generative-adversarial-learning
-  version: 1-draft
-  statement: A GAN learns through competing generator and discriminator objectives; alternating updates can
-    create useful samples but also instability, mode collapse, and misleading quality impressions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - generative-adversarial-learning.base
-  - generative-adversarial-learning.transfer
-  prerequisites:
-  - anyOf:
-    - objective.generative-models
-  - anyOf:
-    - objective.logistic-regression
-  - anyOf:
-    - objective.neural-training-loop
+  - id: objective.generative-adversarial-learning
+    version: 2-draft
+    statement: A GAN learns through competing generator and discriminator objectives; alternating updates can create useful samples but also instability, mode collapse, and misleading quality impressions.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - generative-adversarial-learning.base.v2
+      - generative-adversarial-learning.transfer.v2
+      - generative-adversarial-learning.calculate
+    prerequisites:
+      - anyOf:
+          - objective.generative-models
+      - anyOf:
+          - objective.logistic-regression
+      - anyOf:
+          - objective.neural-training-loop
 scenes:
-- id: generative-adversarial-learning.s1
-  title: Two networks provide opposing signals
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.generative-adversarial-learning
-  markdown: 'A **generative adversarial network**, or **GAN**, trains two networks with opposing roles.
+  - id: generative-adversarial-learning.s1
+    title: A forger and a detective
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.generative-adversarial-learning
+    markdown: |-
+      A forger paints fake banknotes. A detective inspects notes and says "real" or "fake". Each time the detective catches a fake, the forger learns what gave it away; each time a fake slips through, the detective learns what to look for. Neither is ever told what a banknote *should* look like. They improve by competing.
 
+      In 2014, Ian Goodfellow and colleagues in Montreal turned this game into a training method: the **generative adversarial network**, or **GAN**. It has two neural networks:
 
-    The **generator** turns noise, and optionally a condition such as a label, into a sample. The **discriminator**
-    learns to distinguish training examples from generated samples. Feedback through the discriminator helps
-    the generator change its outputs to resemble the data more closely.
+      - The **generator** $G$ takes random noise $z$ (a vector of random numbers, the latent from the first lesson of this module) and outputs a sample $G(z)$, such as an image.
+      - The **discriminator** $D$ takes an image and outputs $D(x)$, its probability that the image is real. It's a classifier, like the logistic regression you've seen, trained on real images labeled 1 and generated ones labeled 0.
 
+      The generator never sees a real image. Its only teacher is the gradient that flows back through the discriminator: "change these pixels this way and you'll look more real."
+    diagram:
+      caption: One round of GAN training. Both networks learn from the discriminator's verdicts.
+      description: Random noise z goes into the generator, which produces a fake image. Fake images and real training images both go to the discriminator, which outputs the probability that each is real. The discriminator is updated to label real images 1 and fakes 0. The generator is updated, through the discriminator's gradient, to make its fakes score closer to real.
+      nodes:
+        - id: noise
+          label: Noise z
+          note: random numbers
+          col: 0
+          row: 0
+          tone: muted
+        - id: gen
+          label: Generator G
+          col: 1
+          row: 0
+          tone: accent
+        - id: fake
+          label: Fake image G(z)
+          col: 2
+          row: 0
+        - id: real
+          label: Real training image
+          col: 2
+          row: 1
+          tone: data
+        - id: disc
+          label: Discriminator D
+          note: outputs P(real)
+          col: 3
+          row: 0
+          tone: accent
+        - id: verdict
+          label: Verdict, e.g. D = 0.3
+          col: 4
+          row: 0
+          tone: warn
+      edges:
+        - from: noise
+          to: gen
+        - from: gen
+          to: fake
+        - from: fake
+          to: disc
+        - from: real
+          to: disc
+        - from: disc
+          to: verdict
+        - from: verdict
+          to: gen
+          label: gradient for G
+          dashed: true
+          bend: -2
+    bridges: []
+  - id: generative-adversarial-learning.s2
+    title: Take turns, one step each
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.generative-adversarial-learning
+    markdown: |-
+      Training alternates. Take a batch of real images and a batch of fakes.
 
-    “Adversarial” refers to these opposed training roles. Different GAN objectives turn the competition into
-    different losses and learning signals.'
-  text_mode: 'A **generative adversarial network**, or **GAN**, trains two networks with opposing roles.
+      1. **Discriminator step.** Hold $G$ fixed. Update $D$'s weights to push $D(\text{real})$ toward 1 and $D(\text{fake})$ toward 0, exactly like training a classifier with cross-entropy.
+      2. **Generator step.** Hold $D$ fixed. Backpropagate from $D$'s output, through $D$, into $G$'s weights, and update $G$ so that $D(G(z))$ goes up.
 
+      Both networks run in both steps; what changes is whose weights move.
 
-    The **generator** turns noise, and optionally a condition such as a label, into a sample. The **discriminator**
-    learns to distinguish training examples from generated samples. Feedback through the discriminator helps
-    the generator change its outputs to resemble the data more closely.
+      :::papers The GAN minimax objective (Goodfellow et al., 2014)
+      $$\min_G \max_D \; V(D, G) = \mathbb{E}_{x \sim p_\text{data}}\big[\log D(x)\big] + \mathbb{E}_{z \sim p_z}\big[\log\big(1 - D(G(z))\big)\big]$$
 
+      $D$ wants $V$ large: $\log D(x)$ near 0 for real images and $\log(1 - D(G(z)))$ near 0 for fakes. $G$ appears only in the second term and wants it very negative, which means $D(G(z))$ near 1. In practice the paper suggests a swap: early on, $D$ rejects fakes easily, $\log(1 - D(G(z)))$ flattens out, and $G$ gets almost no gradient. So $G$ instead maximizes $\log D(G(z))$, the **non-saturating** loss, which pushes hardest exactly when $G$ is losing.
+      :::
 
-    “Adversarial” refers to these opposed training roles. Different GAN objectives turn the competition into
-    different losses and learning signals.'
-  bridges: []
-- id: generative-adversarial-learning.s2
-  title: Alternate updates rather than assume equilibrium
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.generative-adversarial-learning
-  markdown: 'An implementation commonly updates the discriminator using real and generated batches, then updates
-    the generator using a differentiable discriminator score. The opponent changes over training, unlike fitting
-    one fixed target. An ideal mathematical equilibrium does not guarantee a practical optimizer reaches it.
+      This is why GAN training is unlike fitting one fixed target. The discriminator is a moving target, and each network's progress changes the other's loss. There's no single number that should steadily fall.
+    bridges: []
+  - id: generative-adversarial-learning.s5
+    title: The best detective, worked out
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.generative-adversarial-learning
+    markdown: |-
+      Suppose the generator is frozen. What is the best discriminator possible? Look at one image $x$. It shows up among real images with probability $p_\text{data}(x)$ and among fakes with probability $p_g(x)$. The discriminator should report the fraction of its appearances that are real:
 
+      $$D^*(x) = \frac{p_\text{data}(x)}{p_\text{data}(x) + p_g(x)}$$
 
-    For one generator update, hold discriminator parameters fixed while differentiating its score with respect
-    to the generated sample and back through the generator. This supplies a direction for changing generator
-    weights. For a discriminator update, adjust the discriminator using real and generated examples. Which
-    parameters move is part of each step, even though both networks participate in the calculation.'
-  text_mode: 'An implementation commonly updates the discriminator using real and generated batches, then updates
-    the generator using a differentiable discriminator score. The opponent changes over training, unlike fitting
-    one fixed target. An ideal mathematical equilibrium does not guarantee a practical optimizer reaches it.
+      Take four kinds of doodle: real data is 40% cats, 30% dogs, 20% fish, 10% birds. A poor generator makes 10% each of cats, dogs, and fish, and 70% birds. For a bird, $D^* = 0.1 / (0.1 + 0.7) = 0.125$: birds are mostly fake, so they look suspicious. For a cat, $D^* = 0.4 / (0.4 + 0.1) = 0.8$.
 
+      :::predict What does D* say everywhere once the generator matches the data exactly?
+      $p_g = p_\text{data}$, so $D^* = p/(p + p) = 0.5$ for every image. The best detective can only shrug. Then $V = \log 0.5 + \log 0.5 = -\log 4 \approx -1.386$, the lowest value the generator can force. Goodfellow and colleagues proved this is the game's global optimum.
+      :::
 
-    For one generator update, hold discriminator parameters fixed while differentiating its score with respect
-    to the generated sample and back through the generator. This supplies a direction for changing generator
-    weights. For a discriminator update, adjust the discriminator using real and generated examples. Which
-    parameters move is part of each step, even though both networks participate in the calculation.'
-  bridges: []
-- id: generative-adversarial-learning.s3
-  title: Recognize mode collapse
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.generative-adversarial-learning
-  markdown: Imagine a dataset containing circles, squares, and triangles while the generator emits only convincing
-    circles. Individual samples may look good, but distribution coverage is poor. This is a mode-collapse pattern.
-    Visual inspection of a few selected successes can conceal it.
-  text_mode: Imagine a dataset containing circles, squares, and triangles while the generator emits only convincing
-    circles. Individual samples may look good, but distribution coverage is poor. This is a mode-collapse pattern.
-    Visual inspection of a few selected successes can conceal it.
-  bridges: []
-- id: generative-adversarial-learning.s4
-  title: Evaluate more than realism
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.generative-adversarial-learning
-  markdown: Inspect diversity, conditioning accuracy, memorization, and failure cases alongside distributional
-    metrics. Training stability depends on architecture, normalization, losses, and update balance. A discriminator
-    score from the training game is not automatically a calibrated, independent measure of real-world sample
-    quality.
-  text_mode: Inspect diversity, conditioning accuracy, memorization, and failure cases alongside distributional
-    metrics. Training stability depends on architecture, normalization, losses, and update balance. A discriminator
-    score from the training game is not automatically a calibrated, independent measure of real-world sample
-    quality.
-  bridges: []
-- id: generative-adversarial-learning.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.generative-adversarial-learning
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A GAN trains a generator using feedback from a discriminator. Check whether it produces both convincing
-    samples and the variety present in the data.
-- id: generative-adversarial-learning.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.generative-adversarial-learning
-  markdown: A GAN trains a generator using feedback from a discriminator. Check whether it produces both convincing
-    samples and the variety present in the data.
-  text_mode: A GAN trains a generator using feedback from a discriminator. Check whether it produces both convincing
-    samples and the variety present in the data.
+      ```python run
+      import numpy as np
+
+      kinds  = ["cat", "dog", "fish", "bird"]
+      p_data = np.array([0.4, 0.3, 0.2, 0.1])   # real doodles
+      p_g    = np.array([0.1, 0.1, 0.1, 0.7])   # a poor generator: mostly birds
+
+      d_star = p_data / (p_data + p_g)           # the best possible discriminator
+      for k, d in zip(kinds, d_star):
+          print(f"D*({k}) = {d:.3f}")
+
+      def value(p_g):                            # V(D*, G), the minimax objective
+          d = p_data / (p_data + p_g)
+          real = np.sum(p_data * np.log(d))
+          fake = np.sum(p_g[p_g > 0] * np.log(1 - d[p_g > 0]))
+          return real + fake
+
+      print(f"V with the poor generator:    {value(p_g):.3f}")
+      print(f"V with a perfect generator:   {value(p_data):.3f}")
+      print(f"-log 4 (the theoretical best): {-np.log(4):.3f}")
+      ```
+
+      The poor generator leaves $V$ at −0.968; matching the data drives it down to −1.386. Try moving some of the generator's bird mass onto fish and watch $V$ fall.
+    bridges: []
+  - id: generative-adversarial-learning.s3
+    title: Mode collapse, one hop at a time
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.generative-adversarial-learning
+    markdown: |-
+      The generator is rewarded for fooling the current discriminator, not for covering the data. Say it discovers it can draw one convincing cat and draws nothing else. Then $D^*(\text{cat}) = 0.4 / (0.4 + 1) = 0.29$ while dogs, fish, and birds score 1.0, since no fakes of them exist. So the generator jumps wholesale to one of them (the program below takes the first tie, dogs). Now dogs look suspicious and cats look safe again:
+
+      ```python run
+      import numpy as np
+
+      kinds  = ["cat", "dog", "fish", "bird"]
+      p_data = np.array([0.4, 0.3, 0.2, 0.1])
+
+      p_g = np.array([1.0, 0.0, 0.0, 0.0])        # collapsed: every sample is a cat
+      for round_ in range(1, 6):
+          d = p_data / (p_data + p_g)             # discriminator catches up
+          target = int(np.argmax(d))              # generator jumps to the most "real" kind
+          print(f"round {round_}: generator draws {kinds[int(np.argmax(p_g))]:4}  "
+                f"D* = {np.round(d, 2).tolist()}  -> next: {kinds[target]}")
+          p_g = np.eye(4)[target]
+      ```
+
+      It hops between cats and dogs forever and never draws a fish or a bird. This is **mode collapse**: the generator covers only one or a few **modes**, the distinct peaks of the data distribution. The 2014 paper already warned about it, calling it "the Helvetica scenario". Real GANs move in small gradient steps rather than jumps, but the chase is the same, and a collapsed GAN on handwritten digits might draw beautiful 1s and 7s and never a 4.
+
+      :::mixup "Every sample looks great, so the GAN has learned the data."
+      Fidelity and coverage are separate tests, as in the first lesson of this module. Look at hundreds of samples side by side, count how often each kind appears, and compare with the training data.
+      :::
+    bridges: []
+  - id: generative-adversarial-learning.s4
+    title: Unstable, then stunning
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.generative-adversarial-learning
+    markdown: |-
+      Early GANs were notoriously hard to train. If the discriminator got too good, the generator's gradients vanished; if the two fell out of balance, samples oscillated or collapsed. The losses themselves are poor progress meters, because each is measured against a moving opponent. Practitioners save sample grids every few thousand steps and track FID, the realism-and-variety score from the first lesson in this module.
+
+      Fixes came from many directions. **DCGAN** (Radford, Metz & Chintala, 2015) found convolutional architectures that train reliably. **WGAN** (Arjovsky, Chintala & Bottou, 2017) replaced the real-or-fake probability with a critic score that estimates a distance between the two distributions, giving useful gradients even when the fakes are easy to spot.
+
+      Then quality leapt. NVIDIA's **StyleGAN** (Karras, Laine & Aila, 2018) first maps the noise $z$ through a separate network to an intermediate code $w$, then uses $w$ to set the "style" at each resolution of the generator, coarse layers for pose and face shape, fine layers for color and fine texture. In February 2019, the website This Person Does Not Exist showed a new StyleGAN face on every page load, realistic enough to fool many visitors.
+
+      For text-to-image, diffusion models have since largely taken over; Dhariwal and Nichol's 2021 paper was titled "Diffusion Models Beat GANs on Image Synthesis". GANs still shine where speed matters, since one forward pass makes a sample, and adversarial losses help train audio vocoders and the image decoders you'll meet in the latent diffusion lesson.
+    bridges: []
+  - id: generative-adversarial-learning.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.generative-adversarial-learning
+    markdown: Optimal-discriminator values to compute, plus a digit generator, a flat loss curve, and a face model that only draws smiles, test whether you can run and debug the adversarial game.
+    takeaway: |-
+      A GAN trains a generator to fool a discriminator whose best response is D* = p_data / (p_data + p_g). The game can reach p_g = p_data, but it can also chase its tail into mode collapse, so check coverage as well as realism.
+  - id: generative-adversarial-learning.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.generative-adversarial-learning
+    markdown: |-
+      A GAN trains a generator using feedback from a discriminator. Check whether it produces both convincing samples and the variety present in the data.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - generative-adversarial-learning.s1
-    - generative-adversarial-learning.s2
-    - generative-adversarial-learning.s3
-    - generative-adversarial-learning.s4
-    - generative-adversarial-learning.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - generative-adversarial-learning.s1
+        - generative-adversarial-learning.s2
+        - generative-adversarial-learning.s5
+        - generative-adversarial-learning.s3
+        - generative-adversarial-learning.s4
+        - generative-adversarial-learning.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     generative-adversarial-learning.recap: generative-adversarial-learning.check
 assessment_families:
-- id: generative-adversarial-learning.base
-  objective_ref: objective.generative-adversarial-learning
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Alternate updates rather than assume equilibrium: trace the inputs, operation, and result before choosing.'
-  remediation_scene: generative-adversarial-learning.s2
-  variants:
-  - id: generative-adversarial-learning.base.1
-    prompt: What does the generator usually take as a source of variability?
-    options:
-    - id: a
-      text: Noise or latent input, possibly with conditions
-    - id: b
-      text: Only fixed discriminator labels
-    - id: c
-      text: The final test answers necessarily
-    answer: a
-    feedback: Latent variation supports sampling different outputs.
-  - id: generative-adversarial-learning.base.2
-    prompt: Why is GAN optimization unlike one fixed supervised target?
-    options:
-    - id: b
-      text: No gradients can ever be used
-    - id: c
-      text: There are no parameters
-    - id: a
-      text: The learned opponent changes during training
-    answer: a
-    feedback: Each side changes the other’s learning signal.
-- id: generative-adversarial-learning.transfer
-  objective_ref: objective.generative-adversarial-learning
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate more than realism: trace the inputs, operation, and result before choosing.'
-  remediation_scene: generative-adversarial-learning.s4
-  variants:
-  - id: generative-adversarial-learning.transfer.1
-    prompt: Real data has three shape types, generated data only realistic circles. What failure is illustrated?
-    options:
-    - id: b
-      text: Perfect distribution coverage
-    - id: c
-      text: Guaranteed privacy
-    - id: a
-      text: Mode collapse
-    answer: a
-    feedback: A realistic subset can omit major modes.
-  - id: generative-adversarial-learning.transfer.2
-    prompt: Is the training discriminator score an independent quality certificate?
-    options:
-    - id: c
-      text: Only if it exceeds one-half
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: The scorer participates in the optimization game.
+  - id: generative-adversarial-learning.base
+    objective_ref: objective.generative-adversarial-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Alternate updates rather than assume equilibrium: trace the inputs, operation, and result before choosing.'
+    remediation_scene: generative-adversarial-learning.s2
+    variants:
+      - id: generative-adversarial-learning.base.1
+        prompt: What does the generator usually take as a source of variability?
+        options:
+          - id: a
+            text: Noise or latent input, possibly with conditions
+          - id: b
+            text: Only fixed discriminator labels
+          - id: c
+            text: The final test answers necessarily
+        answer: a
+        feedback: Latent variation supports sampling different outputs.
+        retired: true
+      - id: generative-adversarial-learning.base.2
+        prompt: Why is GAN optimization unlike one fixed supervised target?
+        options:
+          - id: b
+            text: No gradients can ever be used
+          - id: c
+            text: There are no parameters
+          - id: a
+            text: The learned opponent changes during training
+        answer: a
+        feedback: Each side changes the other’s learning signal.
+        retired: true
+  - id: generative-adversarial-learning.transfer
+    objective_ref: objective.generative-adversarial-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate more than realism: trace the inputs, operation, and result before choosing.'
+    remediation_scene: generative-adversarial-learning.s4
+    variants:
+      - id: generative-adversarial-learning.transfer.1
+        prompt: Real data has three shape types, generated data only realistic circles. What failure is illustrated?
+        options:
+          - id: b
+            text: Perfect distribution coverage
+          - id: c
+            text: Guaranteed privacy
+          - id: a
+            text: Mode collapse
+        answer: a
+        feedback: A realistic subset can omit major modes.
+        retired: true
+      - id: generative-adversarial-learning.transfer.2
+        prompt: Is the training discriminator score an independent quality certificate?
+        options:
+          - id: c
+            text: Only if it exceeds one-half
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: The scorer participates in the optimization game.
+        retired: true
+  - id: generative-adversarial-learning.base.v2
+    objective_ref: objective.generative-adversarial-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Track who moves in each step: the discriminator step updates D to separate real from fake; the generator step backpropagates through a frozen D into G's weights."
+    remediation_scene: generative-adversarial-learning.s2
+    variants:
+      - id: generative-adversarial-learning.base.v2.1
+        prompt: During the generator step of GAN training, what happens to the discriminator's weights?
+        options:
+          - id: b
+            text: They are updated too, to push D(G(z)) toward 0
+          - id: a
+            text: They stay fixed while gradients pass through D into G
+          - id: c
+            text: They are copied into the generator for that step
+        answer: a
+        feedback: D runs forward and carries gradients back, but only G's weights change. Updating D to reject fakes is the separate discriminator step.
+      - id: generative-adversarial-learning.base.v2.2
+        prompt: Early in training, the discriminator rejects nearly every fake. Why do most GANs have G maximize log D(G(z)) instead of minimizing log(1 − D(G(z)))?
+        options:
+          - id: c
+            text: The two are identical, so the choice is only a convention
+          - id: a
+            text: The original term is nearly flat there, giving G almost no gradient
+          - id: b
+            text: Maximizing log D(G(z)) also trains the discriminator for free
+        answer: a
+        feedback: When D(G(z)) ≈ 0, log(1 − D(G(z))) barely changes, so G learns slowly. The non-saturating version has a steep slope exactly there. Both aim at the same optimum but give very different gradients, and neither updates D.
+      - id: generative-adversarial-learning.base.v2.3
+        prompt: At the GAN's global optimum, what does the best discriminator output for every image?
+        options:
+          - id: a
+            text: 0.5, since real and generated images are equally likely
+          - id: b
+            text: 1 for real images and 0 for generated ones
+          - id: c
+            text: The fraction of the training set the image resembles
+        answer: a
+        feedback: When p_g = p_data, D* = p/(p + p) = 0.5 everywhere. A perfect 1/0 split is only possible while the generator's images differ from the data.
+      - id: generative-adversarial-learning.base.v2.4
+        prompt: Why doesn't a steadily falling generator loss show that a GAN is improving?
+        options:
+          - id: b
+            text: Generator loss always rises during healthy training
+          - id: c
+            text: The generator loss measures reconstruction, not realism
+          - id: a
+            text: Each loss is measured against an opponent that keeps changing
+        answer: a
+        feedback: A falling generator loss might just mean the discriminator got worse. Because each network's loss depends on the other, practitioners watch sample grids and FID instead. GANs have no reconstruction term.
+  - id: generative-adversarial-learning.transfer.v2
+    objective_ref: objective.generative-adversarial-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Compare the variety of the samples with the variety of the data. A generator rewarded only for fooling the current discriminator can abandon whole kinds of data.
+    remediation_scene: generative-adversarial-learning.s3
+    variants:
+      - id: generative-adversarial-learning.transfer.v2.1
+        prompt: A GAN trained on all ten handwritten digits produces crisp 1s and 7s, but you can't find a single 4 in 500 samples. What is this, and what should you report?
+        options:
+          - id: c
+            text: Overfitting; the samples copy training images too closely
+          - id: a
+            text: Mode collapse; high fidelity but poor coverage of the data
+          - id: b
+            text: Posterior collapse; the latent code is being ignored
+        answer: a
+        feedback: Whole digit classes are missing, which is mode collapse. The samples may be crisp and original; the problem is coverage. Posterior collapse is the VAE failure where a decoder ignores its code.
+      - id: generative-adversarial-learning.transfer.v2.2
+        prompt: A face GAN's samples switch every few thousand steps, from mostly smiling faces to mostly frowning ones and back. What does this pattern suggest?
+        options:
+          - id: a
+            text: The generator is chasing whichever mode the discriminator currently trusts
+          - id: b
+            text: The training data is being shuffled into smiling and frowning batches
+          - id: c
+            text: The generator has converged and is sampling the data correctly
+        answer: a
+        feedback: This is the cat-dog hop from the lesson. When D learns to distrust smiles, G shifts to frowns, then back. A converged generator would draw both at once, in the data's proportions.
+      - id: generative-adversarial-learning.transfer.v2.3
+        prompt: A game studio needs 10,000 texture variations per second on a phone. Why might it choose a GAN over a diffusion model?
+        options:
+          - id: b
+            text: GANs tend to cover the data more fully than diffusion models
+          - id: c
+            text: GANs can train from a discriminator, without real images
+          - id: a
+            text: A GAN makes each sample in one forward pass, not many steps
+        answer: a
+        feedback: Generation is a single pass through G, while diffusion runs its network many times per sample. GANs are prone to worse coverage, not better, and they need real data to train the discriminator.
+      - id: generative-adversarial-learning.transfer.v2.4
+        prompt: A discriminator reaches 100% accuracy on real versus fake early in training, and the generator stops improving. Which change targets this problem?
+        options:
+          - id: c
+            text: Train the discriminator for more steps per generator step
+          - id: a
+            text: Use a WGAN-style critic, which still gives gradients when fakes are easy to spot
+          - id: b
+            text: Stop training the generator until the discriminator's loss rises
+        answer: a
+        feedback: A perfect real-or-fake classifier leaves the generator with vanishing gradients; WGAN's distance-based critic keeps giving a useful slope. Strengthening the discriminator further makes it worse, and pausing the generator doesn't change the flat gradient.
+  - id: generative-adversarial-learning.calculate
+    objective_ref: objective.generative-adversarial-learning
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "D*(x) = p_data(x) / (p_data(x) + p_g(x)): the share of this image's appearances that come from real data."
+    remediation_scene: generative-adversarial-learning.s5
+    absolute_tolerance: 0.01
+    variants:
+      - id: generative-adversarial-learning.calculate.1
+        prompt: An image has p_data = 0.3 and p_g = 0.1. What does the optimal discriminator output for it?
+        answer: 0.75
+        feedback: D* = 0.3 / (0.3 + 0.1) = 0.75. The image is three times more common among real images, so it looks mostly real.
+      - id: generative-adversarial-learning.calculate.2
+        prompt: An image has p_data = 0.05 and p_g = 0.2. What does the optimal discriminator output for it?
+        answer: 0.2
+        feedback: D* = 0.05 / 0.25 = 0.2. The generator over-produces this image, so the discriminator distrusts it.
+      - id: generative-adversarial-learning.calculate.3
+        prompt: A collapsed generator draws only cats (p_g(cat) = 1), and 40% of real doodles are cats. What is D*(cat)?
+        answer: 0.286
+        feedback: D* = 0.4 / (0.4 + 1) = 0.4 / 1.4 ≈ 0.286. The cat mode now looks suspicious, which pushes the generator off it.
+      - id: generative-adversarial-learning.calculate.4
+        prompt: Real data has p_data = 0.15 for an image, and the generator never produces it (p_g = 0). What is D* for that image?
+        answer: 1
+        feedback: D* = 0.15 / (0.15 + 0) = 1. Anything the generator never makes is certainly real, which is what lures a collapsed generator toward it.
+      - id: generative-adversarial-learning.calculate.5
+        prompt: The optimal discriminator outputs 0.6 for an image with p_data = 0.3. What is p_g for that image?
+        answer: 0.2
+        feedback: 0.6 = 0.3 / (0.3 + p_g) gives 0.3 + p_g = 0.5, so p_g = 0.2.

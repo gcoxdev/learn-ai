@@ -1,214 +1,424 @@
 schema_version: 0.2-draft
 lesson:
   id: state-estimation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Track a hidden state from noisy observations
   state: draft
-  summary: Combine an imperfect motion prediction with a noisy sensor reading to improve a position estimate.
+  summary: The filter that helped navigate Apollo to the Moon fits in five lines. Learn how it blends a prediction with a noisy reading, and why it beats either one alone.
   slot: M06.5
   category: learning
   sources:
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
+    - title: A New Approach to Linear Filtering and Prediction Problems (Kalman, 1960)
+      url: https://doi.org/10.1115/1.3662552
 objectives:
-- id: objective.state-estimation
-  version: 1-draft
-  statement: Hidden Markov models and Kalman filters alternate prediction and evidence updates; their state,
-    transition, and observation assumptions determine what they can estimate.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - state-estimation.base
-  - state-estimation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.graphical-models
-  - anyOf:
-    - objective.random-variables
+  - id: objective.state-estimation
+    version: 2-draft
+    statement: Hidden Markov models and Kalman filters alternate prediction and evidence updates; their state, transition, and observation assumptions determine what they can estimate.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - state-estimation.base.v2
+      - state-estimation.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.graphical-models
+      - anyOf:
+          - objective.random-variables
 scenes:
-- id: state-estimation.s1
-  title: Track the position behind the reading
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.state-estimation
-  markdown: 'A vehicle has a position, but its sensor reports an imperfect measurement. The true position is
-    the **hidden state** we want to track; the reading is an **observation** that gives us evidence about it.
+  - id: state-estimation.s1
+    title: Where is the robot, really?
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.state-estimation
+    markdown: |-
+      A robot vacuum needs to know where it is, but it can't see that directly. Its wheels say "I moved about 2 meters," but wheels slip on rugs. Its sensors give readings, but readings are noisy. Together, though, they're surprisingly good.
 
+      The robot's true position is its **hidden state**: what you want to know but can't see. Each sensor reading is an **observation**, evidence about that state. The robot keeps a **belief**, a probability distribution over where it might be, and improves it with a two-step loop:
 
-    A **state-space model** describes how the state changes and how observations arise from it. Under a **Markov**
-    assumption, the current state contains the past information needed to predict the next step. Choosing what
-    belongs in that state is therefore part of the model.'
-  text_mode: 'A vehicle has a position, but its sensor reports an imperfect measurement. The true position
-    is the **hidden state** we want to track; the reading is an **observation** that gives us evidence about
-    it.
+      1. **Predict.** Use a motion model ("I drove 2 m forward") to move the belief. Motion is imperfect, so the belief also spreads out.
+      2. **Update.** Use Bayes' rule to reweight the belief by how well each possible position explains the new reading. The belief sharpens.
 
+      This works because of the **Markov assumption**: the current state holds everything from the past that matters for predicting the next step. If the robot's speed matters for where it goes next, speed must be part of the state too.
+    diagram:
+      caption: The filtering loop. Every step predicts with the motion model, then updates with a reading.
+      description: The current belief and a motion command feed the predict step. The predicted belief goes to the update step, which also receives a sensor reading. The update produces the new belief, which loops back to become the current belief for the next step.
+      nodes:
+        - id: belief
+          label: Current belief
+          note: where the robot might be
+          col: 0
+          row: 0
+          tone: accent
+        - id: predict
+          label: Predict
+          note: motion model, belief spreads
+          col: 1
+          row: 0
+        - id: motion
+          label: Motion command
+          note: drove about 2 m
+          col: 0
+          row: 1
+          tone: muted
+        - id: update
+          label: Update
+          note: Bayes' rule, belief sharpens
+          col: 2
+          row: 0
+        - id: reading
+          label: Sensor reading
+          note: noisy
+          col: 2
+          row: 1
+          tone: data
+      edges:
+        - from: belief
+          to: predict
+        - from: motion
+          to: predict
+        - from: predict
+          to: update
+        - from: reading
+          to: update
+        - from: update
+          to: belief
+          label: new belief, next step
+          bend: -2
+    bridges: []
+  - id: state-estimation.s2
+    title: 'Predict, then update: which room?'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.state-estimation
+    markdown: |-
+      First, a simpler question: is the robot in the kitchen or the living room? A model with a small set of hidden states like this is a **hidden Markov model (HMM)**. HMMs ran speech recognition for decades, with slices of audio as the observations and the speech sounds behind them as the hidden states.
 
-    A **state-space model** describes how the state changes and how observations arise from it. Under a **Markov**
-    assumption, the current state contains the past information needed to predict the next step. Choosing what
-    belongs in that state is therefore part of the model.'
-  bridges: []
-- id: state-estimation.s2
-  title: Predict, then update
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.state-estimation
-  markdown: 'A **hidden Markov model (HMM)** often uses a finite set of hidden states, such as “left room”
-    and “right room.” First use the transition model to predict their probabilities. Then update those probabilities
-    using the new observation.
+      The robot's floor sensor reports "tile" 80% of the time in the tiled kitchen, and 20% of the time in the carpeted living room. Each step, the robot stays in its room with probability 0.9 and crosses over with probability 0.1.
 
+      | Step | Kitchen | Living room |
+      | --- | ---: | ---: |
+      | Start: no idea | 0.5 | 0.5 |
+      | Update on "tile" (× 0.8 and × 0.2) | 0.4 → 0.8 | 0.1 → 0.2 |
+      | Predict one move: 0.8 × 0.9 + 0.2 × 0.1 | 0.74 | 0.26 |
+      | Update on "tile" again | 0.592 → 0.92 | 0.052 → 0.08 |
 
-    Suppose the two rooms begin with equal probabilities, 0.5 and 0.5. A signal has likelihood 0.8 in the left
-    room and 0.2 in the right. Multiply to get weights 0.4 and 0.1, then divide by their total, 0.5. The updated
-    probabilities are 0.8 and 0.2. We have changed our belief about the room, not the transition rules.'
-  text_mode: 'A **hidden Markov model (HMM)** often uses a finite set of hidden states, such as “left room”
-    and “right room.” First use the transition model to predict their probabilities. Then update those probabilities
-    using the new observation.
+      Each update is Bayes' rule, as with the bracket camera: multiply by the likelihood, then divide by the total (0.5, then 0.644). Each predict step is marginalization, as in the last lesson: sum over where the robot might have been. Prediction softened 0.8 to 0.74; the second reading sharpened it to 0.92.
+    bridges:
+      - random-variables
+  - id: state-estimation.s3
+    title: Blend a guess and a reading
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.state-estimation
+    markdown: |-
+      Now track the robot's exact position along a hallway, a continuous number. The **Kalman filter** does this when the belief is a **Gaussian**, the bell-shaped distribution, described by just two numbers: its **mean** (best guess) and its **variance** (how uncertain the guess is; the square of the spread).
 
+      Work one full step. The last estimate was 8 m with variance 3. The robot drives 2 m, and its motion adds variance 1.
 
-    Suppose the two rooms begin with equal probabilities, 0.5 and 0.5. A signal has likelihood 0.8 in the left
-    room and 0.2 in the right. Multiply to get weights 0.4 and 0.1, then divide by their total, 0.5. The updated
-    probabilities are 0.8 and 0.2. We have changed our belief about the room, not the transition rules.'
-  bridges:
-  - random-variables
-- id: state-estimation.s3
-  title: Combine a predicted position with a measurement
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.state-estimation
-  markdown: 'A **Kalman filter** handles a continuous state under linear transition and observation rules with
-    Gaussian noise. A **Gaussian** is a bell-shaped distribution. The filter tracks its **mean**, or center,
-    and **covariance**, which describes spread and how uncertainties vary together.
+      - **Predict:** mean 8 + 2 = 10, variance 3 + 1 = 4.
+      - **Reading:** the sensor says 14, and its noise has variance 4. The gap between reading and prediction, 14 − 10 = 4, is the **residual**.
+      - **Gain:** K, the share of the residual to believe, is 4 / (4 + 4) = 0.5. Prediction and sensor are equally uncertain, so split the difference.
+      - **Update:** mean 10 + 0.5 × 4 = 12, variance (1 − 0.5) × 4 = 2.
 
+      The new variance, 2, is smaller than both the prediction's 4 and the sensor's 4. Combining two noisy sources beats either one alone. If a reading goes missing, skip the update: the filter keeps predicting, and the variance keeps growing until the next reading arrives.
 
-    Suppose the predicted position is 10 and the sensor reports 14. The **residual** is measurement minus prediction:
-    14 − 10 = 4. With a **gain** of 0.5, the updated mean is 10 + 0.5 × 4 = 12.
+      :::predict The sensor gets worse: its variance rises from 4 to 12. Same prediction (10, variance 4), same reading (14). Where does the estimate land?
+      K = 4 / (4 + 12) = 0.25, so the mean moves only a quarter of the way: 10 + 0.25 × 4 = 11. The variance becomes 0.75 × 4 = 3. A noisier sensor earns less trust, automatically.
+      :::
 
+      :::papers The Kalman filter in one dimension
+      With estimate $\hat{x}$, variance $P$, motion $u$, motion noise $Q$, reading $z$, and sensor noise $R$:
 
-    The gain determines how much of the discrepancy to use. It comes from the modeled uncertainties; a noisier
-    measurement generally deserves less influence.'
-  text_mode: 'A **Kalman filter** handles a continuous state under linear transition and observation rules
-    with Gaussian noise. A **Gaussian** is a bell-shaped distribution. The filter tracks its **mean**, or center,
-    and **covariance**, which describes spread and how uncertainties vary together.
+      $$\text{Predict: } \hat{x}^- = \hat{x} + u, \qquad P^- = P + Q$$
 
+      $$\text{Update: } K = \frac{P^-}{P^- + R}, \qquad \hat{x} \leftarrow \hat{x}^- + K\,(z - \hat{x}^-), \qquad P \leftarrow (1 - K)\,P^-$$
 
-    Suppose the predicted position is 10 and the sensor reports 14. The **residual** is measurement minus prediction:
-    14 − 10 = 4. With a **gain** of 0.5, the updated mean is 10 + 0.5 × 4 = 12.
+      Above: $\hat{x}=8$, $u=2$, $P=3$, $Q=1$ give $\hat{x}^- = 10$ and $P^- = 4$; then $z = 14$, $R = 4$ give $K = 0.5$, $\hat{x} = 12$, $P = 2$. In several dimensions the same equations use matrices, and the state usually includes velocity as well as position.
+      :::
+    bridges: []
+  - id: state-estimation.run
+    title: Watch the filter beat its sensor
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.state-estimation
+    markdown: |-
+      :::story From a 1960 paper to the Moon
+      Rudolf Kálmán published his filter in 1960. At NASA's Ames Research Center, Stanley Schmidt's group adapted it to estimate an Apollo spacecraft's position and velocity. Orbits aren't straight lines, so they re-linearized the equations around each new estimate: the idea behind the extended Kalman filter. Kalman filtering became part of Apollo's navigation, and it now runs in phones, drones, and cars.
+      :::
 
+      Here a robot tries to move 1 m per step. Its wheels add a little noise, and its position sensor is much noisier (variance 4, so readings are typically about 2 m off).
 
-    The gain determines how much of the discrepancy to use. It comes from the modeled uncertainties; a noisier
-    measurement generally deserves less influence.'
-  bridges: []
-- id: state-estimation.s4
-  title: Know when the model is strained
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.state-estimation
-  markdown: Nonlinear motion, outliers, wrong noise assumptions, and ambiguous observations can challenge these
-    filters. Extended, unscented, and particle methods make different approximations. A smooth estimated trajectory
-    is not proof of accurate tracking. Test with known trajectories and inspect uncertainty as well as point
-    estimates.
-  text_mode: Nonlinear motion, outliers, wrong noise assumptions, and ambiguous observations can challenge
-    these filters. Extended, unscented, and particle methods make different approximations. A smooth estimated
-    trajectory is not proof of accurate tracking. Test with known trajectories and inspect uncertainty as well
-    as point estimates.
-  bridges: []
-- id: state-estimation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.state-estimation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Estimate the next state, then update that estimate with a new observation. The result depends on
-    how well the motion and sensor models describe the situation.
-- id: state-estimation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.state-estimation
-  markdown: Estimate the next state, then update that estimate with a new observation. The result depends on
-    how well the motion and sensor models describe the situation.
-  text_mode: Estimate the next state, then update that estimate with a new observation. The result depends
-    on how well the motion and sensor models describe the situation.
+      ```python run
+      import random
+
+      random.seed(3)
+      Q, R = 0.25, 4.0          # motion noise variance, sensor noise variance
+      true_x, x, P = 0.0, 0.0, 1.0
+      sensor_err = filter_err = 0.0
+
+      print("step  true   sensor  estimate  gain K")
+      for step in range(1, 11):
+          true_x += 1.0 + random.gauss(0, Q ** 0.5)      # robot tries to move 1 m
+          z = true_x + random.gauss(0, R ** 0.5)          # noisy position reading
+          x, P = x + 1.0, P + Q                           # predict
+          K = P / (P + R)                                 # update
+          x, P = x + K * (z - x), (1 - K) * P
+          sensor_err += (z - true_x) ** 2
+          filter_err += (x - true_x) ** 2
+          print(f"{step:4d} {true_x:6.2f} {z:7.2f} {x:9.2f} {K:7.2f}")
+
+      print(f"RMS error: sensor alone {(sensor_err / 10) ** 0.5:.2f} m, filter {(filter_err / 10) ** 0.5:.2f} m")
+      ```
+
+      At step 9 the sensor reads 6.37 when the robot is really at 9.39, but the estimate only dips to 8.73. Over ten steps the filter's typical (RMS) error is 0.66 m, against 1.63 m for the raw sensor. The gain settles near 0.22. Try `R = 0.25` (a precise sensor) and watch K rise.
+  - id: state-estimation.s4
+    title: When the world curves
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.state-estimation
+    markdown: |-
+      The plain Kalman filter assumes straight-line (linear) motion and bell-shaped noise. Real robots turn, and real beliefs can have two peaks: "I'm at the end of corridor A, or the identical end of corridor B." Three variants each relax an assumption:
+
+      | Filter | What it does | Good when |
+      | --- | --- | --- |
+      | **Extended Kalman filter** | Treats the curved motion as a straight line near the current estimate | Gentle curves |
+      | **Unscented Kalman filter** | Pushes a few chosen sample points through the true curve, then fits a new bell curve to them | Sharper curves, one peak |
+      | **Particle filter** | Tracks thousands of weighted guesses ("particles"), moving and reweighting each | Several peaks |
+
+      Particle filters are a sampling method, the subject of the next lesson, and a standard tool for locating lost robots.
+
+      Test any filter on a path you've measured by hand. Check the reported variance too: if the filter claims ±0.5 m but is often 2 m off, its Q and R settings are wrong.
+    bridges: []
+  - id: state-estimation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.state-estimation
+    markdown: Run full Kalman updates by hand, then keep a car tracked through a tunnel, a drone through a sprint, and a robot through twin corridors.
+    takeaway: |-
+      Predict with a motion model, then update with a noisy reading, weighting each by how uncertain it is. The Kalman gain K = P⁻ / (P⁻ + R) sets that balance, and the combined estimate beats either source alone.
+  - id: state-estimation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.state-estimation
+    markdown: |-
+      Estimate the next state, then update that estimate with a new observation. The result depends on how well the motion and sensor models describe the situation.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - state-estimation.s1
-    - state-estimation.s2
-    - state-estimation.s3
-    - state-estimation.s4
-    - state-estimation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - state-estimation.s1
+        - state-estimation.s2
+        - state-estimation.s3
+        - state-estimation.run
+        - state-estimation.s4
+        - state-estimation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     state-estimation.recap: state-estimation.check
 assessment_families:
-- id: state-estimation.base
-  objective_ref: objective.state-estimation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Predict, then update: trace the inputs, operation, and result before choosing.'
-  remediation_scene: state-estimation.s2
-  variants:
-  - id: state-estimation.base.1
-    prompt: What happens before the observation update in a filtering step?
-    options:
-    - id: c
-      text: Discard all previous information
-    - id: a
-      text: Predict the next-state distribution using the transition model
-    - id: b
-      text: Assume the hidden state was observed exactly
-    answer: a
-    feedback: Filtering combines model-based prediction with new evidence.
-  - id: state-estimation.base.2
-    prompt: 'Prior position 8, measurement 12, scalar gain 0.25: corrected position?'
-    options:
-    - id: a
-      text: '9'
-    - id: b
-      text: '10'
-    - id: c
-      text: '11'
-    answer: a
-    feedback: Add one quarter of the residual 4 to 8.
-- id: state-estimation.transfer
-  objective_ref: objective.state-estimation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Know when the model is strained: trace the inputs, operation, and result before choosing.'
-  remediation_scene: state-estimation.s4
-  variants:
-  - id: state-estimation.transfer.1
-    prompt: A sensor becomes much noisier but its modeled uncertainty is unchanged. What can happen?
-    options:
-    - id: a
-      text: The filter may trust bad measurements too strongly
-    - id: b
-      text: The filter becomes automatically optimal
-    - id: c
-      text: The true trajectory becomes linear
-    answer: a
-    feedback: The update weights depend on the assumed uncertainty model.
-  - id: state-estimation.transfer.2
-    prompt: Does a standard Kalman filter provide exact Bayesian filtering for every nonlinear model?
-    options:
-    - id: b
-      text: Yes; covariance handles every distribution exactly
-    - id: c
-      text: Only if the state has a name
-    - id: a
-      text: No; its exact case uses linear-Gaussian assumptions
-    answer: a
-    feedback: Different nonlinear or non-Gaussian settings need other methods or approximations.
+  - id: state-estimation.base
+    objective_ref: objective.state-estimation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Predict, then update: trace the inputs, operation, and result before choosing.'
+    remediation_scene: state-estimation.s2
+    variants:
+      - id: state-estimation.base.1
+        prompt: What happens before the observation update in a filtering step?
+        options:
+          - id: c
+            text: Discard all previous information
+          - id: a
+            text: Predict the next-state distribution using the transition model
+          - id: b
+            text: Assume the hidden state was observed exactly
+        answer: a
+        feedback: Filtering combines model-based prediction with new evidence.
+        retired: true
+      - id: state-estimation.base.2
+        prompt: 'Prior position 8, measurement 12, scalar gain 0.25: corrected position?'
+        options:
+          - id: a
+            text: '9'
+          - id: b
+            text: '10'
+          - id: c
+            text: '11'
+        answer: a
+        feedback: Add one quarter of the residual 4 to 8.
+        retired: true
+  - id: state-estimation.transfer
+    objective_ref: objective.state-estimation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Know when the model is strained: trace the inputs, operation, and result before choosing.'
+    remediation_scene: state-estimation.s4
+    variants:
+      - id: state-estimation.transfer.1
+        prompt: A sensor becomes much noisier but its modeled uncertainty is unchanged. What can happen?
+        options:
+          - id: a
+            text: The filter may trust bad measurements too strongly
+          - id: b
+            text: The filter becomes automatically optimal
+          - id: c
+            text: The true trajectory becomes linear
+        answer: a
+        feedback: The update weights depend on the assumed uncertainty model.
+        retired: true
+      - id: state-estimation.transfer.2
+        prompt: Does a standard Kalman filter provide exact Bayesian filtering for every nonlinear model?
+        options:
+          - id: b
+            text: Yes; covariance handles every distribution exactly
+          - id: c
+            text: Only if the state has a name
+          - id: a
+            text: No; its exact case uses linear-Gaussian assumptions
+        answer: a
+        feedback: Different nonlinear or non-Gaussian settings need other methods or approximations.
+        retired: true
+  - id: state-estimation.base.v2
+    objective_ref: objective.state-estimation
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Compute K = P⁻ / (P⁻ + R) first. Move the prediction toward the reading by K times the residual, then shrink the variance to (1 − K) × P⁻.
+    remediation_scene: state-estimation.s3
+    absolute_tolerance: 0.01
+    numeric_fields:
+      - id: gain
+        label: Gain K
+      - id: mean
+        label: Updated mean
+      - id: variance
+        label: Updated variance
+    variants:
+      - id: state-estimation.base.v2.1
+        prompt: A tracker predicts position 20 with variance 9. A sensor with noise variance 3 reads 24. Record the gain, the updated mean, and the updated variance, then pick the reason the gain has this size.
+        feedback: K = 9 / (9 + 3) = 0.75, so the mean moves three quarters of the residual 4, to 23, and the variance falls to 0.25 × 9 = 2.25. The prediction is the less certain source here, so the reading gets most of the weight.
+        answers:
+          gain: 0.75
+          mean: 23
+          variance: 2.25
+        reason_answer: trust
+        reason_options:
+          - id: noisy
+            text: The gain grows when the sensor is noisier than the prediction.
+          - id: trust
+            text: The gain grows when the prediction is less certain than the sensor.
+          - id: share
+            text: The gain is the sensor's share of total noise, R / (P⁻ + R).
+      - id: state-estimation.base.v2.2
+        prompt: A tracker predicts position 50 with variance 1. A sensor with noise variance 4 reads 45. Record the gain, the updated mean, and the updated variance, then pick the reason the gain has this size.
+        feedback: K = 1 / (1 + 4) = 0.2, so the mean moves a fifth of the residual −5, to 49, and the variance falls to 0.8 × 1 = 0.8. The prediction is already sharp, so a noisy reading only nudges it.
+        answers:
+          gain: 0.2
+          mean: 49
+          variance: 0.8
+        reason_answer: trust
+        reason_options:
+          - id: share
+            text: The gain is the sensor's share of total noise, R / (P⁻ + R).
+          - id: trust
+            text: The gain grows when the prediction is less certain than the sensor.
+          - id: noisy
+            text: The gain grows when the sensor is noisier than the prediction.
+      - id: state-estimation.base.v2.3
+        prompt: A tracker predicts position 100 with variance 6. A sensor with noise variance 2 reads 96. Record the gain, the updated mean, and the updated variance, then pick the reason the gain has this size.
+        feedback: K = 6 / (6 + 2) = 0.75, so the mean moves three quarters of the residual −4, to 97, and the variance falls to 0.25 × 6 = 1.5. Using R / (P⁻ + R) = 0.25 instead would flip the roles of prediction and sensor.
+        answers:
+          gain: 0.75
+          mean: 97
+          variance: 1.5
+        reason_answer: trust
+        reason_options:
+          - id: trust
+            text: The gain grows when the prediction is less certain than the sensor.
+          - id: noisy
+            text: The gain grows when the sensor is noisier than the prediction.
+          - id: share
+            text: The gain is the sensor's share of total noise, R / (P⁻ + R).
+      - id: state-estimation.base.v2.4
+        prompt: A tracker predicts position 0 with variance 2. A sensor with noise variance 8 reads 10. Record the gain, the updated mean, and the updated variance, then pick the reason the gain has this size.
+        feedback: K = 2 / (2 + 8) = 0.2, so the mean moves a fifth of the residual 10, to 2, and the variance falls to 0.8 × 2 = 1.6. The noisy sensor gets little weight even though its reading is far away.
+        answers:
+          gain: 0.2
+          mean: 2
+          variance: 1.6
+        reason_answer: trust
+        reason_options:
+          - id: noisy
+            text: The gain grows when the sensor is noisier than the prediction.
+          - id: share
+            text: The gain is the sensor's share of total noise, R / (P⁻ + R).
+          - id: trust
+            text: The gain grows when the prediction is less certain than the sensor.
+  - id: state-estimation.transfer.v2
+    objective_ref: objective.state-estimation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask which part of the loop is affected. Missing readings mean predict-only steps; wrong noise settings mean wrong trust; a belief with two peaks or a state missing something needs a different model.
+    remediation_scene: state-estimation.s4
+    variants:
+      - id: state-estimation.transfer.v2.1
+        prompt: A car's navigation filter loses GPS for 30 seconds inside a tunnel. What should the filter do during the tunnel?
+        options:
+          - id: b
+            text: Freeze the estimate at the last GPS fix until the signal returns
+          - id: a
+            text: Keep predicting from speed and heading, letting its variance grow
+          - id: c
+            text: Set the gain to 1 so the first new reading replaces everything
+        answer: a
+        feedback: With no readings, the filter runs predict-only steps. The car keeps moving, and each step adds motion noise, so the variance grows until GPS returns and an update shrinks it. Freezing the estimate ignores the car's motion, and a gain of 1 throws the prediction away.
+      - id: state-estimation.transfer.v2.2
+        prompt: A drone's camera gets fogged, so its position readings become far noisier. The filter still uses the old, small sensor variance R. What will you most likely see?
+        options:
+          - id: c
+            text: The estimate barely reacts to readings and drifts slowly off course
+          - id: b
+            text: The filter notices the fog and lowers its gain on its own
+          - id: a
+            text: The estimate jumps around, chasing each bad reading closely
+        answer: a
+        feedback: A small R makes K large, so the filter trusts every reading and follows the noise. The gain depends only on the variances you give it, so it can't notice the fog; raising R to match the real noise restores the balance.
+      - id: state-estimation.transfer.v2.3
+        prompt: A warehouse robot is lost in a building with two identical corridors. Its belief should say "probably at the end of corridor A or of corridor B." Which filter can represent that belief?
+        options:
+          - id: b
+            text: An extended Kalman filter, since its motion model can curve
+          - id: c
+            text: A plain Kalman filter with its variance set very large
+          - id: a
+            text: A particle filter, with weighted guesses in both corridors
+        answer: a
+        feedback: Kalman filters, extended or not, describe the belief as a single bell curve, so they can't hold two separate peaks. A huge variance would smear probability over the whole building. Particles can sit in both corridors at once.
+      - id: state-estimation.transfer.v2.4
+        prompt: A drone's filter tracks position only, and its predictions lag behind every time the drone speeds up. What change fixes the cause?
+        options:
+          - id: a
+            text: Add velocity to the state, so the motion model can use it
+          - id: b
+            text: Raise the sensor variance R so the filter reacts less
+          - id: c
+            text: Run the update step twice for every new reading
+        answer: a
+        feedback: Under the Markov assumption, the state must hold everything needed to predict the next step. Without velocity, the filter can't know the drone is speeding up. Changing R or repeating updates only changes how much readings are trusted.

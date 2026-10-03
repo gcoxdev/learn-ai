@@ -1,190 +1,440 @@
 schema_version: 0.2-draft
 lesson:
   id: transfer-and-domain-adaptation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Reuse learning when the next task or domain changes
   state: draft
-  summary: Reuse earlier learning while checking whether it helps the new task.
+  summary: A solar farm has 600 photos of cracked panels, too few to train a vision model. Borrow one trained on a million images, then keep it working when the weather changes.
   slot: M31.3
   category: learning
   sources:
-  - title: Domain-Adversarial Training of Neural Networks
-    url: https://arxiv.org/abs/1505.07818
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: "How transferable are features in deep neural networks? (Yosinski et al., 2014)"
+      url: https://arxiv.org/abs/1411.1792
+    - title: "Domain-Adversarial Training of Neural Networks (Ganin et al., 2016)"
+      url: https://arxiv.org/abs/1505.07818
+    - title: Dive into Deep Learning — Fine-Tuning
+      url: https://d2l.ai/chapter_computer-vision/fine-tuning.html
+    - title: Dive into Deep Learning — Environment and Distribution Shift (covariate shift correction)
+      url: https://d2l.ai/chapter_linear-classification/environment-and-distribution-shift.html
 objectives:
-- id: objective.transfer-and-domain-adaptation
-  version: 1-draft
-  statement: Transfer learning reuses learned components, domain adaptation uses information from a target
-    domain, and domain generalization aims at unseen domains; evaluate negative transfer and data-access assumptions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - transfer-and-domain-adaptation.base
-  - transfer-and-domain-adaptation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.learned-representations
-  - anyOf:
-    - objective.robustness-and-shift
+  - id: objective.transfer-and-domain-adaptation
+    version: 2-draft
+    statement: Choose between feature extraction and fine-tuning, estimate target performance under covariate shift with importance weights, explain domain-adversarial training, and check for negative transfer on labeled target data.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - transfer-and-domain-adaptation.base.v2
+      - transfer-and-domain-adaptation.transfer.v2
+      - transfer-and-domain-adaptation.calculate
+    prerequisites:
+      - anyOf:
+          - objective.learned-representations
+      - anyOf:
+          - objective.robustness-and-shift
 scenes:
-- id: transfer-and-domain-adaptation.s1
-  title: Reuse a useful representation
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.transfer-and-domain-adaptation
-  markdown: A pretrained vision encoder can supply features for a smaller labeled task, either frozen or fine-tuned.
-    Transfer can reduce data requirements when learned structure is relevant. It can also hurt when source
-    assumptions conflict with the target, a phenomenon called negative transfer.
-  text_mode: A pretrained vision encoder can supply features for a smaller labeled task, either frozen or fine-tuned.
-    Transfer can reduce data requirements when learned structure is relevant. It can also hurt when source
-    assumptions conflict with the target, a phenomenon called negative transfer.
-  bridges: []
-- id: transfer-and-domain-adaptation.s2
-  title: Distinguish target access
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transfer-and-domain-adaptation
-  markdown: Domain adaptation typically allows some target-domain data during adaptation, possibly without
-    labels. Domain generalization aims to perform on domains not available during training. A study using target
-    examples should not describe the same protocol as fully unseen-domain generalization.
-  text_mode: Domain adaptation typically allows some target-domain data during adaptation, possibly without
-    labels. Domain generalization aims to perform on domains not available during training. A study using target
-    examples should not describe the same protocol as fully unseen-domain generalization.
-  bridges: []
-- id: transfer-and-domain-adaptation.s3
-  title: Trace a change in image conditions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transfer-and-domain-adaptation
-  markdown: A classifier trained on studio photos encounters warehouse cameras with different lighting and
-    backgrounds. Feature alignment or target tuning may help. If class meanings or label processes also change,
-    simply matching feature distributions can align the wrong things.
-  text_mode: A classifier trained on studio photos encounters warehouse cameras with different lighting and
-    backgrounds. Feature alignment or target tuning may help. If class meanings or label processes also change,
-    simply matching feature distributions can align the wrong things.
-  bridges: []
-- id: transfer-and-domain-adaptation.s4
-  title: Evaluate the transfer contract
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.transfer-and-domain-adaptation
-  markdown: 'Record which source weights, target examples, labels, and tuning feedback were used. Compare training
-    from scratch and frozen-feature baselines where feasible. Measure target quality, retained source skills,
-    and robustness; transfer is useful when evidence supports the intended new setting.
+  - id: transfer-and-domain-adaptation.s1
+    title: Six hundred photos and a borrowed network
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.transfer-and-domain-adaptation
+    markdown: |-
+      A solar farm wants a model that spots cracked panels in drone photos. It has 600 labeled photos. A ResNet-50 has about 25 million weights; trained from scratch on 600 photos, it would mostly memorize them. But a ResNet-50 already trained on ImageNet's 1.2 million photos can detect edges, textures, and shapes. **Transfer learning** reuses a network trained on one task as the starting point for another.
 
+      There are two standard ways to do it:
 
-    Suppose training from scratch on the target data gives 80% accuracy, while reusing a source encoder gives
-    76% under the same evaluation. That is evidence of negative transfer in this comparison, even if the reused
-    model performed well on its original task. A frozen-feature baseline keeps the encoder fixed and learns
-    only the new prediction part. Fine-tuning permits selected pretrained weights to change too.'
-  text_mode: 'Record which source weights, target examples, labels, and tuning feedback were used. Compare
-    training from scratch and frozen-feature baselines where feasible. Measure target quality, retained source
-    skills, and robustness; transfer is useful when evidence supports the intended new setting.
+      | | **Feature extraction** | **Fine-tuning** |
+      | --- | --- | --- |
+      | What trains | Only a new output layer (the *head*) | The head plus some or all pretrained layers |
+      | Weights updated | 2,048 × 2 + 2 = 4,098 | Up to about 25 million |
+      | Learning rate | Normal | Small, so the pretrained features aren't wrecked |
+      | Suits | Few labels | More labels, or images unlike the originals |
 
+      In feature extraction the pretrained body is **frozen**: each photo passes through it once, becomes a vector of 2,048 numbers, and a small classifier learns "cracked or intact" from those vectors.
 
-    Suppose training from scratch on the target data gives 80% accuracy, while reusing a source encoder gives
-    76% under the same evaluation. That is evidence of negative transfer in this comparison, even if the reused
-    model performed well on its original task. A frozen-feature baseline keeps the encoder fixed and learns
-    only the new prediction part. Fine-tuning permits selected pretrained weights to change too.'
-  bridges: []
-- id: transfer-and-domain-adaptation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.transfer-and-domain-adaptation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Transfer reuses earlier learning. Check whether it helps the new task, which target data were available,
-    and whether earlier capabilities were lost.
-- id: transfer-and-domain-adaptation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.transfer-and-domain-adaptation
-  markdown: Transfer reuses earlier learning. Check whether it helps the new task, which target data were available,
-    and whether earlier capabilities were lost.
-  text_mode: Transfer reuses earlier learning. Check whether it helps the new task, which target data were
-    available, and whether earlier capabilities were lost.
+      Why do borrowed features help at all? Yosinski et al. (2014) found that a network's first layers learn general detectors, such as edges and color blobs, that suit almost any photo, while later layers become specific to the original task. That's why fine-tuning often freezes the early layers and retrains the later ones.
+
+      :::predict The farm has only 60 labeled photos instead of 600. Which option would you try first?
+      Feature extraction. Fine-tuning 25 million weights on 60 photos can overfit within a few passes, while 4,098 weights on fixed features are much harder to overfit. As labels grow into the thousands, fine-tuning usually pulls ahead.
+      :::
+    bridges: []
+  - id: transfer-and-domain-adaptation.s2
+    title: Source, target, and what you get to see
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transfer-and-domain-adaptation
+    markdown: |-
+      The fine-tuned model works well at the first farm, with 93% accuracy on 200 held-out photos. Now the company opens a second farm in a cloudier region. The first farm's photos are the **source domain**, where the model learned. The new farm's photos are the **target domain**, where it must work. What you may use from the target decides which methods apply:
+
+      | Setting | Target data during training | Solar example |
+      | --- | --- | --- |
+      | Supervised fine-tuning | Labeled | 600 labeled photos from the new farm |
+      | **Unsupervised domain adaptation** | Inputs only, no labels | 5,000 unlabeled drone photos from the new farm |
+      | **Domain generalization** | None | Must work at farms nobody has photographed yet |
+
+      Keep the names honest. A method that looked at the new farm's photos during training is doing adaptation, even without labels, and shouldn't be reported as generalizing to unseen farms.
+
+      :::mixup "Starting from a pretrained model can only help."
+      Sometimes the source's habits fit the target badly. Suppose the farm switches to thermal cameras, and fine-tuning the ImageNet network gives 76% while training from scratch on the same labeled thermal photos gives 80%. That's **negative transfer**: reuse made things worse. Always train a from-scratch baseline on the same data, so you'd notice.
+      :::
+    bridges: []
+  - id: transfer-and-domain-adaptation.s3
+    title: Reweight the old farm to look like the new one
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transfer-and-domain-adaptation
+    markdown: |-
+      At the new farm, a cracked panel still looks cracked; only the mix of photos has changed. Most are taken under overcast skies. That's **covariate shift**, which you met in module 3: the inputs change, but the right label for each input doesn't. And the fix from module 3's museum survey works here too: count each example by how common its kind is in the target, divided by how common it is in the source.
+
+      The team's 1,000 labeled validation photos come from the old farm:
+
+      | Sky | Old farm (source) | New farm (target) | Weight | Accuracy on source photos |
+      | --- | ---: | ---: | ---: | ---: |
+      | Sunny | 80% | 30% | 0.3 / 0.8 = 0.375 | 95% |
+      | Overcast | 20% | 70% | 0.7 / 0.2 = 3.5 | 80% |
+
+      Plain accuracy is 0.8 × 95 + 0.2 × 80 = 92%. Reweighted to the new farm's mix, it's 0.3 × 95 + 0.7 × 80 = 84.5%. Expect about 84.5%, not 92%.
+
+      :::papers Importance weighting
+      $$\mathbb{E}_{x,y \sim T}\big[\ell(x,y)\big] = \mathbb{E}_{x,y \sim S}\Big[\tfrac{p_T(x)}{p_S(x)}\,\ell(x,y)\Big]$$
+
+      This holds when $p(y \mid x)$ is the same in both domains, and every kind of target input also appears in the source. Here $\ell$ is "was the prediction wrong", and $p_T(x)/p_S(x)$ is 3.5 for an overcast photo. Multiplying the *training* loss by the same weights makes the model care more about overcast photos. For real images you can't write down $p_T(x)$, so you train a classifier to tell source photos from target photos and turn its odds into weights.
+      :::
+
+      ```python run
+      import numpy as np
+
+      # 1,000 labeled validation photos from the old farm (the source)
+      sky = np.array(["sunny"] * 800 + ["overcast"] * 200)
+      correct = np.concatenate([np.ones(760), np.zeros(40),    # sunny: 760 of 800 right
+                                np.ones(160), np.zeros(40)])   # overcast: 160 of 200 right
+
+      p_source = {"sunny": 0.8, "overcast": 0.2}
+      p_target = {"sunny": 0.3, "overcast": 0.7}   # the new farm is mostly overcast
+      w = np.array([p_target[s] / p_source[s] for s in sky])
+
+      print(f"weights: sunny {p_target['sunny'] / p_source['sunny']:.3f}, "
+            f"overcast {p_target['overcast'] / p_source['overcast']:.3f}")
+      print(f"plain accuracy (source mix):     {correct.mean():.1%}")
+      print(f"weighted accuracy (target mix):  {(w * correct).sum() / w.sum():.1%}")
+      print(f"effective sample size: {w.sum() ** 2 / (w ** 2).sum():.0f} of {len(w)}")
+      ```
+
+      The last line shows the cost. Because 200 overcast photos carry most of the weight, the 1,000 reweighted photos are about as informative as 390 ordinary ones. Change the target to 5% sunny and 95% overcast: the estimate drops to 80.8%, and the effective sample size to 221.
+    bridges: []
+  - id: transfer-and-domain-adaptation.s4
+    title: Train features that can't tell the farms apart
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.transfer-and-domain-adaptation
+    markdown: |-
+      Reweighting needs the target's kinds of photos to appear in the source. If the new farm uses different drones, every photo looks a little different, and there's nothing to upweight. Another idea: learn features that separate cracked from intact panels but *can't* reveal which farm a photo came from.
+
+      **Domain-adversarial training** (DANN; Ganin et al., 2016) adds a third part to the network: a **domain classifier** that tries to guess, from the features, whether a photo came from the source or the target. The feature extractor is trained to help the label predictor and to *fool* the domain classifier. A **gradient reversal layer** does this with one trick: it passes features forward unchanged, but multiplies the gradient by $-\lambda$ on the way back. Only source photos need crack labels. The domain classifier trains on photos from both farms, and its only label is which farm each came from.
+
+      :::papers The DANN objective
+      $$E(\theta_f, \theta_y, \theta_d) = \sum_{i \in S} L_y\big(G_y(G_f(x_i)),\, y_i\big) \;-\; \lambda \sum_{i \in S \cup T} L_d\big(G_d(G_f(x_i)),\, d_i\big)$$
+
+      $G_f$ is the feature extractor, $G_y$ the crack predictor, and $G_d$ the domain classifier; $d_i$ is 0 for old-farm photos and 1 for new-farm photos. Training looks for a saddle point: $\theta_f$ and $\theta_y$ minimize $E$, while $\theta_d$ maximizes it (which means minimizing the domain loss $L_d$). When the domain classifier can do no better than 50%, the features carry no farm information.
+      :::
+
+      Aligned features can still line up the wrong things. If 5% of old-farm panels are cracked but 40% of new-farm panels are, forcing the two feature distributions to match will push some cracked new-farm panels toward intact old ones. So label a couple of hundred target photos as a test set before trusting any adapted model. It's the only direct measurement you have.
+    diagram:
+      caption: Domain-adversarial training. The reversed gradient pushes the features to hide which farm a photo came from.
+      description: A photo from either farm goes into the feature extractor. The features go to the crack predictor, which is trained on labeled source photos. The features also pass through the gradient reversal layer to the domain classifier, which guesses source or target. The reversal layer leaves features unchanged going forward and multiplies the gradient by minus lambda going back.
+      nodes:
+        - id: photo
+          label: Drone photo
+          note: old farm or new farm
+          col: 0
+          row: 1
+          tone: data
+        - id: features
+          label: Feature extractor
+          note: G_f
+          col: 1
+          row: 1
+          tone: accent
+        - id: label
+          label: Crack predictor
+          note: "G_y: trained on source labels"
+          col: 2
+          row: 0
+        - id: grl
+          label: Gradient reversal
+          note: forward unchanged, backward × (−λ)
+          col: 2
+          row: 2
+          tone: warn
+        - id: domain
+          label: Domain classifier
+          note: "G_d: old farm or new farm?"
+          col: 3
+          row: 2
+      edges:
+        - from: photo
+          to: features
+        - from: features
+          to: label
+          label: features
+        - from: features
+          to: grl
+          label: features
+        - from: grl
+          to: domain
+    bridges: []
+  - id: transfer-and-domain-adaptation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.transfer-and-domain-adaptation
+    markdown: Importance weights and reweighted accuracies to compute, then hospital scans, children's speech, night cameras, and satellite images test which transfer method fits which data.
+    takeaway: |-
+      Reuse a pretrained network: freeze it when labels are scarce, fine-tune when you have more. When the target shifts, reweight, align features, or both, and measure on labeled target data.
+  - id: transfer-and-domain-adaptation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.transfer-and-domain-adaptation
+    markdown: |-
+      Transfer reuses earlier learning. Check whether it helps the new task, which target data were available, and whether earlier capabilities were lost.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - transfer-and-domain-adaptation.s1
-    - transfer-and-domain-adaptation.s2
-    - transfer-and-domain-adaptation.s3
-    - transfer-and-domain-adaptation.s4
-    - transfer-and-domain-adaptation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - transfer-and-domain-adaptation.s1
+        - transfer-and-domain-adaptation.s2
+        - transfer-and-domain-adaptation.s3
+        - transfer-and-domain-adaptation.s4
+        - transfer-and-domain-adaptation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     transfer-and-domain-adaptation.recap: transfer-and-domain-adaptation.check
 assessment_families:
-- id: transfer-and-domain-adaptation.base
-  objective_ref: objective.transfer-and-domain-adaptation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Distinguish target access: trace the inputs, operation, and result before choosing.'
-  remediation_scene: transfer-and-domain-adaptation.s2
-  variants:
-  - id: transfer-and-domain-adaptation.base.1
-    prompt: What is negative transfer?
-    options:
-    - id: c
-      text: Every form of fine-tuning
-    - id: a
-      text: Reusing source learning harms the target task
-    - id: b
-      text: Any decrease in file size
-    answer: a
-    feedback: Source structure can be mismatched to the target.
-  - id: transfer-and-domain-adaptation.base.2
-    prompt: Using unlabeled target images during training belongs to which access setting?
-    options:
-    - id: a
-      text: Domain adaptation
-    - id: b
-      text: Fully unseen-target domain generalization
-    - id: c
-      text: No target access
-    answer: a
-    feedback: Target data are available even without labels.
-- id: transfer-and-domain-adaptation.transfer
-  objective_ref: objective.transfer-and-domain-adaptation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate the transfer contract: trace the inputs, operation, and result before choosing.'
-  remediation_scene: transfer-and-domain-adaptation.s4
-  variants:
-  - id: transfer-and-domain-adaptation.transfer.1
-    prompt: Why can feature-distribution matching fail?
-    options:
-    - id: a
-      text: Similar distributions may align semantically different classes
-    - id: b
-      text: Matching always proves label correctness
-    - id: c
-      text: Only model size matters
-    answer: a
-    feedback: Distributional similarity does not establish semantic correspondence.
-  - id: transfer-and-domain-adaptation.transfer.2
-    prompt: What should a transfer report disclose?
-    options:
-    - id: b
-      text: Only final accuracy
-    - id: c
-      text: Only the model’s nickname
-    - id: a
-      text: Source artifacts, target-data access, labels, and tuning protocol
-    answer: a
-    feedback: The access contract determines what was learned from where.
+  - id: transfer-and-domain-adaptation.base
+    objective_ref: objective.transfer-and-domain-adaptation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Distinguish target access: trace the inputs, operation, and result before choosing.'
+    remediation_scene: transfer-and-domain-adaptation.s2
+    variants:
+      - id: transfer-and-domain-adaptation.base.1
+        prompt: What is negative transfer?
+        options:
+          - id: c
+            text: Every form of fine-tuning
+          - id: a
+            text: Reusing source learning harms the target task
+          - id: b
+            text: Any decrease in file size
+        answer: a
+        feedback: Source structure can be mismatched to the target.
+        retired: true
+      - id: transfer-and-domain-adaptation.base.2
+        prompt: Using unlabeled target images during training belongs to which access setting?
+        options:
+          - id: a
+            text: Domain adaptation
+          - id: b
+            text: Fully unseen-target domain generalization
+          - id: c
+            text: No target access
+        answer: a
+        feedback: Target data are available even without labels.
+        retired: true
+  - id: transfer-and-domain-adaptation.transfer
+    objective_ref: objective.transfer-and-domain-adaptation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate the transfer contract: trace the inputs, operation, and result before choosing.'
+    remediation_scene: transfer-and-domain-adaptation.s4
+    variants:
+      - id: transfer-and-domain-adaptation.transfer.1
+        prompt: Why can feature-distribution matching fail?
+        options:
+          - id: a
+            text: Similar distributions may align semantically different classes
+          - id: b
+            text: Matching always proves label correctness
+          - id: c
+            text: Only model size matters
+        answer: a
+        feedback: Distributional similarity does not establish semantic correspondence.
+        retired: true
+      - id: transfer-and-domain-adaptation.transfer.2
+        prompt: What should a transfer report disclose?
+        options:
+          - id: b
+            text: Only final accuracy
+          - id: c
+            text: Only the model’s nickname
+          - id: a
+            text: Source artifacts, target-data access, labels, and tuning protocol
+        answer: a
+        feedback: The access contract determines what was learned from where.
+        retired: true
+  - id: transfer-and-domain-adaptation.base.v2
+    objective_ref: objective.transfer-and-domain-adaptation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask which weights change and what the target data look like. Few labels favor a frozen body; an importance weight is target share divided by source share.
+    remediation_scene: transfer-and-domain-adaptation.s1
+    variants:
+      - id: transfer-and-domain-adaptation.base.v2.1
+        prompt: A team has 60 labeled photos for a new task and an ImageNet-pretrained ResNet-50. Which approach is the safer first try?
+        options:
+          - id: b
+            text: Fine-tune all 25 million weights at the usual learning rate
+          - id: a
+            text: Freeze the pretrained body and train only a new output layer
+          - id: c
+            text: Train a fresh ResNet-50 from random weights on the 60 photos
+        answer: a
+        feedback: With 60 photos, training a few thousand head weights on fixed features is much harder to overfit. Updating 25 million weights at a normal learning rate can wreck the pretrained features and memorize the photos, and training from scratch throws away what the network already knows.
+      - id: transfer-and-domain-adaptation.base.v2.2
+        prompt: During feature extraction with a pretrained network, which weights does training update?
+        options:
+          - id: a
+            text: Only the new output layer that maps features to the new labels
+          - id: b
+            text: The early layers, since they hold the general edge detectors
+          - id: c
+            text: All layers, but with a learning rate ten times smaller than usual
+        answer: a
+        feedback: Feature extraction freezes the whole pretrained body and trains only the new head. Updating layers with a small learning rate is fine-tuning, and it's the early, general layers that are usually kept frozen.
+      - id: transfer-and-domain-adaptation.base.v2.3
+        prompt: Overcast photos are 20% of the source validation set and 70% of the target. Under importance weighting, why does each overcast source photo count 3.5 times?
+        options:
+          - id: c
+            text: Overcast photos are harder, so errors on them deserve extra weight
+          - id: b
+            text: The model is 3.5 times less accurate on overcast photos
+          - id: a
+            text: Overcast photos are 3.5 times as common in the target as in the source
+        answer: a
+        feedback: The weight is p_target / p_source = 0.7 / 0.2 = 3.5, a ratio of frequencies. It says nothing about how hard the photos are or how accurate the model is on them.
+      - id: transfer-and-domain-adaptation.base.v2.4
+        prompt: In domain-adversarial training (DANN), what does the gradient reversal layer make the feature extractor do?
+        options:
+          - id: b
+            text: Help the domain classifier tell source photos from target photos
+          - id: a
+            text: Produce features from which the domain classifier can't tell the domains apart
+          - id: c
+            text: Undo its last update whenever the label predictor makes an error
+        answer: a
+        feedback: Reversing the gradient flips the feature extractor's goal from helping the domain classifier to fooling it, so the features lose domain information. The domain classifier itself still learns to tell the domains apart.
+      - id: transfer-and-domain-adaptation.base.v2.5
+        prompt: A paper trains on photos from three farms and also uses 5,000 unlabeled photos from a fourth farm during training, then tests on that fourth farm. How should it describe the setting?
+        options:
+          - id: a
+            text: Unsupervised domain adaptation, since it used target photos without labels
+          - id: b
+            text: Domain generalization, since no labels from the fourth farm were used
+          - id: c
+            text: Supervised fine-tuning, since the model was trained on the fourth farm
+        answer: a
+        feedback: Seeing unlabeled target inputs during training is unsupervised domain adaptation. Domain generalization means no target data at all, and supervised fine-tuning needs target labels.
+  - id: transfer-and-domain-adaptation.transfer.v2
+    objective_ref: objective.transfer-and-domain-adaptation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "List what the target offers: labels, unlabeled inputs, or nothing. Then check whether target inputs ever appear in the source, and keep a from-scratch baseline in mind."
+    remediation_scene: transfer-and-domain-adaptation.s2
+    variants:
+      - id: transfer-and-domain-adaptation.transfer.v2.1
+        prompt: A chest X-ray model trained at Hospital A will be deployed at Hospital B, which has 10,000 unlabeled scans and a budget to label 200. Which plan fits?
+        options:
+          - id: c
+            text: Deploy the Hospital A model as is, since X-rays look alike everywhere
+          - id: a
+            text: Adapt using the unlabeled B scans, and test on the 200 labeled ones
+          - id: b
+            text: Fine-tune on all 10,000 B scans, using the model's own predictions as labels
+        answer: a
+        feedback: Unlabeled target scans support domain adaptation, and 200 labeled B scans give the only direct measure of how it works there. Scanners and patients differ between hospitals, so deploying as is risks a silent drop. Training on the model's own guesses, with no labeled B scans to check them, could lock in its mistakes at B unnoticed.
+      - id: transfer-and-domain-adaptation.transfer.v2.2
+        prompt: A speech recognizer pretrained on adult speech and fine-tuned on children's recordings scores 70%. The same network trained from scratch on those recordings scores 75%. What does this show?
+        options:
+          - id: a
+            text: Negative transfer, since the adult pretraining hurt this target
+          - id: b
+            text: Overfitting, since the from-scratch model memorized the data
+          - id: c
+            text: Covariate shift, which importance weighting will fix directly
+        answer: a
+        feedback: Reuse did worse than the baseline on the same data, which is negative transfer. Overfitting would lower the from-scratch score, yet it came out higher. Reweighting adult examples can't fix a source whose habits don't fit the target.
+      - id: transfer-and-domain-adaptation.transfer.v2.3
+        prompt: A parking camera's training photos are all daytime. It will now run at night too. Why won't importance weighting of the daytime photos help?
+        options:
+          - id: b
+            text: Night photos need larger weights than the method allows
+          - id: c
+            text: Weighting only works when the labels change, not the inputs
+          - id: a
+            text: No night photos exist in the source, so there's nothing to upweight
+        answer: a
+        feedback: Importance weighting needs every kind of target input to appear in the source. With zero night photos, no weight creates them; collect and label night photos instead. Weighting is designed for input shift, not label change.
+      - id: transfer-and-domain-adaptation.transfer.v2.4
+        prompt: A land-use classifier has 1 million labeled satellite images and an ImageNet-pretrained network. Satellite images look quite unlike everyday photos. Which approach should the team expect to do best?
+        options:
+          - id: c
+            text: Feature extraction, since frozen ImageNet features can't overfit
+          - id: b
+            text: Domain-adversarial training, since the images differ from ImageNet
+          - id: a
+            text: Fine-tuning many layers, since there are plenty of target labels
+        answer: a
+        feedback: With a million labels and images unlike the source, updating the pretrained layers lets the features adapt, and overfitting is not the main risk. DANN aligns an unlabeled target with a labeled source, which isn't the situation here.
+      - id: transfer-and-domain-adaptation.transfer.v2.5
+        prompt: A new farm has 40% cracked panels, against 5% at the old farm. A team runs DANN until the domain classifier sits at 50%. What is the risk?
+        options:
+          - id: a
+            text: Forcing equal feature distributions may map cracked panels onto intact ones
+          - id: b
+            text: The domain classifier at 50% means the crack predictor has stopped learning
+          - id: c
+            text: The model will now ignore the old farm, since its data count less
+        answer: a
+        feedback: When class proportions differ, matching the overall feature distributions pushes some target cracks toward source intact panels. A domain classifier at chance says nothing about the crack predictor, which still trains on source labels.
+  - id: transfer-and-domain-adaptation.calculate
+    objective_ref: objective.transfer-and-domain-adaptation
+    task: base
+    response_type: numeric
+    points: 1
+    hint: An importance weight is target share divided by source share. To estimate target accuracy, weight each group's accuracy by its share in the target.
+    remediation_scene: transfer-and-domain-adaptation.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: transfer-and-domain-adaptation.calculate.1
+        prompt: Night photos are 20% of a source dataset and 60% of the target. What importance weight does each night photo get?
+        answer: 3
+        feedback: 0.6 / 0.2 = 3. Each night source photo stands in for three, because night is three times as common in the target.
+      - id: transfer-and-domain-adaptation.calculate.2
+        prompt: A model is 96% accurate on daytime validation photos and 70% on night photos. The target is half day and half night. What is the estimated target accuracy, in percent?
+        answer: 83
+        feedback: 0.5 × 96 + 0.5 × 70 = 48 + 35 = 83%.
+      - id: transfer-and-domain-adaptation.calculate.3
+        prompt: English messages are 90% of a training set but 50% of the messages a model will see in use. What importance weight does each English training message get? (Two decimals.)
+        answer: 0.56
+        feedback: 0.5 / 0.9 ≈ 0.56. English is over-represented in training, so each English message counts for less than one.
+      - id: transfer-and-domain-adaptation.calculate.4
+        prompt: A classifier is 90% accurate on type-A inputs and 75% on type-B. In the target, 40% of inputs are type A and 60% type B. What is the estimated target accuracy, in percent?
+        answer: 81
+        feedback: 0.4 × 90 + 0.6 × 75 = 36 + 45 = 81%.
+      - id: transfer-and-domain-adaptation.calculate.5
+        prompt: In the solar example, sunny photos are 80% of the source and 30% of the target. What importance weight does a sunny photo get? (Three decimals.)
+        answer: 0.375
+        feedback: 0.3 / 0.8 = 0.375. Sunny photos are rarer in the target, so each counts for less than one.

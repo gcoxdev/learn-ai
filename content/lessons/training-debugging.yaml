@@ -4,212 +4,322 @@ lesson:
   version: 0.3.0-draft
   title: Find the first broken assumption in a training run
   state: draft
-  summary: Follow one tiny training step and find the first point where the calculation differs from what you
-    expected.
+  summary: Training bugs rarely crash. They just make a model quietly worse. Learn the checks that find them fast, from a two-minute sanity test to a symptom-by-symptom field guide.
   slot: M10.8
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: Dive into Deep Learning — authors’ open textbook
+      url: https://d2l.ai/
+    - title: A Recipe for Training Neural Networks (Andrej Karpathy, 2019)
+      url: https://karpathy.github.io/2019/04/25/recipe/
 objectives:
-- id: objective.training-debugging
-  version: 1-draft
-  statement: Training diagnosis checks data, shapes, loss, gradients, updates, and evaluation in order; divergence,
-    plateaus, and noisy metrics can have different causes.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - training-debugging.base
-  - training-debugging.transfer
-  prerequisites:
-  - anyOf:
-    - objective.stochastic-gradients
-  - anyOf:
-    - objective.stable-training
-  - anyOf:
-    - objective.splits-and-leakage
+  - id: objective.training-debugging
+    version: 2-draft
+    statement: Training diagnosis checks data, shapes, loss, gradients, updates, and evaluation in order; divergence, plateaus, and noisy metrics can have different causes.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - training-debugging.base.v2
+      - training-debugging.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.stochastic-gradients
+      - anyOf:
+          - objective.stable-training
+      - anyOf:
+          - objective.splits-and-leakage
 scenes:
-- id: training-debugging.s1
-  title: Start with a tiny inspectable batch
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.training-debugging
-  markdown: 'Print or inspect a few inputs, targets, predictions, and loss terms with their shapes and units.
-    Confirm that targets correspond to the intended examples. A network can optimize a perfectly implemented
-    loss for the wrong labels, so a falling curve is not sufficient evidence.
+  - id: training-debugging.s1
+    title: Look at the data before the curve
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.training-debugging
+    markdown: |-
+      A team trains a model to predict house prices. The loss falls smoothly, the curve looks textbook-perfect, and the predictions are useless: every house gets roughly the average price. Nothing crashed. The bug was one line: predictions came out as a column of 4 numbers, the labels as a flat list of 4, and subtracting them in NumPy silently produced a 4 × 4 grid of every prediction minus every label. The model minimized the wrong thing, very well.
 
+      A tensor's **shape** lists its size along each axis: a column of 4 predictions has shape (4, 1), and a flat list of 4 labels has shape (4,). When two shapes don't match, NumPy and PyTorch often **broadcast**: they stretch both to a shared shape instead of raising an error. That's handy on purpose and a disaster by accident. So before you watch any curves, look at a handful of real examples:
 
-    A tensor''s **shape** gives the size of each axis. Four predictions and four labels are not enough: prediction
-    1 must correspond to label 1. Deliberately inspect one pair and compute its loss by hand. If the program
-    reports a different result, fix that discrepancy before running a larger training job.'
-  text_mode: 'Print or inspect a few inputs, targets, predictions, and loss terms with their shapes and units.
-    Confirm that targets correspond to the intended examples. A network can optimize a perfectly implemented
-    loss for the wrong labels, so a falling curve is not sufficient evidence.
+      - Print a few inputs next to their labels. Does each label belong to its input? (Shuffling inputs but not labels breaks the pairing, and the loss still falls.)
+      - Print the shapes of the predictions, the labels, and the loss terms. A loss built from 4 examples should come from 4 terms, not 16.
+      - Compute one example's loss by hand and compare.
 
+      :::predict A new 10-class image classifier starts training. Before any updates, what should its average cross-entropy loss be?
+      About ln 10 ≈ 2.30. A fresh classifier has no idea yet, so it should give each class a probability near 1/10. Cross-entropy is −ln(probability of the correct class), so −ln(0.1) = 2.30. If step 0 shows 23.0, the starting outputs are wildly overconfident (often an output layer initialized too large), or the loss is summed over 10 examples instead of averaged. Checking the step-0 loss against ln K, where K is the number of classes, takes seconds.
+      :::
+    bridges: []
+  - id: training-debugging.s2
+    title: Overfit one tiny batch
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-debugging
+    markdown: |-
+      Next, make sure the training machinery works at all. The fastest test: take 4 examples and train on only them, over and over. A working network with more parameters than examples should drive the loss to almost zero. Andrej Karpathy's widely shared guide "A Recipe for Training Neural Networks" (2019) puts this check, along with the step-0 loss check, near the very start.
 
-    A tensor''s **shape** gives the size of each axis. Four predictions and four labels are not enough: prediction
-    1 must correspond to label 1. Deliberately inspect one pair and compute its loss by hand. If the program
-    reports a different result, fix that discrepancy before running a larger training job.'
-  bridges: []
-- id: training-debugging.s2
-  title: Check that parameters actually change
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-debugging
-  markdown: 'Trace whether gradients exist, have sensible scale, and reach the intended parameters. Verify
-    the optimizer contains those parameters and that an update occurs. Accidentally detached tensors, frozen
-    weights, missing optimizer steps, or repeated gradient accumulation can make a run behave very differently
-    from its diagram.
+      Here it is on a small two-layer network, first working correctly and then with three planted bugs. A **frozen** layer is left out of the updates, on purpose or by mistake. A **detached** layer has its gradient path cut, so no gradient reaches it. Either way its weights stop moving, which is what the "W1 frozen" case below does.
 
+      ```python run
+      import numpy as np
+      np.seterr(all="ignore")                            # let broken runs print nan quietly
 
-    A **frozen** weight is intentionally excluded from learning. A **detached** calculation no longer passes
-    derivatives back through that connection. Try the one-weight rule at input 2 and target 6: from weight
-    0 and gradient −24, rate 0.1 should give weight 2.4. If the stored weight remains 0, investigate whether
-    the update ran and whether it targeted the correct parameter.'
-  text_mode: 'Trace whether gradients exist, have sensible scale, and reach the intended parameters. Verify
-    the optimizer contains those parameters and that an update occurs. Accidentally detached tensors, frozen
-    weights, missing optimizer steps, or repeated gradient accumulation can make a run behave very differently
-    from its diagram.
+      def train(bug, steps=1000, lr=0.2):
+          rng = np.random.default_rng(1)
+          X = rng.normal(size=(4, 3))                    # a tiny batch: 4 examples, 3 features
+          y = np.array([[1.0], [-1.0], [0.5], [2.0]])
+          W1, W2 = rng.normal(0, 0.5, (3, 8)), rng.normal(0, 0.5, (8, 1))
+          W1_start, losses = W1.copy(), []
+          for step in range(steps):
+              h = np.tanh(X @ W1)                        # forward pass
+              err = h @ W2 - y
+              losses.append(np.mean(err**2))
+              g_out = 2 * err / len(X)                   # backward pass
+              gW2 = h.T @ g_out
+              gW1 = X.T @ ((g_out @ W2.T) * (1 - h**2))
+              if bug == "sign flipped":
+                  gW1, gW2 = -gW1, -gW2
+              if bug == "W1 frozen":
+                  gW1 = 0 * gW1                          # like a layer left out of the optimizer
+              if bug != "update not saved":
+                  W1, W2 = W1 - lr * gW1, W2 - lr * gW2
+          return losses[0], losses[-1], np.abs(W1 - W1_start).max()
 
+      for bug in ["none", "update not saved", "sign flipped", "W1 frozen"]:
+          first, last, moved = train(bug)
+          print(f"{bug:16s} loss {first:.3f} -> {last:.3g}   W1 moved by {moved:.2g}")
+      ```
 
-    A **frozen** weight is intentionally excluded from learning. A **detached** calculation no longer passes
-    derivatives back through that connection. Try the one-weight rule at input 2 and target 6: from weight
-    0 and gradient −24, rate 0.1 should give weight 2.4. If the stored weight remains 0, investigate whether
-    the update ran and whether it targeted the correct parameter.'
-  bridges: []
-- id: training-debugging.s3
-  title: Interpret common curve patterns
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-debugging
-  markdown: Exploding loss suggests examining step scale, invalid arithmetic, data spikes, or target errors.
-    A plateau may reflect weak signal, poor learning rate, saturation, or an already limited objective. Noisy
-    validation can come from a small sample or stochastic evaluation. These are hypotheses to test, not diagnoses
-    supplied by curve shape alone.
-  text_mode: Exploding loss suggests examining step scale, invalid arithmetic, data spikes, or target errors.
-    A plateau may reflect weak signal, poor learning rate, saturation, or an already limited objective. Noisy
-    validation can come from a small sample or stochastic evaluation. These are hypotheses to test, not diagnoses
-    supplied by curve shape alone.
-  bridges: []
-- id: training-debugging.s4
-  title: Change one factor and preserve evidence
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-debugging
-  markdown: 'Try overfitting a tiny clean sample, compare with a baseline, or run a numerical gradient check.
-    Record the change and expected consequence before rerunning. Keep failed-run logs and checkpoints when
-    useful. If validation seems implausibly strong, inspect leakage before celebrating an architectural breakthrough.
+      The healthy run falls from 1.650 to about 0.0000002. An update that's computed but never saved leaves the loss exactly where it started. A flipped sign climbs uphill until the numbers overflow into NaN. The frozen layer is the sneaky one: the second layer alone gets the loss down to 0.0223, which looks like progress until you compare it with the healthy run. "W1 moved by 0" gives it away, so also check that every layer's weights actually changed.
 
+      You can check by hand, too. On the bakery model from the first lesson, weight 0 with gradient −24 and rate 0.1 should become exactly 2.4. If it's still 0, the update didn't run or went to a different parameter.
+    bridges: []
+  - id: training-debugging.s3
+    title: A field guide to sick loss curves
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-debugging
+    markdown: |-
+      Once the machinery passes, most problems show up in the curves. Each symptom has a few usual suspects and a quick first check, most of them from earlier lessons in this module.
 
-    To **overfit a tiny sample** deliberately is a diagnostic experiment: check whether the training machinery
-    can learn a few clean examples at all. Success is not a final model-quality result. Failure can point to
-    wrong labels, missing updates or an unsuitable model; it does not identify which one without further checks.'
-  text_mode: 'Try overfitting a tiny clean sample, compare with a baseline, or run a numerical gradient check.
-    Record the change and expected consequence before rerunning. Keep failed-run logs and checkpoints when
-    useful. If validation seems implausibly strong, inspect leakage before celebrating an architectural breakthrough.
+      | Symptom | Likely causes | First check |
+      | --- | --- | --- |
+      | NaN or infinity within the first steps | Learning rate far too high; log(0); float16 overflow | Divide the rate by 10; find the first non-finite operation |
+      | Sudden spikes later in training | One bad batch or outlier; no clipping | Log gradient norms; inspect the batch at the spike |
+      | Loss flat from step 0 | Update not applied; frozen or detached layer; rate near 0 | Overfit one tiny batch; check that each layer's weights move |
+      | Step-0 loss far from ln K | Oversized output initialization; sum instead of mean; wrong labels | Compare with ln K; print shapes and a few labels |
+      | Falls, then stalls high | Rate too high to settle, or too low to move; saddle; model too small | Try the rate ×3 and ÷3; check the schedule; overfit a tiny batch |
+      | Training loss falls, validation loss rises | Overfitting | More data, weight decay, or stop at the best validation step |
+      | Validation near-perfect from the start | Test examples leaked into training (duplicates across splits) | Search for overlapping examples between the splits |
+      | Loss jumps after resuming a run | Optimizer state or schedule position not restored | Compare the checkpoint's contents with the optimizer's state |
 
+      :::mixup "The loss is going down, so the pipeline is fine."
+      A falling loss says the optimizer is reducing *some* number. With misaligned labels, a broadcasting bug, or leaked test data, it can fall beautifully while the model learns the wrong thing. Only the data and shape checks catch those.
+      :::
+  - id: training-debugging.s4
+    title: One change at a time, written down
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-debugging
+    markdown: |-
+      Here's how an engineer, Ana, worked through an image model whose loss turned to NaN around step 3,000.
 
-    To **overfit a tiny sample** deliberately is a diagnostic experiment: check whether the training machinery
-    can learn a few clean examples at all. Success is not a final model-quality result. Failure can point to
-    wrong labels, missing updates or an unsuitable model; it does not identify which one without further checks.'
-  bridges: []
-- id: training-debugging.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.training-debugging
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Follow one small batch from input to loss, gradient, and updated weight. Fix the first mismatch
-    with your expected calculation before trying a larger run.
-- id: training-debugging.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.training-debugging
-  markdown: Follow one small batch from input to loss, gradient, and updated weight. Fix the first mismatch
-    with your expected calculation before trying a larger run.
-  text_mode: Follow one small batch from input to loss, gradient, and updated weight. Fix the first mismatch
-    with your expected calculation before trying a larger run.
+      1. **Reproduce it.** Same seed, same data order: NaN again at step 3,012. A bug you can reproduce is half fixed.
+      2. **Look before the failure.** The gradient-norm log sat near 1 for 3,000 steps, then jumped to 10⁶ at step 3,011. That's one bad batch, not a rate that's too high everywhere.
+      3. **Find the first broken number.** Stepping through batch 3,011, the first huge value came from a normalization layer. One image was almost completely black, so the variance of its pixels was about 10⁻¹², and dividing by its square root blew the values up a millionfold. That step wrecked the weights, and the next one overflowed into NaN.
+      4. **Change one thing.** She added the missing ε to that division, reran with the same seed, and passed step 3,012. Only then did she turn on gradient clipping as a seat belt, in a separate run, so she could tell which change did what.
+
+      Had she lowered the learning rate, added clipping, and switched to float32 all at once, the NaN might have vanished, and she'd never know which change fixed it, or that the black image was still in the data.
+
+      :::key The debugging habit
+      Find the first place the numbers stop matching what you expected, change one thing, and write down what you changed and what you predicted would happen.
+      :::
+
+      Next: the neural networks module, where the tiny two-layer network above grows into real architectures.
+    bridges: []
+  - id: training-debugging.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.training-debugging
+    markdown: Predict step-0 losses for new classifiers, then match training symptoms (NaN, flat curves, leaks, broadcasting bugs) to the check that finds each cause.
+    takeaway: |-
+      Follow one small batch from input to loss, gradient, and updated weight. Fix the first mismatch with your expected calculation before trying a larger run.
+  - id: training-debugging.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.training-debugging
+    markdown: |-
+      Follow one small batch from input to loss, gradient, and updated weight. Fix the first mismatch with your expected calculation before trying a larger run.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - training-debugging.s1
-    - training-debugging.s2
-    - training-debugging.s3
-    - training-debugging.s4
-    - training-debugging.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - training-debugging.s1
+        - training-debugging.s2
+        - training-debugging.s3
+        - training-debugging.s4
+        - training-debugging.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     training-debugging.recap: training-debugging.check
 assessment_families:
-- id: training-debugging.base
-  objective_ref: objective.training-debugging
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Check that parameters actually change: trace the inputs, operation, and result before choosing.'
-  remediation_scene: training-debugging.s2
-  variants:
-  - id: training-debugging.base.1
-    prompt: Loss decreases on misaligned labels. Has the intended task been validated?
-    options:
-    - id: b
-      text: Yes; decreasing loss proves correctness
-    - id: c
-      text: Only if the model is large
-    - id: a
-      text: No; the optimized target is wrong
-    answer: a
-    feedback: Optimization can faithfully fit an incorrectly constructed task.
-  - id: training-debugging.base.2
-    prompt: Gradients exist but weights never change. What should be checked?
-    options:
-    - id: c
-      text: Only token decoding temperature
-    - id: a
-      text: Optimizer parameter membership and update execution
-    - id: b
-      text: Only the chart color
-    answer: a
-    feedback: Gradient computation and parameter updates are separate steps.
-- id: training-debugging.transfer
-  objective_ref: objective.training-debugging
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Change one factor and preserve evidence: trace the inputs, operation, and result before choosing.'
-  remediation_scene: training-debugging.s4
-  variants:
-  - id: training-debugging.transfer.1
-    prompt: Validation accuracy is suspiciously perfect. What should be investigated?
-    options:
-    - id: c
-      text: A proof of general intelligence
-    - id: a
-      text: Leakage and evaluation construction
-    - id: b
-      text: Only making the model smaller
-    answer: a
-    feedback: Unexpectedly strong results can reveal information boundary failures.
-  - id: training-debugging.transfer.2
-    prompt: A curve plateaus. Is a larger learning rate always the fix?
-    options:
-    - id: a
-      text: No; several data, model, objective, or optimization causes are possible
-    - id: b
-      text: Yes; every plateau has one cause
-    - id: c
-      text: Only if the loss is positive
-    answer: a
-    feedback: A plateau is an observation that needs targeted diagnosis.
+  - id: training-debugging.base
+    objective_ref: objective.training-debugging
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask whether the gradient was computed, whether the update was applied, and whether it reached the intended weights.
+    remediation_scene: training-debugging.s2
+    variants:
+      - id: training-debugging.base.1
+        retired: true
+        prompt: Loss decreases on misaligned labels. Has the intended task been validated?
+        options:
+          - id: b
+            text: Yes; decreasing loss proves correctness
+          - id: c
+            text: Only if the model is large
+          - id: a
+            text: No; the optimized target is wrong
+        answer: a
+        feedback: Optimization can faithfully fit an incorrectly constructed task.
+      - id: training-debugging.base.2
+        retired: true
+        prompt: Gradients exist but weights never change. What should be checked?
+        options:
+          - id: c
+            text: Only token decoding temperature
+          - id: a
+            text: Optimizer parameter membership and update execution
+          - id: b
+            text: Only the chart color
+        answer: a
+        feedback: Gradient computation and parameter updates are separate steps.
+  - id: training-debugging.transfer
+    objective_ref: objective.training-debugging
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Suspiciously good or stubbornly flat results both need a specific check, not a bigger model.
+    remediation_scene: training-debugging.s4
+    variants:
+      - id: training-debugging.transfer.1
+        retired: true
+        prompt: Validation accuracy is suspiciously perfect. What should be investigated?
+        options:
+          - id: c
+            text: A proof of general intelligence
+          - id: a
+            text: Leakage and evaluation construction
+          - id: b
+            text: Only making the model smaller
+        answer: a
+        feedback: Unexpectedly strong results can reveal information boundary failures.
+      - id: training-debugging.transfer.2
+        retired: true
+        prompt: A curve plateaus. Is a larger learning rate always the fix?
+        options:
+          - id: a
+            text: No; several data, model, objective, or optimization causes are possible
+          - id: b
+            text: Yes; every plateau has one cause
+          - id: c
+            text: Only if the loss is positive
+        answer: a
+        feedback: A plateau is an observation that needs targeted diagnosis.
+  - id: training-debugging.base.v2
+    objective_ref: objective.training-debugging
+    task: base
+    response_type: numeric
+    points: 1
+    absolute_tolerance: 0.01
+    hint: A fresh classifier that knows nothing gives each of the K classes probability 1/K, so its cross-entropy is −ln(1/K) = ln K.
+    remediation_scene: training-debugging.s1
+    variants:
+      - id: training-debugging.base.v2.1
+        prompt: A new classifier chooses among 4 classes. Before any training, what average cross-entropy loss should it show? Give two decimals.
+        answer: 1.386
+        feedback: Each class gets probability 1/4, so the loss is −ln(0.25) = ln 4 ≈ 1.39. A step-0 loss far above this suggests overconfident starting outputs or a summed loss.
+      - id: training-debugging.base.v2.2
+        prompt: A new spam filter chooses between 2 classes, spam or not spam. Before any training, what average cross-entropy loss should it show? Give two decimals.
+        answer: 0.693
+        feedback: Each class gets probability 1/2, so the loss is −ln(0.5) = ln 2 ≈ 0.69. Getting 0 or a negative number would point to a bug in the loss itself.
+      - id: training-debugging.base.v2.3
+        prompt: A new bird-song classifier chooses among 50 species. Before any training, what average cross-entropy loss should it show? Give two decimals.
+        answer: 3.912
+        feedback: Each species gets probability 1/50, so the loss is −ln(0.02) = ln 50 ≈ 3.91. Using log base 10 instead of the natural log would give 1.70.
+      - id: training-debugging.base.v2.4
+        prompt: A new image classifier chooses among 1,000 categories. Before any training, what average cross-entropy loss should it show? Give two decimals.
+        answer: 6.908
+        feedback: Each category gets probability 1/1,000, so the loss is −ln(0.001) = ln 1000 ≈ 6.91. If step 0 shows 69 instead, look for oversized initial outputs or a sum over 10 examples where a mean was intended.
+  - id: training-debugging.transfer.v2
+    objective_ref: objective.training-debugging
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Start from the symptom and pick the check that tells the likely causes apart. Look at data, shapes, the step-0 loss, and whether weights move before touching the model's size.
+    remediation_scene: training-debugging.s3
+    variants:
+      - id: training-debugging.transfer.v2.1
+        prompt: A new model's loss stays at exactly the same value for 500 steps. The gradients printed each step are nonzero. What should you check first?
+        options:
+          - id: b
+            text: Whether the learning rate is too high and needs to drop by 10×
+          - id: a
+            text: Whether the computed update is actually applied to the weights
+          - id: c
+            text: Whether the model is too small and needs more layers
+        answer: a
+        feedback: Nonzero gradients with an unchanging loss mean the step isn't reaching the weights, from a missing optimizer step, an update never saved, or parameters not registered with the optimizer. A too-high rate would make the loss jump, not freeze.
+      - id: training-debugging.transfer.v2.2
+        prompt: A regression model's predictions have shape (32, 1), its labels have shape (32,), and the loss is the mean of (predictions − labels)². The loss falls, but predictions all hover near the average. What is the likely bug?
+        options:
+          - id: c
+            text: The learning rate is too low to fit individual examples
+          - id: b
+            text: The model has too few layers to capture the pattern
+          - id: a
+            text: The subtraction broadcasts to a 32 × 32 grid of pairs
+        answer: a
+        feedback: (32, 1) minus (32,) stretches to (32, 32), so the loss compares every prediction with every label, and the best answer is the average. Reshape one side so both are (32,). A bigger model or rate would still minimize the wrong quantity.
+      - id: training-debugging.transfer.v2.3
+        prompt: On a 4-example batch, a network's loss drops from 1.6 to 0.02 but won't go lower, while a colleague's copy of the same network reaches 0.0000002. Every layer's gradient is nonzero. What should you check next?
+        options:
+          - id: a
+            text: Whether every layer's weights actually change between steps
+          - id: c
+            text: Whether 4 examples are too few for a network to memorize
+          - id: b
+            text: Whether the learning rate should be raised for the last layer
+        answer: a
+        feedback: A network that can memorize 4 examples but stalls partway often has a frozen or detached layer, so only part of it learns. Four examples are easy to memorize, which is the point of the test. Changing the last layer's rate doesn't wake up a layer that never updates.
+      - id: training-debugging.transfer.v2.4
+        prompt: A new fraud detector scores 99.8% accuracy on validation from the first epoch, far above published results. What should you investigate first?
+        options:
+          - id: b
+            text: Whether the model is powerful enough to be trusted at scale
+          - id: a
+            text: Whether validation transactions also appear in the training data
+          - id: c
+            text: Whether the learning rate is high enough to keep improving
+        answer: a
+        feedback: Results that are too good too early are the classic sign of leakage, such as duplicated transactions across splits. Check the split before celebrating; neither the model size nor the learning rate explains an instant near-perfect score.
+      - id: training-debugging.transfer.v2.5
+        prompt: A training run is stable for 20,000 steps, then its loss spikes to 50 times normal for one step and slowly recovers. This repeats a few times. Which check tells you the most?
+        options:
+          - id: c
+            text: Lowering the learning rate for the whole run, then retraining
+          - id: b
+            text: Logging gradient norms and inspecting the batches at the spikes
+          - id: a
+            text: Switching from Adam to plain SGD, then comparing the curves
+        answer: b
+        feedback: Isolated spikes after long stable stretches usually trace to particular batches, such as an outlier or a corrupted example. The gradient-norm log finds the step, and the batch shows the cause. A lower rate or another optimizer changes many things at once and may just hide it.

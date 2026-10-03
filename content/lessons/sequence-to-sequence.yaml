@@ -1,267 +1,418 @@
 schema_version: 0.2-draft
 lesson:
   id: sequence-to-sequence
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Map one sequence into another
   state: draft
-  summary: Translate one ordered list into another, then compare using correct prefixes in training with generating
-    your own prefixes.
+  summary: "\"The iced coffee\" becomes \"le café glacé\": three words in, three out, in a different order. See how an encoder, a decoder, and attention pull that off, and why decoding needs a search."
   slot: M13.4
   category: learning
   sources:
-  - title: Dive into Deep Learning — sequence-to-sequence learning
-    url: https://d2l.ai/chapter_recurrent-modern/seq2seq.html
-  - title: Dive into Deep Learning — beam search
-    url: https://d2l.ai/chapter_recurrent-modern/beam-search.html
+    - title: "Sequence to Sequence Learning with Neural Networks (Sutskever, Vinyals & Le, 2014)"
+      url: https://arxiv.org/abs/1409.3215
+    - title: "Neural Machine Translation by Jointly Learning to Align and Translate (Bahdanau, Cho & Bengio, 2014)"
+      url: https://arxiv.org/abs/1409.0473
+    - title: "On the Properties of Neural Machine Translation: Encoder–Decoder Approaches (Cho et al., 2014)"
+      url: https://arxiv.org/abs/1409.1259
+    - title: "Sequence Level Training with Recurrent Neural Networks (Ranzato et al., 2015)"
+      url: https://arxiv.org/abs/1511.06732
+    - title: "Scheduled Sampling for Sequence Prediction with Recurrent Neural Networks (Bengio et al., 2015)"
+      url: https://arxiv.org/abs/1506.03099
+    - title: Dive into Deep Learning — sequence-to-sequence learning
+      url: https://d2l.ai/chapter_recurrent-modern/seq2seq.html
+    - title: Dive into Deep Learning — beam search
+      url: https://d2l.ai/chapter_recurrent-modern/beam-search.html
 objectives:
-- id: objective.sequence-to-sequence
-  version: 1-draft
-  statement: Sequence-to-sequence models encode an input and generate an output sequence; alignment, attention,
-    and teacher forcing address different parts of that task.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - sequence-to-sequence.base
-  - sequence-to-sequence.transfer
-  prerequisites:
-  - anyOf:
-    - objective.recurrent-networks
-  - anyOf:
-    - objective.next-token
+  - id: objective.sequence-to-sequence
+    version: 2-draft
+    statement: Sequence-to-sequence models encode an input and generate an output sequence; alignment, attention, and teacher forcing address different parts of that task.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - sequence-to-sequence.base.v2
+      - sequence-to-sequence.transfer.v2
+      - sequence-to-sequence.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.recurrent-networks
+      - anyOf:
+          - objective.next-token
 scenes:
-- id: sequence-to-sequence.s1
-  title: Translate one sequence into another
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.sequence-to-sequence
-  markdown: 'A **sequence** is an ordered list. Translation maps one sequence to another, and their lengths
-    can differ: “merci beaucoup” has two words, while “thank you very much” has four. A **tokenizer** may split
-    either phrase into smaller units called **tokens**.
+  - id: sequence-to-sequence.s1
+    title: A menu board for French visitors
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.sequence-to-sequence
+    markdown: |-
+      Ana wants Pebble Café's chalkboard specials translated for French tourists. "The iced coffee" should become "le café glacé". "Thank you very much" should become "merci beaucoup": four words in, two words out. The RNNs from the last two lessons emit one output per input step, but here the lengths differ and the order changes ("iced coffee", but "café glacé").
 
+      The fix, published in 2014 by Ilya Sutskever, Oriol Vinyals, and Quoc Le at Google, and at about the same time by Kyunghyun Cho and colleagues, is to split the job between two networks:
 
-    An **encoder** turns the source tokens into representations. A **decoder** uses that information and its
-    preceding output tokens to predict the next one. This is what it means to generate an output **conditioned
-    on** the source. An end-of-sequence decision lets the output stop at its own length.
+      - An **encoder** reads the whole source sentence, one **token** (a word or word piece) at a time, and builds up its hidden state.
+      - A **decoder** starts from the encoder's final state and writes the translation one token at a time. Each prediction depends on the source and on the tokens it has already written. That is what it means for the output to be **conditioned on** the source.
 
+      The decoder stops by writing a special **end-of-sequence token**, so the output can have any length. This encoder–decoder pattern is called **sequence-to-sequence**, or **seq2seq**. Sutskever's version used two deep LSTMs and found a curious trick: reading the source sentence *backwards* made training easier, because it put the first source words close to the first output words.
+    bridges: []
+  - id: sequence-to-sequence.s2
+    title: Attention lets the decoder look back
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sequence-to-sequence
+    markdown: |-
+      In the basic design, the decoder sees the source only through the encoder's final state: one fixed-size vector for the whole sentence. That is a **bottleneck**. Cho and colleagues found that translation quality dropped sharply as sentences got longer.
 
-    The encoder and decoder can use different architectures. Whatever the design, a fluent output that ignores
-    the source has not performed the translation task.'
-  text_mode: 'A **sequence** is an ordered list. Translation maps one sequence to another, and their lengths
-    can differ: “merci beaucoup” has two words, while “thank you very much” has four. A **tokenizer** may split
-    either phrase into smaller units called **tokens**.
+      Dzmitry Bahdanau, Cho, and Yoshua Bengio (2014) removed it. Keep *every* encoder state, one per source word, and at each output step let the decoder choose which ones to read. That choice is **attention**. Suppose the decoder has written "le café" and is about to write the next word:
 
+      1. **Score** each source word for how useful it is right now: the 0.1, iced 2.3, coffee 0.9.
+      2. **Softmax** turns the scores into weights that sum to 1: 0.08, 0.74, 0.18.
+      3. **Average** the encoder states with those weights to get a **context vector**, and feed it to the decoder.
 
-    An **encoder** turns the source tokens into representations. A **decoder** uses that information and its
-    preceding output tokens to predict the next one. This is what it means to generate an output **conditioned
-    on** the source. An end-of-sequence decision lets the output stop at its own length.
+      ```python run
+      import numpy as np
 
+      source = ["the", "iced", "coffee"]
+      encoder_states = np.array([[1.0, 0.0],    # one vector per source word
+                                 [0.0, 2.0],    # (real models use hundreds of numbers)
+                                 [2.0, 1.0]])
+      scores = np.array([0.1, 2.3, 0.9])        # how well each word matches the decoder's need
+                                                # while it is about to write "glacé"
+      weights = np.exp(scores) / np.exp(scores).sum()     # softmax
+      context = weights @ encoder_states                  # weighted average of the states
 
-    The encoder and decoder can use different architectures. Whatever the design, a fluent output that ignores
-    the source has not performed the translation task.'
-  bridges: []
-- id: sequence-to-sequence.s2
-  title: A fixed summary can be a bottleneck
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sequence-to-sequence
-  markdown: 'An early encoder-decoder design may compress the whole source into one vector. A long source can
-    force that fixed summary to carry many details at once. Attention instead lets the decoder form a context-dependent
-    mixture over source positions at each output step.
+      for word, w in zip(source, weights):
+          print(f"{word:7s} weight {w:.2f}")
+      print("context vector:", context.round(2))
+      ```
 
+      The context, about [0.44, 1.66], is mostly the "iced" state, which is what the decoder needs to write "glacé". One step earlier, writing "café", the highest score would have gone to "coffee". The pattern of which source words each output word attends to is called the **alignment**, and it doesn't have to run straight down the diagonal: here the third output word looks at the second input word.
 
-    For a sentence that mentions both a red bicycle and a blue car, the useful source information changes as
-    the decoder generates the words for the bicycle and the car. Attention provides a route to different source
-    representations at those moments; it does not guarantee that the selected information is correct.
+      :::predict Change the score for "coffee" to 2.3, tied with "iced". What are the weights?
+      "Iced" and "coffee" each get about 0.47 and "the" gets 0.05. The context becomes an even blend of the two, so the decoder gets a less clear signal about which word it is translating.
+      :::
 
+      :::papers Additive (Bahdanau) attention
+      $$e_{ij} = v_a^\top \tanh(W_a s_{i-1} + U_a h_j) \qquad \alpha_{ij} = \frac{\exp(e_{ij})}{\sum_k \exp(e_{ik})} \qquad c_i = \sum_j \alpha_{ij} h_j$$
+      $h_j$ is the encoder state for source word $j$, and $s_{i-1}$ is the decoder's state before writing output word $i$. $e_{ij}$ is the score (2.3 for "iced"), $\alpha_{ij}$ the weight (0.74), and $c_i$ the context vector. The small network $v_a$, $W_a$, $U_a$ learns to score. The transformer, three years later, kept this idea and dropped the RNNs.
+      :::
+    bridges: []
+    diagram:
+      caption: Seq2seq with attention. At each step the decoder asks the encoder states for a context vector, then writes one word.
+      description: The source sentence feeds the encoder, which produces one state per word. Those states go to the attention step. The decoder sends its current state to attention, and attention returns a context vector. The decoder combines the context with its previous output word and writes the next word. That word is fed back as the previous output for the following step.
+      nodes:
+        - id: src
+          label: "Source: the iced coffee"
+          col: 0
+          row: 1
+          tone: data
+        - id: enc
+          label: Encoder RNN
+          note: one state per source word
+          col: 1
+          row: 1
+        - id: attn
+          label: Attention
+          note: score, softmax, average
+          col: 2
+          row: 1
+          tone: accent
+        - id: dec
+          label: Decoder RNN
+          col: 3
+          row: 1
+        - id: out
+          label: "Next word: glacé"
+          col: 4
+          row: 1
+          tone: data
+        - id: prev
+          label: "Previous word: café"
+          col: 3
+          row: 2
+          tone: muted
+      edges:
+        - from: src
+          to: enc
+        - from: enc
+          to: attn
+          label: all encoder states
+        - from: dec
+          to: attn
+          label: decoder state
+          bend: 2
+        - from: attn
+          to: dec
+          label: context vector
+        - from: prev
+          to: dec
+        - from: dec
+          to: out
+        - from: out
+          to: prev
+          label: fed back
+          dashed: true
+  - id: sequence-to-sequence.s3
+    title: Teacher forcing, and the first mistake
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sequence-to-sequence
+    markdown: |-
+      Training the decoder needs an input at every step. The standard choice is **teacher forcing**: feed the *correct* previous word from the reference translation, whatever the model would have written. Training on "le café glacé", the step that predicts "glacé" receives "le café" as its prefix, even if the model's own guess for the second word was "thé" (tea). That keeps training fast and stable, since one early mistake can't derail the rest of the sentence.
 
-    Alignment describes which source information is associated with an output position. Word order can change
-    between languages, and one source word can correspond to several output words. An alignment is therefore
-    not necessarily a diagonal, one-to-one word match.'
-  text_mode: 'An early encoder-decoder design may compress the whole source into one vector. A long source
-    can force that fixed summary to carry many details at once. Attention instead lets the decoder form a context-dependent
-    mixture over source positions at each output step.
+      At translation time there is no reference. The decoder reads its *own* previous words. If it writes "le thé", every later step is conditioned on a prefix it never saw in training, and it may continue confidently in the wrong direction: "le thé glacé", iced tea. This gap between training on perfect prefixes and generating from its own imperfect ones is called **exposure bias**, a name popularized by Ranzato and colleagues in 2015. One fix, **scheduled sampling** (Bengio and colleagues, 2015), gradually replaces some reference words with the model's own predictions during training, so it learns to recover from its mistakes.
 
+      :::mixup "Teacher forcing lets the model see the answer it's supposed to predict."
+      It sees the correct *earlier* words, never the word at the current step or anything after it. Feeding in "glacé" itself would be leakage, and the model would learn to copy. When you evaluate, judge sentences the model generated from its own prefixes, not teacher-forced accuracy.
+      :::
+    bridges: []
+  - id: sequence-to-sequence.s4
+    title: Greedy or beam, searching for the best sentence
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.sequence-to-sequence
+    markdown: |-
+      The decoder gives a probability for every possible next word. Choosing the output sentence is a search, and the simplest search is **greedy decoding**: at each step, take the single most likely word. But a sentence's probability is the *product* of its word probabilities, and the best first word doesn't always lead to the best sentence.
 
-    For a sentence that mentions both a red bicycle and a blue car, the useful source information changes as
-    the decoder generates the words for the bicycle and the car. Attention provides a route to different source
-    representations at those moments; it does not guarantee that the selected information is correct.
+      **Beam search** keeps the $k$ best partial sentences (the **beam width**) at every step, extends each with every possible next word, and keeps the $k$ best of the extensions. Greedy decoding is beam search with $k = 1$.
 
+      In the tree below, the first word is "go" (0.6) or "stay" (0.4). After "go", "home" and "here" are equally likely (0.5 each); after "stay", "home" is 0.9 and "here" 0.1.
 
-    Alignment describes which source information is associated with an output position. Word order can change
-    between languages, and one source word can correspond to several output words. An alignment is therefore
-    not necessarily a diagonal, one-to-one word match.'
-  bridges: []
-- id: sequence-to-sequence.s3
-  title: Understand teacher forcing
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sequence-to-sequence
-  markdown: 'During teacher-forced training, the decoder receives the recorded correct previous token rather
-    than its own selected previous output. If the target begins “the red bicycle”, the training step predicting
-    “bicycle” receives the reference prefix “the red”.
+      :::predict Greedy decoding and a beam of width 2 both search this tree. Do they end on the same two-word sentence? Make your guess in the figure, then open this.
+      No. Greedy keeps only "go", and the best it can finish with is $0.6 \times 0.5 = 0.30$. Beam width 2 also keeps "stay", and finds "stay home" at $0.4 \times 0.9 = 0.36$. The less likely first word led to the more likely sentence.
+      :::
 
-
-    At ordinary generation time, the decoder uses its own selected outputs. Predict what happens if it instead
-    produces “the blue”: the next prediction is now conditioned on that generated prefix, not the reference
-    “the red”. One early error can change the context for many later decisions.
-
-
-    Teacher forcing makes training inputs well defined, but good next-token accuracy under reference prefixes
-    does not guarantee a good free-running sequence. Training must still hide future target information from
-    the position being predicted; feeding in the answer would measure a different task.'
-  text_mode: 'During teacher-forced training, the decoder receives the recorded correct previous token rather
-    than its own selected previous output. If the target begins “the red bicycle”, the training step predicting
-    “bicycle” receives the reference prefix “the red”.
-
-
-    At ordinary generation time, the decoder uses its own selected outputs. Predict what happens if it instead
-    produces “the blue”: the next prediction is now conditioned on that generated prefix, not the reference
-    “the red”. One early error can change the context for many later decisions.
-
-
-    Teacher forcing makes training inputs well defined, but good next-token accuracy under reference prefixes
-    does not guarantee a good free-running sequence. Training must still hide future target information from
-    the position being predicted; feeding in the answer would measure a different task.'
-  bridges: []
-- id: sequence-to-sequence.s4
-  title: Evaluate the sequence, not just one token
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.sequence-to-sequence
-  markdown: 'Greedy decoding keeps the most probable next token at each step. Beam search keeps several partial
-    sequences, expands them, and retains the highest-scoring candidates. Beam width is the number retained.
-    Both policies can use exactly the same fixed model parameters.
-
-
-    Try the two-token tree below. A prefix with a weaker first token can have a stronger continuation. Predict
-    whether keeping a second prefix changes the winner, then compare products of conditional probabilities.
-    The lab uses equal-length outputs so the scores are directly comparable without a length penalty.
-
-
-    A higher sequence probability is not a guarantee of a better translation. Evaluate whether the output preserves
-    the source meaning, ends appropriately, and avoids repetition. Sampling offers another decoding policy;
-    changing any of these policies does not by itself retrain the encoder or decoder.'
-  text_mode: 'Greedy decoding keeps the most probable next token at each step. Beam search keeps several partial
-    sequences, expands them, and retains the highest-scoring candidates. Beam width is the number retained.
-    Both policies can use exactly the same fixed model parameters.
-
-
-    Try the two-token tree below. A prefix with a weaker first token can have a stronger continuation. Predict
-    whether keeping a second prefix changes the winner, then compare products of conditional probabilities.
-    The lab uses equal-length outputs so the scores are directly comparable without a length penalty.
-
-
-    A higher sequence probability is not a guarantee of a better translation. Evaluate whether the output preserves
-    the source meaning, ends appropriately, and avoids repetition. Sampling offers another decoding policy;
-    changing any of these policies does not by itself retrain the encoder or decoder.'
-  bridges: []
-  figure:
-    kind: beam-search
-    caption: Keep one or two prefixes in a fixed tree and compare the complete two-token sequence scores.
-    description: The first token favors go over stay, but stay has a stronger home continuation. Beam width
-      two retains that alternative; width one prunes it. Probabilities are hand-written and model parameters
-      do not change.
-- id: sequence-to-sequence.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.sequence-to-sequence
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: 'A sequence-to-sequence model uses an input sequence to generate an output sequence. Check the
-    whole generated result: training with correct prefixes does not guarantee success when it must use its
-    own earlier outputs.'
-- id: sequence-to-sequence.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.sequence-to-sequence
-  markdown: 'A sequence-to-sequence model uses an input sequence to generate an output sequence. Check the
-    whole generated result: training with correct prefixes does not guarantee success when it must use its
-    own earlier outputs.'
-  text_mode: 'A sequence-to-sequence model uses an input sequence to generate an output sequence. Check the
-    whole generated result: training with correct prefixes does not guarantee success when it must use its
-    own earlier outputs.'
+      Real systems add log probabilities instead of multiplying, and divide by a length term, because every extra word multiplies in a number below 1 and would otherwise make short outputs win. The 2017 transformer paper, for example, used a beam of 4 with a length penalty for translation. None of this touches the weights: the same model gives different sentences under different search settings.
+    bridges: []
+    figure:
+      kind: beam-search
+      caption: Keep one or two prefixes in a fixed tree and compare the complete two-token sequence scores.
+      description: The first token favors go over stay, but stay has a stronger home continuation. Beam width two retains that alternative; width one prunes it. Probabilities are hand-written and model parameters do not change.
+  - id: sequence-to-sequence.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.sequence-to-sequence
+    markdown: A subtitle translator, a text summarizer, a chatbot that drifts off course, and a few sequence scores to compute test whether you can follow a decoder step by step.
+    takeaway: |-
+      An encoder reads the source, and a decoder writes the output one token at a time, using attention to look back at the source words it needs. It trains on correct prefixes but must generate from its own, and beam search looks for a better whole sentence than greedy picks.
+  - id: sequence-to-sequence.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.sequence-to-sequence
+    markdown: |-
+      A sequence-to-sequence model uses an input sequence to generate an output sequence. Check the whole generated result: training with correct prefixes does not guarantee success when it must use its own earlier outputs.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - sequence-to-sequence.s1
-    - sequence-to-sequence.s2
-    - sequence-to-sequence.s3
-    - sequence-to-sequence.s4
-    - sequence-to-sequence.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - sequence-to-sequence.s1
+        - sequence-to-sequence.s2
+        - sequence-to-sequence.s3
+        - sequence-to-sequence.s4
+        - sequence-to-sequence.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     sequence-to-sequence.recap: sequence-to-sequence.check
 assessment_families:
-- id: sequence-to-sequence.base
-  objective_ref: objective.sequence-to-sequence
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'A fixed summary can be a bottleneck: trace the inputs, operation, and result before choosing.'
-  remediation_scene: sequence-to-sequence.s2
-  variants:
-  - id: sequence-to-sequence.base.1
-    prompt: What does teacher forcing supply as the previous decoder token during training?
-    options:
-    - id: b
-      text: Always the model’s sampled token
-    - id: c
-      text: The final target sentence as unrestricted future input
-    - id: a
-      text: The recorded reference token
-    answer: a
-    feedback: Teacher forcing uses reference history while preserving the predictive target boundary.
-  - id: sequence-to-sequence.base.2
-    prompt: Why can attention help an encoder-decoder model?
-    options:
-    - id: c
-      text: It removes all training objectives
-    - id: a
-      text: It provides context-dependent access to source positions
-    - id: b
-      text: It guarantees identical source and target lengths
-    answer: a
-    feedback: Attention can reduce dependence on one fixed source summary.
-- id: sequence-to-sequence.transfer
-  objective_ref: objective.sequence-to-sequence
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate the sequence, not just one token: trace the inputs, operation, and result before choosing.'
-  remediation_scene: sequence-to-sequence.s4
-  variants:
-  - id: sequence-to-sequence.transfer.1
-    prompt: A model makes one wrong generated token that changes later outputs. What training/inference difference
-      is relevant?
-    options:
-    - id: c
-      text: Only the number of files
-    - id: a
-      text: Reference prefixes during teacher forcing versus generated prefixes at inference
-    - id: b
-      text: The color of the source text
-    answer: a
-    feedback: The decoder encounters different histories once it follows its own outputs.
-  - id: sequence-to-sequence.transfer.2
-    prompt: Changing beam width changes generated text. Have model weights necessarily changed?
-    options:
-    - id: a
-      text: No; decoding policy can change with fixed weights
-    - id: b
-      text: Yes; beam search is always an optimizer
-    - id: c
-      text: Only if the text is longer
-    answer: a
-    feedback: Search over outputs and parameter training are separate operations.
+  - id: sequence-to-sequence.base
+    objective_ref: objective.sequence-to-sequence
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'A fixed summary can be a bottleneck: trace the inputs, operation, and result before choosing.'
+    remediation_scene: sequence-to-sequence.s2
+    variants:
+      - id: sequence-to-sequence.base.1
+        prompt: What does teacher forcing supply as the previous decoder token during training?
+        options:
+          - id: b
+            text: Always the model’s sampled token
+          - id: c
+            text: The final target sentence as unrestricted future input
+          - id: a
+            text: The recorded reference token
+        answer: a
+        feedback: Teacher forcing uses reference history while preserving the predictive target boundary.
+        retired: true
+      - id: sequence-to-sequence.base.2
+        prompt: Why can attention help an encoder-decoder model?
+        options:
+          - id: c
+            text: It removes all training objectives
+          - id: a
+            text: It provides context-dependent access to source positions
+          - id: b
+            text: It guarantees identical source and target lengths
+        answer: a
+        feedback: Attention can reduce dependence on one fixed source summary.
+        retired: true
+  - id: sequence-to-sequence.transfer
+    objective_ref: objective.sequence-to-sequence
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate the sequence, not just one token: trace the inputs, operation, and result before choosing.'
+    remediation_scene: sequence-to-sequence.s4
+    variants:
+      - id: sequence-to-sequence.transfer.1
+        prompt: A model makes one wrong generated token that changes later outputs. What training/inference difference is relevant?
+        options:
+          - id: c
+            text: Only the number of files
+          - id: a
+            text: Reference prefixes during teacher forcing versus generated prefixes at inference
+          - id: b
+            text: The color of the source text
+        answer: a
+        feedback: The decoder encounters different histories once it follows its own outputs.
+        retired: true
+      - id: sequence-to-sequence.transfer.2
+        prompt: Changing beam width changes generated text. Have model weights necessarily changed?
+        options:
+          - id: a
+            text: No; decoding policy can change with fixed weights
+          - id: b
+            text: Yes; beam search is always an optimizer
+          - id: c
+            text: Only if the text is longer
+        answer: a
+        feedback: Search over outputs and parameter training are separate operations.
+        retired: true
+  - id: sequence-to-sequence.base.v2
+    objective_ref: objective.sequence-to-sequence
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Keep the three parts apart: attention picks which source words to read now, teacher forcing sets the decoder's input during training, and the search picks the output sentence."
+    remediation_scene: sequence-to-sequence.s2
+    variants:
+      - id: sequence-to-sequence.base.v2.1
+        prompt: Translating "the iced coffee" into "le café glacé", the decoder has written "le" and is about to write "café". Which source word should get the highest attention weight?
+        options:
+          - id: c
+            text: "\"the\", because the first source word pairs with the first output word"
+          - id: a
+            text: "\"coffee\", because \"café\" translates it, even though they sit in different positions"
+          - id: b
+            text: "\"iced\", because the second output word lines up with the second source word"
+        answer: a
+        feedback: Attention follows meaning, not position, so "café" should read "coffee". Assuming a straight diagonal (first with first, second with second) is exactly what fails when word order changes between languages.
+      - id: sequence-to-sequence.base.v2.2
+        prompt: During teacher-forced training on the reference "le café glacé", what does the decoder receive as input at the step that predicts "glacé"?
+        options:
+          - id: b
+            text: The words the model itself predicted at the first two steps
+          - id: a
+            text: The reference words "le café", whatever the model predicted
+          - id: c
+            text: The full reference "le café glacé", so it can check itself
+        answer: a
+        feedback: Teacher forcing feeds the correct earlier words from the reference. Feeding the model's own guesses is what happens at generation time, and including "glacé" itself would let the model copy the answer.
+      - id: sequence-to-sequence.base.v2.3
+        prompt: Early encoder–decoder models translated long sentences much worse than short ones. What was the main cause that attention fixed?
+        options:
+          - id: a
+            text: The whole source had to fit into one fixed-size vector
+          - id: b
+            text: The decoder could not write more words than the encoder read
+          - id: c
+            text: Teacher forcing only gave good prefixes for short sentences
+        answer: a
+        feedback: Without attention, the decoder sees the source only through the encoder's final state, which has the same size for 5 words or 50. Seq2seq outputs could already differ in length from the input, and teacher forcing works at any length.
+      - id: sequence-to-sequence.base.v2.4
+        prompt: What does beam search with a beam width of 3 do?
+        options:
+          - id: c
+            text: Looks three words ahead before committing to each word
+          - id: b
+            text: Writes three sentences greedily and keeps the longest one
+          - id: a
+            text: Keeps the three best partial sentences at every step
+        answer: a
+        feedback: A beam of width 3 extends each of its three best prefixes and keeps the three best results, step after step. It neither runs separate greedy passes nor uses a fixed lookahead.
+  - id: sequence-to-sequence.transfer.v2
+    objective_ref: objective.sequence-to-sequence
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask whether the problem happens in training (what the decoder is fed), in the model (what it can read from the source), or in decoding (how the output sentence is chosen).
+    remediation_scene: sequence-to-sequence.s3
+    variants:
+      - id: sequence-to-sequence.transfer.v2.1
+        prompt: A subtitle translator predicts the next word correctly 95% of the time in teacher-forced tests, yet its generated subtitles often go off course after one early wrong word. What is the best next step?
+        options:
+          - id: b
+            text: Add dropout, because a 95% score means the model has memorized the training data
+          - id: a
+            text: Treat it as exposure bias and train with some of its own predictions as inputs
+          - id: c
+            text: Replace attention, because derailing shows it is reading the wrong source words
+        answer: a
+        feedback: Teacher-forced accuracy uses perfect prefixes; generation uses the model's own, and one error changes everything after it. Scheduled sampling trains on some of the model's own predictions. The symptom points to the training-versus-generation gap, not to memorization or attention.
+      - id: sequence-to-sequence.transfer.v2.2
+        prompt: A seq2seq summarizer without attention writes good summaries of short news items but drops facts from the opening paragraphs of long reports. Which change targets the cause?
+        options:
+          - id: c
+            text: Use a wider beam so that more candidate summaries are compared
+          - id: b
+            text: Train longer with teacher forcing on the short news items
+          - id: a
+            text: Let the decoder attend to every encoder state, not just the last
+        answer: a
+        feedback: Long inputs overflow the single fixed-size vector, so early details are lost before decoding starts. Attention keeps every encoder state available. A wider beam searches better over a summary that is already missing the facts.
+      - id: sequence-to-sequence.transfer.v2.3
+        prompt: A chatbot using beam search keeps giving short replies like "I don't know." Which explanation fits what you know about sequence scores?
+        options:
+          - id: a
+            text: Every extra word multiplies in a probability below 1, so short replies score higher
+          - id: b
+            text: A wide beam fine-tunes the decoder toward replies that are safe and short
+          - id: c
+            text: Beam search skips the end-of-sequence token, so long replies are cut off
+        answer: a
+        feedback: A product of probabilities shrinks with every word, so without length normalization the search favors short outputs. Beam search never changes the weights, and it does use the end token; that is how the short replies end.
+      - id: sequence-to-sequence.transfer.v2.4
+        prompt: A team changes its translator's beam width from 1 to 5 and the outputs change. Nobody retrained anything. What explains the change?
+        options:
+          - id: b
+            text: Beam search updates the decoder's weights using its best outputs
+          - id: c
+            text: A wider beam lets attention read more of the source sentence
+          - id: a
+            text: The search now keeps more candidates, using the same model
+        answer: a
+        feedback: Decoding is a search over the same model's probabilities; a wider beam can find sentences greedy decoding pruned. It doesn't train the model, and attention reads all source states at any beam width.
+  - id: sequence-to-sequence.calc.v2
+    objective_ref: objective.sequence-to-sequence
+    task: base
+    response_type: numeric
+    points: 1
+    hint: A sentence's probability is the product of its word probabilities. In log form, add the logs instead; to compare lengths, divide the log total by the number of words.
+    remediation_scene: sequence-to-sequence.s4
+    absolute_tolerance: 0.001
+    variants:
+      - id: sequence-to-sequence.calc.v2.1
+        prompt: A decoder writes "le café glacé" with word probabilities 0.9, 0.8, and 0.5. What is the probability of the whole sentence?
+        answer: 0.36
+        feedback: 0.9 × 0.8 × 0.5 = 0.36. The sentence probability is the product, not the average, of its word probabilities.
+      - id: sequence-to-sequence.calc.v2.2
+        prompt: 'The first word is "go" (0.55) or "stay" (0.45). After "go", "home" and "here" are 0.5 each; after "stay", "home" is 0.8. What is the score of the best two-word sentence found with beam width 2?'
+        answer: 0.36
+        feedback: Beam width 2 keeps both first words. "stay home" scores 0.45 × 0.8 = 0.36, which beats greedy's 0.55 × 0.5 = 0.275.
+      - id: sequence-to-sequence.calc.v2.3
+        prompt: A three-word output has word probabilities 0.5, 0.25, and 0.5. What is the sum of the base-2 log probabilities?
+        answer: -4
+        feedback: log₂ 0.5 = −1 and log₂ 0.25 = −2, so the total is −1 − 2 − 1 = −4, matching log₂ of the product 1/16.
+      - id: sequence-to-sequence.calc.v2.4
+        prompt: A four-word output has word probabilities 0.5, 0.5, 0.25, and 0.5. What is its length-normalized score, the average base-2 log probability per word?
+        answer: -1.25
+        feedback: The logs are −1, −1, −2, and −1, totaling −5. Dividing by 4 words gives −1.25, which can be compared fairly with outputs of other lengths.

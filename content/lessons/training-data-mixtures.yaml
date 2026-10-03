@@ -1,399 +1,537 @@
 schema_version: 0.2-draft
 lesson:
   id: training-data-mixtures
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Choose how much the model sees of each source
   state: draft
-  summary: Choose how often a model trains on each source, then compare planned sampling shares with actual
-    exposure.
+  summary: Kestrel's encyclopedia is 1% of its data on disk but gets 5% of its training. Work out how many times each source is read, and when repetition stops helping.
   slot: M16.3
   category: learning
   sources:
-  - title: Groeneveld et al. — OLMo, an open language-model framework
-    url: https://arxiv.org/abs/2402.00838
-  - title: Biderman et al. — Pythia, a suite for analyzing language-model training
-    url: https://arxiv.org/abs/2304.01373
-  - title: Hoffmann et al. — Training Compute-Optimal Large Language Models
-    url: https://arxiv.org/abs/2203.15556
+    - title: Brown et al. — Language Models are Few-Shot Learners (GPT-3, 2020), Table 2.2
+      url: https://arxiv.org/abs/2005.14165
+    - title: Muennighoff et al. — Scaling Data-Constrained Language Models (2023)
+      url: https://arxiv.org/abs/2305.16264
+    - title: 'Xie et al. — DoReMi: Optimizing Data Mixtures Speeds Up Language Model Pretraining (2023)'
+      url: https://arxiv.org/abs/2305.10429
+    - title: The Llama 3 Herd of Models (2024)
+      url: https://arxiv.org/abs/2407.21783
+    - title: Groeneveld et al. — OLMo, an open language-model framework
+      url: https://arxiv.org/abs/2402.00838
   archetype: mechanism
 objectives:
-- id: objective.training-data-mixtures
-  version: 2-draft
-  statement: Calculate expected token exposure from mixture weights and distinguish source size, sampling share,
-    oversampling, and validation-based selection.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - training-data-mixtures.base.v2
-  - training-data-mixtures.transfer.v2
-  prerequisites:
-  - anyOf:
-    - objective.pretraining-data-pipeline
-  - anyOf:
-    - objective.stochastic-gradients
+  - id: objective.training-data-mixtures
+    version: 3-draft
+    statement: Calculate expected token exposure from mixture weights and distinguish source size, sampling share, oversampling, and validation-based selection.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - training-data-mixtures.base.v3
+      - training-data-mixtures.transfer.v3
+      - training-data-mixtures.calculate
+    prerequisites:
+      - anyOf:
+          - objective.pretraining-data-pipeline
+      - anyOf:
+          - objective.stochastic-gradients
 scenes:
-- id: training-data-mixtures.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.training-data-mixtures
-  title: A library and a reading schedule are different
-  markdown: Suppose a training collection contains stories, code, and science explanations. Having ten times
-    more story tokens on disk does not require reading ten times more stories during training. A **mixture**
-    specifies how often sources are sampled. A **sampling weight** controls a source’s share under a stated
-    scheme. The learning signal depends on the examples actually consumed, their order, and their targets.
-    Inventory size and training exposure answer different questions.
-  text_mode: Suppose a training collection contains stories, code, and science explanations. Having ten times
-    more story tokens on disk does not require reading ten times more stories during training. A **mixture**
-    specifies how often sources are sampled. A **sampling weight** controls a source’s share under a stated
-    scheme. The learning signal depends on the examples actually consumed, their order, and their targets.
-    Inventory size and training exposure answer different questions.
-  bridges: []
-- id: training-data-mixtures.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.training-data-mixtures
-  title: Turn weights into an exposure budget
-  markdown: 'Choose token-level mixture shares of 50% stories, 30% code, and 20% science. For an expected budget
-    of 1,000 sampled tokens, those shares correspond to 500, 300, and 200 tokens. They sum to the total. These
-    are expected counts under random sampling unless a schedule enforces exact quotas. Check whether a recipe
-    weights tokens, documents, or batches: equally weighting long and short documents can create unequal token
-    exposure.'
-  text_mode: 'Choose token-level mixture shares of 50% stories, 30% code, and 20% science. For an expected
-    budget of 1,000 sampled tokens, those shares correspond to 500, 300, and 200 tokens. They sum to the total.
-    These are expected counts under random sampling unless a schedule enforces exact quotas. Check whether
-    a recipe weights tokens, documents, or batches: equally weighting long and short documents can create unequal
-    token exposure.'
-  bridges:
-  - probability
-  - arithmetic
-- id: training-data-mixtures.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-data-mixtures
-  title: Oversampling means meeting examples again
-  markdown: 'Suppose the science source contains 100 token positions across its original documents, while the
-    schedule requests 200 science-token exposures. Under a scheme that repeats this fixed source, some material
-    must be read again. This is **oversampling** relative to the available source data.
+  - id: training-data-mixtures.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.training-data-mixtures
+    title: What's on disk isn't what gets read
+    markdown: |-
+      Kestrel's pipeline produced five cleaned sources, 364 billion tokens in all. The training budget is 100 billion tokens. If the team drew tokens at random from the whole pile, web text would fill 82% of every batch, and the 4-billion-token encyclopedia, probably the most carefully written text they have, would fill about 1%.
 
+      So they write a reading schedule instead. A **mixture** assigns each source a **sampling weight**: the share of training tokens drawn from it. The weights must add up to 1. One full pass through a source is an **epoch**, so the number of epochs tells you how many times, on average, the model reads each document.
 
-    Here “100 tokens of source data” counts positions in the documents, not 100 different entries in the tokenizer
-    vocabulary. A word may occur many times in one document. Repetition can emphasize a useful domain, but
-    does not create new source evidence. Record both total exposures and how much distinct source material
-    was covered.'
-  text_mode: 'Suppose the science source contains 100 token positions across its original documents, while
-    the schedule requests 200 science-token exposures. Under a scheme that repeats this fixed source, some
-    material must be read again. This is **oversampling** relative to the available source data.
+      | Source | On disk | Weight | Tokens read | Epochs |
+      | --- | ---: | ---: | ---: | ---: |
+      | Web (filtered) | 300B | 0.60 | 60B | 0.20 |
+      | Code | 30B | 0.15 | 15B | 0.50 |
+      | Books | 20B | 0.10 | 10B | 0.50 |
+      | Science papers | 10B | 0.10 | 10B | 1.00 |
+      | Encyclopedia | 4B | 0.05 | 5B | 1.25 |
 
+      Most of the web is never read at all. The encyclopedia is read one and a quarter times. Raising a source's weight above its natural share is called **upsampling**.
+    bridges: []
+  - id: training-data-mixtures.s2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-data-mixtures
+    title: From weights to epochs
+    markdown: |-
+      Every row of that table comes from one formula:
 
-    Here “100 tokens of source data” counts positions in the documents, not 100 different entries in the tokenizer
-    vocabulary. A word may occur many times in one document. Repetition can emphasize a useful domain, but
-    does not create new source evidence. Record both total exposures and how much distinct source material
-    was covered.'
-  bridges: []
-- id: training-data-mixtures.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-data-mixtures
-  title: Check the effects across tasks
-  markdown: A code-heavy mixture might improve code tasks while changing general writing or other domains.
-    Evaluate the intended range using protected source-separated examples and comparable budgets. If you try
-    several mixture settings and choose one using validation scores, that choice is part of development. Preserve
-    a final evaluation for the selected recipe. “Best mixture” is incomplete without a task distribution, data
-    constraints, compute budget, and quality criteria.
-  text_mode: A code-heavy mixture might improve code tasks while changing general writing or other domains.
-    Evaluate the intended range using protected source-separated examples and comparable budgets. If you try
-    several mixture settings and choose one using validation scores, that choice is part of development. Preserve
-    a final evaluation for the selected recipe. “Best mixture” is incomplete without a task distribution, data
-    constraints, compute budget, and quality criteria.
-  bridges: []
-- id: training-data-mixtures.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.training-data-mixtures
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: The material stored on disk and the material seen during training are different quantities. Sampling
-    shares determine exposure; independent evaluation shows what the mixture helped or harmed.
-- id: training-data-mixtures.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.training-data-mixtures
-  markdown: The material stored on disk and the material seen during training are different quantities. Sampling
-    shares determine exposure; independent evaluation shows what the mixture helped or harmed.
-  text_mode: The material stored on disk and the material seen during training are different quantities. Sampling
-    shares determine exposure; independent evaluation shows what the mixture helped or harmed.
-- id: training-data-mixtures.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-data-mixtures
-  title: A changing schedule needs a record
-  markdown: Some training runs change source shares over time. A **curriculum** in this context is a schedule
-    for which examples or difficulty levels are emphasized during learning; it is separate from our human course
-    chapters. A run that uses 80% stories early and 20% later cannot be fully described by its final weights.
-    Save schedule versions, sampling state when needed for resumption, and actual consumed counts. Expected
-    shares are a plan; realized exposure is a measurement.
-  text_mode: Some training runs change source shares over time. A **curriculum** in this context is a schedule
-    for which examples or difficulty levels are emphasized during learning; it is separate from our human course
-    chapters. A run that uses 80% stories early and 20% later cannot be fully described by its final weights.
-    Save schedule versions, sampling state when needed for resumption, and actual consumed counts. Expected
-    shares are a plan; realized exposure is a measurement.
-  bridges: []
-- id: training-data-mixtures.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.training-data-mixtures
-  title: Separate data quality from its volume
-  markdown: A larger source can contain duplicates, errors, or examples outside the intended use. A small carefully
-    chosen source can be useful, but its influence and limits still need evaluation. Inspect provenance, filtering,
-    representation, and coverage alongside sampling weights. Keep a record that distinguishes what was available,
-    what was requested, what the model consumed, and which changes were demonstrated on held-out tasks.
-  text_mode: A larger source can contain duplicates, errors, or examples outside the intended use. A small
-    carefully chosen source can be useful, but its influence and limits still need evaluation. Inspect provenance,
-    filtering, representation, and coverage alongside sampling weights. Keep a record that distinguishes what
-    was available, what was requested, what the model consumed, and which changes were demonstrated on held-out
-    tasks.
-  bridges: []
-- id: training-data-mixtures.s7
-  type: question
-  depth: mechanics
-  objective_refs:
-  - objective.training-data-mixtures
-  title: Does repetition create new evidence?
-  markdown: A schedule consumes 300 token exposures from a source containing 100 token positions before repeated
-    sampling. What should the report keep separate?
-  text_mode: A schedule consumes 300 token exposures from a source containing 100 token positions before repeated
-    sampling. What should the report keep separate?
-  bridges: []
-  question:
-    response_type: single_choice
-    options:
-    - id: a
-      text: Total exposures and unique data coverage
-    - id: b
-      text: Token exposures and the file’s display color
-    - id: c
-      text: The source’s name and the alphabetic order of that name
-    answer: a
-    reveal_markdown: Repeated exposure can influence learning but does not multiply the amount of distinct
-      source evidence.
-    hint: Trace the example using the rule from the preceding pages.
-    id: training-data-mixtures.practice.v2.7
+      :::papers Epochs per source
+      $$\text{epochs}_i = \frac{w_i \, D}{S_i}$$
+
+      $w_i$ is source $i$'s sampling weight, $D$ is the total training tokens, and $S_i$ is the source's size in tokens. For the encyclopedia: $0.05 \times 100\text{B} / 4\text{B} = 1.25$. For the web: $0.60 \times 100\text{B} / 300\text{B} = 0.2$. Size-proportional weights would be $w_i = S_i / \sum_j S_j$, which gives every source the same number of epochs.
+      :::
+
+      :::predict The team moves 10 points of weight from web to encyclopedia (web 0.50, encyclopedia 0.15). How many times is the encyclopedia now read?
+      $0.15 \times 100\text{B} / 4\text{B} = 3.75$ epochs. The web drops to $0.50 \times 100 / 300 \approx 0.17$ epochs. A small change in weight is a large change in repetition for a small source.
+      :::
+
+      ```python run
+      total = 100e9  # Kestrel's training budget in tokens
+      sources = {    # name: (tokens on disk, sampling weight)
+          "web":          (300e9, 0.60),
+          "code":         (30e9,  0.15),
+          "books":        (20e9,  0.10),
+          "science":      (10e9,  0.10),
+          "encyclopedia": (4e9,   0.05),
+      }
+      assert abs(sum(w for _, w in sources.values()) - 1) < 1e-9, "weights must sum to 1"
+
+      disk = sum(size for size, _ in sources.values())
+      for name, (size, w) in sources.items():
+          seen = w * total
+          epochs = seen / size
+          note = "  <- repeated" if epochs > 1 else ""
+          print(f"{name:12s} w={w:.2f}  seen {seen/1e9:5.1f}B of {size/1e9:5.1f}B"
+                f"  epochs {epochs:4.2f}  (by size: w={size/disk:.3f}){note}")
+      ```
+
+      Change the weights to test the prediction above, or set `total = 1000e9` to see what a ten-times-longer run would do to every source.
+
+      :::story GPT-3's reading schedule
+      GPT-3 (2020) trained on 300 billion tokens. Its paper reported that the filtered Common Crawl, 410 billion tokens and 60% of the mix, was read about 0.44 times, while English Wikipedia, only 3 billion tokens, was read about 3.4 times. The authors chose weights "intentionally" out of proportion to size, trading a little repetition for more high-quality text.
+      :::
+    bridges:
+      - probability
+      - arithmetic
+  - id: training-data-mixtures.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-data-mixtures
+    title: The fifth reading teaches less than the first
+    markdown: |-
+      Why not read the encyclopedia 20 times? Because repeated tokens are worth less than new ones. Muennighoff et al. (2023) trained hundreds of models on repeated data and found that up to about 4 epochs, repeated tokens were almost as good as fresh ones. Beyond that, each extra pass helped less and less, and with many repetitions extra compute was nearly wasted.
+
+      :::mixup "Upsampling a small source gives the model more of it."
+      It gives the model *more readings* of the same text, not more information. Twenty passes over 4 billion tokens still contain 4 billion tokens' worth of facts and phrasing, and heavily repeated passages are more likely to be memorized and recited word for word.
+      :::
+
+      The Kestrel team adopts a working rule: no source above about 4 epochs unless they have tested it. If a source matters that much, they look for more of it rather than repeating it harder.
+    bridges: []
+  - id: training-data-mixtures.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-data-mixtures
+    title: Weight tokens, not documents
+    markdown: |-
+      A colleague suggests "equal weight for code and forum posts". Equal what? Suppose each training batch takes 1,000 documents from each. Code files here average 2,000 tokens and forum posts average 200. The batch then holds 2,000,000 code tokens and 200,000 forum tokens: a 10-to-1 split, not 1-to-1.
+
+      So Kestrel's weights, like most published mixtures, are shares of *tokens*. When you read someone else's mixture, check the unit first: tokens, documents, or bytes.
+    bridges: []
+  - id: training-data-mixtures.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-data-mixtures
+    title: Pick the weights with small runs
+    markdown: |-
+      No formula tells you the best weights. Teams run experiments. The Kestrel team trains six 150-million-parameter models for 3 billion tokens each, one per candidate mixture, and scores them on held-out text from every domain plus a few benchmarks. More code helps coding tasks and slightly hurts general writing, because in a fixed budget every token given to one source is taken from another.
+
+      Choosing a mixture by its validation scores is tuning, just like choosing a learning rate. The team keeps a separate test set untouched until the final model is done.
+
+      Some methods search automatically. DoReMi (Xie et al., 2023) trained a small 280-million-parameter proxy model to find domain weights for The Pile, then used them to train an 8-billion-parameter model that reached the baseline's accuracy in 2.6 times fewer steps.
+    bridges: []
+  - id: training-data-mixtures.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.training-data-mixtures
+    title: The mix can change as training goes
+    markdown: |-
+      Weights don't have to stay fixed. A common pattern is to save the best data for the end: in the final stretch of training, while the learning rate falls to its lowest values, upsample the highest-quality sources. The Llama 3 report (2024) describes this kind of change, upsampling very high-quality sources at the end of pretraining as the learning rate was annealed to zero. A schedule like this is sometimes called a data **curriculum**, a plan for what the model sees when.
+
+      Kestrel's plan: the table's weights for the first 90 billion tokens, then encyclopedia and science raised to 0.15 each for the last 10 billion. That last phase alone reads the encyclopedia $0.15 \times 10\text{B} / 4\text{B} = 0.375$ more times, on top of $0.05 \times 90\text{B} / 4\text{B} = 1.125$ in the first phase: 1.5 epochs in all. The team logs tokens actually consumed from each source per phase, because a run described only by its final weights can't be reproduced.
+    bridges: []
+  - id: training-data-mixtures.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.training-data-mixtures
+    markdown: Epoch counts to compute, plus a code-heavy assistant, a low-resource language, and a mixture chosen by validation scores, test whether you can set weights and see what they cost.
+    takeaway: |-
+      A mixture decides how many times each source is read: epochs = weight × total tokens ÷ source size. Upsampling adds readings, not information, and repeats beyond about 4 epochs help less and less.
+  - id: training-data-mixtures.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.training-data-mixtures
+    markdown: |-
+      The material stored on disk and the material seen during training are different quantities. Sampling shares determine exposure; independent evaluation shows what the mixture helped or harmed.
+  - id: training-data-mixtures.s7
+    type: question
+    depth: mechanics
+    objective_refs:
+      - objective.training-data-mixtures
+    title: Does repetition create new evidence?
+    markdown: |-
+      Try it on a tiny source. A schedule reads 300 tokens from a source that holds only 100 distinct tokens, so some text is read more than once. What should the training report keep separate?
+    bridges: []
+    question:
+      response_type: single_choice
+      options:
+        - id: a
+          text: Total exposures and unique data coverage
+        - id: b
+          text: Token exposures and the file’s display color
+        - id: c
+          text: The source’s name and the alphabetic order of that name
+      answer: a
+      reveal_markdown: |-
+        300 exposures of a 100-token source is 3 epochs: the model reads the same text three times. That's three readings of one source's worth of information, so report both numbers.
+      hint: Work out the epochs (exposures ÷ source size), then ask whether a second reading adds new text.
+      id: training-data-mixtures.practice.v2.7
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - training-data-mixtures.s1
-    - training-data-mixtures.s2
-    - training-data-mixtures.s3
-    - training-data-mixtures.s4
-    - training-data-mixtures.s5
-    - training-data-mixtures.s6
-    - training-data-mixtures.s7
-    - training-data-mixtures.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - training-data-mixtures.s1
+        - training-data-mixtures.s2
+        - training-data-mixtures.s3
+        - training-data-mixtures.s7
+        - training-data-mixtures.s6
+        - training-data-mixtures.s4
+        - training-data-mixtures.s5
+        - training-data-mixtures.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     training-data-mixtures.recap: training-data-mixtures.check
 assessment_families:
-- id: training-data-mixtures.base
-  objective_ref: objective.training-data-mixtures
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Calculate a simple allocation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: training-data-mixtures.s2
-  variants:
-  - id: training-data-mixtures.base.1
-    prompt: A 20,000-token budget assigns weight 0.25 to code. Expected code tokens?
-    options:
-    - id: c
-      text: '250'
-    - id: a
-      text: 5,000
-    - id: b
-      text: 20,000
-    answer: a
-    feedback: Multiply the token budget by the intended token proportion.
-    retired: true
-  - id: training-data-mixtures.base.2
-    prompt: Do equal document sampling weights guarantee equal token counts?
-    options:
-    - id: a
-      text: No; document lengths can differ
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if a model is dense
-    answer: a
-    feedback: The sampling unit determines how source exposure accumulates.
-    retired: true
-- id: training-data-mixtures.transfer
-  objective_ref: objective.training-data-mixtures
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate the recipe as an intervention: trace the inputs, operation, and result before choosing.'
-  remediation_scene: training-data-mixtures.s4
-  variants:
-  - id: training-data-mixtures.transfer.1
-    prompt: A small corpus is repeated many times. What should evaluation inspect?
-    options:
-    - id: a
-      text: Overfitting, memorization, and target-skill tradeoffs
-    - id: b
-      text: Only the raw unique file count
-    - id: c
-      text: A guarantee of unlimited new information
-    answer: a
-    feedback: Repeated exposure changes emphasis without creating equivalent new independent data.
-    retired: true
-  - id: training-data-mixtures.transfer.2
-    prompt: One mixture improves code but hurts another language. What does this illustrate?
-    options:
-    - id: b
-      text: An impossible measurement
-    - id: c
-      text: That sampling weights have no effect
-    - id: a
-      text: A capability tradeoff under the chosen budget and data recipe
-    answer: a
-    feedback: Mixture choices can redistribute finite training effort.
-    retired: true
-- id: training-data-mixtures.base.v2
-  objective_ref: objective.training-data-mixtures
-  task: base
-  response_type: numeric_fields_with_reason
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: training-data-mixtures.s3
-  variants:
-  - prompt: A token-level mixture allocates 30% of an expected 1000-token budget to code. Record expected code
-      tokens and expected non-code tokens.
-    answers:
-      code: 300.0
-      other: 700.0
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Multiply the budget by the specified token share.
-    - id: c
-      text: Treat the percentage as a fixed number of tokens.
-    - id: b
-      text: Use the source’s file count instead of its sampling share.
-    feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
-    id: training-data-mixtures.base.v2.1
-  - prompt: A token-level mixture allocates 25% of an expected 800-token budget to code. Record expected code
-      tokens and expected non-code tokens.
-    answers:
-      code: 200.0
-      other: 600.0
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: Treat the percentage as a fixed number of tokens.
-    - id: a
-      text: Multiply the budget by the specified token share.
-    - id: b
-      text: Use the source’s file count instead of its sampling share.
-    feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
-    id: training-data-mixtures.base.v2.2
-  - prompt: A token-level mixture allocates 50% of an expected 600-token budget to code. Record expected code
-      tokens and expected non-code tokens.
-    answers:
-      code: 300.0
-      other: 300.0
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Use the source’s file count instead of its sampling share.
-    - id: c
-      text: Treat the percentage as a fixed number of tokens.
-    - id: a
-      text: Multiply the budget by the specified token share.
-    feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
-    id: training-data-mixtures.base.v2.3
-  - prompt: A token-level mixture allocates 20% of an expected 500-token budget to code. Record expected code
-      tokens and expected non-code tokens.
-    answers:
-      code: 100.0
-      other: 400.0
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Use the source’s file count instead of its sampling share.
-    - id: c
-      text: Treat the percentage as a fixed number of tokens.
-    - id: a
-      text: Multiply the budget by the specified token share.
-    feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
-    id: training-data-mixtures.base.v2.4
-  numeric_fields:
-  - id: code
-    label: Expected code-token exposures
-  - id: other
-    label: Expected other-token exposures
-  absolute_tolerance: 1.0e-06
-- id: training-data-mixtures.transfer.v2
-  objective_ref: objective.training-data-mixtures
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: training-data-mixtures.s3
-  variants:
-  - prompt: A source has 100 unique examples and is sampled 300 times. What has increased?
-    answer: a
-    options:
-    - id: b
-      text: The count of distinct examples necessarily increased to 300
-    - id: a
-      text: Exposure, with possible repetition of the same evidence
-    - id: c
-      text: The source’s factual correctness tripled
-    feedback: Sampling more often does not create additional distinct examples.
-    id: training-data-mixtures.transfer.v2.1
-  - prompt: A recipe says “equal source weights” but not the sampling unit. What needs clarification?
-    answer: a
-    options:
-    - id: a
-      text: Whether weights apply to tokens, documents, or batches
-    - id: b
-      text: Whether equal document shares imply equal token shares
-    - id: c
-      text: Whether a final overall loss can recover the undisclosed sampling unit
-    feedback: Different sampling units produce different token exposures.
-    id: training-data-mixtures.transfer.v2.2
-  - prompt: A new mixture improves code validation but harms general writing. What is the decision about?
-    answer: a
-    options:
-    - id: b
-      text: A proof that mixture choice never matters
-    - id: c
-      text: A tokenizer error established by the scores alone
-    - id: a
-      text: A task-dependent tradeoff across the intended use distribution
-    feedback: Evaluate the intended capability mix rather than declaring a universal winner.
-    id: training-data-mixtures.transfer.v2.3
-  - prompt: A run changes mixture shares halfway through. What should its record include?
-    answer: a
-    options:
-    - id: a
-      text: The schedule and actual consumed counts
-    - id: c
-      text: Only the total number of source files
-    - id: b
-      text: Only the final mixture settings
-    feedback: The full exposure history matters; final weights alone do not describe the run.
-    id: training-data-mixtures.transfer.v2.4
+  - id: training-data-mixtures.base
+    objective_ref: objective.training-data-mixtures
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Calculate a simple allocation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: training-data-mixtures.s2
+    variants:
+      - id: training-data-mixtures.base.1
+        prompt: A 20,000-token budget assigns weight 0.25 to code. Expected code tokens?
+        options:
+          - id: c
+            text: '250'
+          - id: a
+            text: 5,000
+          - id: b
+            text: 20,000
+        answer: a
+        feedback: Multiply the token budget by the intended token proportion.
+        retired: true
+      - id: training-data-mixtures.base.2
+        prompt: Do equal document sampling weights guarantee equal token counts?
+        options:
+          - id: a
+            text: No; document lengths can differ
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if a model is dense
+        answer: a
+        feedback: The sampling unit determines how source exposure accumulates.
+        retired: true
+  - id: training-data-mixtures.transfer
+    objective_ref: objective.training-data-mixtures
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate the recipe as an intervention: trace the inputs, operation, and result before choosing.'
+    remediation_scene: training-data-mixtures.s4
+    variants:
+      - id: training-data-mixtures.transfer.1
+        prompt: A small corpus is repeated many times. What should evaluation inspect?
+        options:
+          - id: a
+            text: Overfitting, memorization, and target-skill tradeoffs
+          - id: b
+            text: Only the raw unique file count
+          - id: c
+            text: A guarantee of unlimited new information
+        answer: a
+        feedback: Repeated exposure changes emphasis without creating equivalent new independent data.
+        retired: true
+      - id: training-data-mixtures.transfer.2
+        prompt: One mixture improves code but hurts another language. What does this illustrate?
+        options:
+          - id: b
+            text: An impossible measurement
+          - id: c
+            text: That sampling weights have no effect
+          - id: a
+            text: A capability tradeoff under the chosen budget and data recipe
+        answer: a
+        feedback: Mixture choices can redistribute finite training effort.
+        retired: true
+  - id: training-data-mixtures.base.v2
+    objective_ref: objective.training-data-mixtures
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: training-data-mixtures.s3
+    variants:
+      - prompt: A token-level mixture allocates 30% of an expected 1000-token budget to code. Record expected code tokens and expected non-code tokens.
+        answers:
+          code: 300.0
+          other: 700.0
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Multiply the budget by the specified token share.
+          - id: c
+            text: Treat the percentage as a fixed number of tokens.
+          - id: b
+            text: Use the source’s file count instead of its sampling share.
+        feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
+        id: training-data-mixtures.base.v2.1
+        retired: true
+      - prompt: A token-level mixture allocates 25% of an expected 800-token budget to code. Record expected code tokens and expected non-code tokens.
+        answers:
+          code: 200.0
+          other: 600.0
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: Treat the percentage as a fixed number of tokens.
+          - id: a
+            text: Multiply the budget by the specified token share.
+          - id: b
+            text: Use the source’s file count instead of its sampling share.
+        feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
+        id: training-data-mixtures.base.v2.2
+        retired: true
+      - prompt: A token-level mixture allocates 50% of an expected 600-token budget to code. Record expected code tokens and expected non-code tokens.
+        answers:
+          code: 300.0
+          other: 300.0
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Use the source’s file count instead of its sampling share.
+          - id: c
+            text: Treat the percentage as a fixed number of tokens.
+          - id: a
+            text: Multiply the budget by the specified token share.
+        feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
+        id: training-data-mixtures.base.v2.3
+        retired: true
+      - prompt: A token-level mixture allocates 20% of an expected 500-token budget to code. Record expected code tokens and expected non-code tokens.
+        answers:
+          code: 100.0
+          other: 400.0
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Use the source’s file count instead of its sampling share.
+          - id: c
+            text: Treat the percentage as a fixed number of tokens.
+          - id: a
+            text: Multiply the budget by the specified token share.
+        feedback: Expected exposure equals budget times share; the remaining share goes to other sources.
+        id: training-data-mixtures.base.v2.4
+        retired: true
+    numeric_fields:
+      - id: code
+        label: Expected code-token exposures
+      - id: other
+        label: Expected other-token exposures
+    absolute_tolerance: 1e-6
+  - id: training-data-mixtures.transfer.v2
+    objective_ref: objective.training-data-mixtures
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: training-data-mixtures.s3
+    variants:
+      - prompt: A source has 100 unique examples and is sampled 300 times. What has increased?
+        answer: a
+        options:
+          - id: b
+            text: The count of distinct examples necessarily increased to 300
+          - id: a
+            text: Exposure, with possible repetition of the same evidence
+          - id: c
+            text: The source’s factual correctness tripled
+        feedback: Sampling more often does not create additional distinct examples.
+        id: training-data-mixtures.transfer.v2.1
+        retired: true
+      - prompt: A recipe says “equal source weights” but not the sampling unit. What needs clarification?
+        answer: a
+        options:
+          - id: a
+            text: Whether weights apply to tokens, documents, or batches
+          - id: b
+            text: Whether equal document shares imply equal token shares
+          - id: c
+            text: Whether a final overall loss can recover the undisclosed sampling unit
+        feedback: Different sampling units produce different token exposures.
+        id: training-data-mixtures.transfer.v2.2
+        retired: true
+      - prompt: A new mixture improves code validation but harms general writing. What is the decision about?
+        answer: a
+        options:
+          - id: b
+            text: A proof that mixture choice never matters
+          - id: c
+            text: A tokenizer error established by the scores alone
+          - id: a
+            text: A task-dependent tradeoff across the intended use distribution
+        feedback: Evaluate the intended capability mix rather than declaring a universal winner.
+        id: training-data-mixtures.transfer.v2.3
+        retired: true
+      - prompt: A run changes mixture shares halfway through. What should its record include?
+        answer: a
+        options:
+          - id: a
+            text: The schedule and actual consumed counts
+          - id: c
+            text: Only the total number of source files
+          - id: b
+            text: Only the final mixture settings
+        feedback: The full exposure history matters; final weights alone do not describe the run.
+        id: training-data-mixtures.transfer.v2.4
+        retired: true
+  - id: training-data-mixtures.base.v3
+    objective_ref: objective.training-data-mixtures
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: A weight is a share of the training tokens, not of the source. Epochs = weight × total tokens ÷ source size, and extra epochs repeat the same text.
+    remediation_scene: training-data-mixtures.s2
+    variants:
+      - id: training-data-mixtures.base.v3.1
+        prompt: A 5-billion-token source gets a sampling weight of 0.10 in a 100-billion-token run. How is it treated?
+        options:
+          - id: c
+            text: One-tenth of it is read once, and the rest is skipped
+          - id: a
+            text: It is read about twice, so it is upsampled
+          - id: b
+            text: It is read once, since the weight only sets its batch position
+        answer: a
+        feedback: 0.10 × 100B = 10B tokens drawn from a 5B source is 2 epochs. Reading the weight as the fraction of the source that is used confuses a share of the run with a share of the source.
+      - id: training-data-mixtures.base.v3.2
+        prompt: Why do teams hesitate to read a small, high-quality source more than about four times?
+        options:
+          - id: a
+            text: Later passes add little new learning and raise the risk of memorization
+          - id: b
+            text: The tokenizer must be retrained after a source has been read four times
+          - id: c
+            text: The training loss on that source rises as soon as it is repeated
+        answer: a
+        feedback: Muennighoff et al. found repeats up to about 4 epochs are nearly as good as fresh data, with fading value after that, and heavy repetition encourages word-for-word recall. Nothing about repetition breaks the tokenizer, and training loss on repeated text usually keeps falling.
+      - id: training-data-mixtures.base.v3.3
+        prompt: A recipe samples equal numbers of documents from legal contracts (5,000 tokens each) and tweets (50 tokens each). What does that do to token exposure?
+        options:
+          - id: b
+            text: Tokens split evenly, since each source gets the same number of picks
+          - id: c
+            text: Tweets get more tokens, since short documents fit more easily into batches
+          - id: a
+            text: Contracts get about 100 times as many tokens as tweets
+        answer: a
+        feedback: Each pick of a contract brings 5,000 tokens and each tweet 50, a 100-to-1 split. Equal document counts give equal tokens only when documents are the same length.
+      - id: training-data-mixtures.base.v3.4
+        prompt: A team sets every source's weight to its share of the tokens on disk. What happens to a small, carefully edited source?
+        options:
+          - id: a
+            text: It gets a tiny share of training, the same epochs as the huge web crawl
+          - id: c
+            text: It gets read many more times than the web, because it is small
+          - id: b
+            text: It gets an equal share with every other source, whatever its size
+        answer: a
+        feedback: Size-proportional weights give every source the same number of epochs, so a 1% source fills 1% of training. Upsampling is what makes small sources count; equal shares would be a different rule.
+  - id: training-data-mixtures.transfer.v3
+    objective_ref: objective.training-data-mixtures
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: In a fixed budget, raising one weight lowers others. Work out what the change does to epochs, then ask what that costs.
+    remediation_scene: training-data-mixtures.s4
+    variants:
+      - id: training-data-mixtures.transfer.v3.1
+        prompt: A team building a coding assistant raises code from 15% to 60% of a fixed 100-billion-token run. What should they check before committing?
+        options:
+          - id: c
+            text: Whether the code source is big enough to fill a single epoch
+          - id: a
+            text: How general writing and reasoning scores change, since other sources shrink
+          - id: b
+            text: Whether the tokenizer now needs a larger context length for code
+        answer: a
+        feedback: In a fixed budget, 45 extra points of code come out of every other source, so general skills can drop. A code source only needs to be big enough to avoid heavy repetition, and the context length is set on the config card, not by the mixture.
+      - id: training-data-mixtures.transfer.v3.2
+        prompt: A lab has 2 billion tokens of Icelandic and proposes a weight of 0.20 in a 100-billion-token run. What is the main concern?
+        options:
+          - id: b
+            text: The Icelandic text would be read less than once, wasting most of it
+          - id: c
+            text: Mixing languages in one run stops the model from learning either
+          - id: a
+            text: The Icelandic text would be read 10 times, well past useful repetition
+        answer: a
+        feedback: 0.20 × 100B ÷ 2B = 10 epochs, beyond the roughly 4 where repeats keep most of their value. Better options are a lower weight or more Icelandic data. Multilingual models learn many languages in one run.
+      - id: training-data-mixtures.transfer.v3.3
+        prompt: A team trains six small models on six candidate mixtures and picks the one with the best validation scores. How should they report the final model's performance?
+        options:
+          - id: a
+            text: On a test set that played no part in choosing the mixture
+          - id: b
+            text: On the same validation set, since it picked the winning mixture
+          - id: c
+            text: On the six small models' average, since they share the data
+        answer: a
+        feedback: Picking the mixture by validation scores is tuning, so those scores are optimistic. An untouched test set gives an honest number. The small models' average measures different models.
+      - id: training-data-mixtures.transfer.v3.4
+        prompt: A run uses one mixture for 900 billion tokens, then upsamples math and code for its last 100 billion. What must its training record include to be reproducible?
+        options:
+          - id: c
+            text: The final weights, since those are the ones the finished model saw last
+          - id: a
+            text: Both phases' weights and the tokens actually read from each source
+          - id: b
+            text: The first phase's weights, since that phase covers 90% of training
+        answer: a
+        feedback: Either phase alone describes a different run. Logging the schedule and the consumed tokens per source lets someone rebuild what the model actually read.
+  - id: training-data-mixtures.calculate
+    objective_ref: objective.training-data-mixtures
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Epochs = sampling weight × total training tokens ÷ tokens in the source. Keep both token counts in the same units.
+    remediation_scene: training-data-mixtures.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: training-data-mixtures.calculate.1
+        prompt: A source holds 5 billion tokens and has sampling weight 0.20 in a 50-billion-token run. How many epochs of it does the model read?
+        answer: 2
+        feedback: 0.20 × 50B = 10B tokens drawn from a 5B source, so 10 ÷ 5 = 2 epochs.
+      - id: training-data-mixtures.calculate.2
+        prompt: A 3-billion-token encyclopedia has weight 0.05 in a 300-billion-token run. How many epochs?
+        answer: 5
+        feedback: 0.05 × 300B = 15B tokens from a 3B source, so 15 ÷ 3 = 5 epochs, past the roughly 4 where repeats keep most of their value.
+      - id: training-data-mixtures.calculate.3
+        prompt: A 2-trillion-token web crawl has weight 0.60 in a 1-trillion-token run. How many epochs?
+        answer: 0.3
+        feedback: 0.60 × 1T = 0.6T tokens from a 2T source, so 0.6 ÷ 2 = 0.3 epochs. Most of the crawl is never read.
+      - id: training-data-mixtures.calculate.4
+        prompt: A 12-billion-token book collection has weight 0.08 in a 300-billion-token run. How many epochs?
+        answer: 2
+        feedback: 0.08 × 300B = 24B tokens from a 12B source, so 24 ÷ 12 = 2 epochs.

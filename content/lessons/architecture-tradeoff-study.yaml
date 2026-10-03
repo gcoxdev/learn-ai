@@ -1,206 +1,384 @@
 schema_version: 0.2-draft
 lesson:
   id: architecture-tradeoff-study
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Compare sequence architectures with an honest budget
   state: draft
-  summary: Choose an architecture against a stated quality and resource budget using comparable measurements.
+  summary: Transformer, Mamba, or hybrid? The honest answer depends on your memory budget, your context length, and whether the model must quote things exactly. Work three real decisions through.
   slot: M19.8
   category: learning
   sources:
-  - title: 'Mamba: Linear-Time Sequence Modeling with Selective State Spaces'
-    url: https://arxiv.org/abs/2312.00752
-  - title: The Llama 3 Herd of Models
-    url: https://arxiv.org/abs/2407.21783
-  - title: The Hardware Lottery
-    url: https://arxiv.org/abs/2009.06489
+    - title: "An Empirical Study of Mamba-based Language Models (Waleffe et al., 2024)"
+      url: https://arxiv.org/abs/2406.07887
+    - title: "Mamba: Linear-Time Sequence Modeling with Selective State Spaces (Gu & Dao, 2023)"
+      url: https://arxiv.org/abs/2312.00752
+    - title: "Jamba: A Hybrid Transformer-Mamba Language Model (Lieber et al., 2024)"
+      url: https://arxiv.org/abs/2403.19887
+    - title: The Llama 3 Herd of Models
+      url: https://arxiv.org/abs/2407.21783
+    - title: "The Hardware Lottery (Hooker, 2020)"
+      url: https://arxiv.org/abs/2009.06489
 objectives:
-- id: objective.architecture-tradeoff-study
-  version: 1-draft
-  statement: Architecture comparisons should match relevant budgets and measure quality, state, training, prefill,
-    decoding, and workload sensitivity; no single asymptotic label ranks every system.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - architecture-tradeoff-study.base
-  - architecture-tradeoff-study.transfer
-  prerequisites:
-  - anyOf:
-    - objective.long-context-capability
-  - anyOf:
-    - objective.research-reporting
-  - anyOf:
-    - objective.compute-and-bandwidth
+  - id: objective.architecture-tradeoff-study
+    version: 3-draft
+    statement: Architecture comparisons should match relevant budgets and measure quality, state, training, prefill, decoding, and workload sensitivity; no single asymptotic label ranks every system.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - architecture-tradeoff-study.base.v2
+      - architecture-tradeoff-study.transfer.v2
+      - architecture-tradeoff-study.budget
+    prerequisites:
+      - anyOf:
+          - objective.long-context-capability
+      - anyOf:
+          - objective.research-reporting
+      - anyOf:
+          - objective.compute-and-bandwidth
 scenes:
-- id: architecture-tradeoff-study.s1
-  title: Choose the decision first
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.architecture-tradeoff-study
-  markdown: A phone assistant, a long-document analyst, and a high-throughput batch service have different
-    constraints. Specify quality thresholds, latency, memory, context, and hardware. The preferred architecture
-    is conditional on those requirements; a research benchmark winner may fail a deployment constraint.
-  text_mode: A phone assistant, a long-document analyst, and a high-throughput batch service have different
-    constraints. Specify quality thresholds, latency, memory, context, and hardware. The preferred architecture
-    is conditional on those requirements; a research benchmark winner may fail a deployment constraint.
-  bridges: []
-- id: architecture-tradeoff-study.s2
-  title: Use several matched views
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.architecture-tradeoff-study
-  markdown: 'Equal parameter count, equal active FLOPs, equal training compute, and equal serving cost are
-    different comparisons. Present the relevant ones explicitly. A toy table might compare quality at a fixed
-    memory limit and then latency at a fixed quality threshold, rather than compressing everything into one
-    score.
+  - id: architecture-tradeoff-study.s1
+    title: Three products, one question
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.architecture-tradeoff-study
+    markdown: |-
+      Three teams each ask you, "Which architecture should we use?"
 
+      | Product | Context | Users at once | Memory | Must quote exactly? |
+      | --- | --- | --- | --- | --- |
+      | Phone note assistant | up to 32K tokens | 1 | about 6 GiB for the model | Yes: names, dates |
+      | Lease analyst | 200K tokens | 20 | one 80 GB GPU | Yes: clause numbers |
+      | Nightly news summarizer | 2K tokens | thousands, batched | a GPU cluster | No |
 
-    Suppose a device has an 8 GB memory limit. Model A passes 90 of 100 matched cases using 6 GB; B passes
-    94 but needs 12 GB. A meets the capacity condition and B does not under this configuration. A different
-    server budget could change the decision. These invented numbers demonstrate a comparison rule, not a benchmark
-    result.'
-  text_mode: 'Equal parameter count, equal active FLOPs, equal training compute, and equal serving cost are
-    different comparisons. Present the relevant ones explicitly. A toy table might compare quality at a fixed
-    memory limit and then latency at a fixed quality threshold, rather than compressing everything into one
-    score.
+      The same architecture can't win all three. The phone is limited by memory, the lease analyst by memory *and* exact recall, and the summarizer only by throughput on short inputs, where every design in this module behaves much like a plain transformer.
 
+      So the first step of an architecture comparison isn't a benchmark. It is writing down the requirements, like the table above, before looking at any results. Otherwise it is too easy to pick whichever metric makes your favorite design look good.
+    bridges: []
+  - id: architecture-tradeoff-study.s2
+    title: The honest scorecard
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.architecture-tradeoff-study
+    markdown: |-
+      Here is what this module's evidence supports, as of the studies we've read. "Mixed" means published results point in different directions or come from few large, controlled comparisons.
 
-    Suppose a device has an 8 GB memory limit. Model A passes 90 of 100 matched cases using 6 GB; B passes
-    94 but needs 12 GB. A meets the capacity condition and B does not under this configuration. A different
-    server budget could change the decision. These invented numbers demonstrate a comparison rule, not a benchmark
-    result.'
-  bridges: []
-- id: architecture-tradeoff-study.s3
-  title: Separate phases and distributions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.architecture-tradeoff-study
-  markdown: 'Training can exploit parallel scans or large batches that do not resemble incremental decoding.
-    Prefill processes known prompt tokens; decoding repeatedly produces new ones. Test short and long inputs,
-    concurrency, retrieval-sensitive tasks, and shifted domains. Report the full operating conditions.
+      | | Transformer (GQA) | Sliding window + some global layers | Pure SSM (Mamba, Mamba-2) | Hybrid (e.g. Jamba) |
+      | --- | --- | --- | --- | --- |
+      | Language quality at equal budget | The reference point | Often close to full attention when some layers stay global (mixed) | Matched or beat an equal transformer on many tasks at 8B; behind on copying and in-context learning | Beat the transformer on all 12 standard tasks in one 8B study; few other controlled tests (mixed) |
+      | Training speed at long $n$ | Quadratic attention, but highly tuned kernels | Linear in the window layers; the global layers stay quadratic | Linear in $n$; custom scan or SSD kernels | Mostly linear |
+      | Inference memory | KV cache grows with $n$ | Capped in the window layers; the global layers' cache still grows | Fixed state | Small growing cache |
+      | Exact long-range recall | Strongest | Only within reach of the window or global links | Weak | Close to transformer in reported tests (mixed) |
+      | Maturity (tooling, largest proven scale) | Highest | High | Lower | Lower |
 
+      Two warnings belong beside this table. First, most controlled comparisons stop at a few billion parameters; the largest openly documented models are mostly transformers, often with GQA or sliding-window layers, so public evidence tells us little about alternatives at that scale. Second, maturity is a real column. Sara Hooker's essay *The Hardware Lottery* (2020) argues that ideas win partly because they suit the hardware and software of their day. A design with a better formula can run slower than a transformer whose kernels have had years of tuning.
 
-    **Prefill** processes the supplied prompt. **Decode** generates new outputs incrementally. **Concurrency**
-    counts requests served at once. A method can be fast at a large parallel prefill and slow for one user
-    waiting on each next token. Record all three conditions before comparing a speed claim.'
-  text_mode: 'Training can exploit parallel scans or large batches that do not resemble incremental decoding.
-    Prefill processes known prompt tokens; decoding repeatedly produces new ones. Test short and long inputs,
-    concurrency, retrieval-sensitive tasks, and shifted domains. Report the full operating conditions.
+      :::mixup "Linear-time architectures are faster, so they win whenever speed matters."
+      At 2K tokens, the $n^2$ term is small (the long-context lesson found attention was about 4% of the arithmetic at 4K for a 70B-like model), and tuned transformer kernels often win. The linear-time advantage appears at long contexts and in memory-bound decoding, which is why speed claims must state the length, the phase, and the batch size.
+      :::
+    bridges: []
+  - id: architecture-tradeoff-study.s3
+    title: Work the phone's memory budget
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.architecture-tradeoff-study
+    markdown: |-
+      Take the phone. A 7B model at 4 bits per weight needs about 3.5 GiB, leaving 2.5 GiB of the 6 GiB budget for the cache at 32K tokens. Use the cache formula from the lesson on sharing keys and values with a 32-layer, width-128 shape:
 
+      ```python run
+      GiB = 2**30
+      T, weights, budget = 32768, 3.5, 6.0          # 32K context, 7B weights at 4 bits, phone budget
 
-    **Prefill** processes the supplied prompt. **Decode** generates new outputs incrementally. **Concurrency**
-    counts requests served at once. A method can be fast at a large parallel prefill and slow for one user
-    waiting on each next token. Record all three conditions before comparing a speed claim.'
-  bridges: []
-- id: architecture-tradeoff-study.s4
-  title: Make uncertainty visible
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.architecture-tradeoff-study
-  markdown: Measure repeated runs where useful, identify unavailable training details, and preserve configurations.
-    Explain which differences are controlled and which are confounded by data or scale. State the conclusion
-    at the level measured—for example, faster on this workload with these quality and memory limits.
-  text_mode: Measure repeated runs where useful, identify unavailable training details, and preserve configurations.
-    Explain which differences are controlled and which are confounded by data or scale. State the conclusion
-    at the level measured—for example, faster on this workload with these quality and memory limits.
-  bridges: []
-- id: architecture-tradeoff-study.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.architecture-tradeoff-study
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Choose the task and resource limits before comparing architectures. Measure training, prompt processing,
-    and decoding under the conditions that matter for that decision.
-- id: architecture-tradeoff-study.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.architecture-tradeoff-study
-  markdown: Choose the task and resource limits before comparing architectures. Measure training, prompt processing,
-    and decoding under the conditions that matter for that decision.
-  text_mode: Choose the task and resource limits before comparing architectures. Measure training, prompt processing,
-    and decoding under the conditions that matter for that decision.
+      def kv(attn_layers, kv_heads):                # 16-bit cache, head width 128
+          return 2 * attn_layers * kv_heads * 128 * T * 2 / GiB
+
+      designs = {
+          "Transformer, MHA (32 KV heads)": kv(32, 32),
+          "Transformer, GQA-8": kv(32, 8),
+          "Hybrid 1:7, GQA-8": kv(4, 8),
+          "Pure SSM (illustrative state)": 64 * 5120 * 16 * 2 / GiB,   # Mamba-2.8B-sized: layers x channels x N x bytes
+      }
+      for name, cache in designs.items():
+          total = weights + cache
+          verdict = "fits" if total <= budget else "too big"
+          print(f"{name:31s} cache {cache:6.2f} GiB   total {total:5.2f} GiB   {verdict}")
+      ```
+
+      | Design | Cache at 32K | Total | Verdict |
+      | --- | ---: | ---: | --- |
+      | Transformer, MHA | 16 GiB | 19.5 GiB | too big |
+      | Transformer, GQA-8 | 4 GiB | 7.5 GiB | too big |
+      | Hybrid 1:7 | 0.5 GiB | 4.0 GiB | fits |
+      | Pure SSM | about 0.01 GiB | 3.5 GiB | fits |
+
+      :::predict The product team agrees to cap context at 8K tokens. Does the GQA-8 transformer fit now?
+      Yes. The cache is proportional to length, so it drops to 1 GiB and the total to 4.5 GiB. A mature transformer is back in the running, and the choice now rests on quality and tooling.
+      :::
+
+      Memory narrowed the field to two for 32K; the "must quote exactly" requirement decides between them. Build a test from the phone's real job: 100 notes, questions that need an exact name or date from far back, some near-duplicate notes as distractors. Run both candidates. If the pure SSM misses exact dates that the hybrid gets, the hybrid wins, even though its cache is 50 times larger.
+    bridges: []
+  - id: architecture-tradeoff-study.s4
+    title: Match the budgets, then say what you measured
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.architecture-tradeoff-study
+    markdown: |-
+      A fair comparison fixes one budget and says which. These are different comparisons, and a design can win one and lose another:
+
+      - **Equal parameters**: same model size on disk.
+      - **Equal training compute**: same FLOPs spent, which also means matching the training data.
+      - **Equal serving cost**: same GPUs, and the same answers per second at your real context length and number of users.
+
+      Speed also has phases. **Prefill** processes the prompt all at once and is usually limited by arithmetic. **Decode** produces one token at a time and is usually limited by memory bandwidth, since every step rereads the weights and the cache (module 17's lesson on compute and memory bandwidth). Mamba's reported 5× throughput is a decode-time generation result; it says nothing about prefill on short prompts.
+
+      Now write the lease analyst's conclusion. Suppose you trained a 7B transformer and a 7B hybrid on the same data, then tested both on 400 lease questions at 200K tokens, with three training seeds each. The transformer scored 85% (range 84–86) and the hybrid 84% (83–85); the hybrid's cache was one-eighth the size (about 3 GiB per 200K-token user instead of 24 GiB), so it served 20 users where the transformer served only 2. The honest summary is:
+
+      > "At 7B and 200K tokens, on our lease questions, the hybrid matched the transformer's accuracy within seed variation and served about ten times as many users on one GPU."
+
+      Not "hybrids beat transformers." Each qualifier in that sentence names something you controlled, and a reader can rerun it.
+    bridges: []
+  - id: architecture-tradeoff-study.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.architecture-tradeoff-study
+    markdown: Fit models and users into memory budgets, then choose and defend architectures for a phone, a news summarizer, and a speed claim that doesn't say how it was measured.
+    takeaway: |-
+      Write the requirements first, then compare designs at a matched budget and state the phase, length, and batch you measured. Transformers lead on exact recall and maturity; SSMs and hybrids lead on long-context memory, and the evidence on quality is still mixed.
+  - id: architecture-tradeoff-study.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.architecture-tradeoff-study
+    markdown: |-
+      Choose the task and resource limits before comparing architectures. Measure training, prompt processing, and decoding under the conditions that matter for that decision.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - architecture-tradeoff-study.s1
-    - architecture-tradeoff-study.s2
-    - architecture-tradeoff-study.s3
-    - architecture-tradeoff-study.s4
-    - architecture-tradeoff-study.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - architecture-tradeoff-study.s1
+        - architecture-tradeoff-study.s2
+        - architecture-tradeoff-study.s3
+        - architecture-tradeoff-study.s4
+        - architecture-tradeoff-study.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     architecture-tradeoff-study.recap: architecture-tradeoff-study.check
 assessment_families:
-- id: architecture-tradeoff-study.base
-  objective_ref: objective.architecture-tradeoff-study
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Use several matched views: trace the inputs, operation, and result before choosing.'
-  remediation_scene: architecture-tradeoff-study.s2
-  variants:
-  - id: architecture-tradeoff-study.base.1
-    prompt: Are equal parameters and equal training compute the same comparison?
-    options:
-    - id: c
-      text: Only for every dense model
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Models can consume different data and computation at equal parameter counts.
-  - id: architecture-tradeoff-study.base.2
-    prompt: Why separate prefill and decoding?
-    options:
-    - id: a
-      text: Their computation shapes and bottlenecks differ
-    - id: b
-      text: They always have identical costs
-    - id: c
-      text: Decoding never reads model weights
-    answer: a
-    feedback: Workload phases use hardware differently.
-- id: architecture-tradeoff-study.transfer
-  objective_ref: objective.architecture-tradeoff-study
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Make uncertainty visible: trace the inputs, operation, and result before choosing.'
-  remediation_scene: architecture-tradeoff-study.s4
-  variants:
-  - id: architecture-tradeoff-study.transfer.1
-    prompt: A model is faster but misses the required quality threshold. What follows?
-    options:
-    - id: a
-      text: It may be unsuitable for that decision despite speed
-    - id: b
-      text: It is automatically the best choice
-    - id: c
-      text: Quality cannot constrain deployment
-    answer: a
-    feedback: Requirements define what performance is useful.
-  - id: architecture-tradeoff-study.transfer.2
-    prompt: Data recipes differ between compared models. What should the report acknowledge?
-    options:
-    - id: b
-      text: All differences are proven architectural
-    - id: c
-      text: No evaluation is possible at all
-    - id: a
-      text: Architecture effects are confounded with training differences
-    answer: a
-    feedback: Confounds limit causal attribution while comparisons can still be informative.
+  - id: architecture-tradeoff-study.base
+    objective_ref: objective.architecture-tradeoff-study
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Name the budget that was held equal before comparing results.
+    remediation_scene: architecture-tradeoff-study.s4
+    variants:
+      - id: architecture-tradeoff-study.base.1
+        prompt: Are equal parameters and equal training compute the same comparison?
+        options:
+          - id: c
+            text: Only for every dense model
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Models can consume different data and computation at equal parameter counts.
+        retired: true
+      - id: architecture-tradeoff-study.base.2
+        prompt: Why separate prefill and decoding?
+        options:
+          - id: a
+            text: Their computation shapes and bottlenecks differ
+          - id: b
+            text: They always have identical costs
+          - id: c
+            text: Decoding never reads model weights
+        answer: a
+        feedback: Workload phases use hardware differently.
+        retired: true
+  - id: architecture-tradeoff-study.transfer
+    objective_ref: objective.architecture-tradeoff-study
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Check the requirement first, then the measurement.
+    remediation_scene: architecture-tradeoff-study.s1
+    variants:
+      - id: architecture-tradeoff-study.transfer.1
+        prompt: A model is faster but misses the required quality threshold. What follows?
+        options:
+          - id: a
+            text: It may be unsuitable for that decision despite speed
+          - id: b
+            text: It is automatically the best choice
+          - id: c
+            text: Quality cannot constrain deployment
+        answer: a
+        feedback: Requirements define what performance is useful.
+        retired: true
+      - id: architecture-tradeoff-study.transfer.2
+        prompt: Data recipes differ between compared models. What should the report acknowledge?
+        options:
+          - id: b
+            text: All differences are proven architectural
+          - id: c
+            text: No evaluation is possible at all
+          - id: a
+            text: Architecture effects are confounded with training differences
+        answer: a
+        feedback: Confounds limit causal attribution while comparisons can still be informative.
+        retired: true
+  - id: architecture-tradeoff-study.base.v2
+    objective_ref: objective.architecture-tradeoff-study
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "For each claim, ask: which budget was matched, which phase (prefill or decode) was timed, and what did the controlled studies actually find?"
+    remediation_scene: architecture-tradeoff-study.s2
+    variants:
+      - id: architecture-tradeoff-study.base.v2.1
+        prompt: Model A (a hybrid) and model B (a transformer) both have 7B parameters. A was trained on 3 trillion tokens and B on 1 trillion. A scores higher. What can you conclude about the architectures?
+        options:
+          - id: b
+            text: The hybrid design is better, since both models have the same number of parameters
+          - id: a
+            text: Little, since the data difference could explain the gap as well as the design could
+          - id: c
+            text: The transformer is better, since it reached nearly the same score on less data
+        answer: a
+        feedback: Equal parameters isn't equal training compute. Three times the data can explain the gap on its own, so you need models trained on the same data to credit either design. Reading the small gap as evidence for B makes the same mistake in reverse.
+      - id: architecture-tradeoff-study.base.v2.2
+        prompt: Why do benchmarks report prefill speed and decode speed separately?
+        options:
+          - id: a
+            text: Prefill is usually limited by arithmetic, decode by reading weights and cache from memory
+          - id: c
+            text: Prefill runs on the CPU while decode runs on the GPU, so their hardware differs
+          - id: b
+            text: Decode skips the attention layers, so its cost depends on the feed-forward layers
+        answer: a
+        feedback: Prefill processes many prompt tokens in parallel and keeps the arithmetic units busy; decode makes one token per step and must reread the weights and the whole cache each time. Both run on the GPU, and both run every layer.
+      - id: architecture-tradeoff-study.base.v2.3
+        prompt: Which statement best matches NVIDIA's controlled 8B comparison of pure Mamba-style models and transformers?
+        options:
+          - id: c
+            text: The SSMs trailed the transformer on most standard language tasks
+          - id: b
+            text: The SSMs beat the transformer on nearly every task they measured
+          - id: a
+            text: The SSMs matched it on many tasks but lagged on copying and in-context learning
+        answer: a
+        feedback: Pure SSMs matched or exceeded the transformer on many tasks but fell behind on five-shot MMLU and phone-book lookup. The hybrid, not the pure SSM, beat the transformer across their 12 standard tasks.
+      - id: architecture-tradeoff-study.base.v2.4
+        prompt: A new architecture has lower asymptotic cost than attention, yet it runs slower than a transformer at 4K tokens in a team's tests. Which explanation fits best?
+        options:
+          - id: b
+            text: The asymptotic analysis must contain an error, since lower cost means faster runs
+          - id: a
+            text: The transformer's kernels are heavily tuned and n² is still small at 4K tokens
+          - id: c
+            text: The new architecture must be using a larger state than it was designed to use
+        answer: a
+        feedback: Asymptotic cost describes growth with n; at 4K the quadratic term is small, and years of kernel tuning (the "hardware lottery" point) can outweigh a better formula. Nothing needs to be wrong with the analysis or the state.
+  - id: architecture-tradeoff-study.transfer.v2
+    objective_ref: objective.architecture-tradeoff-study
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Start from the product's binding constraint (memory, exact recall, or throughput), then check that the evidence was measured under matching conditions.
+    remediation_scene: architecture-tradeoff-study.s3
+    variants:
+      - id: architecture-tradeoff-study.transfer.v2.1
+        prompt: A nightly job summarizes 50,000 news articles of about 2K tokens each on a GPU cluster, and it never quotes from far back. Which choice is most sensible?
+        options:
+          - id: a
+            text: A mature GQA transformer, since short inputs erase most linear-time savings
+          - id: c
+            text: A pure SSM, since linear-time models are the faster choice at any length
+          - id: b
+            text: A hybrid, since its small cache is the main cost of a short-input batch job
+        answer: a
+        feedback: At 2K tokens the n² term and the cache are small, so a well-tuned transformer is hard to beat on throughput and tooling. The SSM's advantage appears at long lengths, and the cache isn't this job's bottleneck.
+      - id: architecture-tradeoff-study.transfer.v2.2
+        prompt: "A blog post says: \"Our model is 5× faster than a transformer.\" Before using this for a chat product with long prompts, what do you need to know?"
+        options:
+          - id: c
+            text: Whether the comparison transformer had the same number of layers
+          - id: a
+            text: The phase timed, the context length, and the batch size of the test
+          - id: b
+            text: Whether the speed was measured on the newest available GPUs
+        answer: a
+        feedback: A decode-time throughput gain at long length and large batch may vanish in prefill or at short prompts. Layer count and GPU model matter less than whether the test matches your workload.
+      - id: architecture-tradeoff-study.transfer.v2.3
+        prompt: A phone assistant must fit a 7B model (3.5 GiB at 4 bits) plus its cache in 6 GiB, at 32K tokens, and must recall exact dates from old notes. A GQA transformer needs 4 GiB of cache there, a 1:7 hybrid 0.5 GiB, and a pure SSM almost none. What is the right next step?
+        options:
+          - id: b
+            text: Ship the pure SSM, since it uses the least memory of the three
+          - id: c
+            text: Ship the GQA transformer, since it is the most mature option here
+          - id: a
+            text: Test the hybrid and pure SSM on exact-date questions and pick the one that passes
+        answer: a
+        feedback: The transformer's 7.5 GiB total breaks the budget, so it's out at 32K. Least memory isn't the requirement; exact recall is, and it's where pure SSMs are weakest, so test both remaining designs on it.
+      - id: architecture-tradeoff-study.transfer.v2.4
+        prompt: You trained a hybrid and a transformer at 7B on the same data and tested both on 400 lease questions at 200K tokens with three seeds. Accuracy overlapped (84% vs 85%), and the hybrid served 3× more users. Which conclusion should you write?
+        options:
+          - id: a
+            text: At 7B and 200K tokens on our lease set, the hybrid matched accuracy and served 3× more users
+          - id: b
+            text: Hybrids beat transformers, since they give the same accuracy at a much lower serving cost
+          - id: c
+            text: The transformer is better, since it scored one point higher on the lease questions
+        answer: a
+        feedback: The scoped claim names the scale, length, and task you controlled. "Hybrids beat transformers" generalizes far past one test, and a one-point gap inside the seed ranges isn't a real difference.
+        retired: true
+      - id: architecture-tradeoff-study.transfer.v2.5
+        prompt: A team trained a 7B hybrid and a 7B transformer on the same data, then tested both on 500 insurance-policy questions at 150K tokens with three seeds each. Accuracy was 78% (77–79) for the hybrid and 79% (78–80) for the transformer, and on one GPU the hybrid served 10× more users. Which conclusion should they write?
+        options:
+          - id: a
+            text: Hybrids beat transformers in general, since they match accuracy at a far lower serving cost
+          - id: c
+            text: The transformer is the better model, since it scored a point higher on the policy questions
+          - id: b
+            text: At 7B and 150K on our policy set, the hybrid matched accuracy and served 10× more users
+        answer: b
+        feedback: The scoped claim names the scale, length, and task that were controlled, so a reader can rerun it. One test on one task can't support "hybrids beat transformers" in general, and a one-point gap inside overlapping seed ranges isn't a real difference.
+  - id: architecture-tradeoff-study.budget
+    objective_ref: objective.architecture-tradeoff-study
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Subtract the weights from the memory you have, then divide what is left by the cache each conversation (or each 1K tokens) needs. Round down to whole units."
+    remediation_scene: architecture-tradeoff-study.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: architecture-tradeoff-study.budget.1
+        prompt: After loading the weights, a GPU has 40 GiB free. Each 32K-token conversation with a GQA-8 transformer needs 4 GiB of cache. How many conversations fit at once?
+        answer: 10
+        feedback: "40 ÷ 4 = 10 conversations."
+      - id: architecture-tradeoff-study.budget.2
+        prompt: After loading the weights, a GPU has 40 GiB free. Each 32K-token conversation with a 1:7 hybrid needs 0.5 GiB of cache. How many conversations fit at once?
+        answer: 80
+        feedback: "40 ÷ 0.5 = 80, eight times as many as the GQA transformer's 10."
+      - id: architecture-tradeoff-study.budget.3
+        prompt: An 80 GiB GPU holds 14 GiB of weights. Each user's cache takes 2 GiB. How many users fit at once?
+        answer: 33
+        feedback: "80 − 14 = 66 GiB free, and 66 ÷ 2 = 33 users."
+      - id: architecture-tradeoff-study.budget.4
+        prompt: A phone gives the model 6 GiB. The weights take 3.5 GiB, and the cache grows by 0.125 GiB per 1K tokens (1,024 tokens). How many thousand-token blocks of context fit?
+        answer: 20
+        feedback: "6 − 3.5 = 2.5 GiB free, and 2.5 ÷ 0.125 = 20 blocks, about 20K tokens."
+      - id: architecture-tradeoff-study.budget.5
+        prompt: A GPU has 60 GiB free after loading the weights. A GQA transformer needs 1.25 GiB of cache per 4K-token chat. How many chats fit at once?
+        answer: 48
+        feedback: "60 ÷ 1.25 = 48 chats."

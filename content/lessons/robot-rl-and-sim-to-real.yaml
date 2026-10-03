@@ -1,196 +1,361 @@
 schema_version: 0.2-draft
 lesson:
   id: robot-rl-and-sim-to-real
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn in simulation and test what transfers
   state: draft
-  summary: Learn in a simulated world, then measure where reality differs.
+  summary: Learning by trial and error would take a real robot arm 23 days of nonstop practice. In simulation it takes minutes. The hard part is making the skill survive the trip back to reality.
   slot: M30.6
   category: learning
   sources:
-  - title: Domain Randomization
-    url: https://arxiv.org/abs/1703.06907
-  - title: Dynamics Randomization
-    url: https://arxiv.org/abs/1710.06537
+    - title: "Domain Randomization for Transferring Deep Neural Networks from Simulation to the Real World (Tobin et al., 2017)"
+      url: https://arxiv.org/abs/1703.06907
+    - title: "Sim-to-Real Transfer of Robotic Control with Dynamics Randomization (Peng et al., 2018)"
+      url: https://arxiv.org/abs/1710.06537
+    - title: "Solving Rubik's Cube with a Robot Hand (OpenAI, 2019)"
+      url: https://arxiv.org/abs/1910.07113
+    - title: "Learning to Walk in Minutes Using Massively Parallel Deep Reinforcement Learning (Rudin et al., 2021)"
+      url: https://arxiv.org/abs/2109.11978
+    - title: "Data-efficient Deep Reinforcement Learning for Dexterous Manipulation (Popov et al., 2017)"
+      url: https://arxiv.org/abs/1704.03073
 objectives:
-- id: objective.robot-rl-and-sim-to-real
-  version: 1-draft
-  statement: Robotic RL uses rewards and interaction to improve control; simulation and domain randomization
-    can reduce physical data demands, but transfer depends on dynamics, sensing, and coverage.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - robot-rl-and-sim-to-real.base
-  - robot-rl-and-sim-to-real.transfer
-  prerequisites:
-  - anyOf:
-    - objective.robot-imitation-learning
-  - anyOf:
-    - objective.model-based-and-partially-observed-rl
+  - id: objective.robot-rl-and-sim-to-real
+    version: 2-draft
+    statement: Estimate the real-robot cost of reinforcement learning, design rewards that are paired with hard safety limits, and explain how domain randomization, system identification, and staged testing close the gap between simulation and reality.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - robot-rl-and-sim-to-real.base.v2
+      - robot-rl-and-sim-to-real.transfer.v2
+      - robot-rl-and-sim-to-real.calculate
+    prerequisites:
+      - anyOf:
+          - objective.robot-imitation-learning
+      - anyOf:
+          - objective.model-based-and-partially-observed-rl
 scenes:
-- id: robot-rl-and-sim-to-real.s1
-  title: Use simulation for controlled experience
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.robot-rl-and-sim-to-real
-  markdown: A simulator can provide repeatable resets, varied scenarios, and many interactions without identical
-    physical wear. It approximates geometry, contact, sensors, and dynamics. A policy can exploit those approximations,
-    so simulated return is not the final measure of real-world competence.
-  text_mode: A simulator can provide repeatable resets, varied scenarios, and many interactions without identical
-    physical wear. It approximates geometry, contact, sensors, and dynamics. A policy can exploit those approximations,
-    so simulated return is not the final measure of real-world competence.
-  bridges: []
-- id: robot-rl-and-sim-to-real.s2
-  title: Randomize plausible conditions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robot-rl-and-sim-to-real
-  markdown: 'Domain randomization varies properties such as friction, mass, lighting, camera pose, or delay
-    during training. The aim is to reduce dependence on one narrow simulator setting. Wider variation is not
-    automatically better: implausible ranges can make learning harder or divert capacity from the intended
-    environment.'
-  text_mode: 'Domain randomization varies properties such as friction, mass, lighting, camera pose, or delay
-    during training. The aim is to reduce dependence on one narrow simulator setting. Wider variation is not
-    automatically better: implausible ranges can make learning harder or divert capacity from the intended
-    environment.'
-  bridges: []
-- id: robot-rl-and-sim-to-real.s3
-  title: Design rewards and constraints separately
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robot-rl-and-sim-to-real
-  markdown: 'Rewarding progress toward a target can help learning, but a policy may achieve it through unsafe
-    collisions if constraints are absent. Penalties alone may be insufficient for strict limits. State which
-    boundaries are enforced by controllers or the environment rather than merely encouraged by reward.
+  - id: robot-rl-and-sim-to-real.s1
+    title: 23 days of practice, or 4 minutes
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.robot-rl-and-sim-to-real
+    markdown: |-
+      Imitation needs a human for every demonstration. Reinforcement learning (RL) needs none: Tidy tries, gets a reward, and improves, just like the agents in module 24. The catch is how many tries. Suppose a policy-gradient method such as PPO needs 100 million steps to learn a mug flip, and Tidy acts 50 times a second:
 
+      $$\frac{100{,}000{,}000 \text{ steps}}{50 \text{ steps/s}} = 2{,}000{,}000 \text{ s} \approx 23 \text{ days}$$
 
-    Suppose reaching a target earns 10 points and a collision loses 1. A colliding shortcut can still earn
-    9, so the reward does not make collisions impossible. A separately enforced motion limit or collision check
-    changes which actions can execute. Meanwhile, if simulated friction is always high, a learned fast turn
-    may slip on a real smooth floor. Randomizing friction helps only if the tested range and simulator behavior
-    cover the conditions that matter.'
-  text_mode: 'Rewarding progress toward a target can help learning, but a policy may achieve it through unsafe
-    collisions if constraints are absent. Penalties alone may be insufficient for strict limits. State which
-    boundaries are enforced by controllers or the environment rather than merely encouraged by reward.
+      That's 23 days without a break, a reset, a dropped mug, or a worn gear. Real robot RL is possible, but it's slow and expensive.
 
+      A **simulator** is a physics engine that computes what *would* happen: contacts, friction, motor torques, camera images. It never tires, resets instantly, and can run thousands of copies side by side. If a GPU steps 4,096 simulated Tidys together, 100 million steps take about 24,400 batched steps, around 4 minutes at 100 batched steps a second. Rudin et al. (2021) used this kind of massive parallelism to train a four-legged robot to walk in minutes.
 
-    Suppose reaching a target earns 10 points and a collision loses 1. A colliding shortcut can still earn
-    9, so the reward does not make collisions impossible. A separately enforced motion limit or collision check
-    changes which actions can execute. Meanwhile, if simulated friction is always high, a learned fast turn
-    may slip on a real smooth floor. Randomizing friction helps only if the tested range and simulator behavior
-    cover the conditions that matter.'
-  bridges: []
-- id: robot-rl-and-sim-to-real.s4
-  title: Transfer through staged evidence
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robot-rl-and-sim-to-real
-  markdown: Compare simulation tests, controlled physical trials, and held-out conditions with appropriate
-    supervision and stop mechanisms. Diagnose perception, dynamics, and timing gaps separately. Use additional
-    real data or model calibration when needed; successful transfer is an experimental result, not a property
-    guaranteed by the training label.
-  text_mode: Compare simulation tests, controlled physical trials, and held-out conditions with appropriate
-    supervision and stop mechanisms. Diagnose perception, dynamics, and timing gaps separately. Use additional
-    real data or model calibration when needed; successful transfer is an experimental result, not a property
-    guaranteed by the training label.
-  bridges: []
-- id: robot-rl-and-sim-to-real.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.robot-rl-and-sim-to-real
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Simulation provides practice under chosen assumptions. Test which skills transfer to real sensing,
-    timing, contact, and dynamics; high simulated reward alone does not establish that transfer.
-- id: robot-rl-and-sim-to-real.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.robot-rl-and-sim-to-real
-  markdown: Simulation provides practice under chosen assumptions. Test which skills transfer to real sensing,
-    timing, contact, and dynamics; high simulated reward alone does not establish that transfer.
-  text_mode: Simulation provides practice under chosen assumptions. Test which skills transfer to real sensing,
-    timing, contact, and dynamics; high simulated reward alone does not establish that transfer.
+      The price is that the simulator is a model, and the policy will learn *its* physics.
+    bridges: []
+  - id: robot-rl-and-sim-to-real.s3
+    title: Reward what you want, block what you must
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-rl-and-sim-to-real
+    markdown: |-
+      For "put the mug in the rack", a reward of +10 at the end alone is too rare: random flailing almost never gets there. So designers add **shaping** terms that give partial credit along the way:
+
+      | Term | Value | Purpose |
+      | --- | --- | --- |
+      | Mug in rack | +10 | The actual goal |
+      | Gripper closer to mug | +1 per 10 cm gained | Guide early exploration |
+      | Motor effort | −0.01 × torque² | Prefer smooth, gentle motion |
+      | Collision | −1 | Discourage hitting things |
+
+      Now suppose knocking a glass out of the way is quicker than reaching around it. The policy earns $+10 - 1 = +9$ by crashing through, and the collision penalty turns into a small toll. A penalty only *discourages*. For anything that must never happen, like forces that could hurt someone or motion outside the workspace, use a hard limit enforced outside the policy, in the controller or a safety layer that clips the command.
+
+      :::story The brick that flipped instead of lifting
+      In a 2017 DeepMind study (Popov et al.), a simulated arm learned to stack one Lego Duplo brick on another, helped by shaping terms like those above. One term paid out when the brick was lifted, but it measured the height of the wrong point on the brick, a point that also rises when the brick is simply turned over. The agent learned to flip the brick instead of picking it up. It's a classic example of **specification gaming**: optimizing the reward as written, not as meant.
+      :::
+    bridges: []
+  - id: robot-rl-and-sim-to-real.s2
+    title: Make the simulator a little wrong on purpose
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-rl-and-sim-to-real
+    markdown: |-
+      The difference between simulated and real physics is the **reality gap**. A policy trained on one exact simulated counter may depend on its exact friction, say 0.5. The real counter is 0.45, or 0.7 when sticky, and the flip fails.
+
+      **Domain randomization** attacks the gap by training in many slightly different worlds. Each episode draws new values: friction between 0.3 and 0.9, mug mass between 0.2 and 0.5 kg, motor delay between 10 and 40 ms, random lighting and colors. A policy that succeeds across all of them can't depend on any one value, and the real kitchen looks like just one more draw.
+
+      - **Tobin et al. (2017)** randomized textures, lighting, and camera placement in rendered scenes. An object detector trained only on those images located real objects well enough for a real robot to grasp them.
+      - **Peng et al. (2018)** randomized dynamics (masses, friction, damping, delays) and transferred a pushing policy to a real arm without training on it.
+
+      :::predict Tidy trains with friction drawn from 0.3–0.9. The real counter is wet, with friction 0.15. What do you expect?
+      Trouble. 0.15 lies outside anything the policy practiced on, so it may push too hard and send the mug skidding. Randomization covers the range you choose, so the range must include the conditions you'll meet.
+      :::
+
+      :::story A robot hand and a Rubik's cube
+      In 2019, OpenAI trained a Shadow Dexterous Hand, entirely in simulation, to manipulate a Rubik's cube in its fingers. A standard solving algorithm chose the moves; the learned policy did the hard physical part. Their **automatic domain randomization** widened each range whenever the policy mastered the current one. On the real hand it solved the cube about 60% of the time, and 20% for the hardest scrambles.
+      :::
+    bridges: []
+  - id: robot-rl-and-sim-to-real.sysid
+    title: Measure the real robot first
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-rl-and-sim-to-real
+    markdown: |-
+      Randomizing blindly over huge ranges makes learning harder: a policy that must work on ice *and* sandpaper plays it safe everywhere. So first measure the real thing. Fitting a simulator's parameters to real measurements is **system identification**.
+
+      Tidy's team puts a 0.3 kg mug on the counter and pulls it sideways with a force gauge. It starts to slide at 1.5 N. The mug presses down with $0.3 \times 9.81 = 2.94$ N, so the static friction coefficient is
+
+      $$\mu = \frac{1.5}{2.94} \approx 0.51$$
+
+      They also time the motors: a command takes about 30 ms to show up as motion. Now the simulator uses friction near 0.51 and a 30 ms delay, and randomization only has to cover the spread around those values, say 0.4–0.65 and 20–40 ms, not the whole universe.
+    bridges: []
+  - id: robot-rl-and-sim-to-real.s4
+    title: Find which gap is biting
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-rl-and-sim-to-real
+    markdown: |-
+      Tidy's first mug-flip policy, trained before anyone measured the motors, succeeds 95% of the time in simulation and 60% on the real robot. Rather than guess why, the team reintroduces one real-world effect at a time *in simulation*:
+
+      | Test | Success |
+      | --- | ---: |
+      | Simulation as trained | 95% |
+      | + 30 ms extra motor delay | 72% |
+      | + real camera noise | 91% |
+      | Real robot | 60% |
+
+      Delay explains most of the drop, so the next step is to randomize delay during training (or speed up the control loop), not to collect more images. Each real trial runs with a force limit and an emergency stop ready, because a policy fresh from simulation hasn't yet met the real world.
+    bridges: []
+  - id: robot-rl-and-sim-to-real.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.robot-rl-and-sim-to-real
+    markdown: Work out how long real-robot training would take, then advise a walking robot on ice, a grasping reward that gets fooled, and a detector that only knows one kitchen.
+    takeaway: |-
+      Simulation makes RL's millions of tries affordable, but the policy learns the simulator's physics. Measure the real robot, randomize around it, keep hard safety limits outside the reward, and test which gap remains.
+  - id: robot-rl-and-sim-to-real.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.robot-rl-and-sim-to-real
+    markdown: |-
+      Simulation provides practice under chosen assumptions. Test which skills transfer to real sensing, timing, contact, and dynamics; high simulated reward alone does not establish that transfer.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - robot-rl-and-sim-to-real.s1
-    - robot-rl-and-sim-to-real.s2
-    - robot-rl-and-sim-to-real.s3
-    - robot-rl-and-sim-to-real.s4
-    - robot-rl-and-sim-to-real.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - robot-rl-and-sim-to-real.s1
+        - robot-rl-and-sim-to-real.s3
+        - robot-rl-and-sim-to-real.s2
+        - robot-rl-and-sim-to-real.sysid
+        - robot-rl-and-sim-to-real.s4
+        - robot-rl-and-sim-to-real.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     robot-rl-and-sim-to-real.recap: robot-rl-and-sim-to-real.check
 assessment_families:
-- id: robot-rl-and-sim-to-real.base
-  objective_ref: objective.robot-rl-and-sim-to-real
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Randomize plausible conditions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: robot-rl-and-sim-to-real.s2
-  variants:
-  - id: robot-rl-and-sim-to-real.base.1
-    prompt: Can a policy exploit simulator inaccuracies?
-    options:
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if no reward exists
-    - id: a
-      text: 'Yes'
-    answer: a
-    feedback: Optimization can discover unrealistic shortcuts.
-  - id: robot-rl-and-sim-to-real.base.2
-    prompt: What does domain randomization vary?
-    options:
-    - id: c
-      text: Every possible law of physics without limits
-    - id: a
-      text: Selected environment and sensing parameters during training
-    - id: b
-      text: Only lesson names
-    answer: a
-    feedback: Variation targets anticipated transfer differences.
-- id: robot-rl-and-sim-to-real.transfer
-  objective_ref: objective.robot-rl-and-sim-to-real
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Transfer through staged evidence: trace the inputs, operation, and result before choosing.'
-  remediation_scene: robot-rl-and-sim-to-real.s4
-  variants:
-  - id: robot-rl-and-sim-to-real.transfer.1
-    prompt: Does a collision penalty guarantee a strict no-collision constraint?
-    options:
-    - id: c
-      text: Only if written in the reward
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Soft incentives and enforced constraints differ.
-  - id: robot-rl-and-sim-to-real.transfer.2
-    prompt: Why separate sensing and dynamics gaps during diagnosis?
-    options:
-    - id: a
-      text: They require different corrective evidence and changes
-    - id: b
-      text: All transfer failures have one cause
-    - id: c
-      text: Only model size can fix transfer
-    answer: a
-    feedback: The failed interface determines the remedy.
+  - id: robot-rl-and-sim-to-real.base
+    objective_ref: objective.robot-rl-and-sim-to-real
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Randomize plausible conditions: trace the inputs, operation, and result before choosing.'
+    remediation_scene: robot-rl-and-sim-to-real.s2
+    variants:
+      - id: robot-rl-and-sim-to-real.base.1
+        prompt: Can a policy exploit simulator inaccuracies?
+        options:
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if no reward exists
+          - id: a
+            text: 'Yes'
+        answer: a
+        feedback: Optimization can discover unrealistic shortcuts.
+        retired: true
+      - id: robot-rl-and-sim-to-real.base.2
+        prompt: What does domain randomization vary?
+        options:
+          - id: c
+            text: Every possible law of physics without limits
+          - id: a
+            text: Selected environment and sensing parameters during training
+          - id: b
+            text: Only lesson names
+        answer: a
+        feedback: Variation targets anticipated transfer differences.
+        retired: true
+  - id: robot-rl-and-sim-to-real.transfer
+    objective_ref: objective.robot-rl-and-sim-to-real
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Transfer through staged evidence: trace the inputs, operation, and result before choosing.'
+    remediation_scene: robot-rl-and-sim-to-real.s4
+    variants:
+      - id: robot-rl-and-sim-to-real.transfer.1
+        prompt: Does a collision penalty guarantee a strict no-collision constraint?
+        options:
+          - id: c
+            text: Only if written in the reward
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Soft incentives and enforced constraints differ.
+        retired: true
+      - id: robot-rl-and-sim-to-real.transfer.2
+        prompt: Why separate sensing and dynamics gaps during diagnosis?
+        options:
+          - id: a
+            text: They require different corrective evidence and changes
+          - id: b
+            text: All transfer failures have one cause
+          - id: c
+            text: Only model size can fix transfer
+        answer: a
+        feedback: The failed interface determines the remedy.
+        retired: true
+  - id: robot-rl-and-sim-to-real.base.v2
+    objective_ref: objective.robot-rl-and-sim-to-real
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Separate the tools: rewards encourage, hard limits forbid; randomization covers a range; system identification finds the center of that range."
+    remediation_scene: robot-rl-and-sim-to-real.s2
+    variants:
+      - id: robot-rl-and-sim-to-real.base.v2.1
+        prompt: A reaching task gives +10 for reaching the target and −1 per collision. The trained policy knocks objects aside instead of going around them. What is the best fix?
+        options:
+          - id: b
+            text: Raise the target reward so the robot values reaching more
+          - id: a
+            text: Enforce collision limits in the controller, outside the reward
+          - id: c
+            text: Remove the collision penalty so the reward signal is cleaner
+        answer: a
+        feedback: Crashing through still nets +9, so the penalty is just a toll. Anything that must never happen belongs in a hard limit the policy can't override. A bigger target reward makes the shortcut even more attractive.
+      - id: robot-rl-and-sim-to-real.base.v2.2
+        prompt: Why does training across many randomized friction values help a policy work on a real robot?
+        options:
+          - id: c
+            text: It makes the simulator's friction model more accurate
+          - id: b
+            text: It lets the policy measure the real friction value exactly
+          - id: a
+            text: The real friction becomes one more case the policy has seen
+        answer: a
+        feedback: A policy that succeeds across a range of frictions can't rely on any single value, so reality, if it falls inside the range, is familiar. The simulator's model stays the same, and the policy never measures friction exactly.
+      - id: robot-rl-and-sim-to-real.base.v2.3
+        prompt: What does system identification do in a sim-to-real project?
+        options:
+          - id: a
+            text: It fits the simulator's parameters to measurements of the real robot
+          - id: b
+            text: It records which robot model and serial number is being used
+          - id: c
+            text: It widens every randomization range as far as training allows
+        answer: a
+        feedback: System identification measures real quantities, like friction or motor delay, and sets the simulator to match, so randomization only needs to cover the spread around them. Widening every range is the opposite approach.
+      - id: robot-rl-and-sim-to-real.base.v2.4
+        prompt: A policy scores 95% in simulation and 60% on the real robot. Adding 30 ms of motor delay in simulation drops it to 72%; adding camera noise drops it to 91%. What should the team work on first?
+        options:
+          - id: b
+            text: Collecting more real camera images to retrain the vision part
+          - id: a
+            text: Motor delay, by randomizing it in training or speeding up control
+          - id: c
+            text: Nothing yet, since simulation scores always drop on hardware
+        answer: a
+        feedback: Delay alone costs 23 points, while camera noise costs 4, so delay is the main gap. Retraining vision targets the smaller cause, and the ablation shows the drop has a specific, fixable source.
+  - id: robot-rl-and-sim-to-real.transfer.v2
+    objective_ref: objective.robot-rl-and-sim-to-real
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Ask where the gap is: is the real condition outside the range trained on, is the reward measuring the wrong thing, or is real-world practice simply too slow?"
+    remediation_scene: robot-rl-and-sim-to-real.s4
+    variants:
+      - id: robot-rl-and-sim-to-real.transfer.v2.1
+        prompt: A walking robot was trained with ground friction randomized between 0.6 and 1.0. On an icy path (friction about 0.1) it falls. What is the most direct fix?
+        options:
+          - id: a
+            text: Widen training to include low-friction ground like ice
+          - id: b
+            text: Train longer with the same friction range as before
+          - id: c
+            text: Lower the reward for falling so it takes fewer risks
+        answer: a
+        feedback: Ice lies far outside anything the policy practiced on. Randomization covers only the range you choose, so extend it (ideally after measuring real icy friction). More training in the same range doesn't add icy experience.
+      - id: robot-rl-and-sim-to-real.transfer.v2.2
+        prompt: A team plans to train a door-opening policy with 10 million steps of RL directly on one real robot at 10 Hz. About how long is that, and what is a common alternative?
+        options:
+          - id: c
+            text: About 12 hours; run it overnight on the real robot
+          - id: a
+            text: About 12 days nonstop; train in parallel simulation first
+          - id: b
+            text: About 12 days; lower the rate to 1 Hz to finish sooner
+        answer: a
+        feedback: 10,000,000 / 10 = 1,000,000 s ≈ 11.6 days of nonstop operation, before resets and repairs. Parallel simulation makes those steps cheap. Lowering the rate means fewer steps per second, so it would take longer.
+      - id: robot-rl-and-sim-to-real.transfer.v2.3
+        prompt: A grasping policy is rewarded when a camera sees the object inside the gripper. It learns to hover the open gripper between the camera and the object. What is the best fix?
+        options:
+          - id: b
+            text: Add a second camera so the reward gets a clearer view
+          - id: c
+            text: Increase the reward so the policy tries harder to grasp
+          - id: a
+            text: Reward a check that needs a real grasp, like lifting it
+        answer: a
+        feedback: This is specification gaming; the policy maximized the reward as written. Rewarding something only a real grasp can produce, like the object rising or the wrist feeling its weight, removes the loophole. A bigger reward just pays more for the trick.
+      - id: robot-rl-and-sim-to-real.transfer.v2.4
+        prompt: An object detector trained on photorealistic renders of one simulated kitchen fails in a real kitchen with different countertops and lighting. What approach fits best?
+        options:
+          - id: a
+            text: Render training images with randomized textures, colors, and lighting
+          - id: b
+            text: Render the one simulated kitchen at higher resolution and detail
+          - id: c
+            text: Train longer on the same renders until the detector is more confident
+        answer: a
+        feedback: Tobin et al. showed that varying textures, lighting, and camera placement lets a detector trained only on renders work on real images; the real kitchen becomes one more variation. More detail of a single kitchen still teaches only that kitchen.
+  - id: robot-rl-and-sim-to-real.calculate
+    objective_ref: objective.robot-rl-and-sim-to-real
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Divide the steps by the steps per second to get seconds (divided by the number of robots, if they share the work), then divide by 3,600 for hours."
+    remediation_scene: robot-rl-and-sim-to-real.s1
+    absolute_tolerance: 0.1
+    variants:
+      - id: robot-rl-and-sim-to-real.calculate.1
+        prompt: An RL method needs 1,000,000 steps, and a real robot acts at 50 Hz. How many hours of nonstop operation is that?
+        answer: 5.56
+        feedback: "1,000,000 / 50 = 20,000 s, and 20,000 / 3,600 ≈ 5.56 hours."
+      - id: robot-rl-and-sim-to-real.calculate.2
+        prompt: An RL method needs 36,000,000 steps, and a real robot acts at 100 Hz. How many hours of nonstop operation is that?
+        answer: 100
+        feedback: "36,000,000 / 100 = 360,000 s, and 360,000 / 3,600 = 100 hours, more than 4 days."
+      - id: robot-rl-and-sim-to-real.calculate.3
+        prompt: An RL method needs 180,000 steps, and a real robot acts at 10 Hz. How many hours of nonstop operation is that?
+        answer: 5
+        feedback: "180,000 / 10 = 18,000 s, and 18,000 / 3,600 = 5 hours."
+      - id: robot-rl-and-sim-to-real.calculate.4
+        prompt: An RL method needs 7,200,000 steps, and a real robot acts at 20 Hz. How many hours of nonstop operation is that?
+        answer: 100
+        feedback: "7,200,000 / 20 = 360,000 s, and 360,000 / 3,600 = 100 hours."
+      - id: robot-rl-and-sim-to-real.calculate.5
+        prompt: An RL method needs 3,600,000 steps. Ten identical real robots share the work, each acting at 50 Hz. How many hours does training take?
+        answer: 2
+        feedback: "Together they take 10 × 50 = 500 steps per second. 3,600,000 / 500 = 7,200 s = 2 hours."

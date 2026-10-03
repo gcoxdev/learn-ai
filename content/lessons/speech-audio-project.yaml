@@ -1,355 +1,546 @@
 schema_version: 0.2-draft
 lesson:
   id: speech-audio-project
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: 'Project: trace a speech and audio system'
   state: draft
-  summary: Design a small transcription-and-speech workflow, separate its stages, and evaluate words, sound,
-    timing, and speaker data.
+  summary: Sam is deaf, and his tablet should flash when the doorbell rings and caption the intercom. Build the chime detector from a spectrogram, then find out where the captions fail.
   slot: M36.11
   category: destination
   archetype: project
   minutes: 35
   sources:
-  - title: 'Whisper: Robust Speech Recognition (2022)'
-    url: https://arxiv.org/abs/2212.04356
-  - title: 'Jurafsky and Martin: Speech and Language Processing'
-    url: https://web.stanford.edu/~jurafsky/slp3/
+    - title: 'Robust Speech Recognition via Large-Scale Weak Supervision (Radford et al., 2022), the Whisper paper'
+      url: https://arxiv.org/abs/2212.04356
+    - title: 'Jurafsky and Martin: Speech and Language Processing'
+      url: https://web.stanford.edu/~jurafsky/slp3/
 objectives:
-- id: objective.speech-audio-project
-  version: 1-draft
-  statement: Calculate word error rate from an alignment and raw audio duration, and distinguish recognition,
-    synthesis, and independent evaluation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - speech-audio-project.base
-  - speech-audio-project.transfer
-  prerequisites:
-  - anyOf:
-    - objective.speech-recognition
-  - anyOf:
-    - objective.speech-and-audio-generation
-  - anyOf:
-    - objective.sequence-evaluation
+  - id: objective.speech-audio-project
+    version: 2-draft
+    statement: Build a spectrogram of a synthesized signal, detect a sound event from its pitch track, and compute word error rate by condition from reference and recognized transcripts.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - speech-audio-project.base.v2
+      - speech-audio-project.transfer.v2
+      - speech-audio-project.wer.v2
+    prerequisites:
+      - anyOf:
+          - objective.speech-recognition
+      - anyOf:
+          - objective.speech-and-audio-generation
+      - anyOf:
+          - objective.sequence-evaluation
 scenes:
-- id: speech-audio-project.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.speech-audio-project
-  title: Give each stage a separate job
-  markdown: 'Imagine an accessibility tool that listens to a short instruction, displays its words, and reads
-    the confirmed text aloud. **Speech recognition** maps recorded speech to text. **Speech synthesis** maps
-    text or another representation to speech. An **audio codec** encodes and decodes a sound representation;
-    it is not automatically a speech recognizer.
+  - id: speech-audio-project.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.speech-audio-project
+    title: A doorbell Sam can see
+    markdown: |-
+      Sam is deaf. His kitchen tablet should do two things: flash the screen when the doorbell goes "ding-dong", and caption whatever the visitor says into the intercom. Last week it flashed for the microwave and captioned "who is at the front door" as "who is at the front floor".
 
+      In this project you'll build the doorbell detector from raw samples and measure the captions, using the tools from module 13: spectrograms, speech recognition, and word error rate.
 
-    Your project is a diagram and evaluation sheet for these separate jobs. Work from the supplied words and
-    counts on paper, without recording anyone or downloading a model. Name the input, output, and potential
-    failure at every stage.'
-  text_mode: 'Imagine an accessibility tool that listens to a short instruction, displays its words, and reads
-    the confirmed text aloud. **Speech recognition** maps recorded speech to text. **Speech synthesis** maps
-    text or another representation to speech. An **audio codec** encodes and decodes a sound representation;
-    it is not automatically a speech recognizer.
+      **Your brief**
 
+      | | |
+      | --- | --- |
+      | Goal | Detect the doorbell's two-note chime from audio, ignore the microwave, and measure caption accuracy in quiet and noisy conditions |
+      | Audience | Sam's family, who set up the tablet, and the developer who maintains it |
+      | Done looks like | A spectrogram and note list for the test signal, a detector that says yes to the doorbell and no to the microwave, a word-error table by condition, and one recommendation |
+      | Time | About 35 minutes |
 
-    Your project is a diagram and evaluation sheet for these separate jobs. Work from the supplied words and
-    counts on paper, without recording anyone or downloading a model. Name the input, output, and potential
-    failure at every stage.'
-  bridges: []
-- id: speech-audio-project.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.speech-audio-project
-  title: Specify the sound representation
-  markdown: 'A digital waveform stores samples, measurements taken at regular times. For this toy format, use
-    one audio channel, 16,000 samples per second, and two bytes per sample. A one-second input contains 16,000
-    samples and requires 32,000 raw bytes. File headers and compression are excluded.
+      Two different jobs share this pipeline. The detector looks at *pitch*, how high a sound is. The captions come from a speech recognizer, which maps sound to words. They fail in different ways, so each gets its own test.
+  - id: speech-audio-project.s2
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.speech-audio-project
+    title: Make a sound you can check by hand
+    markdown: |-
+      **The supplied data** is a signal you synthesize, so you know exactly what's in it. Tones are sine waves, as in the figure below: a higher frequency fits more cycles into the same window.
 
+      | Time (s) | Sound | Pitch |
+      | --- | --- | --- |
+      | 0.0 to 0.3 | Doorbell "ding" | 600 Hz |
+      | 0.3 to 0.7 | Doorbell "dong" | 400 Hz |
+      | 0.7 to 1.0 | Silence | none |
+      | 1.0 to 1.2 | Microwave beep | 800 Hz |
 
-    A recognition model may turn the waveform into time-frequency features, which describe changing frequency
-    content, before predicting text. A synthesis system may generate waveform samples or intermediate acoustic/codec
-    representations. Label those interfaces rather than calling every intermediate value a word. The audio-representations
-    lesson explains why timing and frequency information matter.'
-  text_mode: 'A digital waveform stores samples, measurements taken at regular times. For this toy format,
-    use one audio channel, 16,000 samples per second, and two bytes per sample. A one-second input contains
-    16,000 samples and requires 32,000 raw bytes. File headers and compression are excluded.
+      Everything gets a faint hiss (random noise with a standard deviation of 0.05) so the detector can't cheat on perfect silence.
 
+      **Milestone 1: count the samples.** Use 8,000 samples per second, as old telephone lines did. By the Nyquist rule from *From a waveform to time-frequency features*, that captures pitches up to 4,000 Hz, far above the 800 Hz beep. The 1.2-second signal is 1.2 × 8,000 = 9,600 samples; stored at 2 bytes each, 19,200 bytes.
 
-    A recognition model may turn the waveform into time-frequency features, which describe changing frequency
-    content, before predicting text. A synthesis system may generate waveform samples or intermediate acoustic/codec
-    representations. Label those interfaces rather than calling every intermediate value a word. The audio-representations
-    lesson explains why timing and frequency information matter.'
-  bridges:
-  - arithmetic
-  - audio-representations
-  figure:
-    kind: audio
-    caption: A brief synthetic tone connects frequency to a waveform. Playback starts only when you press Play.
-    description: 'A sine wave describes one simple tone, not a speech model. Inspect the same fixed time window
-      while changing frequency: more cycles fit into that window at a higher frequency. Play a brief tone to
-      connect the picture with the sound.'
-- id: speech-audio-project.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speech-audio-project
-  title: Trace recognition and synthesis separately
-  markdown: 'Draw audio preparation, recognition, text review, synthesis, and playback as separate boxes. A
-    wrong transcript can be spoken clearly, so pleasant sound does not prove correct recognition. Conversely,
-    correct displayed words do not prove intelligible generated audio.
+      Cut it into 25 ms windows (200 samples) starting every 10 ms (80 samples). That gives 118 full windows: the first starts at sample 0 and the last at sample 117 × 80 = 9,360. Each window's FFT has 200 ÷ 2 + 1 = 101 frequency bins, spaced 8,000 ÷ 200 = 40 Hz apart. So 400 Hz lands exactly in bin 10, 600 Hz in bin 15, and 800 Hz in bin 20.
+    bridges:
+      - arithmetic
+      - audio-representations
+    figure:
+      kind: audio
+      caption: A brief synthetic tone connects frequency to a waveform. Playback starts only when you press Play.
+      description: 'A sine wave describes one simple tone, not a speech model. Inspect the same fixed time window while changing frequency: more cycles fit into that window at a higher frequency. Play a brief tone to connect the picture with the sound.'
+  - id: speech-audio-project.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speech-audio-project
+    title: From waveform to spectrogram to notes
+    markdown: |-
+      **Milestone 2: build the detector.** Four steps turn samples into a yes or no:
 
+      1. **Spectrogram.** Window each 25 ms frame and take its FFT, exactly the pipeline from *From a waveform to time-frequency features*.
+      2. **Silence gate.** Skip frames whose loudness (standard deviation of the samples) is below 0.1; hiss alone is about 0.03.
+      3. **Pitch track.** For each loud frame, the pitch is the loudest bin × 40 Hz.
+      4. **Notes and rule.** Merge runs of the same pitch lasting at least 3 frames into notes. The doorbell is a 600 Hz note followed by a 400 Hz note that starts less than 0.5 s later.
 
-    Whisper is a documented encoder-decoder speech-recognition example trained on paired audio and text. This
-    reference does not prescribe the architecture of your synthesizer. For each learned component, label training
-    examples, targets, updates, and evaluation. During an ordinary inference request, the fixed model is used
-    rather than retrained. An optional extension compares this modular design with a joint audio model.'
-  text_mode: 'Draw audio preparation, recognition, text review, synthesis, and playback as separate boxes.
-    A wrong transcript can be spoken clearly, so pleasant sound does not prove correct recognition. Conversely,
-    correct displayed words do not prove intelligible generated audio.
+      ```python run
+      import numpy as np
 
+      SR = 8000                                   # samples per second
+      rng = np.random.default_rng(0)
+      def tone(freq, seconds):                    # a pure tone at the given pitch
+          return np.sin(2 * np.pi * freq * np.arange(int(SR * seconds)) / SR)
+      def silence(seconds):
+          return np.zeros(int(SR * seconds))
+      # doorbell "ding" (600 Hz), "dong" (400 Hz), a pause, then a microwave beep (800 Hz), plus hiss
+      audio = np.concatenate([tone(600, 0.3), tone(400, 0.4), silence(0.3), tone(800, 0.2)])
+      audio += 0.05 * rng.normal(size=audio.size)
 
-    Whisper is a documented encoder-decoder speech-recognition example trained on paired audio and text. This
-    reference does not prescribe the architecture of your synthesizer. For each learned component, label training
-    examples, targets, updates, and evaluation. During an ordinary inference request, the fixed model is used
-    rather than retrained. An optional extension compares this modular design with a joint audio model.'
-  bridges: []
-- id: speech-audio-project.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speech-audio-project
-  title: Compute an error rate from an alignment
-  markdown: 'The reference transcript is “turn left at station.” An aligned hypothesis is “turn right station
-    now.” It substitutes right for left, deletes at, and inserts now. With one substitution S, one deletion
-    D, one insertion I, and four reference words N, **word error rate** is (S + D + I) ÷ N = 3 ÷ 4 = 0.75,
-    or 75%.
+      WIN, HOP = 200, 80                          # 25 ms windows every 10 ms
+      frames = np.array([audio[s:s + WIN] * np.hanning(WIN) for s in range(0, audio.size - WIN + 1, HOP)])
+      spec = np.abs(np.fft.rfft(frames, axis=1))  # spectrogram: one row per frame, bins 40 Hz apart
+      print("spectrogram shape (frames, bins):", spec.shape)
 
+      loud = frames.std(axis=1) > 0.1             # silence gate: skip frames that are only hiss
+      pitch = np.where(loud, spec.argmax(axis=1) * SR / WIN, 0)
 
-    Use an alignment with a stated word-normalization rule. The denominator counts reference words, not hypothesis
-    words. With enough insertions, this rate can exceed 100%. It counts edit operations; it does not directly
-    measure the consequence of saying the wrong direction.'
-  text_mode: 'The reference transcript is “turn left at station.” An aligned hypothesis is “turn right station
-    now.” It substitutes right for left, deletes at, and inserts now. With one substitution S, one deletion
-    D, one insertion I, and four reference words N, **word error rate** is (S + D + I) ÷ N = 3 ÷ 4 = 0.75,
-    or 75%.
+      notes, start = [], 0                        # merge runs of equal pitch into notes
+      for i in range(1, len(pitch) + 1):
+          if i == len(pitch) or pitch[i] != pitch[start]:
+              if pitch[start] > 0 and i - start >= 3:
+                  notes.append((int(pitch[start]), round(start * HOP / SR, 2), i - start))
+              start = i
+      print("notes (Hz, starts at s, frames):", notes)
+      pairs = zip(notes, notes[1:])
+      print("doorbell?", any(a[0] == 600 and b[0] == 400 and b[1] - a[1] < 0.5 for a, b in pairs))
+      ```
 
+      **Expected output:**
 
-    Use an alignment with a stated word-normalization rule. The denominator counts reference words, not hypothesis
-    words. With enough insertions, this rate can exceed 100%. It counts edit operations; it does not directly
-    measure the consequence of saying the wrong direction.'
-  bridges: []
-- id: speech-audio-project.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speech-audio-project
-  title: Evaluate the experience as well as the transcript
-  markdown: 'For recognition, list accuracy by language, accent, microphone, noise, and speaker conditions.
-    Reserve speakers and source recordings appropriately when testing generalization. For synthesis, use a
-    listening rubric covering intelligibility, pronunciation, timing, and speaker characteristics permitted
-    by the task.
+      ```
+      spectrogram shape (frames, bins): (118, 101)
+      notes (Hz, starts at s, frames): [(600, 0.0, 29), (400, 0.29, 41), (800, 0.99, 19)]
+      doorbell? True
+      ```
 
+      Three notes, in the right order, at the right pitches. The microwave's 800 Hz beep becomes a note too, but it doesn't match the doorbell rule, so it can't trigger a flash on its own. Notes start about 0.01 s early because a window that straddles a boundary already hears the next tone.
 
-    For the workflow, measure time to first useful output and total response time. **Latency** includes preparation,
-    model work, and waiting. Report errors separately: wrong words, unintelligible sound, and a slow response
-    need different fixes. A reference transcript is not a complete evaluation of sound quality, and a single
-    clean recording does not establish reliable noisy-room performance.'
-  text_mode: 'For recognition, list accuracy by language, accent, microphone, noise, and speaker conditions.
-    Reserve speakers and source recordings appropriately when testing generalization. For synthesis, use a
-    listening rubric covering intelligibility, pronunciation, timing, and speaker characteristics permitted
-    by the task.
+      :::predict The doorbell wears out and its "dong" drifts to 420 Hz. Change `tone(400, 0.4)` to `tone(420, 0.4)`. What does the detector say?
+      "doorbell? False." 420 Hz sits halfway between the 400 and 440 Hz bins, so the loudest bin flips between them from frame to frame. The 41-frame note shatters into short 440 and 400 Hz pieces, and the rule, which wants exactly 400, never fires. Fix it by accepting pitches within about 60 Hz of the target and merging neighboring bins before finding notes.
+      :::
+  - id: speech-audio-project.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speech-audio-project
+    title: Score the captions with word error rate
+    markdown: |-
+      **Milestone 3: measure the recognizer.** The developer recorded four intercom phrases, two in a quiet kitchen and two with the dishwasher running, and saved what the recognizer wrote. This is the second supplied dataset:
 
+      | Condition | Said (reference) | Captioned (hypothesis) |
+      | --- | --- | --- |
+      | Quiet | turn on the porch light | turn on the porch light |
+      | Quiet | set a timer for ten minutes and remind me to stir | set a timer for ten minutes and remind me to stir it |
+      | Noisy | who is at the front door | who is at the front floor |
+      | Noisy | call my sister on speaker | call sister on the speaker |
 
-    For the workflow, measure time to first useful output and total response time. **Latency** includes preparation,
-    model work, and waiting. Report errors separately: wrong words, unintelligible sound, and a slow response
-    need different fixes. A reference transcript is not a complete evaluation of sound quality, and a single
-    clean recording does not establish reliable noisy-room performance.'
-  bridges: []
-- id: speech-audio-project.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.speech-audio-project
-  title: Assemble and review the project
-  markdown: 'For self or peer review, save the pipeline diagram, the raw-size calculation, the aligned word-error
-    calculation, and one failure case per stage. Include what would happen if the input contained silence,
-    unfamiliar language, or conflicting background speech. State the data permissions and which evaluation
-    samples were held out.
+      Word error rate, from *Map sound into words with an alignment model*, is $(S + D + I) / N$: substitutions, deletions, and insertions, over the number of words actually said. The code finds the smallest set of edits with the same edit-distance table as that lesson, then totals each condition.
 
+      ```python run
+      import numpy as np
 
-    A peer can check whether your stage labels, arithmetic, and conclusions agree. Keep a separate synthesis
-    rubric instead of using transcription error as its only score. You may add music or general sound generation
-    as an extension, but do not assume the speech-specific scoring rule transfers unchanged. The quiz checks
-    these concepts; it does not certify a deployed audio system or grade an unseen recording.'
-  text_mode: 'For self or peer review, save the pipeline diagram, the raw-size calculation, the aligned word-error
-    calculation, and one failure case per stage. Include what would happen if the input contained silence,
-    unfamiliar language, or conflicting background speech. State the data permissions and which evaluation
-    samples were held out.
+      def edits(ref, hyp):
+          """Minimum substitutions, deletions, insertions turning ref into hyp (word lists)."""
+          d = np.zeros((len(ref) + 1, len(hyp) + 1), dtype=int)
+          d[:, 0], d[0, :] = range(len(ref) + 1), range(len(hyp) + 1)
+          for i in range(1, len(ref) + 1):
+              for j in range(1, len(hyp) + 1):
+                  d[i, j] = min(d[i - 1, j - 1] + (ref[i - 1] != hyp[j - 1]), d[i - 1, j] + 1, d[i, j - 1] + 1)
+          S = D = I = 0
+          i, j = len(ref), len(hyp)
+          while i or j:                                        # walk back to label each edit
+              if i and j and d[i, j] == d[i - 1, j - 1] + (ref[i - 1] != hyp[j - 1]):
+                  S, i, j = S + (ref[i - 1] != hyp[j - 1]), i - 1, j - 1
+              elif i and d[i, j] == d[i - 1, j] + 1:
+                  D, i = D + 1, i - 1
+              else:
+                  I, j = I + 1, j - 1
+          return S, D, I
 
+      tests = [  # (condition, what was said, what the recognizer wrote)
+          ("quiet", "turn on the porch light", "turn on the porch light"),
+          ("quiet", "set a timer for ten minutes and remind me to stir", "set a timer for ten minutes and remind me to stir it"),
+          ("noisy", "who is at the front door", "who is at the front floor"),
+          ("noisy", "call my sister on speaker", "call sister on the speaker"),
+      ]
+      totals = {}
+      for cond, ref, hyp in tests:
+          S, D, I = edits(ref.split(), hyp.split())
+          n = len(ref.split())
+          print(f"{cond}: S={S} D={D} I={I} N={n}  WER {(S + D + I) / n:.3f}   '{hyp}'")
+          e, w = totals.get(cond, (0, 0)); totals[cond] = (e + S + D + I, w + n)
+      for cond, (e, w) in totals.items():
+          print(f"{cond} WER = {e}/{w} = {e / w:.3f}")
+      e, w = map(sum, zip(*totals.values()))
+      print(f"overall WER = {e}/{w} = {e / w:.3f}")
+      ```
 
-    A peer can check whether your stage labels, arithmetic, and conclusions agree. Keep a separate synthesis
-    rubric instead of using transcription error as its only score. You may add music or general sound generation
-    as an extension, but do not assume the speech-specific scoring rule transfers unchanged. The quiz checks
-    these concepts; it does not certify a deployed audio system or grade an unseen recording.'
-  bridges: []
-- id: speech-audio-project.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.speech-audio-project
-  markdown: Try these questions to check the ideas behind your project. Use the lesson’s rubric for self or
-    peer review of your work; the app does not grade the project artifact.
-  text_mode: Try these questions to check the ideas behind your project. Use the lesson’s rubric for self or
-    peer review of your work; the app does not grade the project artifact.
-  takeaway: Recognizing speech and generating sound are different tasks. Evaluate the words, the audible signal,
-    and the time taken at the appropriate stage.
+      **Expected output:**
+
+      | Phrase | S | D | I | N | WER |
+      | --- | ---: | ---: | ---: | ---: | ---: |
+      | porch light | 0 | 0 | 0 | 5 | 0.000 |
+      | timer | 0 | 0 | 1 | 11 | 0.091 |
+      | front door | 1 | 0 | 0 | 6 | 0.167 |
+      | call my sister | 0 | 1 | 1 | 5 | 0.400 |
+
+      Then: quiet 1/16 (printed as 0.062; exactly 6.25%), noisy 3/11 = 0.273, overall 4/27 = 0.148.
+
+      :::predict Why is "call sister on the speaker" 2 edits, not 3?
+      Line it up: "call" matches, "my" is missing (one deletion), "sister on" match, "the" is extra (one insertion), "speaker" matches. Treating it as substitutions instead ("my"→"sister", "sister"→"on", "on"→"the") costs 3, and the table always keeps the cheapest alignment.
+      :::
+  - id: speech-audio-project.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speech-audio-project
+    title: What to fix first
+    markdown: |-
+      **Milestone 4: interpret.** The overall 14.8% hides the story. Split by condition, as the lesson *Judge quality across time, languages, and delay* recommends: quiet speech is at 6.25%, noisy speech at 27.3%, more than four times worse. The fix belongs in the noisy kitchen: a better microphone position, noise suppression, or a recognizer tested on kitchen noise.
+
+      Then read the errors, not only the rate. "stir it" is harmless. "front floor" for "front door" changes what Sam thinks is happening, but it's one substitution, the same count as a harmless one. WER treats every edit alike, so always list the actual errors beside the number.
+
+      Keep the evidence size in mind: the noisy rate rests on 11 words. Before promising anything, record at least a few hundred words per condition.
+
+      | Mistake | How to spot it | Fix |
+      | --- | --- | --- |
+      | Dividing by words the recognizer wrote | Your N differs from the reference word count | Always divide by reference words |
+      | Averaging the per-phrase rates | You get 16.4% instead of 14.8% | Total the edits and the words, then divide once |
+      | One overall number | No condition column | Report WER per condition |
+      | Exact pitch matching | The detector fails at 420 Hz | Allow a tolerance around each note |
+      | No negative test | Nothing checks that the microwave is ignored | Include sounds that must *not* trigger |
+
+      :::mixup "The average of the four phrase WERs is the system's WER."
+      That average, (0 + 0.091 + 0.167 + 0.400) ÷ 4 = 16.4%, gives the 5-word phrase the same weight as the 11-word one. Standard WER totals edits over total reference words: 4/27 = 14.8%. With many short phrases the two can differ a lot, so say which you report.
+      :::
+  - id: speech-audio-project.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.speech-audio-project
+    title: Report to the family, then score it
+    markdown: |-
+      **Milestone 5: recommend.** Write three or four sentences Sam's family can act on. For example: "The doorbell detector found the chime and ignored the microwave, but it misses if the dong drifts from 400 Hz, so we widened its tolerance to ±60 Hz. Captions are accurate in a quiet kitchen (6% word errors) but four times worse with the dishwasher running (27%), and one noisy error changed 'door' to 'floor'. Until the noise problem is fixed, the tablet should also flash for any intercom speech, so Sam never relies on the caption alone."
+
+      **No-code option.** Do milestone 1's arithmetic by hand. Sketch the spectrogram as a grid (time across, bins up) with the three notes as bright bars, and apply the doorbell rule by eye. Then align the four transcript pairs with pencil, mark each S, D, and I, and compute the WER table.
+
+      **Extension.** Add a synthesized "speech-like" sound: a 150 Hz tone plus its harmonics at 300, 450, and 600 Hz. Give the harmonics equal loudness. What pitch does the loudest-bin detector report, and why is that a problem for tracking a voice?
+
+      **Rubric.** Score yourself, or ask a friend to check your numbers.
+
+      | Criterion | Not yet | Solid | Excellent |
+      | --- | --- | --- | --- |
+      | Signal arithmetic | Missing | Samples, frames, and bins correct | Explains why each tone lands in its bin |
+      | Detector | Fires on any note | Fires on the doorbell only | Tested on a drifted pitch and a non-target sound |
+      | WER | Wrong denominator | Correct per phrase | Correct per condition, totaled properly |
+      | Error reading | Rates only | Lists the actual errors | Ranks errors by what they do to Sam |
+      | Recommendation | None | Names what to fix | Includes a safe fallback and how much more data to collect |
+
+      The questions below check the concepts; judge your own project with the rubric.
+  - id: speech-audio-project.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.speech-audio-project
+    markdown: |-
+      Compute a few error rates, explain the drifting doorbell, then judge a smoke-alarm detector, a captioning vendor, and a bird-song app that fails in the wind.
+    takeaway: |-
+      A spectrogram turns samples into pitches you can reason about, and a sound detector needs tolerance and a test that must not fire. Report word error rate per condition, totaled over reference words, with the actual errors beside it.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - speech-audio-project.s1
-    - speech-audio-project.s2
-    - speech-audio-project.s3
-    - speech-audio-project.s4
-    - speech-audio-project.s5
-    - speech-audio-project.s6
-    - speech-audio-project.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - speech-audio-project.s1
+        - speech-audio-project.s2
+        - speech-audio-project.s3
+        - speech-audio-project.s4
+        - speech-audio-project.s5
+        - speech-audio-project.s6
+        - speech-audio-project.check
+      gate_refs:
+        - gate.core
 assessment_families:
-- id: speech-audio-project.base
-  objective_ref: objective.speech-audio-project
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: speech-audio-project.s4
-  variants:
-  - prompt: A system speaks the wrong transcript very clearly. Which conclusion is justified?
-    answer: a
-    options:
-    - id: b
-      text: Clear speech proves that recognition was correct.
-    - id: c
-      text: The error must be a sample-rate arithmetic error.
-    - id: a
-      text: Speech clarity and recognition correctness need separate evaluation.
-    feedback: The synthesizer can pronounce incorrect text clearly.
-    id: speech-audio-project.base.1
-  - prompt: Which count is the denominator in the taught word error rate?
-    answer: a
-    options:
-    - id: c
-      text: Audio samples in the original waveform.
-    - id: a
-      text: Reference transcript words.
-    - id: b
-      text: Hypothesis transcript words.
-    feedback: Word error rate divides edit counts by reference length under stated normalization.
-    id: speech-audio-project.base.2
-  - prompt: Can word error rate exceed 100%?
-    answer: a
-    options:
-    - id: a
-      text: Yes, when edit counts including insertions exceed reference word count.
-    - id: b
-      text: No, it is a probability assigned to the transcript.
-    - id: c
-      text: No, insertion errors are excluded from the numerator.
-    feedback: It is an edit rate, not a bounded probability.
-    id: speech-audio-project.base.3
-  - prompt: A model performs well on clips from speakers it also trained on. What remains untested?
-    answer: a
-    options:
-    - id: b
-      text: Whether text is an output of speech recognition.
-    - id: c
-      text: Whether the reference transcript has words.
-    - id: a
-      text: Generalization to reserved speakers and recording conditions.
-    feedback: Related source speakers can make evaluation easier than the intended new-speaker task.
-    id: speech-audio-project.base.4
-- id: speech-audio-project.transfer
-  objective_ref: objective.speech-audio-project
-  task: transfer
-  response_type: numeric_fields_with_reason
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: speech-audio-project.s4
-  variants:
-  - prompt: An alignment has S=1 substitutions, D=1 deletions, I=0 insertions, and N=8 reference words. The
-      mono audio contains 32000 samples at 16,000 samples/second. Give word error rate as a percentage and
-      audio duration in seconds.
-    answers:
-      percent: 25.0
-      seconds: 2.0
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Divide edits by audio duration instead of reference words.
-    - id: c
-      text: Exclude inserted words from the edit count.
-    - id: a
-      text: Divide total edits by reference words; divide samples by sample rate.
-    feedback: Word error rate and duration measure different quantities. Keep their denominators separate.
-    id: speech-audio-project.transfer.1
-  - prompt: An alignment has S=0 substitutions, D=1 deletions, I=1 insertions, and N=4 reference words. The
-      mono audio contains 16000 samples at 16,000 samples/second. Give word error rate as a percentage and
-      audio duration in seconds.
-    answers:
-      percent: 50.0
-      seconds: 1.0
-    reason_answer: a
-    reason_options:
-    - id: c
-      text: Exclude inserted words from the edit count.
-    - id: a
-      text: Divide total edits by reference words; divide samples by sample rate.
-    - id: b
-      text: Divide edits by audio duration instead of reference words.
-    feedback: Word error rate and duration measure different quantities. Keep their denominators separate.
-    id: speech-audio-project.transfer.2
-  - prompt: An alignment has S=1 substitutions, D=0 deletions, I=2 insertions, and N=2 reference words. The
-      mono audio contains 48000 samples at 16,000 samples/second. Give word error rate as a percentage and
-      audio duration in seconds.
-    answers:
-      percent: 150.0
-      seconds: 3.0
-    reason_answer: a
-    reason_options:
-    - id: a
-      text: Divide total edits by reference words; divide samples by sample rate.
-    - id: b
-      text: Divide edits by audio duration instead of reference words.
-    - id: c
-      text: Exclude inserted words from the edit count.
-    feedback: Word error rate and duration measure different quantities. Keep their denominators separate.
-    id: speech-audio-project.transfer.3
-  - prompt: An alignment has S=0 substitutions, D=0 deletions, I=1 insertions, and N=10 reference words. The
-      mono audio contains 8000 samples at 16,000 samples/second. Give word error rate as a percentage and audio
-      duration in seconds.
-    answers:
-      percent: 10.0
-      seconds: 0.5
-    reason_answer: a
-    reason_options:
-    - id: b
-      text: Divide edits by audio duration instead of reference words.
-    - id: c
-      text: Exclude inserted words from the edit count.
-    - id: a
-      text: Divide total edits by reference words; divide samples by sample rate.
-    feedback: Word error rate and duration measure different quantities. Keep their denominators separate.
-    id: speech-audio-project.transfer.4
-  numeric_fields:
-  - id: percent
-    label: Word error rate (%)
-  - id: seconds
-    label: Audio duration (seconds)
-  absolute_tolerance: 1.0e-06
+  - id: speech-audio-project.base
+    objective_ref: objective.speech-audio-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: speech-audio-project.s4
+    variants:
+      - prompt: A system speaks the wrong transcript very clearly. Which conclusion is justified?
+        answer: a
+        options:
+          - id: b
+            text: Clear speech proves that recognition was correct.
+          - id: c
+            text: The error must be a sample-rate arithmetic error.
+          - id: a
+            text: Speech clarity and recognition correctness need separate evaluation.
+        feedback: The synthesizer can pronounce incorrect text clearly.
+        id: speech-audio-project.base.1
+        retired: true
+      - prompt: Which count is the denominator in the taught word error rate?
+        answer: a
+        options:
+          - id: c
+            text: Audio samples in the original waveform.
+          - id: a
+            text: Reference transcript words.
+          - id: b
+            text: Hypothesis transcript words.
+        feedback: Word error rate divides edit counts by reference length under stated normalization.
+        id: speech-audio-project.base.2
+        retired: true
+      - prompt: Can word error rate exceed 100%?
+        answer: a
+        options:
+          - id: a
+            text: Yes, when edit counts including insertions exceed reference word count.
+          - id: b
+            text: No, it is a probability assigned to the transcript.
+          - id: c
+            text: No, insertion errors are excluded from the numerator.
+        feedback: It is an edit rate, not a bounded probability.
+        id: speech-audio-project.base.3
+        retired: true
+      - prompt: A model performs well on clips from speakers it also trained on. What remains untested?
+        answer: a
+        options:
+          - id: b
+            text: Whether text is an output of speech recognition.
+          - id: c
+            text: Whether the reference transcript has words.
+          - id: a
+            text: Generalization to reserved speakers and recording conditions.
+        feedback: Related source speakers can make evaluation easier than the intended new-speaker task.
+        id: speech-audio-project.base.4
+        retired: true
+  - id: speech-audio-project.transfer
+    objective_ref: objective.speech-audio-project
+    task: transfer
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: speech-audio-project.s4
+    variants:
+      - prompt: An alignment has S=1 substitutions, D=1 deletions, I=0 insertions, and N=8 reference words. The mono audio contains 32000 samples at 16,000 samples/second. Give word error rate as a percentage and audio duration in seconds.
+        answers:
+          percent: 25.0
+          seconds: 2.0
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Divide edits by audio duration instead of reference words.
+          - id: c
+            text: Exclude inserted words from the edit count.
+          - id: a
+            text: Divide total edits by reference words; divide samples by sample rate.
+        feedback: Word error rate and duration measure different quantities. Keep their denominators separate.
+        id: speech-audio-project.transfer.1
+        retired: true
+      - prompt: An alignment has S=0 substitutions, D=1 deletions, I=1 insertions, and N=4 reference words. The mono audio contains 16000 samples at 16,000 samples/second. Give word error rate as a percentage and audio duration in seconds.
+        answers:
+          percent: 50.0
+          seconds: 1.0
+        reason_answer: a
+        reason_options:
+          - id: c
+            text: Exclude inserted words from the edit count.
+          - id: a
+            text: Divide total edits by reference words; divide samples by sample rate.
+          - id: b
+            text: Divide edits by audio duration instead of reference words.
+        feedback: Word error rate and duration measure different quantities. Keep their denominators separate.
+        id: speech-audio-project.transfer.2
+        retired: true
+      - prompt: An alignment has S=1 substitutions, D=0 deletions, I=2 insertions, and N=2 reference words. The mono audio contains 48000 samples at 16,000 samples/second. Give word error rate as a percentage and audio duration in seconds.
+        answers:
+          percent: 150.0
+          seconds: 3.0
+        reason_answer: a
+        reason_options:
+          - id: a
+            text: Divide total edits by reference words; divide samples by sample rate.
+          - id: b
+            text: Divide edits by audio duration instead of reference words.
+          - id: c
+            text: Exclude inserted words from the edit count.
+        feedback: Word error rate and duration measure different quantities. Keep their denominators separate.
+        id: speech-audio-project.transfer.3
+        retired: true
+      - prompt: An alignment has S=0 substitutions, D=0 deletions, I=1 insertions, and N=10 reference words. The mono audio contains 8000 samples at 16,000 samples/second. Give word error rate as a percentage and audio duration in seconds.
+        answers:
+          percent: 10.0
+          seconds: 0.5
+        reason_answer: a
+        reason_options:
+          - id: b
+            text: Divide edits by audio duration instead of reference words.
+          - id: c
+            text: Exclude inserted words from the edit count.
+          - id: a
+            text: Divide total edits by reference words; divide samples by sample rate.
+        feedback: Word error rate and duration measure different quantities. Keep their denominators separate.
+        id: speech-audio-project.transfer.4
+        retired: true
+    numeric_fields:
+      - id: percent
+        label: Word error rate (%)
+      - id: seconds
+        label: Audio duration (seconds)
+    absolute_tolerance: 1e-6
+  - id: speech-audio-project.base.v2
+    objective_ref: objective.speech-audio-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: For pitch, think in bins of sample rate ÷ window length. For captions, line the words up and count S, D, and I over the words actually said.
+    remediation_scene: speech-audio-project.s3
+    variants:
+      - id: speech-audio-project.base.v2.1
+        prompt: The detector uses 200-sample windows on audio sampled at 8,000 Hz. Why does it report pitches only in steps of 40 Hz?
+        options:
+          - id: b
+            text: The hop between windows is 80 samples, and half of that is 40
+          - id: a
+            text: FFT bins are spaced by sample rate ÷ window length, 8,000 ÷ 200
+          - id: c
+            text: The Hann window smears each tone by 40 Hz to either side
+        answer: a
+        feedback: 'A 200-sample window gives bins 8,000 ÷ 200 = 40 Hz apart, and the detector reports the loudest bin. The hop controls how often a new frame starts (100 per second), not the pitch spacing.'
+      - id: speech-audio-project.base.v2.2
+        prompt: The doorbell's "dong" drifts from 400 Hz to 420 Hz, and the detector stops recognizing the chime. What happened?
+        options:
+          - id: a
+            text: 420 Hz sits between two bins, so the pitch flips between 400 and 440 and the note breaks up
+          - id: b
+            text: 420 Hz is above the Nyquist frequency, so it aliases to a lower and wrong pitch
+          - id: c
+            text: The silence gate drops a 420 Hz tone because it is quieter than a 400 Hz one
+        answer: a
+        feedback: The rule wants a long run at exactly 400 Hz, and a tone between bins never gives one. Nyquist at 8,000 Hz sampling is 4,000 Hz, far above 420, and both tones are equally loud.
+      - id: speech-audio-project.base.v2.3
+        prompt: The two noisy phrases contain 3 edits and 11 reference words, out of 27 reference words in the whole test. Which noisy-condition WER is correct?
+        options:
+          - id: c
+            text: 2 ÷ 11 = 18%, because an insertion isn't a mistake in a word that was said
+          - id: b
+            text: 3 ÷ 27 = 11%, because WER divides by all the reference words in the test
+          - id: a
+            text: 3 ÷ 11 = 27%, because WER divides edits by the words said in that condition
+        answer: a
+        feedback: 'A condition''s WER totals its own edits over its own reference words. Dividing by all 27 dilutes the noisy errors with quiet words, and insertions count as errors: "the" was never said.'
+      - id: speech-audio-project.base.v2.4
+        prompt: '"call my sister on speaker" was captioned "call sister on the speaker". Which edits give its word error rate?'
+        options:
+          - id: a
+            text: One deletion ("my") and one insertion ("the"), so 2 ÷ 5 = 0.4
+          - id: b
+            text: Three substitutions where the words shift, so 3 ÷ 5 = 0.6
+          - id: c
+            text: No edits, since every word said also appears in the caption
+        answer: a
+        feedback: The alignment keeps "call", "sister on", and "speaker" matched, costing one deletion and one insertion. Shifted substitutions would cost 3, and edit distance keeps the cheapest alignment.
+  - id: speech-audio-project.transfer.v2
+    objective_ref: objective.speech-audio-project
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask which condition the evidence covers, whether the sample rate can represent the sound, and which errors matter to the person using the system.
+    remediation_scene: speech-audio-project.s5
+    variants:
+      - id: speech-audio-project.transfer.v2.1
+        prompt: A smoke-alarm detector listens for a 3,000 Hz tone, but the device records at 4,000 samples per second. What goes wrong?
+        options:
+          - id: b
+            text: The windows must be longer to resolve a pitch that high
+          - id: a
+            text: 3,000 Hz is above the 2,000 Hz limit and shows up as 1,000 Hz
+          - id: c
+            text: The silence gate will reject a tone as loud as an alarm
+        answer: a
+        feedback: Nyquist for 4,000 samples per second is 2,000 Hz, so a 3,000 Hz tone aliases to 4,000 − 3,000 = 1,000 Hz. Window length changes bin spacing, not which pitches can be represented.
+      - id: speech-audio-project.transfer.v2.2
+        prompt: A captioning vendor reports "WER 8%" over 500 clips recorded mostly in quiet offices. Your users will speak in moving cars. What should you ask for?
+        options:
+          - id: a
+            text: WER on a car-noise slice, and how many reference words it covers
+          - id: b
+            text: The same WER recomputed on a larger set of quiet office clips
+          - id: c
+            text: Character error rate in place of WER on the same office clips
+        answer: a
+        feedback: Sam's kitchen showed quiet and noisy error rates differing fourfold, so a quiet-office number says little about cars. More quiet clips or a different unit measure the wrong condition more precisely.
+      - id: speech-audio-project.transfer.v2.3
+        prompt: For an intercom that relays who is at the door, system A has WER 10%, mostly dropped "a" and "the"; system B has WER 9%, mostly wrong names and numbers. What is the best reading?
+        options:
+          - id: c
+            text: Choose B, since a lower WER means fewer harmful mistakes
+          - id: b
+            text: Treat them as equal, since the rates differ by one point
+          - id: a
+            text: Look at which words fail; A's errors matter less here
+        answer: a
+        feedback: WER counts every edit alike, so a wrong name costs the same as a missing "the". For this job the names are the message, which makes A the safer choice despite its slightly higher rate.
+      - id: speech-audio-project.transfer.v2.4
+        prompt: A bird-song app's pitch detector works perfectly in a quiet lab, but outdoors in wind it keeps reporting birds that aren't there. What should the evaluation add?
+        options:
+          - id: a
+            text: Windy test clips, scoring false alarms and misses separately
+          - id: b
+            text: A higher sample rate, so the detector can see finer detail
+          - id: c
+            text: Longer windows, so each frame averages over more sound
+        answer: a
+        feedback: The failure is a condition the tests never covered, and false alarms and misses need separate counts, like the microwave test that must not fire. A higher sample rate or longer windows might help, but only a windy test set can show it.
+  - id: speech-audio-project.wer.v2
+    objective_ref: objective.speech-audio-project
+    task: base
+    response_type: numeric
+    points: 1
+    hint: WER = (S + D + I) ÷ N, where N counts reference words. For several phrases, add up all the edits and all the reference words first, then divide once.
+    remediation_scene: speech-audio-project.s4
+    absolute_tolerance: 0.5
+    variants:
+      - id: speech-audio-project.wer.v2.1
+        prompt: An alignment has 2 substitutions, 1 deletion, and 0 insertions against a 12-word reference. What is the word error rate, as a percentage?
+        answer: 25
+        feedback: (2 + 1 + 0) ÷ 12 = 0.25, so 25%.
+      - id: speech-audio-project.wer.v2.2
+        prompt: A recognizer adds 3 words that were never said and gets every other word right, on a 6-word reference. What is the word error rate, as a percentage?
+        answer: 50
+        feedback: Insertions count as errors, so 3 ÷ 6 = 0.5, or 50%.
+      - id: speech-audio-project.wer.v2.3
+        prompt: Phrase 1 has 1 edit in 4 reference words; phrase 2 has 3 edits in 16 reference words. What is the combined word error rate over both phrases, as a percentage?
+        answer: 20
+        feedback: Total edits over total words is (1 + 3) ÷ (4 + 16) = 4 ÷ 20 = 20%. Averaging 25% and 18.75% would give 21.9%, which overweights the short phrase.
+      - id: speech-audio-project.wer.v2.4
+        prompt: An alignment has 1 substitution, 2 deletions, and 1 insertion against a 5-word reference. What is the word error rate, as a percentage?
+        answer: 80
+        feedback: (1 + 2 + 1) ÷ 5 = 0.8, so 80%.

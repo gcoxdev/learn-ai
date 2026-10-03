@@ -1,200 +1,372 @@
 schema_version: 0.2-draft
 lesson:
   id: long-context-capability
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Can the model use a long prompt?
   state: draft
-  summary: Test whether a model can use a long prompt, rather than only whether it accepts one.
+  summary: A model that accepts 128K tokens can still miss a fact on page 150. See how RoPE gets stretched to reach long contexts, why the middle gets lost, and how to test honestly.
   slot: M19.7
   category: learning
   sources:
-  - title: Lost in the Middle
-    url: https://arxiv.org/abs/2307.03172
-  - title: RULER
-    url: https://arxiv.org/abs/2404.06654
+    - title: "Lost in the Middle: How Language Models Use Long Contexts (Liu et al., 2023)"
+      url: https://arxiv.org/abs/2307.03172
+    - title: "Extending Context Window of Large Language Models via Positional Interpolation (Chen et al., 2023)"
+      url: https://arxiv.org/abs/2306.15595
+    - title: "NTK-Aware Scaled RoPE (bloc97, 2023, r/LocalLLaMA post)"
+      url: https://www.reddit.com/r/LocalLLaMA/comments/14lz7j5/ntkaware_scaled_rope_allows_llama_models_to_have/
+    - title: "YaRN: Efficient Context Window Extension of Large Language Models (Peng et al., 2023)"
+      url: https://arxiv.org/abs/2309.00071
+    - title: "RULER: What's the Real Context Size of Your Long-Context Language Models? (Hsieh et al., 2024)"
+      url: https://arxiv.org/abs/2404.06654
 objectives:
-- id: objective.long-context-capability
-  version: 1-draft
-  statement: Long-context capability combines positional behavior, training exposure, information access, and
-    serving resources; evaluation must test retrieval, distraction, and reasoning across positions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - long-context-capability.base
-  - long-context-capability.transfer
-  prerequisites:
-  - anyOf:
-    - objective.continued-pretraining
-  - anyOf:
-    - objective.hybrid-sequence-architectures
+  - id: objective.long-context-capability
+    version: 2-draft
+    statement: Long-context capability combines positional behavior, training exposure, information access, and serving resources; evaluation must test retrieval, distraction, and reasoning across positions.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - long-context-capability.base.v2
+      - long-context-capability.transfer.v2
+      - long-context-capability.scale
+    prerequisites:
+      - anyOf:
+          - objective.continued-pretraining
+      - anyOf:
+          - objective.hybrid-sequence-architectures
 scenes:
-- id: long-context-capability.s1
-  title: Accepting a prompt is only the first test
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.long-context-capability
-  markdown: 'A model may accept 20,000 tokens yet fail to use a fact in the middle. The configured context
-    limit tells us what the implementation accepts. The training context describes the lengths used while fitting
-    the model.
+  - id: long-context-capability.s1
+    title: Accepted is not the same as used
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.long-context-capability
+    markdown: |-
+      A model card promises a 128K-token context. You paste in a 300-page lease and ask, "What is the notice period for ending early?" The clause is on page 150. The model answers confidently, using a clause from page 3 about something else.
 
+      Nothing crashed; the model *accepted* the prompt. Three different numbers hide behind "context length":
 
-    **Effective context** asks how much supplied information the model can use for a particular task. It is
-    measured through behavior, not set by one configuration value. A length that works for retrieving a code
-    may not work equally well for combining evidence across documents.'
-  text_mode: 'A model may accept 20,000 tokens yet fail to use a fact in the middle. The configured context
-    limit tells us what the implementation accepts. The training context describes the lengths used while fitting
-    the model.
+      | Term | What it means | How you learn it |
+      | --- | --- | --- |
+      | Context limit | The longest input the software will run | Read the configuration |
+      | Training context | The lengths the model actually practiced on | Read the training report |
+      | **Effective context** | The length at which the model still uses the information for *your* task | Measure it |
 
+      Liu et al. (2023) measured one version. They gave models 20 documents, only one of which held the answer to a question, and moved that document from first to last. Accuracy traced a U-shape: best when the answer sat at the start or end, worst in the middle. For GPT-3.5-Turbo, with the answer in the middle, accuracy fell *below* its score with no documents at all (56.1%). They called the effect **lost in the middle**.
 
-    **Effective context** asks how much supplied information the model can use for a particular task. It is
-    measured through behavior, not set by one configuration value. A length that works for retrieving a code
-    may not work equally well for combining evidence across documents.'
-  bridges: []
-- id: long-context-capability.s2
-  title: Vary where evidence appears
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.long-context-capability
-  markdown: 'Place a needed fact near the beginning, middle, or end among controlled distractors. Then vary
-    the number of required facts and whether they conflict. Exact retrieval of one inserted string tests a
-    narrower skill than combining several documents to support a justified answer.
+      :::predict If a model is lost in the middle, where should you put the question and the most important instructions in a long prompt?
+      At the start or the end, where use is strongest, and often both. Liu et al. found that placing the question both before and after the documents helped on their key-value lookup task. Better still, shorten the prompt so less sits in the middle.
+      :::
+    bridges: []
+  - id: long-context-capability.s2
+    title: Stretch the rotations, not the model
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.long-context-capability
+    markdown: |-
+      Why can't a model trained on 4,096 tokens simply read 32,768? Recall RoPE from module 15's lesson on positions: each pair of query and key coordinates is rotated by an angle $m\,\theta_i$, where $m$ is the position and $\theta_i = b^{-2i/d}$ is that pair's speed ($b = 10{,}000$, head width $d$). The fast pairs spin by a whole radian per token; the slowest barely turn. Beyond position 4,095, the slow pairs reach angles the model never saw, and attention scores go haywire.
 
+      **Position interpolation (PI)** (Chen et al., 2023) squeezes positions back into the trained range. With scale factor $s = L_{\text{new}} / L_{\text{train}} = 32{,}768 / 4{,}096 = 8$, position $m$ is treated as $m / s$: position 20,000 becomes 2,500. After at most 1,000 fine-tuning steps, LLaMA models worked at 32,768 tokens.
 
-    Put “locker code: 482” at 10%, 50% and 90% of otherwise comparable prompts, then ask for the code. The
-    unrelated surrounding text consists of **distractors**. Next require combining two separately placed clues.
-    Success on the first experiment tests retrieval; the second asks for an additional relationship. Use invented
-    codes so outside knowledge cannot supply the answer.'
-  text_mode: 'Place a needed fact near the beginning, middle, or end among controlled distractors. Then vary
-    the number of required facts and whether they conflict. Exact retrieval of one inserted string tests a
-    narrower skill than combining several documents to support a justified answer.
+      PI has a cost: neighboring tokens now differ by 1/8 radian in the fast pairs instead of 1, so fine local detail gets crowded. The **NTK-aware** fix (posted by "bloc97" on Reddit, 2023) raises the base instead: $b' = b \cdot s^{d/(d-2)}$. The slowest pair is slowed by exactly $s$, like PI, while the fastest pair is left alone. **YaRN** (Peng et al., 2023) refines this "by parts": interpolate the slow pairs, leave the fast pairs untouched, blend in between, and slightly sharpen attention as $s$ grows. YaRN extended Llama 2 to 128K tokens with about 10× fewer training tokens than earlier methods, and DeepSeek-V2 used it to go from 4K to 128K.
 
+      ```python run
+      import numpy as np
 
-    Put “locker code: 482” at 10%, 50% and 90% of otherwise comparable prompts, then ask for the code. The
-    unrelated surrounding text consists of **distractors**. Next require combining two separately placed clues.
-    Success on the first experiment tests retrieval; the second asks for an additional relationship. Use invented
-    codes so outside knowledge cannot supply the answer.'
-  bridges: []
-- id: long-context-capability.s3
-  title: Separate position and workload effects
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.long-context-capability
-  markdown: Positional scaling, sliding windows, context training, and memory compression can each affect long
-    inputs. Longer prompts also increase processing time and may consume larger caches. A model can succeed
-    in an offline benchmark but exceed a product’s latency or capacity budget.
-  text_mode: Positional scaling, sliding windows, context training, and memory compression can each affect
-    long inputs. Longer prompts also increase processing time and may consume larger caches. A model can succeed
-    in an offline benchmark but exceed a product’s latency or capacity budget.
-  bridges: []
-- id: long-context-capability.s4
-  title: Design a useful report
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.long-context-capability
-  markdown: Record prompt length in the actual tokenizer’s tokens, output budget, evidence positions, distractor
-    construction, scoring, and hardware. Include failure examples and confidence intervals where appropriate.
-    Compare to retrieval or task decomposition when the full context does not need to be processed at once.
-  text_mode: Record prompt length in the actual tokenizer’s tokens, output budget, evidence positions, distractor
-    construction, scoring, and hardware. Include failure examples and confidence intervals where appropriate.
-    Compare to retrieval or task decomposition when the full context does not need to be processed at once.
-  bridges: []
-- id: long-context-capability.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.long-context-capability
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Test where evidence appears and what the model must do with it. Accepting a long prompt, retrieving
-    one fact, and reasoning across several facts are different capabilities.
-- id: long-context-capability.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.long-context-capability
-  markdown: Test where evidence appears and what the model must do with it. Accepting a long prompt, retrieving
-    one fact, and reasoning across several facts are different capabilities.
-  text_mode: Test where evidence appears and what the model must do with it. Accepting a long prompt, retrieving
-    one fact, and reasoning across several facts are different capabilities.
+      d, base = 128, 10000.0                      # head width and RoPE base
+      L_train, L_new = 4096, 32768
+      s = L_new / L_train                         # scale factor s = 8
+      speeds = base ** (-np.arange(0, d, 2) / d)  # 64 rotation speeds (radians per token), fastest first
+      ntk_base = base * s ** (d / (d - 2))
+      speeds_ntk = ntk_base ** (-np.arange(0, d, 2) / d)
+
+      m = 20000                                   # a position far beyond training
+      slow, slow_ntk = speeds[-1], speeds_ntk[-1]
+      print(f"slowest pair: angles seen in training run from 0 to {L_train * slow:.3f} rad")
+      print(f"  at position {m}: raw {m * slow:.3f}   PI {m / s * slow:.3f}   NTK {m * slow_ntk:.3f}")
+      print(f"fastest pair: neighboring tokens differ by {speeds[0]:.3f} rad in training")
+      print(f"  after scaling:        PI {speeds[0] / s:.3f}   NTK {speeds_ntk[0]:.3f}")
+      print(f"NTK-aware base: {ntk_base:,.0f}")
+      ```
+
+      At position 20,000 the slowest pair's raw angle is 2.310 radians, far outside the 0 to 0.473 seen in training. Both fixes bring it to 0.289. Only NTK keeps the fast pair's 1-radian step between neighbors. Change `L_new` to 131072 and compare.
+    bridges: []
+  - id: long-context-capability.s3
+    title: A needle is not a haystack test
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.long-context-capability
+    markdown: |-
+      The most popular long-context check is the **needle in a haystack (NIAH)**: hide one sentence, such as "The locker code is 4812," at a chosen depth in a long filler text and ask for it. Many models score nearly perfectly across every depth and length.
+
+      That grid tests one skill, *finding a single distinctive string*. It has three blind spots:
+
+      1. The needle usually stands out. A sentence about locker codes inside essays about start-ups is easy to spot, even by word overlap with the question.
+      2. Nothing competes with it. There are no near-copies, such as an old locker code and a new one.
+      3. Nothing has to be combined. Copying one string back is retrieval, not reasoning.
+
+      **RULER** (Hsieh et al., 2024) keeps the needle idea but adds harder versions: several needles and look-alike distractors, *variable tracking* (follow `X = 12`, `Y = X`, `Z = Y` across the text), *aggregation* (count the most frequent words), and question answering over long documents. Across 17 models and 13 tasks, almost all models dropped sharply as length grew, despite near-perfect NIAH scores. All the models claimed at least 32K tokens, but only about half kept satisfactory performance at 32K.
+
+      :::mixup "It passed needle-in-a-haystack at 128K, so it can reason over 128K."
+      NIAH shows the model can *find* one planted fact. Your lease question needs finding the right clause among similar clauses, and perhaps combining it with a definition 80 pages earlier. Test with look-alike distractors and multi-step questions at the lengths you'll really use.
+      :::
+    bridges: []
+  - id: long-context-capability.s4
+    title: What 128K tokens cost
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.long-context-capability
+    markdown: |-
+      Even when a model uses 128K tokens well, each request is expensive. Take the Llama-2-70B-like model from the lesson on sharing keys and values: 80 layers, 8 KV heads of width 128, and a model width of 8,192.
+
+      ```python run
+      layers, kv_heads, head_dim, d_model, params = 80, 8, 128, 8192, 70e9   # Llama-2-70B-like
+      for n in [4096, 131072]:
+          kv_gib = 2 * layers * kv_heads * head_dim * n * 2 / 2**30          # 16-bit cache
+          weight_flops = 2 * params * n                                     # every weight, every token
+          attn_flops = 2 * n * n * d_model * layers                         # QK^T and AV over n^2/2 pairs
+          print(f"n = {n:7,d}: KV cache {kv_gib:5.2f} GiB | weight FLOPs {weight_flops:.2e}"
+                f" | attention FLOPs {attn_flops:.2e} | attention/weights {attn_flops / weight_flops:.2f}")
+      ```
+
+      | | 4,096 tokens | 131,072 tokens |
+      | --- | ---: | ---: |
+      | KV cache (16-bit, GQA-8) | 1.25 GiB | 40 GiB |
+      | Attention arithmetic ÷ weight arithmetic (prefill) | 0.04 | 1.23 |
+
+      At 4K tokens, the attention scores are a rounding error next to the weight multiplications. At 128K they are *more* than all the weight work combined, because the attention term grows with $n^2$ and the weight term with $n$. Then, during generation, every new token must read the whole 40 GiB cache. On a GPU that reads memory at 3 TB/s, that alone takes about 14 milliseconds per token.
+
+      So for the lease, compare two plans on the same questions: paste all 300 pages, or retrieve the 10 most relevant pages (the retrieval lessons show how) and send about 5,000 tokens. If retrieval matches the long prompt's accuracy, it wins on cost and speed. When you do use long contexts, report the effective length you measured, with the task and distractors you used, not the length on the model card.
+    bridges: []
+  - id: long-context-capability.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.long-context-capability
+    markdown: Work out interpolation scales and stretched positions, then design a fair long-context test for a lease reviewer, a vendor's needle claim, and a busy chat service.
+    takeaway: |-
+      Accepting a long prompt is not using it: models lose facts in the middle, and needle tests check only single-fact retrieval. RoPE scaling (PI, NTK-aware, YaRN) stretches position angles into the trained range, and at 128K the cache and the n² attention cost become the bill.
+  - id: long-context-capability.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.long-context-capability
+    markdown: |-
+      Test where evidence appears and what the model must do with it. Accepting a long prompt, retrieving one fact, and reasoning across several facts are different capabilities.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - long-context-capability.s1
-    - long-context-capability.s2
-    - long-context-capability.s3
-    - long-context-capability.s4
-    - long-context-capability.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - long-context-capability.s1
+        - long-context-capability.s2
+        - long-context-capability.s3
+        - long-context-capability.s4
+        - long-context-capability.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     long-context-capability.recap: long-context-capability.check
 assessment_families:
-- id: long-context-capability.base
-  objective_ref: objective.long-context-capability
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Vary where evidence appears: trace the inputs, operation, and result before choosing.'
-  remediation_scene: long-context-capability.s2
-  variants:
-  - id: long-context-capability.base.1
-    prompt: Does an accepted 128k-token input prove useful reasoning over all 128k tokens?
-    options:
-    - id: c
-      text: Only if the request succeeds without an error
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Accepted length and evaluated capability differ.
-  - id: long-context-capability.base.2
-    prompt: Why move a needed fact to different positions?
-    options:
-    - id: a
-      text: To measure positional sensitivity
-    - id: b
-      text: To train a new tokenizer
-    - id: c
-      text: To remove every distractor
-    answer: a
-    feedback: Information use may vary by location.
-- id: long-context-capability.transfer
-  objective_ref: objective.long-context-capability
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Design a useful report: trace the inputs, operation, and result before choosing.'
-  remediation_scene: long-context-capability.s4
-  variants:
-  - id: long-context-capability.transfer.1
-    prompt: What is broader than single-string needle retrieval?
-    options:
-    - id: a
-      text: Combining multiple separated facts under distractors
-    - id: b
-      text: Echoing one exact string only
-    - id: c
-      text: Counting input bytes alone
-    answer: a
-    feedback: Multi-evidence tasks test additional reasoning and access demands.
-  - id: long-context-capability.transfer.2
-    prompt: What unit should a reported token limit identify?
-    options:
-    - id: b
-      text: An assumed universal word count
-    - id: c
-      text: Only file size
-    - id: a
-      text: The actual tokenizer’s tokens
-    answer: a
-    feedback: Tokenization changes the relation between text and sequence length.
+  - id: long-context-capability.base
+    objective_ref: objective.long-context-capability
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Move the evidence to different depths and watch how accuracy changes.
+    remediation_scene: long-context-capability.s1
+    variants:
+      - id: long-context-capability.base.1
+        prompt: Does an accepted 128k-token input prove useful reasoning over all 128k tokens?
+        options:
+          - id: c
+            text: Only if the request succeeds without an error
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Accepted length and evaluated capability differ.
+        retired: true
+      - id: long-context-capability.base.2
+        prompt: Why move a needed fact to different positions?
+        options:
+          - id: a
+            text: To measure positional sensitivity
+          - id: b
+            text: To train a new tokenizer
+          - id: c
+            text: To remove every distractor
+        answer: a
+        feedback: Information use may vary by location.
+        retired: true
+  - id: long-context-capability.transfer
+    objective_ref: objective.long-context-capability
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: A single planted fact tests retrieval; combining several facts tests more.
+    remediation_scene: long-context-capability.s3
+    variants:
+      - id: long-context-capability.transfer.1
+        prompt: What is broader than single-string needle retrieval?
+        options:
+          - id: a
+            text: Combining multiple separated facts under distractors
+          - id: b
+            text: Echoing one exact string only
+          - id: c
+            text: Counting input bytes alone
+        answer: a
+        feedback: Multi-evidence tasks test additional reasoning and access demands.
+        retired: true
+      - id: long-context-capability.transfer.2
+        prompt: What unit should a reported token limit identify?
+        options:
+          - id: b
+            text: An assumed universal word count
+          - id: c
+            text: Only file size
+          - id: a
+            text: The actual tokenizer’s tokens
+        answer: a
+        feedback: Tokenization changes the relation between text and sequence length.
+        retired: true
+  - id: long-context-capability.base.v2
+    objective_ref: objective.long-context-capability
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Separate three things: where in the prompt the evidence sits, how positions are mapped into RoPE's trained range, and what skill a test actually checks."
+    remediation_scene: long-context-capability.s2
+    variants:
+      - id: long-context-capability.base.v2.1
+        prompt: Liu et al. moved the document holding the answer through a list of 20 documents. What pattern did accuracy follow?
+        options:
+          - id: b
+            text: Steadily falling from first position to last
+          - id: a
+            text: Highest at the start and end, lowest in the middle
+          - id: c
+            text: Roughly flat, since every document was in context
+        answer: a
+        feedback: The U-shape is the "lost in the middle" effect. A steady fall would mean only the start matters, but the end did well too; and being in context didn't mean being used equally.
+      - id: long-context-capability.base.v2.2
+        prompt: Why does position interpolation divide positions by s instead of letting the model run on positions it never trained on?
+        options:
+          - id: a
+            text: Unseen positions give RoPE angles outside the trained range, which disrupts attention
+          - id: c
+            text: Dividing positions shortens the prompt, which cuts the attention cost by s²
+          - id: b
+            text: Dividing positions adds new learned embeddings for the positions beyond training
+        answer: a
+        feedback: Beyond the training length, the slow RoPE pairs reach angles the model never saw, and attention scores blow up. PI maps every position back into the seen range. The prompt keeps all its tokens, and no new embeddings are learned.
+      - id: long-context-capability.base.v2.3
+        prompt: How does NTK-aware scaling differ from plain position interpolation?
+        options:
+          - id: c
+            text: It interpolates the fast rotation pairs and leaves the slow pairs alone
+          - id: b
+            text: It divides every rotation speed by s, the same as interpolation does
+          - id: a
+            text: It raises the RoPE base, slowing the slow pairs while keeping the fast ones
+        answer: a
+        feedback: "The new base b′ = b·s^(d/(d−2)) slows the slowest pair by s but leaves the fastest pair almost unchanged, so neighboring tokens stay distinct. Plain PI slows all pairs by s. The other option has the pairs backwards."
+      - id: long-context-capability.base.v2.4
+        prompt: A model scores nearly 100% on needle-in-a-haystack at 128K tokens. What has that shown?
+        options:
+          - id: b
+            text: That it can combine facts spread across 128K tokens
+          - id: a
+            text: That it can find one distinctive planted fact at 128K
+          - id: c
+            text: That its effective context is 128K for most tasks
+        answer: a
+        feedback: NIAH checks retrieval of a single string that often stands out from the filler. RULER found that models with near-perfect NIAH scores still dropped sharply on multi-needle, tracing, and aggregation tasks.
+  - id: long-context-capability.transfer.v2
+    objective_ref: objective.long-context-capability
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Design the test to match the real task (similar distractors, several facts, real lengths), and weigh the cost of a long prompt against retrieving a short one.
+    remediation_scene: long-context-capability.s4
+    variants:
+      - id: long-context-capability.transfer.v2.1
+        prompt: You're evaluating a model for reviewing 300-page leases, where many clauses look alike. Which test design fits best?
+        options:
+          - id: a
+            text: Plant the answer clause at many depths among look-alike clauses, and add questions that need two clauses
+          - id: b
+            text: Plant one unusual sentence at the end of a lease and check the model can repeat it word for word
+          - id: c
+            text: Check that a 300-page lease fits within the model's context limit without being cut off
+        answer: a
+        feedback: The real task means finding the right clause among similar ones, at any depth, sometimes combining two. A single standout sentence at the end is the easiest possible needle, and fitting the limit only shows acceptance.
+      - id: long-context-capability.transfer.v2.2
+        prompt: "A vendor's slide says \"100% needle-in-a-haystack accuracy at 128K\". You need the model to track which of 40 account balances changed across a long transaction log. What should you conclude?"
+        options:
+          - id: c
+            text: The model is ready, since tracking balances is a form of retrieval
+          - id: a
+            text: Single-fact retrieval works; test tracking and aggregation separately
+          - id: b
+            text: The claim is misleading, since NIAH scores don't relate to real use
+        answer: a
+        feedback: NIAH is real evidence of retrieval, but tracking changes across a log is closer to RULER's variable-tracking and aggregation tasks, where scores often fall. So the slide is true but answers a different question.
+      - id: long-context-capability.transfer.v2.3
+        prompt: A chat service runs a 70B GQA model whose cache costs 40 GiB per 128K-token conversation. Users paste long manuals but ask about a few pages at a time. What should the team try first?
+        options:
+          - id: b
+            text: Double the GPUs so that every conversation keeps its full 128K cache
+          - id: c
+            text: Switch to a model advertised with a longer context limit, such as 1M
+          - id: a
+            text: Retrieve the relevant pages and send a few thousand tokens, then compare
+        answer: a
+        feedback: If retrieval matches accuracy, a 5,000-token prompt needs about 1.5 GiB of cache and far less attention work. More GPUs pay the bill instead of reducing it, and a longer limit makes each conversation more expensive, not cheaper.
+      - id: long-context-capability.transfer.v2.4
+        prompt: A support prompt contains 30 help articles, then the customer's question. Answers often ignore the articles in the middle of the list. Which change targets that pattern?
+        options:
+          - id: a
+            text: Put the question before and after the articles, and rank the likeliest articles first
+          - id: b
+            text: Add more articles so the relevant one is surrounded by extra helpful context
+          - id: c
+            text: Randomly shuffle the order of the articles each time the question is asked
+        answer: a
+        feedback: Models use the start and end of a long prompt best, so put the question and the best evidence there. More articles push relevant ones further into the middle, and shuffling only moves the problem around.
+  - id: long-context-capability.scale
+    objective_ref: objective.long-context-capability
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "The scale factor is s = new length ÷ trained length. Position interpolation treats position m as m ÷ s."
+    remediation_scene: long-context-capability.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: long-context-capability.scale.1
+        prompt: A RoPE model trained on 4,096 tokens is extended to 32,768 with position interpolation. What is the scale factor s?
+        answer: 8
+        feedback: "s = 32,768 ÷ 4,096 = 8."
+      - id: long-context-capability.scale.2
+        prompt: A model trained on 2,048 tokens is extended to 32,768 with position interpolation. What is the scale factor s?
+        answer: 16
+        feedback: "s = 32,768 ÷ 2,048 = 16."
+      - id: long-context-capability.scale.3
+        prompt: With position interpolation at s = 8, which position does the model treat token 20,000 as?
+        answer: 2500
+        feedback: "20,000 ÷ 8 = 2,500, which lies inside the trained range of 0 to 4,095."
+      - id: long-context-capability.scale.4
+        prompt: A model trained on 8,192 tokens is extended to 131,072 with position interpolation. Which position does it treat token 100,000 as?
+        answer: 6250
+        feedback: "s = 131,072 ÷ 8,192 = 16, so 100,000 ÷ 16 = 6,250."
+      - id: long-context-capability.scale.5
+        prompt: A model trained on 4,096 tokens is extended to 131,072 with position interpolation. What is the scale factor s?
+        answer: 32
+        feedback: "s = 131,072 ÷ 4,096 = 32. The YaRN paper reached 128K from Llama 2's 4,096 with s = 32."

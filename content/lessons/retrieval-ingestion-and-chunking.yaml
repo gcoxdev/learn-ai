@@ -1,196 +1,343 @@
 schema_version: 0.2-draft
 lesson:
   id: retrieval-ingestion-and-chunking
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Prepare retrievable evidence without losing its context
   state: draft
-  summary: Turn documents into searchable pieces that keep their meaning.
+  summary: Cut a policy in the wrong place and "cannot be returned" lands in a different chunk from "opened batteries". Learn to split, label, and update documents so search finds whole answers.
   slot: M26.3
   category: learning
   sources:
-  - title: Introduction to Information Retrieval — authors’ online edition
-    url: https://nlp.stanford.edu/IR-book/
-  - title: Retrieval-Augmented Generation
-    url: https://arxiv.org/abs/2005.11401
+    - title: Introduction to Information Retrieval — authors’ online edition
+      url: https://nlp.stanford.edu/IR-book/
+    - title: Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks (Lewis et al., 2020)
+      url: https://arxiv.org/abs/2005.11401
 objectives:
-- id: objective.retrieval-ingestion-and-chunking
-  version: 1-draft
-  statement: Ingestion converts source documents into versioned searchable units with metadata; chunk boundaries,
-    parsing quality, updates, and deletion behavior determine the evidence available later.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - retrieval-ingestion-and-chunking.base
-  - retrieval-ingestion-and-chunking.transfer
-  prerequisites:
-  - anyOf:
-    - objective.dense-vector-retrieval
-  - anyOf:
-    - objective.data-provenance
+  - id: objective.retrieval-ingestion-and-chunking
+    version: 2-draft
+    statement: Ingestion converts source documents into versioned searchable units with metadata; chunk boundaries, parsing quality, updates, and deletion behavior determine the evidence available later.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - retrieval-ingestion-and-chunking.base.v2
+      - retrieval-ingestion-and-chunking.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.dense-vector-retrieval
+      - anyOf:
+          - objective.data-provenance
 scenes:
-- id: retrieval-ingestion-and-chunking.s1
-  title: Parse before embedding
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.retrieval-ingestion-and-chunking
-  markdown: Extract text, tables, headings, and relevant media while preserving source identity and structure.
-    A PDF column-order error can produce misleading text before retrieval starts. Keep parsing diagnostics
-    and representative samples, because an embedding index cannot recover information that ingestion discarded.
-  text_mode: Extract text, tables, headings, and relevant media while preserving source identity and structure.
-    A PDF column-order error can produce misleading text before retrieval starts. Keep parsing diagnostics
-    and representative samples, because an embedding index cannot recover information that ingestion discarded.
-  bridges: []
-- id: retrieval-ingestion-and-chunking.s2
-  title: Choose useful retrieval units
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.retrieval-ingestion-and-chunking
-  markdown: 'A **chunk** is a piece of a source stored as a retrieval unit. Its boundaries should preserve
-    enough context for a reader to interpret it.
+  - id: retrieval-ingestion-and-chunking.s1
+    title: The parser read across the columns
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.retrieval-ingestion-and-chunking
+    markdown: |-
+      Sprocket's returns policy is really a two-column PDF. The left column covers returns, the right covers batteries. The first time the team loaded it into search, the extracted text began:
 
+      > *Return unused items within Opened batteries cannot be 30 days for a full refund. returned, because damaged…*
 
-    Suppose a handbook says, “This part works outdoors. It must stay under a covered roof.” Retrieving only
-    the first sentence loses an essential condition. Keeping both sentences together preserves the meaning.
+      The parser had read straight across the page, line by line, splicing the two columns together. Every later step, from BM25 to embeddings to the language model, would work on this scrambled text, and none of them can unscramble it.
 
+      Getting documents into search is called **ingestion**: extract the text, split it into pieces, attach labels, compute vectors, and write everything to the index. The first step is the one teams skip. A PDF stores characters at positions on a page, not sentences in reading order, so columns, tables, headers, and footnotes all need handling. Before building anything else, open a sample of parsed documents and read them. Two minutes of reading would have caught the spliced columns.
+    bridges: []
+  - id: retrieval-ingestion-and-chunking.s2
+    title: '"Cannot" landed in the next chunk'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.retrieval-ingestion-and-chunking
+    markdown: |-
+      Search usually indexes pieces of documents rather than whole files, so a match points at the paragraph that answers rather than a 40-page manual. Each piece is a **chunk**. The simplest way to make chunks is to cut every $n$ words. Watch what that does to the full returns section.
 
-    Small chunks can focus a match but omit definitions or qualifications. Large chunks preserve more context
-    but can weaken ranking and consume prompt space. Overlap helps with boundary losses while creating duplication.
-    Keep a pointer to the original source so the system can fetch surrounding context when needed.'
-  text_mode: 'A **chunk** is a piece of a source stored as a retrieval unit. Its boundaries should preserve
-    enough context for a reader to interpret it.
+      ```python run
+      import re
 
+      policy = ("Return unused items within 30 days for a full refund. "
+                "Opened batteries cannot be returned, because damaged cells can overheat. "
+                "Chargers may be returned if they are unused.")
 
-    Suppose a handbook says, “This part works outdoors. It must stay under a covered roof.” Retrieving only
-    the first sentence loses an essential condition. Keeping both sentences together preserves the meaning.
+      def words(text):
+          return set(re.findall(r"[a-z]+", text.lower()))
 
+      def best(chunks, query):
+          return max(chunks, key=lambda c: len(words(c) & words(query)))
 
-    Small chunks can focus a match but omit definitions or qualifications. Large chunks preserve more context
-    but can weaken ranking and consume prompt space. Overlap helps with boundary losses while creating duplication.
-    Keep a pointer to the original source so the system can fetch surrounding context when needed.'
-  bridges: []
-- id: retrieval-ingestion-and-chunking.s3
-  title: Attach operational metadata
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.retrieval-ingestion-and-chunking
-  markdown: Store document and chunk IDs, source location, version, timestamps, access scope, and section context
-    where needed. These fields support citations, filtering, freshness, and debugging. Generated chunk summaries
-    should remain distinguishable from the original source text.
-  text_mode: Store document and chunk IDs, source location, version, timestamps, access scope, and section
-    context where needed. These fields support citations, filtering, freshness, and debugging. Generated chunk
-    summaries should remain distinguishable from the original source text.
-  bridges: []
-- id: retrieval-ingestion-and-chunking.s4
-  title: Propagate updates and deletion
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.retrieval-ingestion-and-chunking
-  markdown: When a source changes, identify affected chunks and indexes, remove obsolete entries, and invalidate
-    relevant caches. Re-embedding without deleting old chunks can return conflicting versions. Test end-to-end
-    freshness and access behavior rather than assuming a successful ingestion job means every downstream artifact
-    is current.
-  text_mode: When a source changes, identify affected chunks and indexes, remove obsolete entries, and invalidate
-    relevant caches. Re-embedding without deleting old chunks can return conflicting versions. Test end-to-end
-    freshness and access behavior rather than assuming a successful ingestion job means every downstream artifact
-    is current.
-  bridges: []
-- id: retrieval-ingestion-and-chunking.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.retrieval-ingestion-and-chunking
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Search can only recover the evidence ingestion preserves. Keep useful chunk boundaries, source
-    locations, versions, and access information with each searchable piece.
-- id: retrieval-ingestion-and-chunking.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.retrieval-ingestion-and-chunking
-  markdown: Search can only recover the evidence ingestion preserves. Keep useful chunk boundaries, source
-    locations, versions, and access information with each searchable piece.
-  text_mode: Search can only recover the evidence ingestion preserves. Keep useful chunk boundaries, source
-    locations, versions, and access information with each searchable piece.
+      w = policy.split()
+      fixed = [" ".join(w[i:i + 12]) for i in range(0, len(w), 12)]  # 12 words each
+      sentences = re.split(r"(?<=\.) ", policy)                        # one sentence each
+
+      query = "return opened batteries"
+      for name, chunks in [("fixed-size", fixed), ("by sentence", sentences)]:
+          print(f"--- {name} chunks ---")
+          for c in chunks:
+              print(" |", c)
+          print("best match:", best(chunks, query), "\n")
+      ```
+
+      The 12-word cut ends the first chunk with "…full refund. Opened batteries" and starts the next with "cannot be returned." For the query *return opened batteries*, the first chunk matches all three words, so it wins. The model then reads "full refund … Opened batteries" and tells the customer yes. Splitting by sentence keeps "Opened batteries cannot be returned" whole, and that sentence wins instead.
+
+      :::mixup "Smaller chunks are always more precise."
+      Small chunks match sharply, but they strip away the words that give a sentence its meaning: the condition, the exception, the "cannot". Big chunks keep context but blur the match and eat prompt space. Pick the size by testing real questions, not by instinct.
+      :::
+    bridges: []
+  - id: retrieval-ingestion-and-chunking.strategies
+    title: Cut along the document's own seams
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.retrieval-ingestion-and-chunking
+    markdown: |-
+      Four common ways to chunk, from crudest to most careful. One uses **overlap**: each chunk repeats the last few tokens of the one before, so a sentence cut at one boundary appears whole in the next chunk.
+
+      | Strategy | How it cuts | Watch out for |
+      | --- | --- | --- |
+      | Fixed size | Every $n$ tokens | Splits sentences and lists mid-thought |
+      | Fixed size with overlap | Every $n$ tokens, each chunk repeating the end of the last | Stores some text twice |
+      | Sentence or paragraph | At sentence or paragraph ends | Pieces vary a lot in length |
+      | Structure-aware | At headings, list items, table rows | Needs a parser that sees structure |
+
+      A cheap trick helps every strategy: put the document title and section heading at the top of each chunk ("Returns policy › Batteries: Opened batteries cannot…"). A chunk that says only "They cannot be returned" is useless on its own; the heading tells both the search and the model what "they" are.
+
+      :::predict A 900-token page is cut into 300-token chunks with 100 tokens of overlap. How many chunks, and how many tokens get stored?
+      Each new chunk starts 300 − 100 = 200 tokens after the last, so chunks start at 0, 200, 400, and 600. The last one runs from 600 to 900, exactly the end. That's 4 chunks and 4 × 300 = 1,200 stored tokens: a third more than the page itself. Without overlap it would be 3 chunks and 900 tokens.
+      :::
+    bridges: []
+  - id: retrieval-ingestion-and-chunking.s3
+    title: Every chunk carries its label
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.retrieval-ingestion-and-chunking
+    markdown: |-
+      A chunk is more than its text. Here is how the battery sentence is stored:
+
+      ```python
+      {
+        "chunk_id":  "returns-v3-02",
+        "doc_id":    "returns",
+        "version":   3,                      # policy version, effective 1 Mar 2026
+        "section":   "Returns policy > Batteries",
+        "source":    "help.sprocket.example/returns#batteries",
+        "access":    "public",               # vs "staff"
+        "embedding_model": "encoder-2026-01",
+        "text":      "Returns policy > Batteries: Opened batteries cannot be returned, ..."
+      }
+      ```
+
+      Each field is there because a later lesson needs it. The source link lets an answer **cite** its evidence. The version and date let you prefer the current policy. The access field lets search hide staff-only pages from customers *before* ranking. The embedding model name catches the mixed-model mistake from the last lesson. This bundle of labels is the chunk's **metadata**.
+    bridges: []
+  - id: retrieval-ingestion-and-chunking.s4
+    title: When the policy changes
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.retrieval-ingestion-and-chunking
+    markdown: |-
+      On 1 October, Sprocket extends its return window from 30 days to 45. The team re-runs ingestion on the new page. The job reports success, and the index now holds the new chunks *and* the old ones, because nothing told it to delete anything. A customer asking about the return window gets both "30 days" and "45 days" in the prompt, and the model picks one.
+
+      The fix is to treat each document as a unit. When a document changes, find every chunk with its `doc_id`, delete them, then insert the new version's chunks. Do the same when a document is deleted or a staff page becomes private. Then test the result, not the job: ask "how long do I have to return something?" and check that only 45 days comes back. A successful ingestion run tells you the new chunks were written, not that the old ones are gone. Caches built from old answers need clearing too, which the last lesson in this module covers.
+    bridges: []
+  - id: retrieval-ingestion-and-chunking.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.retrieval-ingestion-and-chunking
+    markdown: Contracts, a spec-sheet table, a deleted HR page, and an oversized support index test whether you can spot evidence that was lost before search ever ran.
+    takeaway: |-
+      Search can only find what ingestion kept. Parse carefully, cut chunks along the document's own seams, label each chunk with its source, version, and access, and delete old chunks when a document changes.
+  - id: retrieval-ingestion-and-chunking.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.retrieval-ingestion-and-chunking
+    markdown: |-
+      Search can only recover the evidence ingestion preserves. Keep useful chunk boundaries, source locations, versions, and access information with each searchable piece.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - retrieval-ingestion-and-chunking.s1
-    - retrieval-ingestion-and-chunking.s2
-    - retrieval-ingestion-and-chunking.s3
-    - retrieval-ingestion-and-chunking.s4
-    - retrieval-ingestion-and-chunking.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - retrieval-ingestion-and-chunking.s1
+        - retrieval-ingestion-and-chunking.s2
+        - retrieval-ingestion-and-chunking.strategies
+        - retrieval-ingestion-and-chunking.s3
+        - retrieval-ingestion-and-chunking.s4
+        - retrieval-ingestion-and-chunking.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     retrieval-ingestion-and-chunking.recap: retrieval-ingestion-and-chunking.check
 assessment_families:
-- id: retrieval-ingestion-and-chunking.base
-  objective_ref: objective.retrieval-ingestion-and-chunking
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Choose useful retrieval units: trace the inputs, operation, and result before choosing.'
-  remediation_scene: retrieval-ingestion-and-chunking.s2
-  variants:
-  - id: retrieval-ingestion-and-chunking.base.1
-    prompt: Can embeddings restore text lost during faulty parsing?
-    options:
-    - id: c
-      text: Only with a larger vector
-    - id: a
-      text: Not reliably
-    - id: b
-      text: Always
-    answer: a
-    feedback: The retrieval representation depends on ingested evidence.
-  - id: retrieval-ingestion-and-chunking.base.2
-    prompt: What is a tradeoff of very small chunks?
-    options:
-    - id: a
-      text: Focused matching but possible loss of context
-    - id: b
-      text: Guaranteed complete context
-    - id: c
-      text: No effect on retrieval
-    answer: a
-    feedback: Boundaries can separate qualifications from claims.
-- id: retrieval-ingestion-and-chunking.transfer
-  objective_ref: objective.retrieval-ingestion-and-chunking
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Propagate updates and deletion: trace the inputs, operation, and result before choosing.'
-  remediation_scene: retrieval-ingestion-and-chunking.s4
-  variants:
-  - id: retrieval-ingestion-and-chunking.transfer.1
-    prompt: Why retain source locations with chunks?
-    options:
-    - id: a
-      text: To support traceable citations and diagnosis
-    - id: b
-      text: To guarantee every generated statement is true
-    - id: c
-      text: Only to increase file size
-    answer: a
-    feedback: Provenance connects retrieved units to original evidence.
-  - id: retrieval-ingestion-and-chunking.transfer.2
-    prompt: New chunks are added but obsolete ones remain. What can happen?
-    options:
-    - id: b
-      text: All results become current automatically
-    - id: c
-      text: Only storage gets smaller
-    - id: a
-      text: Conflicting stale versions are retrieved
-    answer: a
-    feedback: Update propagation must include removal or version filtering.
+  - id: retrieval-ingestion-and-chunking.base
+    objective_ref: objective.retrieval-ingestion-and-chunking
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Choose useful retrieval units: trace the inputs, operation, and result before choosing.'
+    remediation_scene: retrieval-ingestion-and-chunking.s2
+    variants:
+      - id: retrieval-ingestion-and-chunking.base.1
+        prompt: Can embeddings restore text lost during faulty parsing?
+        options:
+          - id: c
+            text: Only with a larger vector
+          - id: a
+            text: Not reliably
+          - id: b
+            text: Always
+        answer: a
+        feedback: The retrieval representation depends on ingested evidence.
+        retired: true
+      - id: retrieval-ingestion-and-chunking.base.2
+        prompt: What is a tradeoff of very small chunks?
+        options:
+          - id: a
+            text: Focused matching but possible loss of context
+          - id: b
+            text: Guaranteed complete context
+          - id: c
+            text: No effect on retrieval
+        answer: a
+        feedback: Boundaries can separate qualifications from claims.
+        retired: true
+  - id: retrieval-ingestion-and-chunking.transfer
+    objective_ref: objective.retrieval-ingestion-and-chunking
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Propagate updates and deletion: trace the inputs, operation, and result before choosing.'
+    remediation_scene: retrieval-ingestion-and-chunking.s4
+    variants:
+      - id: retrieval-ingestion-and-chunking.transfer.1
+        prompt: Why retain source locations with chunks?
+        options:
+          - id: a
+            text: To support traceable citations and diagnosis
+          - id: b
+            text: To guarantee every generated statement is true
+          - id: c
+            text: Only to increase file size
+        answer: a
+        feedback: Provenance connects retrieved units to original evidence.
+        retired: true
+      - id: retrieval-ingestion-and-chunking.transfer.2
+        prompt: New chunks are added but obsolete ones remain. What can happen?
+        options:
+          - id: b
+            text: All results become current automatically
+          - id: c
+            text: Only storage gets smaller
+          - id: a
+            text: Conflicting stale versions are retrieved
+        answer: a
+        feedback: Update propagation must include removal or version filtering.
+        retired: true
+  - id: retrieval-ingestion-and-chunking.base.v2
+    objective_ref: objective.retrieval-ingestion-and-chunking
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Follow one sentence from the source file into the index. Where could it have been scrambled, cut in half, separated from its heading, or left behind after an update?
+    remediation_scene: retrieval-ingestion-and-chunking.s2
+    variants:
+      - id: retrieval-ingestion-and-chunking.base.v2.1
+        prompt: 'A fixed-size chunker ends one chunk with "…full refund. Opened batteries" and starts the next with "cannot be returned." What is the likely effect on the query "return opened battery"?'
+        options:
+          - id: b
+            text: Both chunks are retrieved together, since they came from the same page
+          - id: a
+            text: The first chunk matches best and suggests opened batteries are refundable
+          - id: c
+            text: The embedding of the first chunk still carries the "cannot" from its neighbor
+        answer: a
+        feedback: The first chunk contains "return", "opened", and "battery" but not the "cannot", so it wins and misleads. Chunks are indexed and embedded independently, so neighbors are neither retrieved together nor blended unless you build that in.
+      - id: retrieval-ingestion-and-chunking.base.v2.2
+        prompt: A 900-token page is split into 300-token chunks with 100 tokens of overlap. Why add the overlap?
+        options:
+          - id: a
+            text: A sentence cut at one boundary still appears whole in the next chunk
+          - id: c
+            text: Repeated tokens raise each chunk's similarity to typical questions
+          - id: b
+            text: Overlapping chunks take less storage than cutting the page cleanly
+        answer: a
+        feedback: Overlap repeats the end of each chunk at the start of the next, so boundary sentences survive intact somewhere. It costs extra storage (here 1,200 tokens instead of 900) and doesn't make chunks more similar to questions.
+      - id: retrieval-ingestion-and-chunking.base.v2.3
+        prompt: A two-column PDF was parsed line by line across both columns, splicing unrelated sentences together. The team proposes switching to a stronger embedding model. What should they do instead?
+        options:
+          - id: c
+            text: Use larger chunks so that each spliced sentence has more context
+          - id: b
+            text: Add BM25 so exact words still match despite the scrambled order
+          - id: a
+            text: Fix the parser to follow reading order, then re-ingest the document
+        answer: a
+        feedback: Every later step works on the text the parser produced, so the scrambling has to be fixed at the source. A better encoder, bigger chunks, or keyword search all operate on the same spliced sentences.
+      - id: retrieval-ingestion-and-chunking.base.v2.4
+        prompt: The return window changed from 30 to 45 days. Ingestion re-ran successfully, but answers sometimes still say 30 days. What went wrong?
+        options:
+          - id: b
+            text: The embedding model hasn't yet learned the new number of days
+          - id: c
+            text: The new chunks are too short to outrank the older, longer ones
+          - id: a
+            text: The old version's chunks were never deleted from the index
+        answer: a
+        feedback: Re-ingesting adds the new chunks; unless the old chunks for that document are deleted, both versions stay searchable. Embedding models don't learn from your documents, and chunk length isn't what keeps the stale answer alive.
+  - id: retrieval-ingestion-and-chunking.transfer.v2
+    objective_ref: objective.retrieval-ingestion-and-chunking
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what a reader would need beside the retrieved chunk to understand it correctly, and whether ingestion kept that information.
+    remediation_scene: retrieval-ingestion-and-chunking.strategies
+    variants:
+      - id: retrieval-ingestion-and-chunking.transfer.v2.1
+        prompt: 'A contract search retrieves the chunk "The Supplier shall not be liable for such losses." The model can''t tell which losses. Which ingestion change helps most?'
+        options:
+          - id: a
+            text: Prefix each chunk with its clause heading and keep the defining sentence with it
+          - id: b
+            text: Cut the contract into even smaller chunks so each covers one idea
+          - id: c
+            text: Remove repeated legal phrases so the key words stand out more
+        answer: a
+        feedback: The chunk depends on context outside it ("such losses"), so it needs its heading and the sentence that defines the term. Smaller chunks would strip even more context, and deleting phrases changes what the contract says.
+      - id: retrieval-ingestion-and-chunking.transfer.v2.2
+        prompt: 'A spec-sheet table is extracted as a flat run of text: "Model Weight Range A1 B2 21 kg 24 kg 80 km 95 km". Questions about the B2''s range get wrong answers. What should ingestion do?'
+        options:
+          - id: c
+            text: Split the flat text into smaller chunks so each number stands alone
+          - id: a
+            text: Keep each table row as a unit, with the column headers attached
+          - id: b
+            text: Drop tables from the index, since models can't read numbers well
+        answer: a
+        feedback: Flattening separated each number from its row and column, so nothing links "95 km" to B2. Rows with headers ("B2, Weight 24 kg, Range 95 km") keep the link. Smaller chunks separate the numbers further, and dropping tables loses the evidence entirely.
+      - id: retrieval-ingestion-and-chunking.transfer.v2.3
+        prompt: HR deletes an outdated parental-leave policy from its wiki. Two weeks later the HR assistant still quotes it. What was missing?
+        options:
+          - id: b
+            text: A newer embedding model that recognizes the policy as outdated
+          - id: a
+            text: A step that deletes a document's chunks when the source is deleted
+          - id: c
+            text: A higher similarity threshold so older pages score too low to appear
+        answer: a
+        feedback: Deleting the wiki page doesn't touch the chunks already in the index; deletion has to be carried through by document ID and then tested. A new model or a threshold would still leave the old chunks searchable.
+      - id: retrieval-ingestion-and-chunking.transfer.v2.4
+        prompt: A support index uses 3,000-token chunks. The right chunk is usually retrieved, but answers are vague and just three chunks fill the prompt. What change fits?
+        options:
+          - id: a
+            text: Split along section headings into smaller chunks, each carrying its heading
+          - id: c
+            text: Add more overlap between the large chunks so fewer details are lost
+          - id: b
+            text: Retrieve the top 10 chunks instead of the top 3 to cover more material
+        answer: a
+        feedback: Huge chunks bury the relevant paragraph in unrelated text and use up the prompt. Section-sized chunks with headings keep context while focusing the match. More overlap makes chunks even bigger, and ten 3,000-token chunks won't fit.

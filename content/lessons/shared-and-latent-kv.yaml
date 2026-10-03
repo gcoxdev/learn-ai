@@ -1,212 +1,428 @@
 schema_version: 0.2-draft
 lesson:
   id: shared-and-latent-kv
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Reduce the state stored for attention keys and values
   state: draft
-  summary: Compare sharing attention keys and values with storing a compressed representation of them.
+  summary: Sixteen users chatting with a 70B model can need 160 GiB of attention cache, more than the model itself. Learn the one-line formula, and the tricks that cut it 8× and beyond.
   slot: M19.2
   category: learning
   sources:
-  - title: Multi-query attention
-    url: https://arxiv.org/abs/1911.02150
-  - title: Grouped-query attention
-    url: https://arxiv.org/abs/2305.13245
-  - title: DeepSeek-V2
-    url: https://arxiv.org/abs/2405.04434
+    - title: "Fast Transformer Decoding: One Write-Head is All You Need (Shazeer, 2019)"
+      url: https://arxiv.org/abs/1911.02150
+    - title: "GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints (Ainslie et al., 2023)"
+      url: https://arxiv.org/abs/2305.13245
+    - title: "Llama 2: Open Foundation and Fine-Tuned Chat Models (Touvron et al., 2023)"
+      url: https://arxiv.org/abs/2307.09288
+    - title: "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model (DeepSeek-AI, 2024)"
+      url: https://arxiv.org/abs/2405.04434
 objectives:
-- id: objective.shared-and-latent-kv
-  version: 1-draft
-  statement: Multi-query and grouped-query attention share key/value heads, while latent attention compresses
-    their representation; cache savings depend on exact dimensions and implementation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - shared-and-latent-kv.base
-  - shared-and-latent-kv.transfer
-  prerequisites:
-  - anyOf:
-    - objective.multi-head-attention
-  - anyOf:
-    - objective.cached-inference
+  - id: objective.shared-and-latent-kv
+    version: 2-draft
+    statement: Multi-query and grouped-query attention share key/value heads, while latent attention compresses their representation; cache savings depend on exact dimensions and implementation.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - shared-and-latent-kv.base.v2
+      - shared-and-latent-kv.transfer.v2
+      - shared-and-latent-kv.bytes
+    prerequisites:
+      - anyOf:
+          - objective.multi-head-attention
+      - anyOf:
+          - objective.cached-inference
 scenes:
-- id: shared-and-latent-kv.s1
-  title: Let query heads share keys and values
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.shared-and-latent-kv
-  markdown: '**KV** means the attention keys and values kept for reuse. Standard multi-head attention commonly
-    gives each head its own query, key, and value projections.
+  - id: shared-and-latent-kv.s1
+    title: The cache that outgrows the model
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.shared-and-latent-kv
+    markdown: |-
+      You're serving a 70-billion-parameter model to 16 people at once, each in a 4,096-token conversation. The weights in 16-bit precision take 140 GB. With standard multi-head attention, the conversations need another 160 GiB. The weights are the same for everyone, but every conversation needs its own copy of something else.
 
+      That something is the **KV cache**. When the model generates token 4,097, each layer needs the keys and values of all 4,096 earlier tokens. Recomputing them for every new token would waste work, so the server keeps them: for every token, every layer, every head, one key vector and one value vector. As the end-to-end token trace in module 15 showed, the cache grows with every token the conversation adds.
 
-    **Multi-query attention (MQA)** shares one KV head across all query heads. **Grouped-query attention (GQA)**
-    uses several KV heads, each shared by a group of query heads. This offers an intermediate amount of sharing.
-    The query projections remain distinct, so sharing keys and values does not make every head’s output identical.'
-  text_mode: '**KV** means the attention keys and values kept for reuse. Standard multi-head attention commonly
-    gives each head its own query, key, and value projections.
+      Count it for a model shaped like Llama 2 70B: 80 layers, 64 attention heads, 128 numbers per head, 2 bytes per number.
 
+      :::papers KV-cache size
+      $$\text{bytes} = 2 \times \text{layers} \times \text{kv\_heads} \times \text{head\_dim} \times \text{seq\_len} \times \text{bytes per value} \times \text{batch}$$
 
-    **Multi-query attention (MQA)** shares one KV head across all query heads. **Grouped-query attention (GQA)**
-    uses several KV heads, each shared by a group of query heads. This offers an intermediate amount of sharing.
-    The query projections remain distinct, so sharing keys and values does not make every head’s output identical.'
-  bridges: []
-- id: shared-and-latent-kv.s2
-  title: Count a simple cache change
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.shared-and-latent-kv
-  markdown: 'Ignoring overhead and using equal head dimensions, eight query heads with eight key/value heads
-    store four times the key/value elements of a two-key/value-head design for the same tokens and layers.
-    Query heads still perform their computations. Cache reduction does not imply every model allocation shrinks
-    by four.
+      The leading 2 counts one key and one value. With every head keeping its own keys and values: $2 \times 80 \times 64 \times 128 \times 2 = 2{,}621{,}440$ bytes, or 2.5 MiB per token. Times 4,096 tokens gives 10 GiB per conversation, and times 16 conversations gives 160 GiB. (1 GiB is $2^{30}$ bytes.)
+      :::
 
+      Size is only half the problem. Generating each new token reads the *whole* cache from memory. Noam Shazeer (2019) pointed out that for incremental decoding, this memory traffic, not arithmetic, sets the speed. A smaller cache means more users per GPU and faster tokens.
+    bridges: []
+  - id: shared-and-latent-kv.s2
+    title: Let query heads share keys and values
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.shared-and-latent-kv
+    markdown: |-
+      Look at the formula again: only `kv_heads` is a design choice. Every other factor is fixed by the model's size or the conversation. So keep all 64 query heads, but let them share fewer key/value heads.
 
-    With 100 cached positions, head width 16 and one layer, eight KV heads store 2 × 100 × 8 × 16 = 25,600
-    values. Two KV heads store 6,400. The leading 2 counts keys and values. Multiply by bytes per value for
-    payload memory; weights and allocation overhead are separate.'
-  text_mode: 'Ignoring overhead and using equal head dimensions, eight query heads with eight key/value heads
-    store four times the key/value elements of a two-key/value-head design for the same tokens and layers.
-    Query heads still perform their computations. Cache reduction does not imply every model allocation shrinks
-    by four.
+      - **Multi-query attention (MQA)**, from Shazeer's 2019 paper, keeps one key/value head that all query heads share.
+      - **Grouped-query attention (GQA)**, from Ainslie et al. (2023), splits the query heads into groups; each group shares one key/value head. GQA with 1 group is MQA, and GQA with one group per query head is ordinary multi-head attention (MHA).
 
+      | Design | Query heads | KV heads | Query heads per KV head | Cache per token (70B-like, 16-bit) |
+      | --- | ---: | ---: | ---: | ---: |
+      | MHA | 64 | 64 | 1 | 2,560 KiB |
+      | GQA-8 | 64 | 8 | 8 | 320 KiB |
+      | MQA | 64 | 1 | 64 | 40 KiB |
 
-    With 100 cached positions, head width 16 and one layer, eight KV heads store 2 × 100 × 8 × 16 = 25,600
-    values. Two KV heads store 6,400. The leading 2 counts keys and values. Multiply by bytes per value for
-    payload memory; weights and allocation overhead are separate.'
-  bridges: []
-- id: shared-and-latent-kv.s3
-  title: Store a compressed internal representation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.shared-and-latent-kv
-  markdown: '**Multi-head latent attention (MLA)** stores a smaller learned representation that supports the
-    required key/value calculations. **Latent** refers to that internal representation. This changes how the
-    information is represented, rather than simply reducing the number of independent KV heads.
+      Llama 2 used GQA in its larger models, and its 70B model has 8 KV heads. That cuts the 16-conversation cache from 160 GiB to 20 GiB.
 
+      :::predict A team picks 16 KV heads instead of 8 for the same model. What is the cache per token, and for one 4,096-token conversation?
+      Twice GQA-8: 640 KiB per token, and 2.5 GiB per conversation. The cache scales in direct proportion to the number of KV heads.
+      :::
 
-    Projections and algebraic rearrangements use the compressed state in attention. Positional components and
-    any matrices folded into other operations require architecture-specific handling. To calculate cache size,
-    inspect the actual stored dimensions, including positional state.'
-  text_mode: '**Multi-head latent attention (MLA)** stores a smaller learned representation that supports the
-    required key/value calculations. **Latent** refers to that internal representation. This changes how the
-    information is represented, rather than simply reducing the number of independent KV heads.
+      ```python run
+      def kv_bytes(layers, kv_heads, head_dim, tokens, bytes_per_value=2, batch=1):
+          return 2 * layers * kv_heads * head_dim * tokens * bytes_per_value * batch
 
+      KiB, GiB = 2**10, 2**30
+      # Llama-2-70B-like: 80 layers, 64 query heads of width 128, 16-bit values
+      for name, kv_heads in [("MHA", 64), ("GQA-8", 8), ("MQA", 1)]:
+          per_token = kv_bytes(80, kv_heads, 128, tokens=1)
+          one_chat = kv_bytes(80, kv_heads, 128, tokens=4096)
+          print(f"{name:6s} {per_token / KiB:5.0f} KiB/token   one 4,096-token chat "
+                f"{one_chat / GiB:6.2f} GiB   16 chats {16 * one_chat / GiB:6.1f} GiB")
 
-    Projections and algebraic rearrangements use the compressed state in attention. Positional components and
-    any matrices folded into other operations require architecture-specific handling. To calculate cache size,
-    inspect the actual stored dimensions, including positional state.'
-  bridges: []
-- id: shared-and-latent-kv.s4
-  title: Check accuracy and actual cache layout
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.shared-and-latent-kv
-  markdown: Sharing or compressing keys and values changes the parameterization and can require training or
-    adaptation. Report stored tensor shapes, precision, position state, and kernel support. Compare latency
-    and quality under representative sequence lengths rather than treating theoretical element savings as automatic
-    end-to-end gains.
-  text_mode: Sharing or compressing keys and values changes the parameterization and can require training or
-    adaptation. Report stored tensor shapes, precision, position state, and kernel support. Compare latency
-    and quality under representative sequence lengths rather than treating theoretical element savings as automatic
-    end-to-end gains.
-  bridges: []
-- id: shared-and-latent-kv.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.shared-and-latent-kv
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: MQA and GQA reduce KV duplication by sharing heads. Latent attention compresses the representation
-    itself. Count the actual cached arrays before claiming a memory saving.
-- id: shared-and-latent-kv.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.shared-and-latent-kv
-  markdown: MQA and GQA reduce KV duplication by sharing heads. Latent attention compresses the representation
-    itself. Count the actual cached arrays before claiming a memory saving.
-  text_mode: MQA and GQA reduce KV duplication by sharing heads. Latent attention compresses the representation
-    itself. Count the actual cached arrays before claiming a memory saving.
+      # DeepSeek-V2 MLA: 60 layers, each caching 512 latent + 64 RoPE-key numbers
+      mla_per_token = 60 * (512 + 64) * 2
+      print(f"MLA    {mla_per_token / KiB:5.1f} KiB/token  (DeepSeek-V2 shape)")
+      ```
+
+      Try `tokens=131072` (a 128K context) for GQA-8: a single conversation needs 40 GiB. Or set `bytes_per_value=1` to see what an 8-bit cache saves.
+
+      :::mixup "If eight query heads share one key/value head, those eight heads all compute the same thing."
+      Each query head still has its own query projection, so each scores the shared keys differently and gets its own blend of the shared values. The heads lose some freedom (they must agree on what the keys and values *are*), not their individual attention patterns.
+      :::
+    diagram:
+      caption: Grouped-query attention with 4 query heads and 2 KV heads. Only the KV heads are cached.
+      description: "Query heads 1 and 2 both read KV head A. Query heads 3 and 4 both read KV head B. The KV cache stores keys and values only for KV heads A and B, for every past token, so it holds half as much as a design where each of the four query heads had its own KV head."
+      nodes:
+        - id: q1
+          label: Query head 1
+          col: 0
+          row: 0
+        - id: q2
+          label: Query head 2
+          col: 1
+          row: 0
+        - id: q3
+          label: Query head 3
+          col: 3
+          row: 0
+        - id: q4
+          label: Query head 4
+          col: 4
+          row: 0
+        - id: kva
+          label: KV head A
+          note: keys + values, shared
+          col: 0
+          row: 1
+          tone: data
+        - id: kvb
+          label: KV head B
+          note: keys + values, shared
+          col: 4
+          row: 1
+          tone: data
+        - id: cache
+          label: KV cache
+          note: stores A and B for every past token
+          col: 2
+          row: 2
+          tone: accent
+      edges:
+        - from: kva
+          to: q1
+        - from: kva
+          to: q2
+        - from: kvb
+          to: q3
+        - from: kvb
+          to: q4
+        - from: cache
+          to: kva
+          label: per token
+        - from: cache
+          to: kvb
+          label: per token
+    bridges: []
+  - id: shared-and-latent-kv.s3
+    title: Cache a compressed latent instead
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.shared-and-latent-kv
+    markdown: |-
+      GQA saves memory by giving heads fewer distinct keys and values. DeepSeek-V2 (2024) took a different route: keep many full heads, but cache one short compressed vector per token, the **latent** (a learned code, not directly readable), and rebuild each head's keys and values from it. The method is called **multi-head latent attention (MLA)**.
+
+      :::papers Multi-head latent attention (DeepSeek-V2)
+      For hidden state $h_t$, one learned down-projection makes the latent, and learned up-projections rebuild each head's key and value:
+
+      $$c_t = W^{DKV} h_t, \qquad k_t^{(i)} = W^{UK,(i)} c_t, \qquad v_t^{(i)} = W^{UV,(i)} c_t$$
+
+      Only $c_t$ is cached. The trick that makes this cheap is associativity: a head's score is $q^{(i)\top} W^{UK,(i)} c_t = \big(W^{UK,(i)\top} q^{(i)}\big)^{\top} c_t$, so $W^{UK}$ can be folded into the query side and $W^{UV}$ into the output projection. The model scores against $c_t$ directly and never rebuilds full keys during decoding.
+      :::
+
+      Position needs special care. RoPE (rotary position embedding, from module 15's lesson on positions) rotates each key by an angle that depends on its position. That rotation would sit between the query and $W^{UK}$, and because it changes with every position, $W^{UK}$ can no longer be folded into the query once and for all. So MLA adds a small separate key that carries RoPE, shared by all heads, and caches that too.
+
+      DeepSeek-V2's numbers: 128 heads of width 128, a latent of 512 numbers, and a RoPE key of 64 numbers. Per token per layer:
+
+      | Design | Numbers cached per token per layer |
+      | --- | ---: |
+      | MHA, 128 heads × 128 | $2 \times 128 \times 128 = 32{,}768$ |
+      | MLA | $512 + 64 = 576$ |
+
+      That is about 57 times smaller. The paper notes it equals GQA with only 2.25 groups ($2 \times 2.25 \times 128 = 576$), and reports quality better than standard multi-head attention in its experiments.
+    bridges: []
+  - id: shared-and-latent-kv.s4
+    title: Before you switch, count and budget
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.shared-and-latent-kv
+    markdown: |-
+      Suppose you must serve an existing multi-head model on GPUs that are already short of memory. Here is how the options play out.
+
+      1. **Count first.** Use the formula with the model's real `kv_heads`, `head_dim`, and cache precision. A model card that says "64 heads" may still have 8 KV heads.
+      2. **Converting costs training.** Sharing heads changes the model, so you can't just delete key/value heads from a trained checkpoint. Ainslie et al. converted multi-head checkpoints by averaging the key and value heads within each group, then continued training with about 5% of the original pre-training compute. The result came close to multi-head quality at close to multi-query speed. DeepSeek built MLA into the model from the start of training.
+      3. **Weights don't shrink.** In our opening case, the 140 GB of weights is about 130 GiB. Going from MHA to GQA-8 cuts total memory from about 290 GiB (130 GiB of weights plus 160 GiB of cache) to about 150 GiB. That is a big win, but now the weights dominate, and halving the cache again saves far less.
+
+      Cache savings also stack. An 8-bit cache halves every row of the table, and a sliding window (the previous lesson, on attention patterns) caps `seq_len` at the window size: Mistral 7B keeps a rolling buffer of the last 4,096 tokens.
+    bridges: []
+  - id: shared-and-latent-kv.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.shared-and-latent-kv
+    markdown: Compute cache sizes for real model shapes, then decide what sharing heads or caching a latent would save a chatbot, a code assistant, and a memory-starved server.
+    takeaway: |-
+      KV cache = 2 × layers × KV heads × head width × tokens × bytes. GQA and MQA shrink it by sharing key/value heads across query heads; MLA caches a small latent and rebuilds keys and values from it.
+  - id: shared-and-latent-kv.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.shared-and-latent-kv
+    markdown: |-
+      MQA and GQA reduce KV duplication by sharing heads. Latent attention compresses the representation itself. Count the actual cached arrays before claiming a memory saving.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - shared-and-latent-kv.s1
-    - shared-and-latent-kv.s2
-    - shared-and-latent-kv.s3
-    - shared-and-latent-kv.s4
-    - shared-and-latent-kv.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - shared-and-latent-kv.s1
+        - shared-and-latent-kv.s2
+        - shared-and-latent-kv.s3
+        - shared-and-latent-kv.s4
+        - shared-and-latent-kv.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     shared-and-latent-kv.recap: shared-and-latent-kv.check
 assessment_families:
-- id: shared-and-latent-kv.base
-  objective_ref: objective.shared-and-latent-kv
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Count a simple cache change: trace the inputs, operation, and result before choosing.'
-  remediation_scene: shared-and-latent-kv.s2
-  variants:
-  - id: shared-and-latent-kv.base.1
-    prompt: What does grouped-query attention share?
-    options:
-    - id: a
-      text: Key/value heads among groups of query heads
-    - id: b
-      text: All token IDs across languages
-    - id: c
-      text: One output token across every request
-    answer: a
-    feedback: Groups reuse key/value projections.
-  - id: shared-and-latent-kv.base.2
-    prompt: Eight KV heads become two with equal dimensions. Simplified KV element reduction?
-    options:
-    - id: b
-      text: Twofold
-    - id: c
-      text: No reduction
-    - id: a
-      text: Fourfold
-    answer: a
-    feedback: The KV-head count falls by a factor of four.
-- id: shared-and-latent-kv.transfer
-  objective_ref: objective.shared-and-latent-kv
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Check accuracy and actual cache layout: trace the inputs, operation, and result before choosing.'
-  remediation_scene: shared-and-latent-kv.s4
-  variants:
-  - id: shared-and-latent-kv.transfer.1
-    prompt: Is latent attention just a different name for MQA?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if both cache tensors
-    - id: a
-      text: No; it uses a compressed latent parameterization
-    answer: a
-    feedback: Sharing head count and latent compression are distinct mechanisms.
-  - id: shared-and-latent-kv.transfer.2
-    prompt: Does a fourfold KV reduction imply fourfold total-memory reduction?
-    options:
-    - id: c
-      text: Only for every batch
-    - id: a
-      text: No; weights and other allocations remain
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: One allocation is only part of the budget.
+  - id: shared-and-latent-kv.base
+    objective_ref: objective.shared-and-latent-kv
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Only the number of key/value heads enters the cache formula; the query heads don't.
+    remediation_scene: shared-and-latent-kv.s2
+    variants:
+      - id: shared-and-latent-kv.base.1
+        prompt: What does grouped-query attention share?
+        options:
+          - id: a
+            text: Key/value heads among groups of query heads
+          - id: b
+            text: All token IDs across languages
+          - id: c
+            text: One output token across every request
+        answer: a
+        feedback: Groups reuse key/value projections.
+        retired: true
+      - id: shared-and-latent-kv.base.2
+        prompt: Eight KV heads become two with equal dimensions. Simplified KV element reduction?
+        options:
+          - id: b
+            text: Twofold
+          - id: c
+            text: No reduction
+          - id: a
+            text: Fourfold
+        answer: a
+        feedback: The KV-head count falls by a factor of four.
+        retired: true
+  - id: shared-and-latent-kv.transfer
+    objective_ref: objective.shared-and-latent-kv
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Separate the cache from the weights, and sharing heads from compressing them.
+    remediation_scene: shared-and-latent-kv.s4
+    variants:
+      - id: shared-and-latent-kv.transfer.1
+        prompt: Is latent attention just a different name for MQA?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if both cache tensors
+          - id: a
+            text: No; it uses a compressed latent parameterization
+        answer: a
+        feedback: Sharing head count and latent compression are distinct mechanisms.
+        retired: true
+      - id: shared-and-latent-kv.transfer.2
+        prompt: Does a fourfold KV reduction imply fourfold total-memory reduction?
+        options:
+          - id: c
+            text: Only for every batch
+          - id: a
+            text: No; weights and other allocations remain
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: One allocation is only part of the budget.
+        retired: true
+  - id: shared-and-latent-kv.base.v2
+    objective_ref: objective.shared-and-latent-kv
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Keep three things apart: query heads (each scores its own way), key/value heads (what gets cached), and MLA's latent (a compressed vector the heads' keys and values are rebuilt from)."
+    remediation_scene: shared-and-latent-kv.s2
+    variants:
+      - id: shared-and-latent-kv.base.v2.1
+        prompt: A model uses grouped-query attention with 32 query heads and 8 key/value heads. How are the heads arranged?
+        options:
+          - id: b
+            text: Each group of 8 query heads shares one key/value head
+          - id: c
+            text: Each query head chooses among all 8 key/value heads
+          - id: a
+            text: Each group of 4 query heads shares one key/value head
+        answer: a
+        feedback: 32 query heads ÷ 8 KV heads = 4 query heads per group. Eight per group would need only 4 KV heads, and query heads don't choose freely among KV heads; each is fixed to its group's.
+      - id: shared-and-latent-kv.base.v2.2
+        prompt: Under GQA, four query heads share one set of keys and values. Why do those four heads still produce different outputs?
+        options:
+          - id: a
+            text: Each has its own query projection, so each weighs the shared keys differently
+          - id: b
+            text: Each has its own positional encoding, so each sees the tokens in another order
+          - id: c
+            text: Each is followed by its own feed-forward layer, which separates their outputs
+        answer: a
+        feedback: Different queries give different scores against the same keys, so each head blends the shared values in its own proportions. RoPE rotates by position the same way for every head, and the feed-forward layer comes after the heads are combined.
+      - id: shared-and-latent-kv.base.v2.3
+        prompt: Shazeer's multi-query attention was proposed to speed up generating text one token at a time. What does it shrink?
+        options:
+          - id: c
+            text: The number of query heads, so fewer attention patterns are computed
+          - id: a
+            text: The keys and values stored per token, which each new token must read
+          - id: b
+            text: The feed-forward weights, which dominate the arithmetic per token
+        answer: a
+        feedback: Decoding each token reads the whole KV cache, and that memory traffic sets the speed. MQA keeps every query head but caches one key/value head. The feed-forward weights are unchanged.
+      - id: shared-and-latent-kv.base.v2.4
+        prompt: What does DeepSeek-V2's multi-head latent attention store in the cache for each token and layer?
+        options:
+          - id: b
+            text: Keys and values for 2 shared heads, as in GQA with two groups
+          - id: a
+            text: A 512-number latent plus a 64-number key that carries RoPE
+          - id: c
+            text: The full keys and values for all 128 heads, at 4-bit precision
+        answer: a
+        feedback: MLA caches one compressed latent (rebuilt into each head's keys and values by learned up-projections) plus a small shared RoPE key, 576 numbers in all. That equals the size of GQA with 2.25 groups, but it isn't head sharing, and it isn't quantization.
+  - id: shared-and-latent-kv.transfer.v2
+    objective_ref: objective.shared-and-latent-kv
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Write the cache formula and ask which factor the proposed change actually touches. Then remember the weights sit in memory too.
+    remediation_scene: shared-and-latent-kv.s4
+    variants:
+      - id: shared-and-latent-kv.transfer.v2.1
+        prompt: A chatbot runs a trained 13B multi-head model and runs out of memory at 8 concurrent 8,000-token chats. The team wants a lasting fix without training a new model from scratch. Which plan fits?
+        options:
+          - id: b
+            text: Switch to a FlashAttention kernel, which removes the need to keep a cache
+          - id: c
+            text: Cut the number of query heads in half, which halves the cache per token
+          - id: a
+            text: Convert to GQA by averaging KV heads per group, then train a little more
+        answer: a
+        feedback: Ainslie et al. converted checkpoints this way with about 5% of the original training compute. FlashAttention cuts temporary attention memory during a step, not the stored cache, and query heads don't appear in the cache formula.
+      - id: shared-and-latent-kv.transfer.v2.2
+        prompt: A server holds 60 GB of weights and 16 GB of KV cache. Switching to a design with 4× fewer KV heads is proposed. About how much memory will the model then use in total?
+        options:
+          - id: c
+            text: About 19 GB
+          - id: a
+            text: About 64 GB
+          - id: b
+            text: About 38 GB
+        answer: a
+        feedback: Only the cache shrinks, from 16 GB to 4 GB, so the total falls from 76 GB to 64 GB. Dividing the whole 76 GB by 4 (19 GB) or by 2 (38 GB) wrongly shrinks the weights too.
+      - id: shared-and-latent-kv.transfer.v2.3
+        prompt: A code assistant keeps a 16-bit cache of 20 GiB for its longest sessions, using 8 KV heads. The team switches to an 8-bit cache and to 4 KV heads (after retraining). What is the new cache size?
+        options:
+          - id: b
+            text: 10 GiB
+          - id: c
+            text: 2.5 GiB
+          - id: a
+            text: 5 GiB
+        answer: a
+        feedback: "The two savings multiply: half the bytes per value and half the heads give 20 × ½ × ½ = 5 GiB. 10 GiB applies only one of them, and 2.5 GiB applies one twice."
+      - id: shared-and-latent-kv.transfer.v2.4
+        prompt: A new model's card says "64 attention heads, head size 128, 80 layers". An engineer estimates the cache from those numbers alone. What should she check first?
+        options:
+          - id: a
+            text: How many key/value heads the model has, since GQA uses fewer
+          - id: b
+            text: How many experts it has, since each one keeps a separate cache
+          - id: c
+            text: How large its vocabulary is, since each token's cache scales with it
+        answer: a
+        feedback: With 8 KV heads instead of 64 the estimate would be 8× too high. Experts in a mixture-of-experts model live in the feed-forward layers and don't add attention caches, and vocabulary size doesn't enter the formula.
+  - id: shared-and-latent-kv.bytes
+    objective_ref: objective.shared-and-latent-kv
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Multiply 2 × layers × KV heads × head width × tokens × bytes per value (× batch). 1 KiB = 1,024 bytes and 1 GiB = 1,024³ bytes."
+    remediation_scene: shared-and-latent-kv.s1
+    absolute_tolerance: 0.01
+    variants:
+      - id: shared-and-latent-kv.bytes.1
+        prompt: A model has 32 layers, 8 key/value heads, and head width 128, with a 16-bit (2-byte) cache. How many KiB does the cache grow per token?
+        answer: 128
+        feedback: "2 × 32 × 8 × 128 × 2 = 131,072 bytes = 128 KiB per token."
+      - id: shared-and-latent-kv.bytes.2
+        prompt: A Llama-2-70B-like model has 80 layers, 8 key/value heads, and head width 128, with a 2-byte cache. How many GiB of cache does one 4,096-token conversation need?
+        answer: 1.25
+        feedback: "Per token: 2 × 80 × 8 × 128 × 2 = 327,680 bytes (320 KiB). Times 4,096 tokens = 1,342,177,280 bytes = 1.25 GiB."
+      - id: shared-and-latent-kv.bytes.3
+        prompt: A multi-head model has 32 layers, 32 heads (each with its own keys and values), and head width 128, with a 2-byte cache. How many GiB does one 4,096-token sequence need?
+        answer: 2
+        feedback: "2 × 32 × 32 × 128 × 2 = 524,288 bytes (512 KiB) per token. Times 4,096 = 2 GiB."
+      - id: shared-and-latent-kv.bytes.4
+        prompt: The Llama-2-70B-like model (80 layers, 8 KV heads, head width 128, 2 bytes) serves a batch of 8 conversations, each 4,096 tokens long. How many GiB of KV cache in total?
+        answer: 10
+        feedback: "1.25 GiB per conversation × 8 = 10 GiB. With 64 KV heads (plain MHA) it would be 80 GiB."
+      - id: shared-and-latent-kv.bytes.5
+        prompt: DeepSeek-V2 has 60 layers and caches 576 numbers per token per layer (a 512-number latent plus a 64-number RoPE key), at 2 bytes each. How many KiB of cache per token?
+        answer: 67.5
+        feedback: "60 × 576 × 2 = 69,120 bytes = 67.5 KiB, versus 3,840 KiB if it cached full keys and values for all 128 heads."

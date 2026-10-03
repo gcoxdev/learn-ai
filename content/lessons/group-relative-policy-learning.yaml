@@ -1,225 +1,442 @@
 schema_version: 0.2-draft
 lesson:
   id: group-relative-policy-learning
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Compare several sampled solutions to form a baseline
   state: draft
-  summary: Compare several responses to the same prompt and calculate a learning signal relative to their group.
+  summary: Ask the same maths question eight times, and the answers grade each other. That one idea, GRPO, removed a whole network from RL training and powered DeepSeek-R1.
   slot: M21.4
   category: learning
   sources:
-  - title: DeepSeekMath
-    url: https://arxiv.org/abs/2402.03300
+    - title: "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models (Shao et al., 2024), section 4"
+      url: https://arxiv.org/abs/2402.03300
+    - title: "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning (DeepSeek-AI, 2025)"
+      url: https://arxiv.org/abs/2501.12948
+    - title: "DAPO: An Open-Source LLM Reinforcement Learning System at Scale (Yu et al., 2025)"
+      url: https://arxiv.org/abs/2503.14476
+    - title: "Understanding R1-Zero-Like Training: A Critical Perspective (Liu et al., 2025)"
+      url: https://arxiv.org/abs/2503.20783
 objectives:
-- id: objective.group-relative-policy-learning
-  version: 1-draft
-  statement: GRPO-style methods derive relative learning signals from groups of responses, then update policy
-    probabilities with specified clipping and regularization; group variance and sampling choices affect the
-    signal.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - group-relative-policy-learning.base
-  - group-relative-policy-learning.transfer
-  prerequisites:
-  - anyOf:
-    - objective.verifiable-rewards
-  - anyOf:
-    - objective.rlhf-and-kl-control
-  - anyOf:
-    - objective.statistics-evidence
+  - id: objective.group-relative-policy-learning
+    version: 3-draft
+    statement: GRPO scores each answer against the other answers to the same prompt, then updates the policy with clipping and a KL penalty; the group's spread and sampling choices shape the signal.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - group-relative-policy-learning.base.v2
+      - group-relative-policy-learning.transfer.v2
+      - group-relative-policy-learning.calculate
+    prerequisites:
+      - anyOf:
+          - objective.verifiable-rewards
+      - anyOf:
+          - objective.rlhf-and-kl-control
+      - anyOf:
+          - objective.statistics-evidence
 scenes:
-- id: group-relative-policy-learning.s1
-  title: Sample a group for one prompt
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.group-relative-policy-learning
-  markdown: '**Group relative policy optimization**, or **GRPO**, generates several responses to the same prompt
-    and scores them. Each score is compared with a **baseline**, a score used to judge whether that response
-    did better or worse than expected.
+  - id: group-relative-policy-learning.s1
+    title: Let the answers grade each other
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.group-relative-policy-learning
+    markdown: |-
+      The last lesson gave you a verifier: each answer earns 1 or 0. Now you need to turn those scores into a training update. The RLHF lesson used PPO, whose recipe comes from reinforcement learning (the policy-gradients lesson in the reinforcement-learning module covers it in full): push up an action in proportion to its **advantage**, how much better it did than a **baseline** (what you expected). PPO gets the baseline from a critic, a second network that predicts the expected reward.
 
+      For a language model that critic is a problem. It's usually a network about as large as the policy itself, so it roughly doubles the memory. And the reward arrives only at the end of the answer, so the critic has to learn to predict it at every token from very little signal.
 
-    In the original GRPO formulation, the group supplies this comparison without a separately trained value
-    model. The prompt stays fixed while the model samples alternatives. This changes how the baseline is estimated;
-    the rewards still need to measure something useful.'
-  text_mode: '**Group relative policy optimization**, or **GRPO**, generates several responses to the same
-    prompt and scores them. Each score is compared with a **baseline**, a score used to judge whether that
-    response did better or worse than expected.
+      **Group relative policy optimization** (GRPO), introduced by Shao and colleagues in the DeepSeekMath paper (2024), drops the critic. For each question it samples a *group* of $G$ answers from the current policy and scores them all. The group's average reward *is* the baseline. An answer that beats its siblings gets pushed up; one that trails them gets pushed down.
 
+      Take the question *"What is 17 × 24?"* (answer 408). With $G = 4$, the policy writes 408, 398, 408, 418. The rewards are 1, 0, 1, 0, and their mean is 0.5. The two right answers are above the group's average and the two wrong ones are below it.
+    diagram:
+      caption: One GRPO step. The group's own average replaces PPO's critic network.
+      description: A question goes to the old policy, which samples a group of G answers. A verifier scores each answer. The rewards are normalized within the group by subtracting the mean and dividing by the standard deviation, giving one advantage per answer. The advantages feed the policy update, which also uses clipping and a KL penalty that compares with a frozen reference model. The updated policy becomes the old policy for the next step.
+      nodes:
+        - id: question
+          label: Question
+          note: e.g. 17 × 24 = ?
+          col: 0
+          row: 0
+          tone: data
+        - id: sample
+          label: Sample G answers
+          note: from the old policy
+          col: 1
+          row: 0
+          tone: accent
+        - id: score
+          label: Verifier scores each answer
+          note: rewards r₁ … r_G
+          col: 2
+          row: 0
+        - id: norm
+          label: "Advantage = (r − mean) / std"
+          note: within this group only
+          col: 3
+          row: 0
+          tone: accent
+        - id: update
+          label: Clipped policy update
+          note: minus β × KL penalty
+          col: 2
+          row: 1
+        - id: ref
+          label: Reference model
+          note: frozen; anchors the KL
+          col: 3
+          row: 1
+          tone: muted
+      edges:
+        - from: question
+          to: sample
+        - from: sample
+          to: score
+        - from: score
+          to: norm
+        - from: norm
+          to: update
+        - from: ref
+          to: update
+          dashed: true
+        - from: update
+          to: sample
+          label: next old policy
+          dashed: true
+    bridges: []
+  - id: group-relative-policy-learning.s2
+    title: Score each answer against its group
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.group-relative-policy-learning
+    markdown: |-
+      GRPO subtracts the group mean and then divides by the group's **standard deviation**, a measure of how spread out the rewards are (the square root of the average squared distance from the mean):
 
-    In the original GRPO formulation, the group supplies this comparison without a separately trained value
-    model. The prompt stays fixed while the model samples alternatives. This changes how the baseline is estimated;
-    the rewards still need to measure something useful.'
-  bridges: []
-- id: group-relative-policy-learning.s2
-  title: Calculate centered scores
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.group-relative-policy-learning
-  markdown: 'For rewards zero, one, and one, the group mean is two-thirds. Centered rewards are minus two-thirds,
-    one-third, and one-third. A standardized version divides by group standard deviation with a defined numerical
-    convention. Above-average responses receive a different local signal from below-average ones.
+      $$\hat A_i = \frac{r_i - \operatorname{mean}(r_1, \dots, r_G)}{\operatorname{std}(r_1, \dots, r_G)}$$
 
+      For rewards 1, 0, 1, 0: the mean is 0.5, every reward sits 0.5 from it, so the standard deviation is 0.5. The advantages are $+0.5/0.5 = +1$ for the right answers and $-1$ for the wrong ones.
 
-    The **standard deviation** measures spread around a mean. With rewards [0, 1, 1] and population-variance
-    convention, squared deviations average to 2/9, so standard deviation is about 0.471. Dividing centered
-    rewards gives approximately [−1.414, 0.707, 0.707], ignoring the stabilizer for this illustration. Other
-    denominator and stabilization conventions must be specified.'
-  text_mode: 'For rewards zero, one, and one, the group mean is two-thirds. Centered rewards are minus two-thirds,
-    one-third, and one-third. A standardized version divides by group standard deviation with a defined numerical
-    convention. Above-average responses receive a different local signal from below-average ones.
+      Now suppose only one of four is right: rewards 1, 0, 0, 0. The mean is 0.25, and the standard deviation is $\sqrt{(0.75^2 + 3 \times 0.25^2)/4} \approx 0.433$. The lone correct answer gets $0.75/0.433 \approx +1.732$, and each wrong one gets $-0.25/0.433 \approx -0.577$. A rare success gets a big push.
 
+      :::predict Three of four are right: rewards 1, 1, 1, 0. What advantage does the wrong answer get?
+      It's the mirror image: $-1.732$, and each right answer gets $+0.577$. A rare failure gets a big push *down*. Notice that the advantages in every group add up to zero.
+      :::
 
-    The **standard deviation** measures spread around a mean. With rewards [0, 1, 1] and population-variance
-    convention, squared deviations average to 2/9, so standard deviation is about 0.471. Dividing centered
-    rewards gives approximately [−1.414, 0.707, 0.707], ignoring the stabilizer for this illustration. Other
-    denominator and stabilization conventions must be specified.'
-  bridges:
-  - statistics-evidence
-  - random-variables
-- id: group-relative-policy-learning.s3
-  title: Handle degenerate and biased groups
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.group-relative-policy-learning
-  markdown: If every sampled response has identical reward, a centered group gives no relative distinction,
-    and standardization needs zero-variance handling. Group size, reward sparsity, response-length normalization,
-    and sampling temperature affect the training signal. Later algorithm variants can change these details
-    substantially.
-  text_mode: If every sampled response has identical reward, a centered group gives no relative distinction,
-    and standardization needs zero-variance handling. Group size, reward sparsity, response-length normalization,
-    and sampling temperature affect the training signal. Later algorithm variants can change these details
-    substantially.
-  bridges: []
-- id: group-relative-policy-learning.s4
-  title: Keep the objective and rollout state explicit
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.group-relative-policy-learning
-  markdown: 'Three model states can have different roles:
+      In outcome-supervised GRPO, every token of answer $i$ shares the same advantage $\hat A_i$. The model can't tell which tokens made 418 wrong; it only learns that this whole answer did worse than its siblings.
 
+      ```python run
+      import numpy as np
 
-    - The **old policy** generated the sampled responses.
+      def grpo_advantages(rewards, eps=1e-4):
+          """GRPO outcome advantage: (r - group mean) / group std."""
+          r = np.array(rewards, dtype=float)
+          return (r - r.mean()) / (r.std() + eps)   # np.std divides by G
 
-    - The **current policy** is being updated.
+      for rewards in [[1, 0, 1, 0], [1, 0, 0, 0], [1, 1, 1, 0], [1, 1, 1, 1]]:
+          print(f"rewards {rewards} -> advantages {np.round(grpo_advantages(rewards), 3)}")
 
-    - A **reference model**, if used, anchors a separate divergence penalty.
+      G = 8
+      for p in [0.1, 0.5, 0.9]:
+          useless = p**G + (1 - p)**G
+          print(f"solve rate {p}: chance all {G} answers get the same reward = {useless:.3f}")
+      ```
 
+      The small `eps` stops a division by zero. Some libraries divide by $G - 1$ inside the standard deviation instead of $G$. That scales every advantage in a group by the same factor, which acts like a slightly different learning rate. Try `[0.9, 0.9, 1.0, 0.9]`, a partial-credit reward: the best answer is only 0.1 ahead, yet it gets $+1.728$, almost the full $+1.732$ of a lone correct answer (the `eps` trims it slightly).
+    bridges:
+      - statistics-evidence
+      - random-variables
+  - id: group-relative-policy-learning.s3
+    title: When the whole group agrees
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.group-relative-policy-learning
+    markdown: |-
+      The last row of the program's first block shows the catch. If all four answers are right, every reward equals the mean, every advantage is 0, and that question teaches nothing. The same goes for four wrong answers. GRPO learns only from questions where the group *disagrees*.
 
-    Document which states the objective compares, how it clips or penalizes changes, and whether it averages
-    over tokens or sequences. Sampled data can become stale as the current policy changes. To judge the recipe,
-    compare results on held-out problems and total compute cost as well as training reward.'
-  text_mode: 'Three model states can have different roles:
+      If the policy solves a question with probability $p$, all $G$ answers agree with probability $p^G + (1-p)^G$. With $G = 8$, that's 0.8% at $p = 0.5$, but 43% at $p = 0.9$ and again at $p = 0.1$. As training succeeds, more and more questions become too easy to teach anything, and the effective batch shrinks. The DAPO recipe (Yu et al., 2025) responds with *dynamic sampling*: keep sampling and drop questions whose groups are all right or all wrong until the batch is full of useful ones.
 
+      :::story Longer answers, learned
+      DeepSeek-R1-Zero was trained with GRPO and rule-based rewards. Over training, its average response length grew steadily, from hundreds of tokens toward thousands. Nobody rewarded length. Longer reasoning simply won more group comparisons, and the report describes the model starting to re-check and revise its own work.
+      :::
 
-    - The **old policy** generated the sampled responses.
+      :::deeper Two normalizations that were later questioned
+      Liu and colleagues (2025) argued that GRPO's two divisions add biases. Dividing by the standard deviation gives extra weight to questions that are nearly always right or nearly always wrong: our rare-success group earned 1.732 where the balanced group earned 1. Averaging each answer's loss over its own length ($1/|o_i|$ below) penalizes long wrong answers less per token than short ones, which can inflate length. Their "Dr. GRPO" variant removes both terms.
+      :::
+    bridges: []
+  - id: group-relative-policy-learning.s4
+    title: The full objective, term by term
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.group-relative-policy-learning
+    markdown: |-
+      Three versions of the model appear in one GRPO step: the **old policy** $\pi_{\theta_\text{old}}$ that sampled the group, the **current policy** $\pi_\theta$ being updated, and a frozen **reference model** $\pi_\text{ref}$, usually the model you started RL from.
 
-    - The **current policy** is being updated.
+      :::papers The GRPO objective (Shao et al., 2024)
+      $$J(\theta) = \frac{1}{G}\sum_{i=1}^{G}\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}\Big[\min\big(\rho_{i,t}\hat A_{i},\ \operatorname{clip}(\rho_{i,t}, 1-\varepsilon, 1+\varepsilon)\,\hat A_{i}\big) - \beta\,\mathbb{D}_{\text{KL}}\Big], \qquad \rho_{i,t} = \frac{\pi_\theta(o_{i,t} \mid q, o_{i,<t})}{\pi_{\theta_\text{old}}(o_{i,t} \mid q, o_{i,<t})}$$
 
-    - A **reference model**, if used, anchors a separate divergence penalty.
+      $o_i$ is answer $i$, $|o_i|$ its length in tokens, and $\rho_{i,t}$ the probability ratio for its token $t$. The min-and-clip is PPO's, from the RLHF lesson. Take the lone correct answer, $\hat A = 1.732$. One of its tokens had probability 0.40 under the old policy and 0.52 now, so $\rho = 1.3$. Unclipped, $1.3 \times 1.732 = 2.252$. Clipped at $1 + \varepsilon = 1.2$, it's $2.078$. The min takes 2.078, so there's no extra reward for pushing that token further on this batch.
 
+      The KL term is estimated per token as $\frac{\pi_\text{ref}}{\pi_\theta} - \log\frac{\pi_\text{ref}}{\pi_\theta} - 1$, which is never negative. If the reference model gave that token 0.40, the penalty is $0.769 - \log 0.769 - 1 \approx 0.032$, multiplied by $\beta$. DeepSeekMath used $\beta = 0.04$, sampled 64 outputs per question, and scored them with a learned reward model rather than a rule-based checker.
+      :::
 
-    Document which states the objective compares, how it clips or penalizes changes, and whether it averages
-    over tokens or sequences. Sampled data can become stale as the current policy changes. To judge the recipe,
-    compare results on held-out problems and total compute cost as well as training reward.'
-  bridges: []
-- id: group-relative-policy-learning.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.group-relative-policy-learning
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: GRPO compares responses with others in the same group. The learning signal depends on the rewards,
-    their spread, and how the responses were sampled.
-- id: group-relative-policy-learning.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.group-relative-policy-learning
-  markdown: GRPO compares responses with others in the same group. The learning signal depends on the rewards,
-    their spread, and how the responses were sampled.
-  text_mode: GRPO compares responses with others in the same group. The learning signal depends on the rewards,
-    their spread, and how the responses were sampled.
+      One difference from the PPO-based RLHF in the post-training module: there, the KL penalty was folded into each response's reward. GRPO adds it to the loss as its own term, so it doesn't disturb the group comparison.
+
+      :::mixup "GRPO drops the critic, so it's cheaper in every way."
+      It saves the critic's memory and training. But it needs $G$ full answers for every question, so it spends more on *generation*: 64 samples per question in DeepSeekMath. It trades a network for samples. That trade pays off when rewards are cheap to check and the GPUs can generate in large batches.
+      :::
+    bridges: []
+  - id: group-relative-policy-learning.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.group-relative-policy-learning
+    markdown: A few group advantages to compute by hand, plus a nearly solved problem set, a partial-credit coding task, and a tight GPU budget, test whether you can predict what GRPO learns.
+    takeaway: |-
+      GRPO samples a group of answers per question and uses the group's mean and spread as the baseline, so no critic is needed. It learns only when the group disagrees, and rare successes or failures get the biggest pushes.
+  - id: group-relative-policy-learning.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.group-relative-policy-learning
+    markdown: |-
+      GRPO compares responses with others in the same group. The learning signal depends on the rewards, their spread, and how the responses were sampled.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - group-relative-policy-learning.s1
-    - group-relative-policy-learning.s2
-    - group-relative-policy-learning.s3
-    - group-relative-policy-learning.s4
-    - group-relative-policy-learning.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - group-relative-policy-learning.s1
+        - group-relative-policy-learning.s2
+        - group-relative-policy-learning.s3
+        - group-relative-policy-learning.s4
+        - group-relative-policy-learning.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     group-relative-policy-learning.recap: group-relative-policy-learning.check
 assessment_families:
-- id: group-relative-policy-learning.base
-  objective_ref: objective.group-relative-policy-learning
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Calculate centered scores: trace the inputs, operation, and result before choosing.'
-  remediation_scene: group-relative-policy-learning.s2
-  variants:
-  - id: group-relative-policy-learning.base.1
-    prompt: Rewards 0, 1, 1 have mean what?
-    options:
-    - id: a
-      text: Two-thirds
-    - id: b
-      text: One
-    - id: c
-      text: Zero
-    answer: a
-    feedback: The total two is divided by three responses.
-  - id: group-relative-policy-learning.base.2
-    prompt: What happens to centered relative signals if all rewards are identical?
-    options:
-    - id: b
-      text: They prove every solution is correct
-    - id: c
-      text: They automatically select one best response
-    - id: a
-      text: They provide no within-group distinction
-    answer: a
-    feedback: Equal scores cannot rank the group.
-- id: group-relative-policy-learning.transfer
-  objective_ref: objective.group-relative-policy-learning
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Keep the objective and rollout state explicit: trace the inputs, operation, and result before choosing.'
-  remediation_scene: group-relative-policy-learning.s4
-  variants:
-  - id: group-relative-policy-learning.transfer.1
-    prompt: What does the original group baseline replace?
-    options:
-    - id: b
-      text: The need for rewards
-    - id: c
-      text: All policy parameters
-    - id: a
-      text: A separately learned value baseline in that formulation
-    answer: a
-    feedback: Relative group statistics supply the comparison signal.
-  - id: group-relative-policy-learning.transfer.2
-    prompt: Why state token-versus-sequence normalization?
-    options:
-    - id: c
-      text: It guarantees identical objectives
-    - id: a
-      text: It can change how response lengths influence updates
-    - id: b
-      text: It only changes file formatting
-    answer: a
-    feedback: Averaging conventions affect the optimization target.
+  - id: group-relative-policy-learning.base
+    objective_ref: objective.group-relative-policy-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Calculate centered scores: trace the inputs, operation, and result before choosing.'
+    remediation_scene: group-relative-policy-learning.s2
+    variants:
+      - id: group-relative-policy-learning.base.1
+        prompt: Rewards 0, 1, 1 have mean what?
+        options:
+          - id: a
+            text: Two-thirds
+          - id: b
+            text: One
+          - id: c
+            text: Zero
+        answer: a
+        feedback: The total two is divided by three responses.
+        retired: true
+      - id: group-relative-policy-learning.base.2
+        prompt: What happens to centered relative signals if all rewards are identical?
+        options:
+          - id: b
+            text: They prove every solution is correct
+          - id: c
+            text: They automatically select one best response
+          - id: a
+            text: They provide no within-group distinction
+        answer: a
+        feedback: Equal scores cannot rank the group.
+        retired: true
+  - id: group-relative-policy-learning.transfer
+    objective_ref: objective.group-relative-policy-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Keep the objective and rollout state explicit: trace the inputs, operation, and result before choosing.'
+    remediation_scene: group-relative-policy-learning.s4
+    variants:
+      - id: group-relative-policy-learning.transfer.1
+        prompt: What does the original group baseline replace?
+        options:
+          - id: b
+            text: The need for rewards
+          - id: c
+            text: All policy parameters
+          - id: a
+            text: A separately learned value baseline in that formulation
+        answer: a
+        feedback: Relative group statistics supply the comparison signal.
+        retired: true
+      - id: group-relative-policy-learning.transfer.2
+        prompt: Why state token-versus-sequence normalization?
+        options:
+          - id: c
+            text: It guarantees identical objectives
+          - id: a
+            text: It can change how response lengths influence updates
+          - id: b
+            text: It only changes file formatting
+        answer: a
+        feedback: Averaging conventions affect the optimization target.
+        retired: true
+  - id: group-relative-policy-learning.base.v2
+    objective_ref: objective.group-relative-policy-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Every answer is judged only against its own group. Ask what the group mean and spread are, and what that leaves for this answer.
+    remediation_scene: group-relative-policy-learning.s2
+    variants:
+      - id: group-relative-policy-learning.base.v2.1
+        prompt: In GRPO, what serves as the baseline that a sampled answer's reward is compared with?
+        options:
+          - id: b
+            text: A value network's estimate of the expected reward at each token
+          - id: a
+            text: The average reward of the group sampled for the same question
+          - id: c
+            text: The reward the frozen reference model earned on that question
+        answer: a
+        feedback: GRPO samples G answers per question and uses their mean reward as the baseline. Dropping the value network is the whole point, and the reference model is used only for the KL penalty, not as a baseline.
+      - id: group-relative-policy-learning.base.v2.2
+        prompt: Why does GRPO need less memory than PPO when training a language model?
+        options:
+          - id: a
+            text: It drops the critic, which is usually about as big as the policy
+          - id: b
+            text: It keeps only the single best answer from each sampled group
+          - id: c
+            text: It skips the reference model and the KL penalty that uses it
+        answer: a
+        feedback: PPO trains a value network roughly the size of the policy; GRPO replaces it with group statistics. GRPO still trains on the whole group, and it keeps a reference model for its KL term.
+      - id: group-relative-policy-learning.base.v2.3
+        prompt: All eight answers in a GRPO group are correct. Apart from the KL term, what does the policy learn from this question?
+        options:
+          - id: c
+            text: It reinforces the shortest of the eight correct answers most
+          - id: b
+            text: It strongly reinforces all eight, since each one earned reward
+          - id: a
+            text: Nothing, since every answer's advantage works out to zero
+        answer: a
+        feedback: Every reward equals the group mean, so every advantage is 0 and the clipped term contributes no gradient. GRPO learns only where answers disagree. Earning reward isn't enough; an answer has to beat its siblings.
+      - id: group-relative-policy-learning.base.v2.4
+        prompt: In outcome-supervised GRPO, how is an answer's advantage spread over its tokens?
+        options:
+          - id: a
+            text: Every token in the answer gets the same normalized reward
+          - id: b
+            text: Only the final token gets it, where the reward is earned
+          - id: c
+            text: Tokens nearer the end get a larger share of the reward
+        answer: a
+        feedback: With one reward per answer, GRPO sets the advantage of every token to that answer's normalized reward. It has no way to single out which tokens mattered; the process-reward lesson looks at scoring individual steps.
+      - id: group-relative-policy-learning.base.v2.5
+        prompt: How does GRPO apply its KL penalty, compared with the PPO-based RLHF setup?
+        options:
+          - id: b
+            text: It subtracts the KL from each answer's reward before normalizing
+          - id: a
+            text: It adds the KL to the loss as a separate term, not to the reward
+          - id: c
+            text: It drops the KL penalty and relies on ratio clipping instead
+        answer: a
+        feedback: DeepSeekMath adds the KL divergence directly to the loss, so it doesn't distort the group-relative advantages. PPO-based RLHF folds it into the reward instead. GRPO uses both clipping and a KL term.
+  - id: group-relative-policy-learning.transfer.v2
+    objective_ref: objective.group-relative-policy-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Work out what the group rewards look like in this situation, then what dividing by their spread does to them.
+    remediation_scene: group-relative-policy-learning.s3
+    variants:
+      - id: group-relative-policy-learning.transfer.v2.1
+        prompt: A team runs GRPO with G = 8 on a problem set the model already solves 95% of the time. Training barely moves. What is the most likely reason?
+        options:
+          - id: a
+            text: Most groups are all correct, so most advantages are zero
+          - id: b
+            text: G = 8 is too large a group for the critic network to fit
+          - id: c
+            text: The KL penalty is cancelling out the correct answers' rewards
+        answer: a
+        feedback: At p = 0.95, a group of 8 is all correct about 66% of the time (0.95⁸ ≈ 0.663), and those groups give no signal. Harder problems, or filtering out all-agree groups as DAPO does, restore it. GRPO has no critic to fit.
+      - id: group-relative-policy-learning.transfer.v2.2
+        prompt: A coding task's reward is the fraction of 10 tests passed. A group scores 0.9, 0.9, 1.0, 0.9. What advantage does the 1.0 answer get?
+        options:
+          - id: c
+            text: About 0, since each answer passed most of the tests
+          - id: a
+            text: About +1.73, since the group's spread is very small
+          - id: b
+            text: About +0.1, since it is just 0.1 better than the rest
+        answer: a
+        feedback: The mean is 0.925 and the standard deviation about 0.043, so (1.0 − 0.925) ÷ 0.043 ≈ +1.73. Dividing by the spread makes small gaps count as much as big ones. The raw gap of 0.1 is exactly what the division rescales.
+      - id: group-relative-policy-learning.transfer.v2.3
+        prompt: Your GPUs can hold the policy and a frozen reference model, but not another network of the same size. Which method fits?
+        options:
+          - id: b
+            text: PPO with a learned critic, since it needs no second network
+          - id: c
+            text: Neither; reinforcement learning always needs a critic
+          - id: a
+            text: GRPO, since the group mean takes the place of the critic
+        answer: a
+        feedback: GRPO was designed for this. The group average replaces PPO's critic, which is usually about as big as the policy. REINFORCE-style methods like GRPO show that a learned critic isn't required, just a baseline.
+        retired: true
+      - id: group-relative-policy-learning.transfer.v2.4
+        prompt: A support-chat model is trained with GRPO using a learned reward model. Within most groups, rewards differ only by tiny amounts caused by the reward model's noise. What does dividing by the group's standard deviation do?
+        options:
+          - id: a
+            text: Scales the noise up into full-sized advantages
+          - id: b
+            text: Shrinks all the advantages toward zero
+          - id: c
+            text: Removes the noise, since the mean is subtracted
+        answer: a
+        feedback: When the spread is tiny, dividing by it blows small differences up to advantages near ±1 or more, so noise is trained on as if it were signal. Subtracting the mean shifts rewards; it doesn't remove noise between answers.
+      - id: group-relative-policy-learning.transfer.v2.5
+        prompt: You're training a maths model with an answer checker. Your GPUs hold the policy and a frozen reference model, but no third network of that size. Which setup fits?
+        options:
+          - id: b
+            text: PPO, with the frozen reference model reused as the critic
+          - id: a
+            text: GRPO, sampling several answers per question for a group baseline
+          - id: c
+            text: PPO with a critic of the same size, run with a smaller batch
+        answer: a
+        feedback: GRPO needs no critic, because each group's average reward is the baseline, so the policy and reference model fit. A critic must be trained to predict reward, so a frozen reference model can't stand in for one, and a smaller batch doesn't shrink a policy-sized critic.
+  - id: group-relative-policy-learning.calculate
+    objective_ref: objective.group-relative-policy-learning
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Find the group mean, then the standard deviation (divide the summed squared gaps by G, then take the square root), then compute (reward − mean) ÷ std.
+    remediation_scene: group-relative-policy-learning.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: group-relative-policy-learning.calculate.1
+        prompt: A GRPO group of 4 answers earns rewards 1, 0, 0, 0. Using the standard deviation that divides by G, what is the advantage of the correct answer?
+        answer: 1.732
+        feedback: The mean is 0.25 and the standard deviation is √((0.75² + 3 × 0.25²) ÷ 4) = √0.1875 ≈ 0.433. So (1 − 0.25) ÷ 0.433 ≈ 1.732.
+      - id: group-relative-policy-learning.calculate.2
+        prompt: A GRPO group of 4 answers earns rewards 1, 1, 1, 0. Using the standard deviation that divides by G, what is the advantage of the wrong answer?
+        answer: -1.732
+        feedback: The mean is 0.75 and the standard deviation is ≈ 0.433. So (0 − 0.75) ÷ 0.433 ≈ −1.732, the mirror image of a lone success.
+      - id: group-relative-policy-learning.calculate.3
+        prompt: A GRPO group of 8 answers has 2 correct (reward 1) and 6 wrong (reward 0). Using the standard deviation that divides by G, what is the advantage of each wrong answer?
+        answer: -0.577
+        feedback: The mean is 0.25 and the standard deviation is √(0.25 × 0.75) ≈ 0.433. So (0 − 0.25) ÷ 0.433 ≈ −0.577.
+      - id: group-relative-policy-learning.calculate.4
+        prompt: A partial-credit task gives a group of 3 answers rewards 0.2, 0.6, and 1.0. Using the standard deviation that divides by G, what is the advantage of the 1.0 answer?
+        answer: 1.225
+        feedback: The mean is 0.6. The squared gaps are 0.16, 0, and 0.16, so the standard deviation is √(0.32 ÷ 3) ≈ 0.327. The advantage is 0.4 ÷ 0.327 ≈ 1.225.
+      - id: group-relative-policy-learning.calculate.5
+        prompt: A GRPO group of 4 answers earns rewards 1, 0, 1, 0. Using the standard deviation that divides by G, what is the advantage of a correct answer?
+        answer: 1
+        feedback: The mean is 0.5 and every reward is 0.5 away from it, so the standard deviation is 0.5 and the advantage is 0.5 ÷ 0.5 = 1.

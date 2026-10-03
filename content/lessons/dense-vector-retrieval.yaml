@@ -1,192 +1,416 @@
 schema_version: 0.2-draft
 lesson:
   id: dense-vector-retrieval
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Search learned representations with approximate neighbors
   state: draft
-  summary: Search by learned meaning while checking what faster search misses.
+  summary: '"When do I get my money back?" shares no words with the refunds page. See how vector search finds it anyway, and what the fast index quietly skips.'
   slot: M26.2
   category: learning
   sources:
-  - title: Dense Passage Retrieval
-    url: https://arxiv.org/abs/2004.04906
-  - title: HNSW
-    url: https://arxiv.org/abs/1603.09320
-  - title: Introduction to Information Retrieval — authors’ online edition
-    url: https://nlp.stanford.edu/IR-book/
+    - title: Dense Passage Retrieval for Open-Domain Question Answering (Karpukhin et al., 2020)
+      url: https://arxiv.org/abs/2004.04906
+    - title: "ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT (Khattab & Zaharia, 2020)"
+      url: https://arxiv.org/abs/2004.12832
+    - title: Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs (Malkov & Yashunin)
+      url: https://arxiv.org/abs/1603.09320
+    - title: Introduction to Information Retrieval — authors’ online edition
+      url: https://nlp.stanford.edu/IR-book/
 objectives:
-- id: objective.dense-vector-retrieval
-  version: 1-draft
-  statement: Dense retrieval compares query and document embeddings, often using approximate nearest-neighbor
-    indexes; similarity, index recall, and task relevance must be evaluated separately.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - dense-vector-retrieval.base
-  - dense-vector-retrieval.transfer
-  prerequisites:
-  - anyOf:
-    - objective.lexical-information-retrieval
-  - anyOf:
-    - objective.embeddings
+  - id: objective.dense-vector-retrieval
+    version: 2-draft
+    statement: Dense retrieval compares query and document embeddings, often with an approximate index; check similarity, index recall, and real relevance separately.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - dense-vector-retrieval.base.v2
+      - dense-vector-retrieval.transfer.v2
+      - dense-vector-retrieval.calc
+    prerequisites:
+      - anyOf:
+          - objective.lexical-information-retrieval
+      - anyOf:
+          - objective.embeddings
 scenes:
-- id: dense-vector-retrieval.s1
-  title: Encode queries and documents
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.dense-vector-retrieval
-  markdown: 'A **dual encoder** encodes queries and passages separately into a compatible vector space. The
-    two encoders may share weights or use different weights. Dot product or cosine similarity ranks candidates.
-    Training pairs shape what nearby means: semantic relatedness, answer usefulness, and exact factual support
-    are different targets.'
-  text_mode: 'A **dual encoder** encodes queries and passages separately into a compatible vector space. The
-    two encoders may share weights or use different weights. Dot product or cosine similarity ranks candidates.
-    Training pairs shape what nearby means: semantic relatedness, answer usefulness, and exact factual support
-    are different targets.'
-  bridges: []
-- id: dense-vector-retrieval.s2
-  title: Trade exact search for a faster index
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.dense-vector-retrieval
-  markdown: Exact search compares against every stored vector. Approximate nearest-neighbor methods use structures
-    such as graphs, partitions, or compressed codes to reduce work. They can miss some true nearest neighbors;
-    index parameters trade memory, latency, and recall.
-  text_mode: Exact search compares against every stored vector. Approximate nearest-neighbor methods use structures
-    such as graphs, partitions, or compressed codes to reduce work. They can miss some true nearest neighbors;
-    index parameters trade memory, latency, and recall.
-  bridges: []
-- id: dense-vector-retrieval.s3
-  title: Separate two kinds of recall
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.dense-vector-retrieval
-  markdown: 'If exact vector search ranks the relevant document poorly, the representation or query may be
-    at fault. If approximate search misses a relevant exact neighbor, the index introduces additional error.
-    Measure both neighbor recall against an exact reference and task relevance against judgments.
+  - id: dense-vector-retrieval.s1
+    title: '"Money back" never says "refund"'
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.dense-vector-retrieval
+    markdown: |-
+      In the last lesson, a Sprocket Bikes customer asked *how long until I get my money back?* and BM25 scored every document zero. The refunds page answers it perfectly, in different words.
 
+      **Dense retrieval** compares meanings instead of words. A trained neural network, the **encoder**, turns each document into an embedding, a vector of a few hundred numbers (as in the embeddings lesson), placed so that texts about similar things land near each other. At question time the question is encoded too, and search returns the documents whose vectors are closest. "Money back" and "refund" end up neighbors because the encoder was trained on many examples where they meant the same thing.
 
-    Imagine exact search returns document IDs [A, B, C] as its top three neighbors. An approximate index returns
-    [A, C, D], so neighbor recall at three is 2/3. If only B actually answers the question, this search has
-    lost the useful evidence despite retaining two close neighbors.'
-  text_mode: 'If exact vector search ranks the relevant document poorly, the representation or query may be
-    at fault. If approximate search misses a relevant exact neighbor, the index introduces additional error.
-    Measure both neighbor recall against an exact reference and task relevance against judgments.
+      Documents are encoded once, ahead of time; only the short query is encoded per search. Encoding the query and each document separately like this is called a **dual encoder** (or bi-encoder).
 
+      :::papers Dense Passage Retrieval (Karpukhin et al., 2020)
+      DPR trained two BERT encoders, one for questions and one for passages, on question–passage pairs, using the other passages in each training batch as wrong answers. The score is a plain dot product, $\text{sim}(q,p) = E_Q(q)^\top E_P(p)$. On several open-domain question-answering benchmarks, DPR found an answer-bearing passage in its top 20 more often than BM25.
+      :::
+    bridges: []
+  - id: dense-vector-retrieval.cosine
+    title: Closeness is an angle
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.dense-vector-retrieval
+    markdown: |-
+      Real embeddings have hundreds of dimensions. To see the arithmetic, pretend ours have three, which we'll label *money back*, *battery*, and *how long*. The question becomes $q = [0.8, 0, 0.6]$ and the refunds page $d = [0.6, 0, 0.8]$.
 
-    Imagine exact search returns document IDs [A, B, C] as its top three neighbors. An approximate index returns
-    [A, C, D], so neighbor recall at three is 2/3. If only B actually answers the question, this search has
-    lost the useful evidence despite retaining two close neighbors.'
-  bridges: []
-- id: dense-vector-retrieval.s4
-  title: Preserve representation compatibility
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.dense-vector-retrieval
-  markdown: Query and document encoders, normalization, dimensions, and distance metric must agree. Changing
-    an embedding model usually requires rebuilding affected document vectors and indexes. Similarity alone
-    does not verify facts, access permissions, or whether a document is current.
-  text_mode: Query and document encoders, normalization, dimensions, and distance metric must agree. Changing
-    an embedding model usually requires rebuilding affected document vectors and indexes. Similarity alone
-    does not verify facts, access permissions, or whether a document is current.
-  bridges: []
-- id: dense-vector-retrieval.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.dense-vector-retrieval
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Dense retrieval finds nearby vectors. Check both whether the index finds the intended neighbors
-    and whether those neighbors contain useful evidence.
-- id: dense-vector-retrieval.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.dense-vector-retrieval
-  markdown: Dense retrieval finds nearby vectors. Check both whether the index finds the intended neighbors
-    and whether those neighbors contain useful evidence.
-  text_mode: Dense retrieval finds nearby vectors. Check both whether the index finds the intended neighbors
-    and whether those neighbors contain useful evidence.
+      **Cosine similarity** measures the angle between two vectors: 1 means same direction, 0 means unrelated.
+
+      $$\cos(q,d) = \frac{q \cdot d}{\lVert q\rVert\,\lVert d\rVert}$$
+
+      The dot product is $0.8 \times 0.6 + 0 \times 0 + 0.6 \times 0.8 = 0.96$. Both vectors have length 1, so the cosine is 0.96.
+
+      ```python run
+      import numpy as np
+
+      # Toy 3-number "embeddings". Dimensions: [money back, battery, how long]
+      docs = {
+          "returns":  [0.6, 0.8, 0.0],
+          "battery":  [0.0, 1.0, 0.0],
+          "shipping": [0.0, 0.0, 1.0],
+          "refunds":  [0.6, 0.0, 0.8],
+          "chargers": [0.0, 1.0, 0.0],
+      }
+      query = np.array([0.8, 0.0, 0.6])  # "how long until I get my money back"
+
+      def cosine(a, b):
+          return a @ b / (np.linalg.norm(a) * np.linalg.norm(b))
+
+      ranked = sorted(docs, key=lambda d: -cosine(query, np.array(docs[d])))
+      for name in ranked:
+          vec = np.array(docs[name])
+          print(f"{name:9} cosine = {cosine(query, vec):.2f}   dot = {query @ vec:.2f}")
+      ```
+
+      Refunds comes first (0.96), then shipping (0.60), then returns (0.48). The page BM25 couldn't see is now on top.
+
+      :::predict Change the returns vector to [1.2, 1.6, 0.0]: same direction, twice as long. What happens to its cosine and its dot product?
+      Its cosine stays 0.48, because the angle hasn't changed. Its dot product doubles to 0.96 and ties the refunds page. A plain dot product rewards long vectors, so many systems normalize every vector to length 1, which makes the dot product equal the cosine.
+      :::
+    bridges: []
+  - id: dense-vector-retrieval.encoders
+    title: Read separately or read together
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.dense-vector-retrieval
+    markdown: |-
+      A dual encoder never sees the question and the document together. That makes it fast, and also limits it. A **cross-encoder** reads the question and one document together and outputs a relevance score, so every word of each can influence the other.
+
+      | | Dual encoder | Cross-encoder |
+      | --- | --- | --- |
+      | Reads | Query and document separately | Query and document together |
+      | Document work at search time | None (vectors precomputed) | One full model run per document |
+      | Good for | Searching millions of documents | Carefully ordering a few dozen |
+      | Weak at | Fine distinctions, negation | Speed |
+
+      So the two are used in sequence: a dual encoder picks candidates, and a cross-encoder reranks the short list (the hybrid-search lesson builds this).
+
+      :::mixup "A high similarity score means the document says what I asked about."
+      Similarity measures topic, not truth. "Opened batteries cannot be returned" and "Opened batteries can be returned" usually land very close together, because one vector for a whole passage captures its topic far more than a small negation. Similarity finds candidates; something else must check what they say.
+      :::
+
+      :::deeper Late interaction: ColBERT
+      ColBERT (Khattab & Zaharia, 2020) sits between the two designs. It stores one vector per token of every document. At search time, each query token finds its most similar document token, and those maximum similarities are summed. Documents are still encoded ahead of time, but word-level matching survives.
+      :::
+    bridges: []
+  - id: dense-vector-retrieval.s2
+    title: Skip most of the collection, on purpose
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.dense-vector-retrieval
+    markdown: |-
+      **Exact search** compares the query with every stored vector: for 10 million chunks of 768 numbers, about 7.7 billion multiplications per question. **Approximate nearest-neighbor (ANN)** search checks only a small part of the collection and accepts that it will sometimes miss a true neighbor. Two designs dominate:
+
+      - **IVF** (inverted file index): cluster the vectors into, say, 1,000 groups (usually with k-means), each with a center. Like the inverted index in the last lesson, each center keeps a list of the vectors filed under it. Scan only the groups whose centers are closest to the query. The number scanned is the knob, often called `nprobe`.
+      - **HNSW** (hierarchical navigable small world, Malkov & Yashunin): link each vector to some near neighbors in a layered graph. A search starts in a sparse top layer, keeps hopping to whichever neighbor is closer to the query, and drops a layer when no hop helps. The knob is how many candidates the walk keeps (often `ef`).
+
+      This simulation builds a small IVF index over 5,000 clustered vectors and measures what fraction of the exact top 10 it finds.
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(0)
+      topics = rng.normal(size=(20, 16))
+      docs = topics[rng.integers(0, 20, 5000)] + rng.normal(size=(5000, 16))
+      docs /= np.linalg.norm(docs, axis=1, keepdims=True)   # unit length: dot = cosine
+
+      # IVF index: 50 random documents act as centroids (real IVF runs k-means),
+      # and every document is filed under its nearest centroid.
+      centroids = docs[rng.choice(5000, 50, replace=False)]
+      lists = np.argmax(docs @ centroids.T, axis=1)
+
+      queries = docs[:200] + 0.5 * rng.normal(size=(200, 16))
+      for nprobe in (1, 3, 10, 50):
+          found, scanned = 0, 0
+          for q in queries:
+              exact = set(np.argsort(-(docs @ q))[:10])      # true top 10
+              near = np.argsort(-(centroids @ q))[:nprobe]    # closest lists
+              cand = np.flatnonzero(np.isin(lists, near))     # only search these
+              approx = set(cand[np.argsort(-(docs[cand] @ q))[:10]])
+              found += len(exact & approx)
+              scanned += len(cand)
+          print(f"probe {nprobe:2} lists: recall@10 = {found / 2000:.2f}, "
+                f"scanned {scanned / 200 / 5000:.0%} of vectors")
+      ```
+
+      Probing 1 list scans 2% of the vectors and finds 30% of the true top 10. Probing 10 lists scans 21% and finds 88%. Probing all 50 is exact search again. Try other `nprobe` values and look for the point where extra scanning stops buying much recall.
+    bridges: []
+  - id: dense-vector-retrieval.s3
+    title: Two different recalls
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.dense-vector-retrieval
+    markdown: |-
+      The recall in that simulation compares the ANN index with exact search. It says nothing about whether the results answer anyone's question. Keep the two apart:
+
+      | Measure | Compares | A low value means |
+      | --- | --- | --- |
+      | **Index recall@k** | ANN top $k$ vs. exact top $k$ | The index settings are skipping true neighbors |
+      | **Task recall@k** | Top $k$ vs. relevance judgments | The encoder or query doesn't put the answer near the question |
+
+      Sprocket's help center has grown to 20,000 chunks. For one question, exact search returns chunks [A, B, C, D, E]; the ANN index returns [A, C, B, F, E]. Four of the five exact neighbors appear, so index recall@5 = 4/5 = 0.8. But chunk D is the one that answers the question, and the index dropped it. That loss is the index's fault: raise `nprobe` or `ef`. If exact search had ranked D 40th, no index setting would help; you'd look at the encoder, the query wording, or the chunking.
+    bridges: []
+  - id: dense-vector-retrieval.s4
+    title: One model for queries and documents
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.dense-vector-retrieval
+    markdown: |-
+      Vectors from different encoders live in different spaces: coordinate 17 in one model means nothing in another, even when the lengths match. If Sprocket encodes new questions with an upgraded model while stored documents keep their old vectors, the similarities become noise. When the model changes, re-encode every document and rebuild the index. Store the model name beside each vector so a mismatch is easy to catch.
+    bridges: []
+  - id: dense-vector-retrieval.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.dense-vector-retrieval
+    markdown: A law firm's model upgrade, a parts catalog, a music service's index, and a few recall calculations test whether you can tell a similarity problem from an index problem.
+    takeaway: |-
+      Dense retrieval finds documents whose vectors point the same way as the question's, so it matches meaning even without shared words. Fast ANN indexes skip some true neighbors, so measure index recall against exact search and task recall against real answers.
+  - id: dense-vector-retrieval.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.dense-vector-retrieval
+    markdown: |-
+      Dense retrieval finds nearby vectors. Check both whether the index finds the intended neighbors and whether those neighbors contain useful evidence.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - dense-vector-retrieval.s1
-    - dense-vector-retrieval.s2
-    - dense-vector-retrieval.s3
-    - dense-vector-retrieval.s4
-    - dense-vector-retrieval.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - dense-vector-retrieval.s1
+        - dense-vector-retrieval.cosine
+        - dense-vector-retrieval.encoders
+        - dense-vector-retrieval.s2
+        - dense-vector-retrieval.s3
+        - dense-vector-retrieval.s4
+        - dense-vector-retrieval.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     dense-vector-retrieval.recap: dense-vector-retrieval.check
 assessment_families:
-- id: dense-vector-retrieval.base
-  objective_ref: objective.dense-vector-retrieval
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trade exact search for a faster index: trace the inputs, operation, and result before choosing.'
-  remediation_scene: dense-vector-retrieval.s2
-  variants:
-  - id: dense-vector-retrieval.base.1
-    prompt: What does approximate nearest-neighbor search trade?
-    options:
-    - id: b
-      text: All semantics for exact proof
-    - id: c
-      text: Only label spelling
-    - id: a
-      text: Some retrieval exactness for resource savings
-    answer: a
-    feedback: Approximation can reduce work while missing neighbors.
-  - id: dense-vector-retrieval.base.2
-    prompt: Exact vector search already misses relevant passages. What should be inspected?
-    options:
-    - id: c
-      text: Only the UI color
-    - id: a
-      text: Representation quality and query-task fit
-    - id: b
-      text: Only approximate-index settings
-    answer: a
-    feedback: An exact search cannot fix a poor similarity geometry.
-- id: dense-vector-retrieval.transfer
-  objective_ref: objective.dense-vector-retrieval
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Preserve representation compatibility: trace the inputs, operation, and result before choosing.'
-  remediation_scene: dense-vector-retrieval.s4
-  variants:
-  - id: dense-vector-retrieval.transfer.1
-    prompt: Why rebuild document embeddings after an incompatible encoder change?
-    options:
-    - id: c
-      text: Only to change file dates
-    - id: a
-      text: Old and new vectors may no longer share a meaningful space
-    - id: b
-      text: Vector dimensions never matter
-    answer: a
-    feedback: Compatibility is part of the retrieval contract.
-  - id: dense-vector-retrieval.transfer.2
-    prompt: Does high cosine similarity verify factual support?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if vectors are normalized
-    answer: a
-    feedback: Similarity is a learned retrieval signal, not a truth proof.
+  - id: dense-vector-retrieval.base
+    objective_ref: objective.dense-vector-retrieval
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trade exact search for a faster index: trace the inputs, operation, and result before choosing.'
+    remediation_scene: dense-vector-retrieval.s2
+    variants:
+      - id: dense-vector-retrieval.base.1
+        prompt: What does approximate nearest-neighbor search trade?
+        options:
+          - id: b
+            text: All semantics for exact proof
+          - id: c
+            text: Only label spelling
+          - id: a
+            text: Some retrieval exactness for resource savings
+        answer: a
+        feedback: Approximation can reduce work while missing neighbors.
+        retired: true
+      - id: dense-vector-retrieval.base.2
+        prompt: Exact vector search already misses relevant passages. What should be inspected?
+        options:
+          - id: c
+            text: Only the UI color
+          - id: a
+            text: Representation quality and query-task fit
+          - id: b
+            text: Only approximate-index settings
+        answer: a
+        feedback: An exact search cannot fix a poor similarity geometry.
+        retired: true
+  - id: dense-vector-retrieval.transfer
+    objective_ref: objective.dense-vector-retrieval
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Preserve representation compatibility: trace the inputs, operation, and result before choosing.'
+    remediation_scene: dense-vector-retrieval.s4
+    variants:
+      - id: dense-vector-retrieval.transfer.1
+        prompt: Why rebuild document embeddings after an incompatible encoder change?
+        options:
+          - id: c
+            text: Only to change file dates
+          - id: a
+            text: Old and new vectors may no longer share a meaningful space
+          - id: b
+            text: Vector dimensions never matter
+        answer: a
+        feedback: Compatibility is part of the retrieval contract.
+        retired: true
+      - id: dense-vector-retrieval.transfer.2
+        prompt: Does high cosine similarity verify factual support?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if vectors are normalized
+        answer: a
+        feedback: Similarity is a learned retrieval signal, not a truth proof.
+        retired: true
+  - id: dense-vector-retrieval.base.v2
+    objective_ref: objective.dense-vector-retrieval
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Keep three things apart: what the encoder places near the question, what the fast index actually checks, and what the document actually says."
+    remediation_scene: dense-vector-retrieval.cosine
+    variants:
+      - id: dense-vector-retrieval.base.v2.1
+        prompt: A dual encoder can search 10 million documents quickly, while a cross-encoder can't. What makes the difference?
+        options:
+          - id: b
+            text: The dual encoder uses shorter vectors, so each comparison is cheaper
+          - id: a
+            text: Document vectors don't depend on the query, so they're computed in advance
+          - id: c
+            text: The dual encoder skips documents that share no words with the query
+        answer: a
+        feedback: Because each document is encoded on its own, its vector can be stored before any question arrives; only the query is encoded at search time. A cross-encoder must run the model on every query–document pair. Skipping documents with no shared words is what keyword search does.
+      - id: dense-vector-retrieval.base.v2.2
+        prompt: A vector index ranks by raw dot product. Long, rambling pages keep outranking short, focused ones, and their vectors turn out to be much longer. What change targets this?
+        options:
+          - id: c
+            text: Switch to a larger embedding model with more dimensions
+          - id: b
+            text: Probe more IVF lists so that the short pages are found
+          - id: a
+            text: Normalize every vector to length 1, so the score becomes cosine
+        answer: a
+        feedback: The dot product grows with vector length, while cosine depends only on direction. Probing more lists changes which vectors are checked, not how they're scored, and a bigger model doesn't remove the length effect.
+      - id: dense-vector-retrieval.base.v2.3
+        prompt: For a test question, exact vector search ranks the answering passage 40th, and the ANN index doesn't return it at all. Where should you look first?
+        options:
+          - id: a
+            text: The encoder, query wording, or chunking, since exact search misses it too
+          - id: b
+            text: The ANN settings, since raising nprobe or ef should recover the passage
+          - id: c
+            text: The passage's length, since cosine favors longer passages
+        answer: a
+        feedback: Exact search is the best any index can do, and it already ranks the passage 40th, so the problem is where the passage sits relative to the question. Better ANN settings can only get closer to exact search. Cosine ignores vector length.
+      - id: dense-vector-retrieval.base.v2.4
+        prompt: '"Opened batteries cannot be returned" and "Opened batteries can be returned" get a cosine similarity of 0.97. Why is this expected?'
+        options:
+          - id: b
+            text: Cosine ignores word order, so the encoder never sees the word "not"
+          - id: c
+            text: The index is approximate, so it blurs sentences that are near each other
+          - id: a
+            text: A single vector captures the shared topic much more than a small negation
+        answer: a
+        feedback: Both sentences are about returning opened batteries, and one passage-level vector mostly encodes that. Encoders do read "cannot"; it just moves the vector a little. The index only affects which vectors are compared, not their similarity.
+  - id: dense-vector-retrieval.transfer.v2
+    objective_ref: objective.dense-vector-retrieval
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide whether the failure lies in the vectors themselves, in the index that searches them, or in treating similarity as proof.
+    remediation_scene: dense-vector-retrieval.s3
+    variants:
+      - id: dense-vector-retrieval.transfer.v2.1
+        prompt: A law firm upgrades its embedding model. New questions are encoded with the new model, but the 2 million stored contracts keep their old vectors. Search results turn nearly random. What fixes it?
+        options:
+          - id: a
+            text: Re-encode all stored contracts with the new model and rebuild the index
+          - id: c
+            text: Normalize the old vectors so they can be compared with the new ones
+          - id: b
+            text: Increase the number of lists probed so the right contracts are found
+        answer: a
+        feedback: Two models produce two unrelated coordinate systems, so comparing across them is meaningless. Normalizing only fixes lengths, not what the coordinates mean, and probing more lists still compares mismatched vectors.
+      - id: dense-vector-retrieval.transfer.v2.2
+        prompt: A parts catalog uses only vector search. A search for "bearing 6204-2RS" returns "6205-2RS" and "6203-2RS" above the exact part. What is the most likely cause?
+        options:
+          - id: c
+            text: The index is approximate and skipped the exact part number
+          - id: a
+            text: Embeddings place near-identical codes close together, blurring the digits
+          - id: b
+            text: The vectors weren't normalized, so longer part pages scored higher
+        answer: a
+        feedback: To an encoder, 6203, 6204, and 6205 look like nearly the same text, so their vectors sit together. Exact identifiers are where keyword search shines, which is why hybrid search exists. An approximate index would miss the part entirely rather than rank neighbors above it.
+      - id: dense-vector-retrieval.transfer.v2.3
+        prompt: A vendor reports that its vector database reaches recall@10 of 0.98. Your support bot still misses the right article for a third of questions. How can both be true?
+        options:
+          - id: b
+            text: The 0.98 figure is averaged over many queries, so it hides a third of them
+          - id: a
+            text: The 0.98 compares the index with exact search, not with which article answers
+          - id: c
+            text: Recall@10 counts only the first result, so the other nine can be wrong
+        answer: a
+        feedback: Index recall says the ANN index nearly matches exact search. It says nothing about whether exact search puts the answering article near the question; that needs task recall against relevance judgments.
+      - id: dense-vector-retrieval.transfer.v2.4
+        prompt: A music service's HNSW index answers in 4 ms but misses about 15% of each song's true nearest neighbors. The team can afford 12 ms. What change fits?
+        options:
+          - id: a
+            text: Let the search keep more candidates (raise ef), trading time for recall
+          - id: c
+            text: Switch from cosine to dot product to make each comparison cheaper
+          - id: b
+            text: Re-encode the songs with a smaller model to fit the time budget
+        answer: a
+        feedback: A wider graph walk checks more vectors, finding more true neighbors at higher latency, which the budget allows. Changing the similarity measure or the model changes what "nearest" means instead of finding the current nearest neighbors more reliably.
+  - id: dense-vector-retrieval.calc
+    objective_ref: objective.dense-vector-retrieval
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Index recall@k = (how many of the exact top k the ANN index also returned) ÷ k. Average over queries when there are several.
+    remediation_scene: dense-vector-retrieval.s3
+    variants:
+      - id: dense-vector-retrieval.calc.1
+        prompt: Exact search returns [P, Q, R, S, T, U, V, W, X, Y] as the top 10. The ANN index returns [P, R, Q, Z, T, V, U, K, X, W]. What is the index's recall@10? Give a decimal.
+        answer: 0.8
+        feedback: The ANN list contains P, Q, R, T, U, V, W, X, which is 8 of the 10 exact neighbors. It missed S and Y. Recall@10 = 8/10 = 0.8. Order doesn't matter for recall.
+      - id: dense-vector-retrieval.calc.2
+        prompt: Exact top 5 is [A, B, C, D, E]. The ANN index returns [A, C, F, G, E]. What is the index's recall@5? Give a decimal.
+        answer: 0.6
+        feedback: A, C, and E appear in both lists, so recall@5 = 3/5 = 0.6.
+      - id: dense-vector-retrieval.calc.3
+        prompt: 'Over three test queries, an ANN index finds 9, 7, and 8 of the exact top 10 neighbors. What is its average recall@10? Give a decimal.'
+        answer: 0.8
+        feedback: The per-query recalls are 0.9, 0.7, and 0.8. Their average is 2.4/3 = 0.8.
+      - id: dense-vector-retrieval.calc.4
+        prompt: Exact top 4 is [K1, K2, K3, K4]. The ANN index returns [K2, K9, K1, K7]. What is the index's recall@4? Give a decimal.
+        answer: 0.5
+        feedback: K1 and K2 appear in both lists, so recall@4 = 2/4 = 0.5.
+    absolute_tolerance: 0.01

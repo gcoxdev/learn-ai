@@ -1,208 +1,553 @@
 schema_version: 0.2-draft
 lesson:
   id: game-search
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Plan while another player chooses the reply
   state: draft
-  summary: Choose a game move by considering the opponent’s reply, then see how pruning and sampled play can
-    save work.
+  summary: Choose a move when your opponent chooses the reply. Work minimax by hand, watch alpha-beta skip leaves, and see how Deep Blue and AlphaGo searched.
   slot: M05.5
   category: learning
   sources:
-  - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
-    url: https://aima.cs.berkeley.edu/
+    - title: 'Artificial Intelligence: A Modern Approach — authors’ materials'
+      url: https://aima.cs.berkeley.edu/
+    - title: 'Mastering the game of Go with deep neural networks and tree search (Silver et al., 2016)'
+      url: https://www.nature.com/articles/nature16961
 objectives:
-- id: objective.game-search
-  version: 1-draft
-  statement: Minimax, alpha-beta pruning, and Monte Carlo tree search evaluate actions under different opponent
-    and sampling assumptions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - game-search.base
-  - game-search.transfer
-  prerequisites:
-  - anyOf:
-    - objective.search-problems
-  - anyOf:
-    - objective.decisions-and-games
+  - id: objective.game-search
+    version: 2-draft
+    statement: Minimax, alpha-beta pruning, and Monte Carlo tree search evaluate actions under different opponent and sampling assumptions.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - game-search.base.v2
+      - game-search.transfer.v2
+      - game-search.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.search-problems
+      - anyOf:
+          - objective.decisions-and-games
 scenes:
-- id: game-search.s1
-  title: Your best move depends on the reply
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.game-search
-  markdown: In a two-player zero-sum game, one player’s gain is the other’s loss. Minimax chooses an action
-    by assuming the opponent will choose the least favorable reply. The game state, legal actions, terminal
-    conditions, and payoff must be specified. Other game structures require different reasoning.
-  text_mode: In a two-player zero-sum game, one player’s gain is the other’s loss. Minimax chooses an action
-    by assuming the opponent will choose the least favorable reply. The game state, legal actions, terminal
-    conditions, and payoff must be specified. Other game structures require different reasoning.
-  bridges: []
-- id: game-search.s2
-  title: Work backward through a tiny tree
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.game-search
-  markdown: Action A allows opponent replies with payoffs 3 and 5 for us, so its minimax value is 3. Action
-    B allows payoffs 2 and 9, so its value is 2. We choose A because its worst available reply is better. Choosing
-    the largest leaf 9 would ignore the opponent’s control.
-  text_mode: Action A allows opponent replies with payoffs 3 and 5 for us, so its minimax value is 3. Action
-    B allows payoffs 2 and 9, so its value is 2. We choose A because its worst available reply is better. Choosing
-    the largest leaf 9 would ignore the opponent’s control.
-  bridges:
-  - decisions-and-games
-- id: game-search.s3
-  title: Prune without changing the minimax result
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.game-search
-  markdown: 'Alpha-beta pruning stops exploring branches that cannot affect the current minimax decision, using
-    bounds from already examined alternatives. Good move ordering can increase pruning. With the same tree
-    and evaluation assumptions, pruning preserves the minimax result; a depth-limited heuristic evaluation
-    still limits the quality of that result.
+  - id: game-search.s1
+    title: Your best move depends on the reply
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.game-search
+    markdown: |-
+      In tic-tac-toe, a move that sets up two ways to win is brilliant, unless your opponent's very next move completes *their* row. Roads never fought back; in a game, every plan has to survive the other player's best reply.
 
+      This lesson covers **two-player zero-sum games**, where one player's gain is exactly the other's loss, like tic-tac-toe, chess, and Go. (Games with dice or hidden cards need extra tools.) Call the two players **MAX**, who wants the score high, and **MIN**, who wants it low. A finished game gets a score, such as +1 for a MAX win, 0 for a draw, and −1 for a loss.
 
-    In the tiny tree, you already know A guarantees 3. When examining B, you first find the opponent can leave
-    you 2. You can stop examining B''s other reply: the opponent can choose 2, so B cannot improve your guaranteed
-    3. Skipping the unseen 9 changes neither the comparison nor the result.'
-  text_mode: 'Alpha-beta pruning stops exploring branches that cannot affect the current minimax decision,
-    using bounds from already examined alternatives. Good move ordering can increase pruning. With the same
-    tree and evaluation assumptions, pruning preserves the minimax result; a depth-limited heuristic evaluation
-    still limits the quality of that result.
+      Laying out every move and every reply gives a **game tree**. Tic-tac-toe's is small: fewer than 9! = 362,880 ways a game can unfold, easy to search completely. Chess is another matter: in 1950 Claude Shannon estimated about 10¹²⁰ possible chess games. Game programs need ways to search less of the tree.
+    bridges: []
+  - id: game-search.s2
+    title: Work backward through a tiny tree
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.game-search
+    markdown: |-
+      You're MAX with three moves, L, M, and R. After each one, MIN picks one of three replies, and the game ends with the score shown (higher is better for you).
 
+      :::predict The biggest score in the tree, 9, sits under M. Should you play M?
+      No. After M, MIN chooses, and MIN will pick 3, the worst reply for you. Judge each move by what the opponent will let you have:
 
-    In the tiny tree, you already know A guarantees 3. When examining B, you first find the opponent can leave
-    you 2. You can stop examining B''s other reply: the opponent can choose 2, so B cannot improve your guaranteed
-    3. Skipping the unseen 9 changes neither the comparison nor the result.'
-  bridges: []
-- id: game-search.s4
-  title: Spend more trials on promising moves
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.game-search
-  markdown: '**Monte Carlo tree search (MCTS)** repeatedly selects a path, extends it, evaluates the result,
-    and updates the statistics along that path. The selection rule balances promising moves with less-explored
-    alternatives.
+      | Your move | Scores after MIN's replies | MIN picks | Value of the move |
+      | --- | --- | ---: | ---: |
+      | L | 4, 7, 5 | 4 | **4** |
+      | M | 6, 3, 9 | 3 | 3 |
+      | R | 2, 8, 1 | 1 | 1 |
 
+      You play L, the move with the best worst case. Its value, 4, is the **minimax value** of the game: the score you can guarantee if both sides play perfectly.
+      :::
 
-    A **rollout** plays a possible continuation to estimate an outcome. A learned **policy** can suggest moves,
-    and a **value estimate** can score a position without playing to the end. **Backing up** the result means
-    updating the statistics of the earlier choices that led there.
+      Backing values up from the leaves this way is the minimax algorithm: MIN nodes take the smallest child, MAX nodes the largest, alternating level by level up to the root.
 
+      :::papers The minimax recursion
+      $$\text{MINIMAX}(s) = \begin{cases} \text{UTILITY}(s) & \text{if the game is over at } s \\ \max_a \text{MINIMAX}(\text{RESULT}(s, a)) & \text{if MAX moves at } s \\ \min_a \text{MINIMAX}(\text{RESULT}(s, a)) & \text{if MIN moves at } s \end{cases}$$
+      UTILITY is the final score and RESULT is the transition model from the search problems lesson. In our tree, MINIMAX(after L) = min(4, 7, 5) = 4, and MINIMAX(root) = max(4, 3, 1) = 4.
+      :::
+    diagram:
+      caption: The tiny game tree. You (MAX) choose a move; MIN then chooses the reply that leaves you the lowest score.
+      description: The root, your move as MAX, has three branches. Move L leads to a MIN node whose replies score 4, 7, and 5, so it is worth 4. Move M leads to a MIN node with replies 6, 3, and 9, worth 3. Move R leads to a MIN node with replies 2, 8, and 1, worth 1. MAX picks L, worth 4.
+      nodes:
+        - id: root
+          label: Your move (MAX)
+          note: value 4, play L
+          col: 1
+          row: 0
+          tone: accent
+        - id: l
+          label: After L (MIN)
+          note: replies 4, 7, 5 → 4
+          col: 0
+          row: 1
+          tone: data
+        - id: m
+          label: After M (MIN)
+          note: replies 6, 3, 9 → 3
+          col: 1
+          row: 1
+        - id: r
+          label: After R (MIN)
+          note: replies 2, 8, 1 → 1
+          col: 2
+          row: 1
+      edges:
+        - from: root
+          to: l
+          label: L
+        - from: root
+          to: m
+          label: M
+        - from: root
+          to: r
+          label: R
+    bridges:
+      - decisions-and-games
+  - id: game-search.s3
+    title: Skip leaves that can't change the answer
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.game-search
+    markdown: |-
+      Do you really need all nine scores? Walk through them left to right and keep one number, **α (alpha)**: the best value MAX is already sure of.
 
-    One good rollout and one bad rollout give evidence about those trials. Their average does not prove what
-    every possible opponent response will do.'
-  text_mode: '**Monte Carlo tree search (MCTS)** repeatedly selects a path, extends it, evaluates the result,
-    and updates the statistics along that path. The selection rule balances promising moves with less-explored
-    alternatives.
+      | Leaf | Score | What we now know | Decision |
+      | --- | ---: | --- | --- |
+      | L, 1st | 4 | L is worth at most 4 | keep going |
+      | L, 2nd | 7 | still at most 4 | keep going |
+      | L, 3rd | 5 | L is worth exactly 4, so α = 4 | move on to M |
+      | M, 1st | 6 | M is worth at most 6 | keep going: 6 > 4 |
+      | M, 2nd | 3 | M is worth at most 3 | **stop: 3 ≤ α** |
+      | M, 3rd | 9 | *never looked at* | pruned |
+      | R, 1st | 2 | R is worth at most 2 | **stop: 2 ≤ α** |
+      | R, 2nd and 3rd | 8, 1 | *never looked at* | pruned |
 
+      Once MIN can hold M down to 3, you'd never choose M: L already guarantees 4. Whether the hidden leaf is 9 or 900, MIN would still pick 3. This is **alpha-beta pruning**, and it skipped 3 of 9 leaves. In deeper trees a partner bound, **β (beta)**, does the same job for MIN.
 
-    A **rollout** plays a possible continuation to estimate an outcome. A learned **policy** can suggest moves,
-    and a **value estimate** can score a position without playing to the end. **Backing up** the result means
-    updating the statistics of the earlier choices that led there.
+      :::mixup "Pruning is a shortcut that might miss the best move."
+      Alpha-beta returns exactly the same move and value as full minimax. It skips only leaves that provably can't change the decision.
+      :::
 
+      The order of moves decides how much gets skipped. Run it, then change the order to `"RML"`:
 
-    One good rollout and one bad rollout give evidence about those trials. Their average does not prove what
-    every possible opponent response will do.'
-  bridges: []
-- id: game-search.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.game-search
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: In minimax, choose the move with the best worst-case reply. Pruning skips branches that cannot
-    change that decision; sampled tree search uses trials to estimate promising moves.
-- id: game-search.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.game-search
-  markdown: In minimax, choose the move with the best worst-case reply. Pruning skips branches that cannot
-    change that decision; sampled tree search uses trials to estimate promising moves.
-  text_mode: In minimax, choose the move with the best worst-case reply. Pruning skips branches that cannot
-    change that decision; sampled tree search uses trials to estimate promising moves.
+      ```python run
+      import math
+
+      def leaves(node):
+          return 1 if isinstance(node, int) else sum(leaves(c) for c in node)
+
+      def alphabeta(node, alpha, beta, maximizing, stats):
+          if isinstance(node, int):                      # a finished game: its score
+              stats["evaluated"] += 1
+              return node
+          best = -math.inf if maximizing else math.inf
+          for i, child in enumerate(node):
+              value = alphabeta(child, alpha, beta, not maximizing, stats)
+              if maximizing:
+                  best, alpha = max(best, value), max(alpha, value)
+              else:
+                  best, beta = min(best, value), min(beta, value)
+              if alpha >= beta:                          # the other player won't allow this line
+                  stats["pruned"] += sum(leaves(c) for c in node[i + 1:])
+                  break
+          return best
+
+      moves = {"L": [4, 7, 5], "M": [6, 3, 9], "R": [2, 8, 1]}
+      order = "LMR"                                      # try "RML"
+      stats = {"evaluated": 0, "pruned": 0}
+      value = alphabeta([moves[m] for m in order], -math.inf, math.inf, True, stats)
+      print(f"order {order}: value {value}, leaves evaluated {stats['evaluated']}, pruned {stats['pruned']}")
+      ```
+
+      Best move first: 6 leaves evaluated, 3 pruned. Worst first: all 9 evaluated, same value 4. With perfect ordering, alpha-beta examines roughly $b^{d/2}$ positions instead of $b^d$, so the same time buys about twice the depth.
+
+      :::story Deep Blue, 1997
+      Real games are too deep to search to the end, so programs stop at a fixed depth and score positions with an **evaluation function**, a hand-written estimate such as "material plus king safety." In May 1997, IBM's Deep Blue beat world champion Garry Kasparov 3½–2½ over six games. At its core was alpha-beta search at enormous scale, on custom chess chips that examined well over 100 million positions per second.
+      :::
+    bridges: []
+  - id: game-search.s4
+    title: Spend more trials on promising moves
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.game-search
+    markdown: |-
+      Go defeated this recipe for decades. It has around 250 legal moves per turn against chess's 35 or so, and nobody could write a good evaluation function for it. **Monte Carlo tree search (MCTS)** sidesteps both problems by playing many quick games from a move and counting wins. Each round has four steps:
+
+      1. **Select**: walk down the tree, at each step choosing a child by the rule below.
+      2. **Expand**: add one new position to the tree.
+      3. **Simulate**: play a quick game (a **rollout**) from there to the end, often with random moves.
+      4. **Back up**: add the win or loss to the counts of every node on the path.
+
+      The selection rule balances *exploiting* moves that have won often with *exploring* moves tried only a few times. The standard choice is **UCB1** (on trees, UCT: Kocsis and Szepesvári, 2006). Pick the child with the highest
+
+      $$\frac{w_i}{n_i} + c\sqrt{\frac{\ln N}{n_i}}$$
+
+      where $w_i$ is the child's wins, $n_i$ its visits, $N$ the parent's visits, and $c$ a constant, often $\sqrt{2}$.
+
+      :::predict The root has N = 30 visits. L has won 12 of 20, M 5 of 8, and R 0 of 2. With c = √2, which does UCB1 try next?
+      R, the one that has never won! Its bonus is huge because it's barely been tried:
+
+      | Move | Win rate $w/n$ | Bonus $\sqrt{2}\sqrt{\ln 30 / n}$ | Score |
+      | --- | ---: | ---: | ---: |
+      | L | 12/20 = 0.600 | 0.583 | 1.183 |
+      | M | 5/8 = 0.625 | 0.922 | 1.547 |
+      | R | 0/2 = 0.000 | 1.844 | 1.844 (highest) |
+
+      If R loses once more (0 of 3, with N = 31), its score drops to 1.513 and M (1.552) takes over. R isn't abandoned, though: its bonus creeps back up as N grows, so it gets tried again later. Two losses aren't enough evidence to give up on a move.
+      :::
+
+      When time runs out, MCTS usually plays the move it visited most, since those estimates rest on the most games.
+
+      :::story AlphaGo, 2016
+      In March 2016, DeepMind's AlphaGo beat Lee Sedol, one of the world's strongest Go players, 4–1. It ran MCTS with two neural networks: a **policy network** suggested promising moves, steering selection toward them, and a **value network** judged positions, combined with fast rollouts to score new positions.
+      :::
+    diagram:
+      caption: One round of Monte Carlo tree search. Rounds repeat until time runs out.
+      description: Select walks down the tree using UCB1 and hands the chosen position to Expand, which adds a new node. Simulate plays a quick game from that node to the end. Back up adds the result to every node on the path, and then the next round begins with Select again.
+      nodes:
+        - id: select
+          label: Select
+          note: pick children by UCB1
+          col: 0
+          row: 0
+          tone: accent
+        - id: expand
+          label: Expand
+          note: add one new position
+          col: 1
+          row: 0
+        - id: simulate
+          label: Simulate
+          note: quick game to the end
+          col: 1
+          row: 1
+          tone: data
+        - id: backup
+          label: Back up
+          note: update wins and visits
+          col: 0
+          row: 1
+      edges:
+        - from: select
+          to: expand
+        - from: expand
+          to: simulate
+        - from: simulate
+          to: backup
+          label: result
+        - from: backup
+          to: select
+          label: next round
+          dashed: true
+    bridges: []
+  - id: game-search.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.game-search
+    markdown: New game trees, chess and Connect Four bots, and MCTS statistics ask you to back up minimax values, count pruned leaves, and read what the numbers really say.
+    takeaway: |-
+      Minimax picks the move with the best worst case. Alpha-beta gets the same answer while skipping leaves that can't matter, and MCTS spends its game simulations where the win counts are promising or still uncertain.
+  - id: game-search.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.game-search
+    markdown: |-
+      In minimax, choose the move with the best worst-case reply. Pruning skips branches that cannot change that decision; sampled tree search uses trials to estimate promising moves.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - game-search.s1
-    - game-search.s2
-    - game-search.s3
-    - game-search.s4
-    - game-search.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - game-search.s1
+        - game-search.s2
+        - game-search.s3
+        - game-search.s4
+        - game-search.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     game-search.recap: game-search.check
 assessment_families:
-- id: game-search.base
-  objective_ref: objective.game-search
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Work backward through a tiny tree: trace the inputs, operation, and result before choosing.'
-  remediation_scene: game-search.s2
-  variants:
-  - id: game-search.base.1
-    prompt: A has opponent replies [4, 7]; B has [3, 10]. Which action does minimax prefer?
-    options:
-    - id: a
-      text: A
-    - id: b
-      text: B
-    - id: c
-      text: Always the action with leaf 10
-    answer: a
-    feedback: Worst-case values are 4 and 3, so A is preferred.
-  - id: game-search.base.2
-    prompt: What does alpha-beta pruning aim to remove?
-    options:
-    - id: b
-      text: All losing positions from the actual game
-    - id: c
-      text: The opponent’s legal actions permanently
-    - id: a
-      text: Branches unable to change the current minimax decision
-    answer: a
-    feedback: Pruning reduces computation without changing the evaluated minimax result.
-- id: game-search.transfer
-  objective_ref: objective.game-search
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Allocate trials with Monte Carlo tree search: trace the inputs, operation, and result before choosing.'
-  remediation_scene: game-search.s4
-  variants:
-  - id: game-search.transfer.1
-    prompt: A depth-limited minimax agent has a poor leaf evaluator. Does alpha-beta fix that evaluator?
-    options:
-    - id: b
-      text: Yes; pruning learns perfect values
-    - id: c
-      text: Only if the tree has an even depth
-    - id: a
-      text: No; pruning preserves the same evaluation assumptions
-    answer: a
-    feedback: Search efficiency and evaluation accuracy are separate.
-  - id: game-search.transfer.2
-    prompt: MCTS visits one action only twice and another a thousand times. What should interpretation consider?
-    options:
-    - id: c
-      text: A guarantee that the twice-visited action is worst
-    - id: a
-      text: Unequal uncertainty and the exploration policy
-    - id: b
-      text: Only which action has the larger name
-    answer: a
-    feedback: Finite sampling and allocation affect confidence in estimated values.
+  - id: game-search.base
+    objective_ref: objective.game-search
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Work backward through a tiny tree: trace the inputs, operation, and result before choosing.'
+    remediation_scene: game-search.s2
+    variants:
+      - id: game-search.base.1
+        prompt: A has opponent replies [4, 7]; B has [3, 10]. Which action does minimax prefer?
+        options:
+          - id: a
+            text: A
+          - id: b
+            text: B
+          - id: c
+            text: Always the action with leaf 10
+        answer: a
+        feedback: Worst-case values are 4 and 3, so A is preferred.
+        retired: true
+      - id: game-search.base.2
+        prompt: What does alpha-beta pruning aim to remove?
+        options:
+          - id: b
+            text: All losing positions from the actual game
+          - id: c
+            text: The opponent’s legal actions permanently
+          - id: a
+            text: Branches unable to change the current minimax decision
+        answer: a
+        feedback: Pruning reduces computation without changing the evaluated minimax result.
+        retired: true
+  - id: game-search.transfer
+    objective_ref: objective.game-search
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Allocate trials with Monte Carlo tree search: trace the inputs, operation, and result before choosing.'
+    remediation_scene: game-search.s4
+    variants:
+      - id: game-search.transfer.1
+        prompt: A depth-limited minimax agent has a poor leaf evaluator. Does alpha-beta fix that evaluator?
+        options:
+          - id: b
+            text: Yes; pruning learns perfect values
+          - id: c
+            text: Only if the tree has an even depth
+          - id: a
+            text: No; pruning preserves the same evaluation assumptions
+        answer: a
+        feedback: Search efficiency and evaluation accuracy are separate.
+        retired: true
+      - id: game-search.transfer.2
+        prompt: MCTS visits one action only twice and another a thousand times. What should interpretation consider?
+        options:
+          - id: c
+            text: A guarantee that the twice-visited action is worst
+          - id: a
+            text: Unequal uncertainty and the exploration policy
+          - id: b
+            text: Only which action has the larger name
+        answer: a
+        feedback: Finite sampling and allocation affect confidence in estimated values.
+        retired: true
+  - id: game-search.base.v2
+    objective_ref: objective.game-search
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: A MIN node takes its smallest child and a MAX node its largest. Alpha-beta stops a MIN node as soon as its value drops to α (what MAX already has) or below.
+    remediation_scene: game-search.s3
+    variants:
+      - id: game-search.base.v2.1
+        prompt: You (MAX) can play A, after which MIN's replies score 4 or 7, or B, after which MIN's replies score 3 or 10. Which move does minimax choose?
+        options:
+          - id: b
+            text: B, since it's the only way to reach 10
+          - id: c
+            text: B, since its average of 6.5 beats 5.5
+          - id: a
+            text: A, since its worst reply still leaves 4
+        answer: a
+        feedback: MIN picks the reply, so A is worth 4 and B is worth 3. The 10 and the averages only count if MIN helps you, and minimax assumes it won't.
+      - id: game-search.base.v2.2
+        prompt: Your first move is already worth 5. Your second move's MIN node has leaves 7, 2, and 9, checked left to right. Which leaves does alpha-beta skip?
+        options:
+          - id: a
+            text: Just the 9
+          - id: b
+            text: Both the 2 and the 9
+          - id: c
+            text: None of the three
+        answer: a
+        feedback: After 7 the node is worth at most 7, which could still beat 5, so the search goes on. After 2 it's worth at most 2 ≤ 5, so the 9 can't matter. The 2 had to be checked to learn that.
+      - id: game-search.base.v2.3
+        prompt: Plain minimax and alpha-beta search the same game tree to the same depth. How do their results compare?
+        options:
+          - id: c
+            text: Alpha-beta may pick a slightly worse move to save time
+          - id: a
+            text: Same move and value; alpha-beta looks at fewer leaves
+          - id: b
+            text: Alpha-beta picks better moves, since it cuts weak lines
+        answer: a
+        feedback: Pruning skips only leaves that can't change the decision, so the answer is identical. It saves time without changing, improving, or worsening the result.
+      - id: game-search.base.v2.4
+        prompt: You search the same tree twice with alpha-beta, once with the best moves first and once with the worst moves first. What differs between the two runs?
+        options:
+          - id: b
+            text: The minimax value found at the root
+          - id: a
+            text: How many leaves get pruned
+          - id: c
+            text: Which move is finally chosen
+        answer: a
+        feedback: Ordering changes only the work. Best-first ordering gives α a good value early, so more leaves fall at or below it. The value and the chosen move stay the same, as the "LMR" and "RML" runs showed.
+      - id: game-search.base.v2.5
+        prompt: 'An MCTS node has N = 50 visits. Child X has won 30 of 40, and child Y has won 2 of 5. Using UCB1 with c = √2, X scores about 1.19 and Y about 1.65. Which child does selection follow, and why?'
+        options:
+          - id: c
+            text: X, because its win rate of 0.75 is higher
+          - id: b
+            text: X, because it has been visited far more often
+          - id: a
+            text: Y, because its exploration bonus is large
+        answer: a
+        feedback: UCB1 follows the highest score, and Y's bonus for being rarely tried lifts it to 1.65. Win rate alone would pick X, but that would stop MCTS from checking whether Y is better than it looks.
+  - id: game-search.transfer.v2
+    objective_ref: objective.game-search
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Minimax assumes the opponent finds its best reply. Pruning saves time but never changes the answer. MCTS estimates are shaky where visits are few.
+    remediation_scene: game-search.s4
+    variants:
+      - id: game-search.transfer.v2.1
+        prompt: A depth-limited chess engine has a weak evaluation function. You add alpha-beta pruning. What improves?
+        options:
+          - id: a
+            text: It can search deeper in the same time
+          - id: b
+            text: Its position scores become more accurate
+          - id: c
+            text: It no longer needs an evaluation function
+        answer: a
+        feedback: Pruning cuts wasted work, so the same time buys a deeper search. The scores at the cutoff still come from the same weak evaluation function.
+      - id: game-search.transfer.v2.2
+        prompt: A Connect Four bot using minimax refuses to set a trap that would beat most beginners, because a strong player could escape it. Why does minimax behave this way?
+        options:
+          - id: c
+            text: Pruning removed the trap line from its tree
+          - id: a
+            text: It assumes the opponent finds the best reply
+          - id: b
+            text: Its evaluation function scores traps as losses
+        answer: a
+        feedback: Minimax values each move by the opponent's best reply, so a trap that fails against good play looks bad. Pruning never removes a line that could change the decision.
+      - id: game-search.transfer.v2.3
+        prompt: After 1,000 MCTS rounds, move P has been visited 900 times with a win rate of 0.55, and move Q 12 times with a win rate of 0.67. Which should the program play?
+        options:
+          - id: b
+            text: Q, because its win rate is the higher one
+          - id: a
+            text: P, because its estimate rests on far more games
+          - id: c
+            text: Q, because fewer visits leave less room for error
+        answer: a
+        feedback: MCTS usually plays the most-visited move. Q's 0.67 comes from only 12 games and could easily be luck, while P's 0.55 is backed by 900.
+      - id: game-search.transfer.v2.4
+        prompt: For decades Go programs lagged far behind chess programs, which used alpha-beta with hand-written evaluation functions. Why did Go programs switch to MCTS?
+        options:
+          - id: a
+            text: Go positions are hard to score with written rules
+          - id: b
+            text: Alpha-beta can't be used in a two-player game
+          - id: c
+            text: Go has fewer legal moves per turn than chess
+        answer: a
+        feedback: MCTS scores positions by playing games out, which doesn't need a hand-written evaluation. Alpha-beta is built for two-player games, and Go has far more moves per turn (around 250 against chess's 35 or so), not fewer.
+      - id: game-search.transfer.v2.5
+        prompt: An MCTS game bot is given ten times more thinking time per move. What does it do with the extra time?
+        options:
+          - id: c
+            text: Switches over to alpha-beta for the extra time
+          - id: b
+            text: Searches the full tree to the end of the game
+          - id: a
+            text: Runs more rounds, sharpening its win estimates
+        answer: a
+        feedback: MCTS improves by running more rounds, so more time means more games behind each estimate. Ten times the time is still nowhere near enough to search a Go or chess tree completely.
+  - id: game-search.calc.v2
+    objective_ref: objective.game-search
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: Work left to right. A MIN node takes its smallest leaf; once its value falls to α (the best MAX already has) or below, skip its remaining leaves. The root takes the largest MIN value.
+    remediation_scene: game-search.s3
+    numeric_fields:
+      - id: value
+        label: Minimax value of the root
+      - id: pruned
+        label: Leaves alpha-beta skips
+    variants:
+      - id: game-search.calc.v2.1
+        prompt: 'You (MAX) have three moves, searched left to right. After each, MIN chooses among these leaves, in order: A: 3, 5. B: 2, 9. C: 6, 4. Record the root''s minimax value and the number of leaves alpha-beta skips.'
+        feedback: A = min(3, 5) = 3, so α = 3. In B the first leaf, 2, is ≤ 3, so the 9 is skipped. C needs both leaves, min(6, 4) = 4. Root = max(3, 2 or less, 4) = 4, with 1 leaf skipped.
+        answers:
+          value: 4
+          pruned: 1
+        reason_answer: rule
+        reason_options:
+          - id: rule
+            text: MIN takes the smallest, MAX the largest; stop a MIN node once it's at or below α.
+          - id: avg
+            text: Average each MIN node's leaves, then take the largest average.
+          - id: max
+            text: Take the largest leaf anywhere, since MAX moves first.
+      - id: game-search.calc.v2.2
+        prompt: 'You (MAX) have three moves, searched left to right. After each, MIN chooses among these leaves, in order: A: 8, 6, 7. B: 5, 9, 1. C: 4, 3, 2. Record the root''s minimax value and the number of leaves alpha-beta skips.'
+        feedback: A = 6, so α = 6. B's first leaf, 5, is ≤ 6, so 9 and 1 are skipped. C's first leaf, 4, is ≤ 6, so 3 and 2 are skipped. The root is 6, with 4 leaves skipped.
+        answers:
+          value: 6
+          pruned: 4
+        reason_answer: rule
+        reason_options:
+          - id: avg
+            text: Average each MIN node's leaves, then take the largest average.
+          - id: rule
+            text: MIN takes the smallest, MAX the largest; stop a MIN node once it's at or below α.
+          - id: max
+            text: Take the largest leaf anywhere, since MAX moves first.
+      - id: game-search.calc.v2.3
+        prompt: 'You (MAX) have three moves, searched left to right. After each, MIN chooses among these leaves, in order: A: 2, 4. B: 7, 5. C: 1, 8. Record the root''s minimax value and the number of leaves alpha-beta skips.'
+        feedback: A = 2, so α = 2. B's leaves 7 and 5 both beat 2, so both are checked; B = 5 and α becomes 5. C's first leaf, 1, is ≤ 5, so the 8 is skipped. The root is 5, with 1 leaf skipped.
+        answers:
+          value: 5
+          pruned: 1
+        reason_answer: rule
+        reason_options:
+          - id: max
+            text: Take the largest leaf anywhere, since MAX moves first.
+          - id: avg
+            text: Average each MIN node's leaves, then take the largest average.
+          - id: rule
+            text: MIN takes the smallest, MAX the largest; stop a MIN node once it's at or below α.
+      - id: game-search.calc.v2.4
+        prompt: 'You (MAX) have three moves, searched left to right. After each, MIN chooses among these leaves, in order: A: 1, 6, 2. B: 3, 4, 8. C: 9, 7, 5. Record the root''s minimax value and the number of leaves alpha-beta skips.'
+        feedback: A = 1, B = 3, and C = 5. Each MIN node's leaves stay above the α set before it, so every leaf must be checked. The root is 5, with 0 leaves skipped; the best move came last.
+        answers:
+          value: 5
+          pruned: 0
+        reason_answer: rule
+        reason_options:
+          - id: rule
+            text: MIN takes the smallest, MAX the largest; stop a MIN node once it's at or below α.
+          - id: max
+            text: Take the largest leaf anywhere, since MAX moves first.
+          - id: avg
+            text: Average each MIN node's leaves, then take the largest average.
+      - id: game-search.calc.v2.5
+        prompt: 'You (MAX) have three moves, searched left to right. After each, MIN chooses among these leaves, in order: A: 7, 2. B: 8, 6. C: 1, 9. Record the root''s minimax value and the number of leaves alpha-beta skips.'
+        feedback: A = 2, so α = 2. B's leaves 8 and 6 both beat 2; B = 6 and α becomes 6. C's first leaf, 1, is ≤ 6, so the 9 is skipped. The root is 6, with 1 leaf skipped.
+        answers:
+          value: 6
+          pruned: 1
+        reason_answer: rule
+        reason_options:
+          - id: avg
+            text: Average each MIN node's leaves, then take the largest average.
+          - id: max
+            text: Take the largest leaf anywhere, since MAX moves first.
+          - id: rule
+            text: MIN takes the smallest, MAX the largest; stop a MIN node once it's at or below α.

@@ -1,206 +1,418 @@
 schema_version: 0.2-draft
 lesson:
   id: hybrid-sequence-architectures
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Combine attention, recurrence, and convolution deliberately
   state: draft
-  summary: Combine sequence mechanisms deliberately and count each kind of memory the combination retains.
+  summary: Attention looks things up exactly but its cache keeps growing; Mamba's memory is fixed but blurry. Jamba keeps one attention layer in eight, and here is why that ratio works.
   slot: M19.6
   category: learning
   sources:
-  - title: 'Jamba: A Hybrid Transformer-Mamba Language Model'
-    url: https://arxiv.org/abs/2403.19887
-  - title: Griffin
-    url: https://arxiv.org/abs/2402.19427
+    - title: "Jamba: A Hybrid Transformer-Mamba Language Model (Lieber et al., 2024)"
+      url: https://arxiv.org/abs/2403.19887
+    - title: "An Empirical Study of Mamba-based Language Models (Waleffe et al., 2024)"
+      url: https://arxiv.org/abs/2406.07887
+    - title: "Repeat After Me: Transformers are Better than State Space Models at Copying (Jelassi et al., 2024)"
+      url: https://arxiv.org/abs/2402.01032
+    - title: "Griffin: Mixing Gated Linear Recurrences with Local Attention for Efficient Language Models (De et al., 2024)"
+      url: https://arxiv.org/abs/2402.19427
 objectives:
-- id: objective.hybrid-sequence-architectures
-  version: 1-draft
-  statement: Hybrid sequence models mix mechanisms with different memory and communication properties; the
-    arrangement, shared dimensions, and evaluation determine whether the combination helps.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - hybrid-sequence-architectures.base
-  - hybrid-sequence-architectures.transfer
-  prerequisites:
-  - anyOf:
-    - objective.selective-state-spaces
-  - anyOf:
-    - objective.attention-patterns
-  - anyOf:
-    - objective.shared-and-latent-kv
+  - id: objective.hybrid-sequence-architectures
+    version: 2-draft
+    statement: Hybrid sequence models mix mechanisms with different memory and communication properties; the arrangement, shared dimensions, and evaluation determine whether the combination helps.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - hybrid-sequence-architectures.base.v2
+      - hybrid-sequence-architectures.transfer.v2
+      - hybrid-sequence-architectures.cache
+    prerequisites:
+      - anyOf:
+          - objective.selective-state-spaces
+      - anyOf:
+          - objective.attention-patterns
+      - anyOf:
+          - objective.shared-and-latent-kv
 scenes:
-- id: hybrid-sequence-architectures.s1
-  title: Different mechanisms offer different access
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.hybrid-sequence-architectures
-  markdown: Attention can directly compare a query against retained token states. Recurrence compresses history
-    into evolving state. Convolution emphasizes structured neighborhoods. A hybrid can use several mechanisms
-    to balance access, compute, and memory, but adding components also changes training and implementation
-    complexity.
-  text_mode: Attention can directly compare a query against retained token states. Recurrence compresses history
-    into evolving state. Convolution emphasizes structured neighborhoods. A hybrid can use several mechanisms
-    to balance access, compute, and memory, but adding components also changes training and implementation
-    complexity.
-  bridges: []
-- id: hybrid-sequence-architectures.s2
-  title: Specify where the mechanisms meet
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.hybrid-sequence-architectures
-  markdown: 'A design might alternate recurrent and attention blocks, combine their outputs within a block,
-    or reserve attention for selected layers. Specify the residual path, normalization, widths, and position
-    handling. A list of ingredient names is not an executable architecture description.
+  - id: hybrid-sequence-architectures.s1
+    title: Two memories, two strengths
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.hybrid-sequence-architectures
+    markdown: |-
+      Our coding assistant has two jobs. Across a 250,000-token repository, it must keep the general drift: what the code is for, which style it uses. And now and then it must quote one exact thing: the name `parse_invoice_v2`, defined 180,000 tokens back.
 
+      The last five lessons gave us two kinds of layer, and each is good at one job:
 
-    For a small diagram, draw recurrent update → attention → recurrent update. Label the vector width at each
-    connection. A parallel design would instead send the same input to both branches and then add or concatenate
-    their outputs. Those two arrangements use the same ingredient names but perform different calculations.'
-  text_mode: 'A design might alternate recurrent and attention blocks, combine their outputs within a block,
-    or reserve attention for selected layers. Specify the residual path, normalization, widths, and position
-    handling. A list of ingredient names is not an executable architecture description.
+      | | Attention layer | Selective SSM layer (Mamba) |
+      | --- | --- | --- |
+      | What it keeps per layer | Keys and values for every past token | One fixed-size state |
+      | Memory at 250K tokens | Grows with every token | Same as at 1K tokens |
+      | Work per new token | Grows with context length | Constant |
+      | Exact lookup of one old token | Direct: compare the query with its key | Only if the state happened to keep it |
+      | Gist of a long stream | Yes, at quadratic cost | Yes, cheaply |
 
+      A **hybrid architecture** stacks both kinds of layer in one model, so the cheap layers carry most of the sequence and a few attention layers handle exact lookups. Google DeepMind's Griffin (2024) mixed gated recurrent layers with local attention. AI21's **Jamba** (March 2024) mixed Mamba layers with full attention layers and added mixture-of-experts on top. Before building one, it helps to know exactly what pure SSMs get wrong.
+    bridges: []
+  - id: hybrid-sequence-architectures.s2
+    title: Where pure SSMs stumble
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.hybrid-sequence-architectures
+    markdown: |-
+      Three lines of evidence point to the same weakness.
 
-    For a small diagram, draw recurrent update → attention → recurrent update. Label the vector width at each
-    connection. A parallel design would instead send the same input to both branches and then add or concatenate
-    their outputs. Those two arrangements use the same ingredient names but perform different calculations.'
-  bridges: []
-- id: hybrid-sequence-architectures.s3
-  title: Count each kind of state
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.hybrid-sequence-architectures
-  markdown: 'Suppose only two of eight layers use cached attention and six use fixed recurrent states. The
-    attention portion of cache growth may shrink compared with eight attention layers, but the recurrent states
-    and all weights remain. Exact savings depend on head shapes, precision, and architecture.
+      - **Copying.** Jelassi et al. (2024) proved that a two-layer transformer can copy strings whose length is exponential in its number of heads, while any fixed-state model is limited by the size of its state. In their experiments, transformers beat state-space models at copying and at looking up a number in a phone book given in the prompt.
+      - **Following a format from examples.** In Jamba's ablations, a pure Mamba model shown few-shot movie-review examples labeled "Positive" or "Negative" often answered "Very Good", "Funny", or "3/10" instead. The hybrid used the labels correctly, and the authors found attention heads in it that focused on the label tokens of the examples.
+      - **Controlled scale-up.** NVIDIA trained 8B-parameter transformer, Mamba, Mamba-2, and hybrid models on the same data (Waleffe et al., 2024). The pure SSMs lagged on five-shot MMLU and phone-book lookup. A hybrid with 43% Mamba-2 layers, 7% attention layers, and 50% MLP layers beat the transformer on all 12 of their standard tasks, by 2.65 points on average, and was projected to generate up to 8× faster.
 
+      :::predict In NVIDIA's hybrid, only 7% of the layers are attention. Why might so few be enough?
+      Lookup doesn't have to happen in every layer. Once an attention layer has pulled the exact old token into the current position's vector, the Mamba layers after it can carry and process it like any other information. The attention layers act as occasional "look back exactly" steps between long stretches of cheap processing.
+      :::
 
-    If one attention layer stores K bytes per retained position and one recurrent layer stores R bytes independent
-    of length, the toy hybrid needs about 2KT + 6R bytes at context length T, before other state. Eight matching
-    attention layers need about 8KT. This formula makes the saved growing portion and the remaining fixed portion
-    visible.'
-  text_mode: 'Suppose only two of eight layers use cached attention and six use fixed recurrent states. The
-    attention portion of cache growth may shrink compared with eight attention layers, but the recurrent states
-    and all weights remain. Exact savings depend on head shapes, precision, and architecture.
+      :::mixup "A hybrid is a pure SSM with attention bolted on for safety."
+      In NVIDIA's study the hybrid beat the pure transformer on all 12 standard tasks, and in Jamba's ablations the hybrid beat both the pure transformer and the pure Mamba model on standard benchmarks. The two layer types complement each other, which is why the combination can beat both of its parents.
+      :::
+    bridges: []
+  - id: hybrid-sequence-architectures.s3
+    title: Count each kind of state
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.hybrid-sequence-architectures
+    markdown: |-
+      Only attention layers keep a KV cache, so a hybrid's cache formula is the one from the lesson on sharing keys and values with *attention* layers in place of all layers:
 
+      $$\text{KV bytes} = 2 \times L_{\text{attn}} \times \text{kv\_heads} \times \text{head\_dim} \times T \times \text{bytes per value}$$
 
-    If one attention layer stores K bytes per retained position and one recurrent layer stores R bytes independent
-    of length, the toy hybrid needs about 2KT + 6R bytes at context length T, before other state. Eight matching
-    attention layers need about 8KT. This formula makes the saved growing portion and the remaining fixed portion
-    visible.'
-  bridges: []
-- id: hybrid-sequence-architectures.s4
-  title: Use ablations to test the combination
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.hybrid-sequence-architectures
-  markdown: Compare the hybrid with appropriately matched attention-only and recurrent alternatives. Include
-    retrieval, language tasks, context lengths, training budget, and hardware throughput. If the hybrid wins,
-    ablations help identify which placement or mechanism matters instead of attributing every improvement to
-    the name hybrid.
-  text_mode: Compare the hybrid with appropriately matched attention-only and recurrent alternatives. Include
-    retrieval, language tasks, context lengths, training budget, and hardware throughput. If the hybrid wins,
-    ablations help identify which placement or mechanism matters instead of attributing every improvement to
-    the name hybrid.
-  bridges: []
-- id: hybrid-sequence-architectures.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.hybrid-sequence-architectures
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A hybrid can combine direct attention access with compact recurrent memory. Specify how the blocks
-    connect and count both the growing cache and the fixed state.
-- id: hybrid-sequence-architectures.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.hybrid-sequence-architectures
-  markdown: A hybrid can combine direct attention access with compact recurrent memory. Specify how the blocks
-    connect and count both the growing cache and the fixed state.
-  text_mode: A hybrid can combine direct attention access with compact recurrent memory. Specify how the blocks
-    connect and count both the growing cache and the fixed state.
+      The SSM layers add a fixed amount that doesn't depend on $T$. The Jamba paper compared caches at 256K tokens in 16-bit: 128 GB for Llama-2 7B, 32 GB for Mistral 7B, and 4 GB for Jamba. You can check the first two: Llama-2 7B has 32 layers of 32 heads with width 128, and Mistral 7B shares 8 KV heads. A Jamba-like model keeps 4 attention layers out of 32.
+
+      ```python run
+      def kv_gib(attn_layers, kv_heads, head_dim, tokens, bytes_per_value=2):
+          return 2 * attn_layers * kv_heads * head_dim * tokens * bytes_per_value / 2**30
+
+      T = 256 * 1024                                   # a 256K-token context
+      print(f"32 attention layers, 32 KV heads (Llama-2-7B-like): {kv_gib(32, 32, 128, T):6.1f} GiB")
+      print(f"32 attention layers,  8 KV heads (Mistral-7B-like): {kv_gib(32, 8, 128, T):6.1f} GiB")
+
+      for mamba_per_attn in [0, 1, 3, 7]:              # attention : Mamba ratio 1 : m, 32 layers total
+          attn = 32 // (1 + mamba_per_attn)
+          print(f"ratio 1:{mamba_per_attn}  -> {attn:2d} attention layers, "
+                f"{32 - attn:2d} Mamba layers, KV cache {kv_gib(attn, 8, 128, T):5.1f} GiB")
+      ```
+
+      At a 1:7 ratio, the cache is 4 GiB, an eighth of the all-attention version with the same KV heads. Try `T = 1024 * 1024` for a million-token context: 16 GiB at 1:7 versus 128 GiB with no Mamba layers.
+
+      Two numbers don't shrink. The weights are all still there, and the Mamba layers' fixed states are small but not zero. So an 8× smaller cache means 8× more room for context or users only when the cache was what filled the GPU.
+    bridges: []
+  - id: hybrid-sequence-architectures.s4
+    title: Jamba, layer by layer
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.hybrid-sequence-architectures
+    markdown: |-
+      "Mamba plus attention" is not yet a design. You also have to say how many of each, in what order, and what sits between them. Some designs even run an attention branch and an SSM branch side by side on the same input and combine their outputs, which computes something different from stacking them. Jamba's released model specifies:
+
+      - **4 Jamba blocks**, each with 8 layers: 1 attention layer and 7 Mamba layers (the ratio $a{:}m = 1{:}7$).
+      - **Mixture-of-experts in every other layer**: 16 experts, of which the router picks 2 per token (the top-k routing from module 18, with k = 2). That gives 52B parameters in total but only 12B active per token.
+      - **No explicit positional encoding.** The authors found it unnecessary, since the Mamba layers already see tokens in order.
+
+      It supports contexts up to 256K tokens, and with 8-bit weights it fits on a single 80 GB GPU while processing a 140K-token text.
+
+      How did they pick 1:7? By **ablation**: training otherwise-matched models that differ in one choice. In their experiments, 1:3 and 1:7 performed similarly, and 1:7 was the more compute-efficient. That is the habit to copy. When a hybrid wins, vary one thing at a time (the ratio, where the attention layers sit, whether MoE is on) with the same data and budget, and include the pure transformer and the pure SSM as baselines. Otherwise you can't tell whether the gain came from the mix or from something else that changed.
+
+      A hybrid isn't always the answer, though. A sensor model that flags anomalies in a live stream never has to quote an old reading exactly, so a pure SSM can be the better choice.
+    diagram:
+      caption: One Jamba block. The released model stacks four of these.
+      description: "Tokens enter a block of eight layers. Seven are Mamba layers and one is an attention layer; as in the released model's configuration, the drawing shows four Mamba layers, then the attention layer, then three Mamba layers. Every other layer uses a mixture-of-experts feed-forward (16 experts, top 2) instead of a plain MLP. Only the attention layer writes to the KV cache; each Mamba layer keeps a fixed-size state."
+      nodes:
+        - id: in
+          label: Tokens in
+          col: 0
+          row: 1
+          tone: data
+        - id: m1
+          label: 4 Mamba layers
+          note: fixed-size states
+          col: 1
+          row: 1
+        - id: attn
+          label: 1 attention layer
+          note: exact lookup
+          col: 2
+          row: 1
+          tone: accent
+        - id: m2
+          label: 3 Mamba layers
+          note: fixed-size states
+          col: 3
+          row: 1
+        - id: out
+          label: To next block
+          col: 4
+          row: 1
+          tone: data
+        - id: cache
+          label: KV cache
+          note: grows with context
+          col: 2
+          row: 2
+          tone: warn
+        - id: moe
+          label: MoE in every other layer
+          note: 16 experts, top 2
+          col: 2
+          row: 0
+          tone: muted
+      edges:
+        - from: in
+          to: m1
+        - from: m1
+          to: attn
+        - from: attn
+          to: m2
+        - from: m2
+          to: out
+        - from: attn
+          to: cache
+          label: reads and writes
+        - from: moe
+          to: m1
+          dashed: true
+        - from: moe
+          to: m2
+          dashed: true
+    bridges: []
+  - id: hybrid-sequence-architectures.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.hybrid-sequence-architectures
+    markdown: Size the KV cache of hybrids with different ratios, then design and test hybrids for document search, a streaming sensor, and a 256K-token claim.
+    takeaway: |-
+      Pure SSMs are cheap but weak at exact copying and lookup; a few attention layers restore that. Only the attention layers grow a KV cache, so a 1:7 attention-to-Mamba ratio cuts it eightfold, and ablations show which part of the mix earns its place.
+  - id: hybrid-sequence-architectures.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.hybrid-sequence-architectures
+    markdown: |-
+      A hybrid can combine direct attention access with compact recurrent memory. Specify how the blocks connect and count both the growing cache and the fixed state.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - hybrid-sequence-architectures.s1
-    - hybrid-sequence-architectures.s2
-    - hybrid-sequence-architectures.s3
-    - hybrid-sequence-architectures.s4
-    - hybrid-sequence-architectures.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - hybrid-sequence-architectures.s1
+        - hybrid-sequence-architectures.s2
+        - hybrid-sequence-architectures.s3
+        - hybrid-sequence-architectures.s4
+        - hybrid-sequence-architectures.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     hybrid-sequence-architectures.recap: hybrid-sequence-architectures.check
 assessment_families:
-- id: hybrid-sequence-architectures.base
-  objective_ref: objective.hybrid-sequence-architectures
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Specify where the mechanisms meet: trace the inputs, operation, and result before choosing.'
-  remediation_scene: hybrid-sequence-architectures.s2
-  variants:
-  - id: hybrid-sequence-architectures.base.1
-    prompt: What does direct attention access differ from?
-    options:
-    - id: a
-      text: Reading only a compressed recurrent summary
-    - id: b
-      text: Any use of matrix multiplication
-    - id: c
-      text: All forms of learned representation
-    answer: a
-    feedback: The memory interface differs even when both learn parameters.
-  - id: hybrid-sequence-architectures.base.2
-    prompt: Does naming attention and recurrence fully specify a hybrid?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if dimensions are omitted
-    - id: a
-      text: No; arrangement and interfaces are required
-    answer: a
-    feedback: Composition determines actual computation.
-- id: hybrid-sequence-architectures.transfer
-  objective_ref: objective.hybrid-sequence-architectures
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Use ablations to test the combination: trace the inputs, operation, and result before choosing.'
-  remediation_scene: hybrid-sequence-architectures.s4
-  variants:
-  - id: hybrid-sequence-architectures.transfer.1
-    prompt: Two cached-attention layers replace eight. Is total model memory necessarily quartered?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only model name matters
-    - id: a
-      text: No; other state and weights remain
-    answer: a
-    feedback: Reducing one allocation does not scale the entire budget equally.
-  - id: hybrid-sequence-architectures.transfer.2
-    prompt: What helps identify why a hybrid improved?
-    options:
-    - id: c
-      text: Only total download size
-    - id: a
-      text: Matched ablations of components and placement
-    - id: b
-      text: Only a larger advertised context limit
-    answer: a
-    feedback: Controlled comparisons test the proposed mechanism.
+  - id: hybrid-sequence-architectures.base
+    objective_ref: objective.hybrid-sequence-architectures
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Compare what each layer type keeps from the past.
+    remediation_scene: hybrid-sequence-architectures.s1
+    variants:
+      - id: hybrid-sequence-architectures.base.1
+        prompt: What does direct attention access differ from?
+        options:
+          - id: a
+            text: Reading only a compressed recurrent summary
+          - id: b
+            text: Any use of matrix multiplication
+          - id: c
+            text: All forms of learned representation
+        answer: a
+        feedback: The memory interface differs even when both learn parameters.
+        retired: true
+      - id: hybrid-sequence-architectures.base.2
+        prompt: Does naming attention and recurrence fully specify a hybrid?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if dimensions are omitted
+          - id: a
+            text: No; arrangement and interfaces are required
+        answer: a
+        feedback: Composition determines actual computation.
+        retired: true
+  - id: hybrid-sequence-architectures.transfer
+    objective_ref: objective.hybrid-sequence-architectures
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Only attention layers grow a cache; the weights stay the same size.
+    remediation_scene: hybrid-sequence-architectures.s4
+    variants:
+      - id: hybrid-sequence-architectures.transfer.1
+        prompt: Two cached-attention layers replace eight. Is total model memory necessarily quartered?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only model name matters
+          - id: a
+            text: No; other state and weights remain
+        answer: a
+        feedback: Reducing one allocation does not scale the entire budget equally.
+        retired: true
+      - id: hybrid-sequence-architectures.transfer.2
+        prompt: What helps identify why a hybrid improved?
+        options:
+          - id: c
+            text: Only total download size
+          - id: a
+            text: Matched ablations of components and placement
+          - id: b
+            text: Only a larger advertised context limit
+        answer: a
+        feedback: Controlled comparisons test the proposed mechanism.
+        retired: true
+  - id: hybrid-sequence-architectures.base.v2
+    objective_ref: objective.hybrid-sequence-architectures
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Attention layers look things up exactly and grow a cache; Mamba layers keep a fixed state cheaply. Ask which property the question is about."
+    remediation_scene: hybrid-sequence-architectures.s2
+    variants:
+      - id: hybrid-sequence-architectures.base.v2.1
+        prompt: Jamba is mostly Mamba layers. What did its authors find the few attention layers add?
+        options:
+          - id: b
+            text: Faster processing of long inputs than the Mamba layers give
+          - id: a
+            text: In-context skills, such as using the label format from few-shot examples
+          - id: c
+            text: A place for the mixture-of-experts layers, which need attention to route
+        answer: a
+        feedback: A pure Mamba model often ignored the "Positive"/"Negative" format; the hybrid followed it, and some of its attention heads focused on the example labels. Attention is the slower layer at long lengths, and MoE routing doesn't depend on attention.
+      - id: hybrid-sequence-architectures.base.v2.2
+        prompt: A 32-layer transformer becomes a hybrid with 4 attention layers and 28 Mamba layers, same KV heads. Which part of its inference memory shrinks about 8×?
+        options:
+          - id: a
+            text: The KV cache, since only attention layers store keys and values
+          - id: c
+            text: The weights, since Mamba layers need fewer parameters per layer
+          - id: b
+            text: The total, since the cache and the weights both scale with layers
+        answer: a
+        feedback: The cache counts attention layers only, so 32 → 4 cuts it 8×. The weights don't shrink 8× (Mamba layers have parameters too), and the Mamba layers add their own small fixed states.
+      - id: hybrid-sequence-architectures.base.v2.3
+        prompt: Jamba has 52B total parameters but only 12B active per token. Which design choice explains the gap?
+        options:
+          - id: c
+            text: Its Mamba layers skip tokens that the router scores as unimportant
+          - id: b
+            text: Its attention layers share one set of weights across all four blocks
+          - id: a
+            text: Its mixture-of-experts layers run 2 of 16 experts for each token
+        answer: a
+        feedback: Every other layer is an MoE layer, and top-2 routing means most expert weights sit idle for any one token. Mamba's selection changes the state update, not which parameters run, and the attention layers aren't shared.
+      - id: hybrid-sequence-architectures.base.v2.4
+        prompt: Two teams both describe their model as "Mamba plus attention". One alternates the layers; the other feeds each layer's input to a Mamba branch and an attention branch side by side and adds the results. What follows?
+        options:
+          - id: a
+            text: They compute different functions, so the ingredient list doesn't define the model
+          - id: b
+            text: They compute the same function, since addition doesn't depend on order
+          - id: c
+            text: They differ only in speed, since both use each mechanism the same number of times
+        answer: a
+        feedback: In the stacked design, attention reads the Mamba layer's output; in the parallel one, both read the same input. Those are different computations with different results, which is why a hybrid must specify its arrangement.
+  - id: hybrid-sequence-architectures.transfer.v2
+    objective_ref: objective.hybrid-sequence-architectures
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "First ask whether the task needs exact lookups from far back. Then, to credit the design, change one thing at a time against matched baselines."
+    remediation_scene: hybrid-sequence-architectures.s4
+    variants:
+      - id: hybrid-sequence-architectures.transfer.v2.1
+        prompt: A legal-search tool must quote exact clause numbers from 200,000-token contracts on one GPU. The team is choosing a backbone. Which fits best?
+        options:
+          - id: b
+            text: A pure Mamba model, since its memory stays flat at 200,000 tokens
+          - id: a
+            text: A hybrid with a few attention layers among many Mamba layers
+          - id: c
+            text: A full-attention transformer with multi-head (not grouped) KV heads
+        answer: a
+        feedback: Exact quoting is the lookup skill pure SSMs lack, and a full multi-head transformer's cache at 200K tokens is huge. A hybrid keeps a few exact-lookup layers with a much smaller cache.
+      - id: hybrid-sequence-architectures.transfer.v2.2
+        prompt: A new hybrid beats the team's old transformer, but it was also trained on twice as much data. How can they find out whether the hybrid design helped?
+        options:
+          - id: c
+            text: Report the gain as the hybrid's, since the architecture is the change they care about
+          - id: a
+            text: Train a transformer and a pure SSM on the same data and budget, and vary the ratio
+          - id: b
+            text: Compare the two models' KV caches, since a smaller cache shows the design worked
+        answer: a
+        feedback: With the data doubled, the gain could come from the data alone. Matched baselines and one-change-at-a-time ablations, like Jamba's 1:3 versus 1:7 test, isolate the design's effect. Cache size measures memory, not quality.
+      - id: hybrid-sequence-architectures.transfer.v2.3
+        prompt: A factory wants a model that watches a live vibration stream and raises an alarm when the pattern drifts. It never needs to quote an old reading. Which backbone is the sensible first choice?
+        options:
+          - id: a
+            text: A pure SSM, since the task rewards cheap tracking of the recent pattern
+          - id: b
+            text: A hybrid, since a few attention layers make any sequence model better
+          - id: c
+            text: A full transformer, since long streams need every past reading kept
+        answer: a
+        feedback: This task needs the gist of a stream at constant cost per step, the SSM's strength. Attention layers pay off when exact lookups matter, and keeping every reading forever would make memory grow without bound.
+      - id: hybrid-sequence-architectures.transfer.v2.4
+        prompt: "A vendor says: \"Our hybrid supports a 256K context, and its KV cache is only 4 GB.\" What should you test before relying on it for long-document question answering?"
+        options:
+          - id: b
+            text: Whether the 4 GB figure holds at batch size 1 on your own GPU
+          - id: c
+            text: Whether the model loads a 256K-token prompt without an error
+          - id: a
+            text: Whether it answers from evidence placed at many positions in long inputs
+        answer: a
+        feedback: A small cache and an accepted input length say nothing about whether the model can find and use evidence 200K tokens back. The next lesson shows how to test that. Loading without an error is the weakest possible check.
+  - id: hybrid-sequence-architectures.cache
+    objective_ref: objective.hybrid-sequence-architectures
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Count attention layers only: 2 × attention layers × KV heads × head width × tokens × bytes. 1 GiB = 1,024³ bytes, and 256K = 262,144 tokens."
+    remediation_scene: hybrid-sequence-architectures.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: hybrid-sequence-architectures.cache.1
+        prompt: A hybrid has 32 layers, 4 of them attention, each with 8 KV heads of width 128, and a 2-byte cache. How many GiB of KV cache does a 262,144-token context need?
+        answer: 4
+        feedback: "2 × 4 × 8 × 128 × 262,144 × 2 = 4,294,967,296 bytes = 4 GiB. With all 32 layers as attention it would be 32 GiB."
+      - id: hybrid-sequence-architectures.cache.2
+        prompt: A 48-layer hybrid uses attention in 1 layer out of every 6. Each attention layer has 8 KV heads of width 128, with a 2-byte cache. How many GiB of KV cache for a 131,072-token context?
+        answer: 4
+        feedback: "48 ÷ 6 = 8 attention layers. 2 × 8 × 8 × 128 × 131,072 × 2 = 4 GiB."
+      - id: hybrid-sequence-architectures.cache.3
+        prompt: A 64-layer hybrid uses attention in 1 layer out of every 8. Each attention layer has 4 KV heads of width 128, with a 2-byte cache. How many GiB of KV cache for a 65,536-token context?
+        answer: 1
+        feedback: "64 ÷ 8 = 8 attention layers. 2 × 8 × 4 × 128 × 65,536 × 2 = 1,073,741,824 bytes = 1 GiB."
+      - id: hybrid-sequence-architectures.cache.4
+        prompt: A pure transformer has 32 layers, each with 32 KV heads of width 128, and a 2-byte cache. How many GiB of KV cache does a 262,144-token context need?
+        answer: 128
+        feedback: "2 × 32 × 32 × 128 × 262,144 × 2 = 128 GiB, the Llama-2-7B figure in the Jamba paper's comparison."
+      - id: hybrid-sequence-architectures.cache.5
+        prompt: A 32-layer hybrid with an attention-to-Mamba ratio of 1:3 has 8 KV heads of width 128 per attention layer and a 2-byte cache. How many GiB of KV cache for a 262,144-token context?
+        answer: 8
+        feedback: "1:3 means 1 attention layer in every 4, so 8 attention layers. 2 × 8 × 8 × 128 × 262,144 × 2 = 8 GiB."

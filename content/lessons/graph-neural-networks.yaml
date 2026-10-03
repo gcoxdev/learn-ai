@@ -1,208 +1,520 @@
 schema_version: 0.2-draft
 lesson:
   id: graph-neural-networks
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn by exchanging messages across a graph
   state: draft
-  summary: Update connected objects by exchanging and combining messages.
+  summary: A molecule has no first atom and no fixed size. Watch atoms pass messages along their bonds, by hand, and see why too many rounds blur every atom into the same thing.
   slot: M34.1
   category: learning
   sources:
-  - title: Neural Message Passing for Quantum Chemistry
-    url: https://arxiv.org/abs/1704.01212
-  - title: Graph Convolutional Networks
-    url: https://arxiv.org/abs/1609.02907
+    - title: Neural Message Passing for Quantum Chemistry (Gilmer et al., 2017)
+      url: https://arxiv.org/abs/1704.01212
+    - title: Semi-Supervised Classification with Graph Convolutional Networks (Kipf & Welling, ICLR 2017)
+      url: https://arxiv.org/abs/1609.02907
+    - title: Deeper Insights into Graph Convolutional Networks for Semi-Supervised Learning (Li, Han & Wu, 2018)
+      url: https://arxiv.org/abs/1801.07606
+    - title: How Powerful are Graph Neural Networks? (Xu et al., ICLR 2019)
+      url: https://arxiv.org/abs/1810.00826
+    - title: On the Bottleneck of Graph Neural Networks and its Practical Implications (Alon & Yahav, ICLR 2021)
+      url: https://arxiv.org/abs/2006.05205
 objectives:
-- id: objective.graph-neural-networks
-  version: 1-draft
-  statement: Graph neural networks update node or edge representations using neighborhood messages and aggregation;
-    graph construction, permutation behavior, and depth determine what relationships can be represented.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - graph-neural-networks.base
-  - graph-neural-networks.transfer
-  prerequisites:
-  - anyOf:
-    - objective.knowledge-graphs
-  - anyOf:
-    - objective.neural-forward-pass
+  - id: objective.graph-neural-networks
+    version: 2-draft
+    statement: Graph neural networks update node or edge representations using neighborhood messages and aggregation; graph construction, permutation behavior, and depth determine what relationships can be represented.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - graph-neural-networks.base.v2
+      - graph-neural-networks.transfer.v2
+      - graph-neural-networks.calculate
+    prerequisites:
+      - anyOf:
+          - objective.knowledge-graphs
+      - anyOf:
+          - objective.neural-forward-pass
 scenes:
-- id: graph-neural-networks.s1
-  title: Represent entities and relations
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.graph-neural-networks
-  markdown: 'A graph contains nodes and edges, optionally with attributes. Atoms and bonds, users and interactions,
-    or locations and connections produce different graph meanings. The choice of edges is an inductive assumption:
-    an absent edge may remove an information path the task needs.'
-  text_mode: 'A graph contains nodes and edges, optionally with attributes. Atoms and bonds, users and interactions,
-    or locations and connections produce different graph meanings. The choice of edges is an inductive assumption:
-    an absent edge may remove an information path the task needs.'
-  bridges: []
-- id: graph-neural-networks.s2
-  title: Pass and aggregate messages
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.graph-neural-networks
-  markdown: 'A **message function** combines a neighbor''s representation with relevant edge information. Each
-    node gathers, or **aggregates**, incoming messages and uses the result to update its own representation.
+  - id: graph-neural-networks.s1
+    title: A molecule has no first atom
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.graph-neural-networks
+    markdown: |-
+      You want a network that predicts how well a molecule dissolves in water. The networks of module 11 expect a fixed-length list of numbers in a fixed order. A molecule gives you neither: aspirin has 13 heavy (non-hydrogen) atoms, caffeine has 14, and neither has a "first" atom.
 
+      So treat the molecule as a **graph**, a set of **nodes** (atoms) joined by **edges** (bonds), as in the lesson on knowledge graphs. Our running example is acetamide, $\text{CH}_3\text{CONH}_2$, without its hydrogens. A methyl carbon C1 bonds to a central carbon C2, which also bonds to an oxygen O and a nitrogen N.
 
-    For messages 2 and 4, summing gives 6 while averaging gives 3. These preserve different information. Both
-    are **permutation-invariant**: changing the message order to [4, 2] leaves the aggregate unchanged.
+      A computer stores the bonds as an **adjacency matrix** $A$: row $v$ has a 1 in column $u$ when atoms $v$ and $u$ are bonded.
 
+      | | C1 | C2 | O | N |
+      | --- | :---: | :---: | :---: | :---: |
+      | **C1** | 0 | 1 | 0 | 0 |
+      | **C2** | 1 | 0 | 1 | 1 |
+      | **O** | 0 | 1 | 0 | 0 |
+      | **N** | 0 | 1 | 0 | 0 |
 
-    Renaming or reordering nodes should not change a whole-graph prediction merely because storage order changed.
-    For a prediction at each node, reordering inputs should reorder the corresponding outputs consistently.'
-  text_mode: 'A **message function** combines a neighbor''s representation with relevant edge information.
-    Each node gathers, or **aggregates**, incoming messages and uses the result to update its own representation.
+      Each atom also carries a **feature vector** describing it. Ours is one number, 1 for a heteroatom (O or N) and 0 for carbon, so $x = [0, 0, 1, 1]$.
 
+      What counts as an edge is your choice: bonds for a molecule, atoms within 5 ångströms for a protein, roads for a map. Information travels only along the edges you draw.
+    bridges: []
+  - id: graph-neural-networks.s2
+    title: Each atom listens to its neighbors
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.graph-neural-networks
+    markdown: |-
+      A **graph neural network (GNN)** updates every atom's vector in rounds. In each round, a **message-passing layer**, every atom collects a message from each bonded neighbor, adds them up, and combines the total with its own vector:
 
-    For messages 2 and 4, summing gives 6 while averaging gives 3. These preserve different information. Both
-    are **permutation-invariant**: changing the message order to [4, 2] leaves the aggregate unchanged.
+      $$h_v' = \sigma\Big(W\,h_v + \sum_{u \in N(v)} W'\,h_u\Big)$$
 
+      Here $h_v$ is atom $v$'s current vector, $N(v)$ is its set of neighbors, $W$ and $W'$ are learned weights shared by every atom, and $\sigma$ is ReLU. Take $W = 1$ and $W' = 0.5$.
 
-    Renaming or reordering nodes should not change a whole-graph prediction merely because storage order changed.
-    For a prediction at each node, reordering inputs should reorder the corresponding outputs consistently.'
-  bridges: []
-- id: graph-neural-networks.s3
-  title: Expand the receptive neighborhood
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.graph-neural-networks
-  markdown: 'After one local message-passing layer, a node has received information from immediate neighbors.
-    More layers can bring information from farther away.
+      | Atom | Own $h$ | Neighbors' $h$ | Layer 1 | Layer 2 |
+      | --- | ---: | --- | ---: | ---: |
+      | C1 | 0 | C2: 0 | $0 + 0.5(0) = 0$ | $0 + 0.5(1) = 0.5$ |
+      | C2 | 0 | C1, O, N: 0, 1, 1 | $0 + 0.5(2) = 1$ | $1 + 0.5(0 + 1 + 1) = 2$ |
+      | O | 1 | C2: 0 | $1 + 0.5(0) = 1$ | $1 + 0.5(1) = 1.5$ |
+      | N | 1 | C2: 0 | $1 + 0.5(0) = 1$ | $1 + 0.5(1) = 1.5$ |
 
+      Layer 2 uses the layer-1 values. After one layer, C2 "knows" it has two heteroatom neighbors, but C1 is still 0. After two layers C1 is 0.5: news of the O and N has travelled two bonds.
 
-    Two problems can limit that benefit. **Over-smoothing** means repeated mixing makes node representations
-    too similar. **Over-squashing** means too much distant information must pass through a limited representation
-    or narrow graph connection.
+      :::predict Swap the oxygen for a carbon, so x = [0, 0, 0, 1]. What is C1 after two layers?
+      Layer 1 gives C2 $= 0 + 0.5(0 + 0 + 1) = 0.5$, and C1 stays 0. Layer 2 gives C1 $= 0 + 0.5(0.5) = 0.25$. One heteroatom instead of two halves the signal that reaches the methyl carbon.
+      :::
 
+      The same weights serve every atom, as a convolution filter serves every pixel, so one GNN reads molecules of any size. The code runs both layers, then reorders the atoms and runs again.
 
-    These are different problems, and more depth does not automatically solve either one or make every graph
-    property learnable.'
-  text_mode: 'After one local message-passing layer, a node has received information from immediate neighbors.
-    More layers can bring information from farther away.
+      ```python run
+      import numpy as np
 
+      atoms = ["C1", "C2", "O", "N"]            # acetamide's heavy atoms
+      A = np.array([[0, 1, 0, 0],               # C1 bonds to C2
+                    [1, 0, 1, 1],               # C2 bonds to C1, O and N
+                    [0, 1, 0, 0],               # O bonds to C2
+                    [0, 1, 0, 0]])              # N bonds to C2
+      x = np.array([0.0, 0.0, 1.0, 1.0])       # 1 = heteroatom (O or N)
+      W_self, W_nbr = 1.0, 0.5
 
-    Two problems can limit that benefit. **Over-smoothing** means repeated mixing makes node representations
-    too similar. **Over-squashing** means too much distant information must pass through a limited representation
-    or narrow graph connection.
+      def gnn(A, h, layers=2):
+          for _ in range(layers):
+              messages = A @ h                  # sum over each atom's neighbors
+              h = np.maximum(0, W_self * h + W_nbr * messages)   # ReLU
+          return h
 
+      def show(names, h):
+          return ", ".join(f"{n}={v:g}" for n, v in zip(names, h))
 
-    These are different problems, and more depth does not automatically solve either one or make every graph
-    property learnable.'
-  bridges: []
-- id: graph-neural-networks.s4
-  title: Evaluate graph-specific generalization
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.graph-neural-networks
-  markdown: Test new nodes, new graphs, changed sizes, and structural distributions as appropriate. Avoid leakage
-    through edges or related entities crossing splits. Node classification, link prediction, and whole-graph
-    prediction require different outputs and evaluation designs.
-  text_mode: Test new nodes, new graphs, changed sizes, and structural distributions as appropriate. Avoid
-    leakage through edges or related entities crossing splits. Node classification, link prediction, and whole-graph
-    prediction require different outputs and evaluation designs.
-  bridges: []
-- id: graph-neural-networks.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.graph-neural-networks
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A graph neural network updates representations using messages along edges. The graph, aggregation
-    rule, and number of layers determine which relationships can influence each output.
-- id: graph-neural-networks.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.graph-neural-networks
-  markdown: A graph neural network updates representations using messages along edges. The graph, aggregation
-    rule, and number of layers determine which relationships can influence each output.
-  text_mode: A graph neural network updates representations using messages along edges. The graph, aggregation
-    rule, and number of layers determine which relationships can influence each output.
+      print("after 1 layer: ", show(atoms, gnn(A, x, 1)))
+      h = gnn(A, x, 2)
+      print("after 2 layers:", show(atoms, h), "| sum readout =", h.sum())
+
+      p = [3, 1, 0, 2]                          # store the same atoms in a new order
+      h2 = gnn(A[p][:, p], x[p], 2)
+      print("reordered:     ", show([atoms[i] for i in p], h2), "| sum readout =", h2.sum())
+      ```
+
+      Each atom keeps its value in either order, and the total stays 5.5. Set `W_nbr = -1.0` and watch ReLU clip C2 to 0.
+
+      :::papers Message passing neural networks (Gilmer et al., 2017)
+      Gilmer and colleagues wrote many graph networks as one template:
+
+      $$m_v = \sum_{u \in N(v)} M(h_v, h_u, e_{vu}), \qquad h_v' = U(h_v, m_v), \qquad \hat{y} = R(\{h_v\})$$
+
+      The message $M$ is our $W'h_u$ (real models also use the bond type $e_{vu}$), the update $U$ is $\sigma(Wh_v + m_v)$, and the readout $R$ is our sum, 5.5. With vector features, a layer is one line: $H' = \sigma(HW + AHW')$.
+      :::
+    diagram:
+      caption: One message-passing layer, seen from C2 in the worked example.
+      description: The three neighbors of C2 (C1 with h = 0, O with h = 1, N with h = 1) each send a message to a sum node, which computes 0.5 times their total, giving 1. The sum goes to the update node, which also receives C2's own vector h = 0. The update applies ReLU to W times its own vector plus the message sum and outputs C2's new vector, 1.
+      nodes:
+        - id: c1
+          label: C1, h = 0
+          col: 0
+          row: 0
+          tone: data
+        - id: o
+          label: O, h = 1
+          col: 0
+          row: 1
+          tone: data
+        - id: n
+          label: N, h = 1
+          col: 0
+          row: 2
+          tone: data
+        - id: sum
+          label: Sum messages
+          note: 0.5 × (0 + 1 + 1) = 1
+          col: 1
+          row: 1
+          tone: accent
+        - id: self
+          label: C2's own vector
+          note: h = 0
+          col: 2
+          row: 2
+          tone: muted
+        - id: update
+          label: Update
+          note: ReLU(1 × 0 + 1)
+          col: 2
+          row: 1
+          tone: accent
+        - id: out
+          label: New C2 vector
+          note: h' = 1
+          col: 3
+          row: 1
+      edges:
+        - from: c1
+          to: sum
+          label: 0.5 × 0
+        - from: o
+          to: sum
+          label: 0.5 × 1
+        - from: n
+          to: sum
+          label: 0.5 × 1
+        - from: sum
+          to: update
+        - from: self
+          to: update
+        - from: update
+          to: out
+    bridges: []
+  - id: graph-neural-networks.gcn-normalization
+    title: Keep busy atoms from shouting
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.graph-neural-networks
+    markdown: |-
+      A plain sum misbehaves on busy nodes. An atom with three neighbors adds three messages; a user with 2,000 friends adds 2,000. Values grow with **degree**, the number of neighbors.
+
+      The **graph convolutional network (GCN)** of Kipf and Welling (2017) fixes this in two steps. First, give every node a self-loop, $\tilde{A} = A + I$, so its own vector counts as one more neighbor. Then scale the message between $u$ and $v$ by $1/\sqrt{\tilde{d}_u \tilde{d}_v}$, where $\tilde{d}$ is the degree counting the self-loop:
+
+      $$H' = \sigma\big(\tilde{D}^{-1/2}\,\tilde{A}\,\tilde{D}^{-1/2}\,H\,W\big)$$
+
+      In acetamide the degrees with self-loops are C1: 2, C2: 4, O: 2, N: 2.
+
+      | Pair | Weight |
+      | --- | --- |
+      | C1 with itself | $1/\sqrt{2 \times 2} = 0.5$ |
+      | C2 with itself | $1/\sqrt{4 \times 4} = 0.25$ |
+      | C2 with any neighbor | $1/\sqrt{4 \times 2} \approx 0.354$ |
+
+      One GCN step on $x = [0, 0, 1, 1]$ (with $W = 1$) gives C2 $= 0.25(0) + 0.354(0 + 1 + 1) \approx 0.707$, instead of 2 unnormalized. The hub hears its neighbors more quietly, and they hear it more quietly too. GCN made its name labeling papers in citation networks from a few labeled examples.
+    bridges: []
+  - id: graph-neural-networks.s3
+    title: More layers see farther, then blur together
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.graph-neural-networks
+    markdown: |-
+      After $k$ layers, an atom's vector can depend on every atom within $k$ bonds, its **receptive field**. But each layer also mixes neighbors together. Suppose each layer replaces each atom's value with the average over itself and its neighbors, starting from $x = [0, 0, 1, 1]$:
+
+      | Layers | C1 | C2 | O | N |
+      | ---: | ---: | ---: | ---: | ---: |
+      | 0 | 0 | 0 | 1 | 1 |
+      | 1 | 0 | 0.5 | 0.5 | 0.5 |
+      | 2 | 0.25 | 0.375 | 0.5 | 0.5 |
+      | 5 | 0.379 | 0.4 | 0.41 | 0.41 |
+      | 30 | 0.4 | 0.4 | 0.4 | 0.4 |
+
+      After 30 layers the oxygen and the methyl carbon are indistinguishable. This is **over-smoothing**: repeated averaging drives every node in a connected graph toward the same vector (here 0.4). Li, Han, and Wu (2018) showed that a GCN layer is a form of this smoothing, one reason practical GNNs are often only a few layers deep.
+
+      ```python run
+      import numpy as np
+
+      A = np.array([[0, 1, 0, 0], [1, 0, 1, 1], [0, 1, 0, 0], [0, 1, 0, 0]])
+      A_hat = A + np.eye(4)                     # add self-loops
+      d = A_hat.sum(axis=1)                     # degrees with self-loops: 2, 4, 2, 2
+      gcn = A_hat / np.sqrt(np.outer(d, d))     # the GCN weights
+      avg = A_hat / d[:, None]                  # plain average of self + neighbors
+
+      x = np.array([0.0, 0.0, 1.0, 1.0])       # C1, C2, O, N
+      print("one GCN step:", (gcn @ x).round(3))
+
+      h = x.copy()
+      for k in range(1, 31):
+          h = avg @ h
+          if k in (1, 2, 5, 30):
+              print(f"{k:2d} averaging layers:", h.round(3))
+      ```
+
+      Try `x = [1, 0, 0, 0]`. The values still settle at one shared number.
+
+      A different failure appears when two parts of a graph meet through a single bond. Everything one side learns about the other must squeeze through the fixed-size vectors at that bond, which Alon and Yahav (2021) called **over-squashing**. Adding layers doesn't fix it.
+    bridges: []
+  - id: graph-neural-networks.s4
+    title: Read out the whole molecule, then test on new ones
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.graph-neural-networks
+    markdown: |-
+      To predict one number for the whole molecule, the **readout** combines the atom vectors. It must give the same answer however the atoms are listed, a property called **permutation invariance**. Sum, mean, and max all qualify; our sum is 5.5 in any order.
+
+      :::mixup "Just list the atom vectors in order and feed them to an ordinary network."
+      Listed as [C1, C2, O, N], the vectors are [0.5, 2, 1.5, 1.5]. Stored as [N, C2, C1, O], they're [1.5, 2, 0.5, 1.5]. An ordinary network sees two different inputs and can give two answers for one molecule. It also can't take a fifth atom.
+      :::
+
+      Aggregation matters too. Picture a carbon whose only neighbors are two oxygens and another whose only neighbor is one. Summing the heteroatom flags gives 2 and 1; averaging gives 1 and 1, so the mean can't count. Xu and colleagues (2019) proved that sum aggregation tells apart neighborhoods that mean and max confuse.
+
+      When you test, remember that edges can carry answers. A fraud model scored on accounts linked to known fraudsters in its training data looks better than it will on a new ring. For molecules, keep near-copies on one side of the split, as the lesson on molecular modeling shows.
+    bridges: []
+  - id: graph-neural-networks.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.graph-neural-networks
+    markdown: Message-passing sums to compute by hand, then road networks, social graphs, point clouds, and crystals to test whether you can pick the right aggregation, depth, and readout.
+    takeaway: |-
+      Each GNN layer updates a node from its own vector plus the summed messages of its neighbors, using weights shared by every node. Depth sets how far information travels, too much of it blurs nodes together, and an order-free readout gives one answer per graph.
+  - id: graph-neural-networks.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.graph-neural-networks
+    markdown: |-
+      A graph neural network updates representations using messages along edges. The graph, aggregation rule, and number of layers determine which relationships can influence each output.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - graph-neural-networks.s1
-    - graph-neural-networks.s2
-    - graph-neural-networks.s3
-    - graph-neural-networks.s4
-    - graph-neural-networks.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - graph-neural-networks.s1
+        - graph-neural-networks.s2
+        - graph-neural-networks.gcn-normalization
+        - graph-neural-networks.s3
+        - graph-neural-networks.s4
+        - graph-neural-networks.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     graph-neural-networks.recap: graph-neural-networks.check
 assessment_families:
-- id: graph-neural-networks.base
-  objective_ref: objective.graph-neural-networks
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Pass and aggregate messages: trace the inputs, operation, and result before choosing.'
-  remediation_scene: graph-neural-networks.s2
-  variants:
-  - id: graph-neural-networks.base.1
-    prompt: Messages 2 and 4 aggregate to what under a mean?
-    options:
-    - id: b
-      text: '6'
-    - id: c
-      text: '8'
-    - id: a
-      text: '3'
-    answer: a
-    feedback: Mean divides their sum by two neighbors.
-  - id: graph-neural-networks.base.2
-    prompt: Why use a permutation-invariant neighborhood aggregation?
-    options:
-    - id: c
-      text: Only file order matters
-    - id: a
-      text: Neighbor listing order should not arbitrarily change the represented graph
-    - id: b
-      text: All graph nodes must be identical
-    answer: a
-    feedback: Graph structure is independent of an arbitrary list ordering.
-- id: graph-neural-networks.transfer
-  objective_ref: objective.graph-neural-networks
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate graph-specific generalization: trace the inputs, operation, and result before choosing.'
-  remediation_scene: graph-neural-networks.s4
-  variants:
-  - id: graph-neural-networks.transfer.1
-    prompt: Does more message-passing depth guarantee better graph reasoning?
-    options:
-    - id: c
-      text: Only for molecules
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Depth can introduce oversmoothing or information bottlenecks.
-  - id: graph-neural-networks.transfer.2
-    prompt: Why inspect edges crossing a data split?
-    options:
-    - id: a
-      text: They can leak information between training and evaluation entities
-    - id: b
-      text: Edges never carry information
-    - id: c
-      text: Only labels can leak
-    answer: a
-    feedback: Graph connectivity affects independence.
+  - id: graph-neural-networks.base
+    objective_ref: objective.graph-neural-networks
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Pass and aggregate messages: trace the inputs, operation, and result before choosing.'
+    remediation_scene: graph-neural-networks.s2
+    variants:
+      - id: graph-neural-networks.base.1
+        prompt: Messages 2 and 4 aggregate to what under a mean?
+        options:
+          - id: b
+            text: '6'
+          - id: c
+            text: '8'
+          - id: a
+            text: '3'
+        answer: a
+        feedback: Mean divides their sum by two neighbors.
+        retired: true
+      - id: graph-neural-networks.base.2
+        prompt: Why use a permutation-invariant neighborhood aggregation?
+        options:
+          - id: c
+            text: Only file order matters
+          - id: a
+            text: Neighbor listing order should not arbitrarily change the represented graph
+          - id: b
+            text: All graph nodes must be identical
+        answer: a
+        feedback: Graph structure is independent of an arbitrary list ordering.
+        retired: true
+  - id: graph-neural-networks.transfer
+    objective_ref: objective.graph-neural-networks
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate graph-specific generalization: trace the inputs, operation, and result before choosing.'
+    remediation_scene: graph-neural-networks.s4
+    variants:
+      - id: graph-neural-networks.transfer.1
+        prompt: Does more message-passing depth guarantee better graph reasoning?
+        options:
+          - id: c
+            text: Only for molecules
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Depth can introduce oversmoothing or information bottlenecks.
+        retired: true
+      - id: graph-neural-networks.transfer.2
+        prompt: Why inspect edges crossing a data split?
+        options:
+          - id: a
+            text: They can leak information between training and evaluation entities
+          - id: b
+            text: Edges never carry information
+          - id: c
+            text: Only labels can leak
+        answer: a
+        feedback: Graph connectivity affects independence.
+        retired: true
+  - id: graph-neural-networks.base.v2
+    objective_ref: objective.graph-neural-networks
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Picture one layer from a single node's point of view. It adds up its neighbors' messages, combines them with its own vector, and can only hear nodes one hop further than it could before.
+    remediation_scene: graph-neural-networks.s2
+    variants:
+      - id: graph-neural-networks.base.v2.1
+        prompt: A GNN predicts solubility. When the same molecule's atoms are listed in a different order, the prediction changes. Which design choice most likely causes this?
+        options:
+          - id: b
+            text: The update uses ReLU rather than a smooth activation function
+          - id: a
+            text: The readout joins the atom vectors in list order before the output layer
+          - id: c
+            text: The update adds each atom's own vector to its neighbors' message sum
+        answer: a
+        feedback: Message passing with shared weights treats every ordering alike, so the order must be leaking in at the readout. A sum, mean, or max readout ignores order; joining vectors in list order doesn't. ReLU and the self term act on each atom the same way whatever its position.
+      - id: graph-neural-networks.base.v2.2
+        prompt: 'A carbon bonded to two oxygens and a carbon bonded to one oxygen receive heteroatom flags [1, 1] and [1]. Sum aggregation gives 2 and 1; mean gives 1 and 1. What does this show?'
+        options:
+          - id: c
+            text: Mean aggregation changes when neighbors are listed in another order
+          - id: b
+            text: Sum is preferred because its outputs stay small on large graphs
+          - id: a
+            text: Mean aggregation can't count neighbors, so it discards information
+        answer: a
+        feedback: Both carbons look identical to the mean, but the sum tells them apart. Mean is still order-free, so that isn't the problem, and it's the sum, not the mean, whose values grow with degree.
+      - id: graph-neural-networks.base.v2.3
+        prompt: In the chain C1–C2–C3–C4–O, which atoms can affect C1's vector after exactly two message-passing layers?
+        options:
+          - id: a
+            text: C1 itself plus C2 and C3, the atoms within two bonds
+          - id: b
+            text: C1 itself plus C2, since a layer passes messages across one bond
+          - id: c
+            text: Every atom in the chain, since the messages are summed together
+        answer: a
+        feedback: Each layer carries information one more bond, so two layers reach two hops. Layer 1 brings C3's information into C2, and layer 2 passes it on to C1. The oxygen is four bonds away and needs four layers.
+      - id: graph-neural-networks.base.v2.4
+        prompt: A team stacks 30 averaging GNN layers on small molecules and finds that every atom ends up with nearly the same vector. Which problem is this?
+        options:
+          - id: b
+            text: Over-squashing, where distant information crowds into one small vector
+          - id: a
+            text: Over-smoothing, where repeated averaging pulls all nodes to one value
+          - id: c
+            text: Vanishing gradients, where the deep stack stops the weights updating
+        answer: a
+        feedback: Averaging with neighbors again and again drives every node in a connected graph toward the same vector, which is over-smoothing. Over-squashing is about a bottleneck edge, and vanishing gradients would slow training rather than make all atoms identical.
+      - id: graph-neural-networks.base.v2.5
+        prompt: Why does the GCN rule scale the message between nodes u and v by 1/√(d_u·d_v)?
+        options:
+          - id: c
+            text: So that the aggregation gives the same result in any node order
+          - id: b
+            text: So that messages from nearer nodes count more than farther ones
+          - id: a
+            text: So that a node's total doesn't grow with its number of neighbors
+        answer: a
+        feedback: Without scaling, a node with 2,000 neighbors sums 2,000 messages. Dividing by the degrees keeps totals comparable across busy and quiet nodes. A plain sum is already order-free, and each layer only reaches direct neighbors, so distance isn't what the factor handles.
+  - id: graph-neural-networks.transfer.v2
+    objective_ref: objective.graph-neural-networks
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask which of the lesson's levers the problem needs. Where do the edges come from, how far must information travel, how should messages be scaled, and how do node vectors become one answer?
+    remediation_scene: graph-neural-networks.s4
+    variants:
+      - id: graph-neural-networks.transfer.v2.1
+        prompt: A traffic GNN treats intersections as nodes and roads as edges. Speeds at an intersection depend on jams up to three intersections upstream, but the model has one layer. Which change targets this?
+        options:
+          - id: a
+            text: Use at least three message-passing layers so jams can reach it
+          - id: b
+            text: Switch from sum to mean so busy intersections don't dominate
+          - id: c
+            text: Scale each message by the degrees of both intersections
+        answer: a
+        feedback: One layer only reaches direct neighbors; information three hops away needs three layers. Changing the aggregation or scaling alters how neighbors are weighted but still only reaches one hop.
+      - id: graph-neural-networks.transfer.v2.2
+        prompt: In a social-network GNN with plain sum aggregation, users who follow a celebrity with 2 million followers get huge, unstable vectors. What is the standard fix?
+        options:
+          - id: c
+            text: Add more layers so the large sum is spread over more nodes
+          - id: a
+            text: Normalize messages by degree, as in the GCN rule or a mean
+          - id: b
+            text: Replace the sum readout with a max readout over the graph
+        answer: a
+        feedback: The trouble is that sums grow with degree, so scaling by degree targets it directly. Extra layers spread the huge value further. The readout acts after message passing and doesn't touch the per-node blow-up.
+      - id: graph-neural-networks.transfer.v2.3
+        prompt: A lab scans a protein's surface as 5,000 points in 3-D, with no bonds recorded. How can a GNN use this data?
+        options:
+          - id: b
+            text: Sort the points by x-coordinate and feed the list to an MLP
+          - id: c
+            text: Treat each point as its own graph and average the predictions
+          - id: a
+            text: Connect points closer than a chosen distance, then pass messages
+        answer: a
+        feedback: The edges are a modeling choice. Linking nearby points lets each point hear its surroundings. Sorting imposes an arbitrary order that shifts when the scan rotates, and isolated points can't exchange any information.
+      - id: graph-neural-networks.transfer.v2.4
+        prompt: A materials team wants one formation-energy number per crystal from graphs with anywhere from 8 to 200 atoms. Which output design fits?
+        options:
+          - id: a
+            text: Pass messages, then sum the atom vectors into one crystal vector
+          - id: b
+            text: Pad each crystal to 200 atoms and flatten the vectors in list order
+          - id: c
+            text: Predict an energy for each atom and report the largest of them
+        answer: a
+        feedback: A sum readout handles any size and any atom order (divide by the atom count if the target is quoted per atom). Padding and flattening depends on the listing order, and the largest atom energy ignores all the others.
+      - id: graph-neural-networks.transfer.v2.5
+        prompt: A molecule has two ring systems joined by a single bond. The target depends on how the two rings interact, and adding layers doesn't help. What best explains this?
+        options:
+          - id: b
+            text: Over-smoothing, since ring atoms average into one shared value
+          - id: a
+            text: Over-squashing, since everything must pass through one bond
+          - id: c
+            text: The readout depends on the order in which atoms are listed
+        answer: a
+        feedback: All information between the rings must cross one bond and fit in a fixed-size vector, and extra layers add more to squeeze through. Over-smoothing would blur atoms together rather than block cross-ring information, and a sum readout isn't order-dependent.
+  - id: graph-neural-networks.calculate
+    objective_ref: objective.graph-neural-networks
+    task: base
+    response_type: numeric
+    points: 1
+    hint: 'Apply h′ = ReLU(W·h_v + W′·(sum of neighbors'' h)) to one node at a time. For a second layer, use the first layer''s values for every node.'
+    remediation_scene: graph-neural-networks.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: graph-neural-networks.calculate.1
+        prompt: In the path graph A–B–C, the features are A = 1, B = 2, C = 3. With W = 1, W′ = 0.5, and ReLU, what is B's value after one message-passing layer?
+        answer: 4
+        feedback: B's neighbors are A and C, so the message sum is 0.5 × (1 + 3) = 2. Adding B's own term 1 × 2 gives 4, and ReLU keeps it.
+      - id: graph-neural-networks.calculate.2
+        prompt: 'In acetamide, give each heavy atom its hydrogen count as a feature: C1 = 3, C2 = 0, O = 0, N = 2. C2 bonds to C1, O, and N. With W = 1 and W′ = 0.5, what is C2 after one layer?'
+        answer: 2.5
+        feedback: The neighbors sum to 3 + 0 + 2 = 5, and 0.5 × 5 = 2.5. C2's own term is 1 × 0 = 0, so the result is 2.5.
+      - id: graph-neural-networks.calculate.3
+        prompt: A node has value 1 and two neighbors with values 2 and 3. With W = 2, W′ = −1, and ReLU, what is the node's new value?
+        answer: 0
+        feedback: 2 × 1 + (−1) × (2 + 3) = 2 − 5 = −3, and ReLU turns −3 into 0.
+      - id: graph-neural-networks.calculate.4
+        prompt: In the path graph A–B–C, the features are A = 1, B = 0, C = 0. With W = 1, W′ = 1, and ReLU, what is C's value after two layers?
+        answer: 1
+        feedback: After layer 1, A = 1 + 0 = 1, B = 0 + (1 + 0) = 1, and C = 0 + 0 = 0. After layer 2, C = 0 + 1 × B = 0 + 1 = 1. A's signal needed two layers to reach C.
+      - id: graph-neural-networks.calculate.5
+        prompt: In a GCN, a node with 3 neighbors is bonded to a node with 1 neighbor. After adding self-loops, what normalization weight 1/√(d̃_u·d̃_v) does their edge get? Give three decimals.
+        answer: 0.354
+        feedback: Self-loops raise the degrees to 4 and 2, so the weight is 1/√(4 × 2) = 1/√8 ≈ 0.354. Forgetting the self-loops gives 1/√3 ≈ 0.577.

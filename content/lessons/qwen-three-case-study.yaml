@@ -1,245 +1,443 @@
 schema_version: 0.2-draft
 lesson:
   id: qwen-three-case-study
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Compare Qwen3 dense and MoE models with reasoning modes
   state: draft
-  summary: Compare dense and expert models while tracing how their thinking modes were trained.
+  summary: Add "/no_think" to a question and Qwen3 answers at once; leave it off and it reasons at length first, with the same weights. See how that switch was trained, and why the huge MoE caches less than the dense 32B.
   slot: M35.3
   category: learning
   sources:
-  - title: Qwen3 report v1
-    url: https://arxiv.org/abs/2505.09388v1
-  - title: Qwen3 official repository
-    url: https://github.com/QwenLM/Qwen3
+    - title: Qwen3 report v1
+      url: https://arxiv.org/abs/2505.09388v1
+    - title: Qwen3 official repository
+      url: https://github.com/QwenLM/Qwen3
 objectives:
-- id: objective.qwen-three-case-study
-  version: 1-draft
-  statement: The original Qwen3 release connects dense and MoE architecture choices with staged pretraining,
-    reasoning-oriented adaptation, mode fusion, and distillation; compare exact checkpoints and mode-specific
-    inference budgets.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - qwen-three-case-study.base
-  - qwen-three-case-study.transfer
-  prerequisites:
-  - anyOf:
-    - objective.model-report-and-artifact-inventory
-  - anyOf:
-    - objective.moe-parameter-accounting
-  - anyOf:
-    - objective.reasoning-distillation-and-cost
+  - id: objective.qwen-three-case-study
+    version: 2-draft
+    statement: The original Qwen3 release connects dense and MoE architecture choices with staged pretraining, reasoning-oriented adaptation, mode fusion, and distillation; compare exact checkpoints and mode-specific inference budgets.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - qwen-three-case-study.base.v2
+      - qwen-three-case-study.transfer.v2
+      - qwen-three-case-study.calculate
+    prerequisites:
+      - anyOf:
+          - objective.model-report-and-artifact-inventory
+      - anyOf:
+          - objective.moe-parameter-accounting
+      - anyOf:
+          - objective.reasoning-distillation-and-cost
 scenes:
-- id: qwen-three-case-study.s1
-  title: Pin the original family
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.qwen-three-case-study
-  markdown: 'Anchor: Qwen3 Technical Report revision 1, May 14, 2025. This lesson studies the original mixed
-    thinking/non-thinking family, not every later Qwen3-branded update. Sources checked September 13, 2026.
-    The official repository points to individual model cards and their artifact-specific configurations.'
-  text_mode: 'Anchor: Qwen3 Technical Report revision 1, May 14, 2025. This lesson studies the original mixed
-    thinking/non-thinking family, not every later Qwen3-branded update. Sources checked September 13, 2026.
-    The official repository points to individual model cards and their artifact-specific configurations.'
-  bridges: []
-- id: qwen-three-case-study.s2
-  title: Compare dense and sparse capacity
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.qwen-three-case-study
-  markdown: 'The report includes dense models and two MoEs: 30B-A3B and 235B-A22B. Their sparse blocks select
-    eight of 128 experts. The A labels distinguish approximate activated counts from total counts; they do
-    not specify the entire memory footprint or guarantee a particular serving speed.'
-  text_mode: 'The report includes dense models and two MoEs: 30B-A3B and 235B-A22B. Their sparse blocks select
-    eight of 128 experts. The A labels distinguish approximate activated counts from total counts; they do
-    not specify the entire memory footprint or guarantee a particular serving speed.'
-  bridges: []
-- id: qwen-three-case-study.s3
-  title: Follow data and adaptation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.qwen-three-case-study
-  markdown: 'The report describes a 36T-token multilingual pretraining corpus. Its three pretraining stages
-    build broad knowledge, emphasize knowledge-intensive material, and extend context from 4,096 to 32,768
-    tokens.
+  - id: qwen-three-case-study.s1
+    title: One set of weights, two ways to answer
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.qwen-three-case-study
+    markdown: |-
+      You're building a maths tutor. Some requests are lookups ("What's the formula for a circle's area?"); others are proofs that need careful reasoning. Qwen's own previous lineup split this across two models: Qwen2.5 for chat and QwQ for reasoning.
 
+      Qwen3 put both behaviors in one checkpoint. End a message with `/think` and the model writes its reasoning inside a `<think>` block before answering. End it with `/no_think` and the block comes back empty and the answer starts at once. Thinking is the default.
 
-    Flagship post-training then follows four stages: long-reasoning cold start, reasoning reinforcement learning,
-    thinking-mode fusion, and general reinforcement learning. The cold start supplies reasoning demonstrations;
-    reasoning RL rewards checked outcomes; mode fusion combines thinking and direct-answer examples; general
-    RL broadens the targeted behavior.
+      Pin the object: the **Qwen3 Technical Report, revision 1 (May 14, 2025)**, describing the original release. Later date-suffixed Qwen3 updates changed the interface, so check their cards separately.
+    bridges: []
+  - id: qwen-three-case-study.s2
+    title: Six dense models, two MoEs
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.qwen-three-case-study
+    markdown: |-
+      The report lists six dense models (0.6B to 32B) and two mixtures of experts. Four of them, from the report's Tables 1–2 and the released configs:
 
+      | | Qwen3-8B | Qwen3-32B | Qwen3-30B-A3B | Qwen3-235B-A22B |
+      | --- | ---: | ---: | ---: | ---: |
+      | Layers | 36 | 64 | 48 | 94 |
+      | Width | 4,096 | 5,120 | 2,048 | 4,096 |
+      | Query / KV heads | 32 / 8 | 64 / 8 | 32 / 4 | 64 / 4 |
+      | Experts (total / chosen) | dense | dense | 128 / 8 | 128 / 8 |
+      | Parameters (total / active) | 8.2B | 32.8B | 30.5B / 3.3B | 235B / 22B |
+      | Context | 128K | 128K | 128K | 128K |
 
-    Smaller-model recipes use **strong-to-weak distillation**: transferring behavior through teacher-generated
-    examples. This does not copy the teacher''s expert layout. Check the recipe for each model rather than
-    assigning the flagship sequence to every family member.'
-  text_mode: 'The report describes a 36T-token multilingual pretraining corpus. Its three pretraining stages
-    build broad knowledge, emphasize knowledge-intensive material, and extend context from 4,096 to 32,768
-    tokens.
+      Every model was pretrained on about **36 trillion tokens** in 119 languages and dialects, in three stages: over 30T general tokens at 4,096 context, about 5T tokens weighted toward STEM, code, and reasoning, then hundreds of billions of tokens at 32,768 context. YaRN, a RoPE rescaling method, stretches that 32K to 128K at inference.
 
+      Notable choices: QK-Norm in attention for stable training, a 151,669-token byte-level BPE vocabulary, and, unlike DeepSeek's MoEs, **no shared expert**. Every expert is routed, and a load-balancing loss computed over the whole global batch, rather than each small batch, keeps load even while letting experts specialize.
+    bridges: []
+  - id: qwen-three-case-study.s5
+    title: The big MoE caches less than the dense 32B
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.qwen-three-case-study
+    markdown: |-
+      :::predict Which grows its KV cache faster per token, the 235B MoE or the dense 32B?
+      The dense 32B: 2 × 64 layers × 8 KV heads × 128 × 2 bytes = 256 KiB, against 2 × 94 × 4 × 128 × 2 = 188 KiB for the 235B. Halving the KV heads outweighs having 47% more layers. Expert count doesn't enter the cache at all: experts live in the feed-forward layers, and only attention is cached.
+      :::
 
-    Flagship post-training then follows four stages: long-reasoning cold start, reasoning reinforcement learning,
-    thinking-mode fusion, and general reinforcement learning. The cold start supplies reasoning demonstrations;
-    reasoning RL rewards checked outcomes; mode fusion combines thinking and direct-answer examples; general
-    RL broadens the targeted behavior.
+      The calculator applies the parameter accounting from the lesson on counting MoE parameters: total parameters set memory, and active parameters set compute per token.
 
+      ```python run
+      # Qwen3 model sheet: (layers, width, q heads, kv heads, FFN or expert width, experts, chosen)
+      models = {"Qwen3-32B":       (64, 5120, 64, 8, 25600, 1, 1),
+                "Qwen3-30B-A3B":   (48, 2048, 32, 4, 768, 128, 8),
+                "Qwen3-235B-A22B": (94, 4096, 64, 4, 1536, 128, 8)}
+      vocab, hd, D = 151936, 128, 36e12            # head width 128 in every config; 36T tokens
 
-    Smaller-model recipes use **strong-to-weak distillation**: transferring behavior through teacher-generated
-    examples. This does not copy the teacher''s expert layout. Check the recipe for each model rather than
-    assigning the flagship sequence to every family member.'
-  bridges: []
-- id: qwen-three-case-study.s4
-  title: Inspect the inference mode contract
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.qwen-three-case-study
-  markdown: The original repository documents thinking controls and matching templates; it states Apache 2.0
-    for its open-weight models, with license files in model repositories. Mode settings alter the generation
-    behavior and budget. Inspect the exact checkpoint before applying these instructions to a later release
-    with a different interface.
-  text_mode: The original repository documents thinking controls and matching templates; it states Apache 2.0
-    for its open-weight models, with license files in model repositories. Mode settings alter the generation
-    behavior and budget. Inspect the exact checkpoint before applying these instructions to a later release
-    with a different interface.
-  bridges: []
-- id: qwen-three-case-study.s5
-  title: Compare useful operating points
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.qwen-three-case-study
-  markdown: 'Run the same verified tasks in supported modes with explicit total token and latency budgets.
-    A mode producing longer intermediate text can improve some answers while costing more. Compare dense and
-    sparse variants using both quality and full resident memory, including shared computation and caches.
+      for name, (L, d, q, kvh, ffn, E, k) in models.items():
+          attn = 2 * d * q * hd + 2 * d * kvh * hd
+          expert = 3 * d * ffn
+          router = d * E if E > 1 else 0
+          total = L * (attn + E * expert + router) + 2 * vocab * d
+          active = L * (attn + k * expert + router) + 2 * vocab * d
+          kv = 2 * L * kvh * hd * 2
+          print(f"{name:16s} total {total / 1e9:5.1f}B  active {active / 1e9:5.2f}B | "
+                f"bf16 {total * 2 / 1e9:3.0f} GB  fp8 {total / 1e9:3.0f} GB | "
+                f"KV {kv / 1024:3.0f} KiB/token | 6ND {6 * active * D:.1e}")
+      ```
 
+      Three things to read off. The 30B-A3B needs 61 GB of bf16 weights even though each token touches only 3.35B of them. The flagship's pretraining (6ND with the 22B *active* count) comes to about 4.8 × 10²⁴ FLOPs, less than the dense 32B's 7.1 × 10²⁴. And the report gives no GPU-hours, so unlike Llama 3 or DeepSeek-V3, there's no reported figure to check these against. Label them computed, and the true cost unknown.
 
-    For a toy comparison, record final-answer correctness alongside all generated tokens, including intermediate
-    reasoning. Ten correct answers using 1,000 tokens and eleven using 5,000 express a quality–cost tradeoff;
-    they do not establish one universally better mode. Keep prompts, attempt counts, and scoring fixed before
-    interpreting the difference.'
-  text_mode: 'Run the same verified tasks in supported modes with explicit total token and latency budgets.
-    A mode producing longer intermediate text can improve some answers while costing more. Compare dense and
-    sparse variants using both quality and full resident memory, including shared computation and caches.
+      Change the 235B's last number from 8 to 128 to see what running every expert would cost.
+    bridges: []
+  - id: qwen-three-case-study.s3
+    title: Four stages to build the switch
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.qwen-three-case-study
+    markdown: |-
+      The two flagships, 235B-A22B and 32B, went through four post-training stages:
 
+      1. **Long chain-of-thought cold start.** A small SFT set of verified reasoning traces generated by QwQ-32B, filtered for correct answers and no language mixing. The report keeps it deliberately small.
+      2. **Reasoning RL.** GRPO, from the lesson on group-relative policy learning, on 3,995 query–verifier pairs. The 235B's AIME'24 score rose from 70.1 to 85.1 over 170 RL steps.
+      3. **Thinking mode fusion.** More SFT on a mix of thinking examples (rejection-sampled from the stage-2 model) and non-thinking examples, each marked `/think` or `/no_think`.
+      4. **General RL.** Over 20 tasks scored by rules, by a model comparing against a reference answer, or by a reward model trained on preferences.
 
-    For a toy comparison, record final-answer correctness alongside all generated tokens, including intermediate
-    reasoning. Ten correct answers using 1,000 tokens and eleven using 5,000 express a quality–cost tradeoff;
-    they do not establish one universally better mode. Keep prompts, attempt counts, and scoring fixed before
-    interpreting the difference.'
-  bridges: []
-- id: qwen-three-case-study.s6
-  title: Distinguish observations from explanations
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.qwen-three-case-study
-  markdown: If one variant performs better, data, distillation, capacity, and training budget may all differ.
-    Use documented ablations where available and state remaining confounds. A coherent family offers useful
-    comparisons without becoming a controlled experiment in architecture alone.
-  text_mode: If one variant performs better, data, distillation, capacity, and training budget may all differ.
-    Use documented ablations where available and state remaining confounds. A coherent family offers useful
-    comparisons without becoming a controlled experiment in architecture alone.
-  bridges: []
-- id: qwen-three-case-study.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.qwen-three-case-study
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: The original Qwen3 family includes different architectures and adaptation recipes. Compare exact
-    checkpoints and supported modes using the full generation and memory budgets.
-- id: qwen-three-case-study.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.qwen-three-case-study
-  markdown: The original Qwen3 family includes different architectures and adaptation recipes. Compare exact
-    checkpoints and supported modes using the full generation and memory budgets.
-  text_mode: The original Qwen3 family includes different architectures and adaptation recipes. Compare exact
-    checkpoints and supported modes using the full generation and memory budgets.
+      Stages 1–2 build the reasoning; stages 3–4 add the direct mode and general behavior.
+    diagram:
+      caption: Qwen3 post-training. Flagships take four stages; smaller models are distilled from them.
+      description: A base model goes through a long chain-of-thought cold start, then reasoning RL with GRPO, then thinking mode fusion, then general RL, producing the flagship models Qwen3-235B-A22B and Qwen3-32B. The flagships act as teachers for strong-to-weak distillation, which turns smaller base models into the lightweight Qwen3 models from 0.6B to 14B plus 30B-A3B.
+      nodes:
+        - id: base
+          label: Base model
+          col: 0
+          row: 0
+          tone: muted
+        - id: cold
+          label: 1. Long-CoT cold start
+          note: small SFT set
+          col: 1
+          row: 0
+        - id: rl
+          label: 2. Reasoning RL
+          note: GRPO, 3,995 problems
+          col: 2
+          row: 0
+        - id: fusion
+          label: 3. Thinking mode fusion
+          note: SFT with /think and /no_think
+          col: 3
+          row: 0
+        - id: general
+          label: 4. General RL
+          note: 20+ tasks
+          col: 4
+          row: 0
+        - id: flagship
+          label: Flagships
+          note: 235B-A22B and 32B
+          col: 4
+          row: 1
+          tone: accent
+        - id: small
+          label: Lightweight models
+          note: 0.6B–14B and 30B-A3B
+          col: 2
+          row: 1
+          tone: data
+      edges:
+        - from: base
+          to: cold
+        - from: cold
+          to: rl
+        - from: rl
+          to: fusion
+        - from: fusion
+          to: general
+        - from: general
+          to: flagship
+        - from: flagship
+          to: small
+          label: strong-to-weak distillation
+    bridges: []
+  - id: qwen-three-case-study.s4
+    title: The mode switch is a template contract
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.qwen-three-case-study
+    markdown: |-
+      Fusion only works if requests are formatted like the training data. In the released chat template, a non-thinking reply always contains an *empty* `<think></think>` block. Hugging Face's version of the template can insert that empty block for you (`enable_thinking=False`). Drop it and you send the model a format it never saw.
+
+      The report also describes a **thinking budget**: when the reasoning reaches a token limit you set, your code stops it, inserts a fixed instruction ("Considering the limited time by the user, I have to give the solution based on the thinking directly now.") and closes the block, and the model answers from its partial reasoning. The report notes this ability wasn't trained directly; it emerged from fusion.
+
+      For the tutor: `/no_think` for lookups, thinking with a budget for proofs. Measure accuracy *and* tokens per request for each, since thinking tokens cost time and money like any others.
+
+      :::mixup "Thinking mode is a different model, or at least a different set of weights."
+      Same checkpoint. Only the flag and the think block's contents differ, so both modes share one deployment and one memory footprint.
+      :::
+    bridges: []
+  - id: qwen-three-case-study.s6
+    title: Distilling the small models cost a tenth
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.qwen-three-case-study
+    markdown: |-
+      The lightweight models skipped the four stages. They used **strong-to-weak distillation** in two phases. First, *off-policy*: fine-tune on teacher outputs in both modes. Then *on-policy*: the student writes its own responses, and training pulls its token probabilities (logits) toward those of Qwen3-32B or 235B-A22B on the same text, minimizing their KL divergence.
+
+      The report tested this against RL, starting both from the same off-policy Qwen3-8B checkpoint:
+
+      | From the same 8B start | AIME'24 | GPU-hours |
+      | --- | ---: | ---: |
+      | + reinforcement learning | 67.6 | 17,920 |
+      | + on-policy distillation | 74.4 | 1,800 |
+
+      Higher score for about a tenth of the compute. That matches what DeepSeek found with R1's students, in the lesson on distilling reasoning.
+
+      This is also why comparing family members needs care. If Qwen3-32B beats 30B-A3B, they differ in active size, architecture, *and* recipe (four stages versus distillation). The table above is a clean comparison because only the method changed.
+    bridges: []
+  - id: qwen-three-case-study.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.qwen-three-case-study
+    markdown: Size Qwen3's dense and MoE models, then advise a tutoring app, a GPU-limited team, and a lab choosing between RL and distillation.
+    takeaway: |-
+      Qwen3 packs thinking and non-thinking modes into one checkpoint through a four-stage recipe and a chat-template contract. For its MoEs, total parameters set memory, active parameters set compute, and KV heads set the cache.
+  - id: qwen-three-case-study.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.qwen-three-case-study
+    markdown: |-
+      The original Qwen3 family includes different architectures and adaptation recipes. Compare exact checkpoints and supported modes using the full generation and memory budgets.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - qwen-three-case-study.s1
-    - qwen-three-case-study.s2
-    - qwen-three-case-study.s3
-    - qwen-three-case-study.s4
-    - qwen-three-case-study.s5
-    - qwen-three-case-study.s6
-    - qwen-three-case-study.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - qwen-three-case-study.s1
+        - qwen-three-case-study.s2
+        - qwen-three-case-study.s5
+        - qwen-three-case-study.s3
+        - qwen-three-case-study.s4
+        - qwen-three-case-study.s6
+        - qwen-three-case-study.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     qwen-three-case-study.recap: qwen-three-case-study.check
 assessment_families:
-- id: qwen-three-case-study.base
-  objective_ref: objective.qwen-three-case-study
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Compare dense and sparse capacity: trace the inputs, operation, and result before choosing.'
-  remediation_scene: qwen-three-case-study.s2
-  variants:
-  - id: qwen-three-case-study.base.1
-    prompt: In 30B-A3B, does A3B describe total stored parameters?
-    options:
-    - id: c
-      text: It denotes the vocabulary size
-    - id: a
-      text: No; it denotes an approximate activated count
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Total and activated capacity are different quantities.
-  - id: qwen-three-case-study.base.2
-    prompt: Do the original MoE blocks activate all 128 experts per token?
-    options:
-    - id: a
-      text: No; the reported selection is eight
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only when a prompt is English
-    answer: a
-    feedback: Sparse routing executes a selected subset.
-- id: qwen-three-case-study.transfer
-  objective_ref: objective.qwen-three-case-study
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Distinguish observations from explanations: trace the inputs, operation, and result before choosing.'
-  remediation_scene: qwen-three-case-study.s6
-  variants:
-  - id: qwen-three-case-study.transfer.1
-    prompt: Should every small model be assigned the flagship post-training recipe without checking?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if model names share Qwen3
-    answer: a
-    feedback: Distillation can change the stage history.
-  - id: qwen-three-case-study.transfer.2
-    prompt: Why compare reasoning modes at matched budgets?
-    options:
-    - id: b
-      text: Modes always have identical cost
-    - id: c
-      text: Only parameter counts affect latency
-    - id: a
-      text: Longer generated traces consume resources that affect the tradeoff
-    answer: a
-    feedback: Inference behavior and cost depend on generation length and settings.
+  - id: qwen-three-case-study.base
+    objective_ref: objective.qwen-three-case-study
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Separate total parameters (memory) from active parameters (compute per token).
+    remediation_scene: qwen-three-case-study.s2
+    variants:
+      - id: qwen-three-case-study.base.1
+        prompt: In 30B-A3B, does A3B describe total stored parameters?
+        options:
+          - id: c
+            text: It denotes the vocabulary size
+          - id: a
+            text: No; it denotes an approximate activated count
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Total and activated capacity are different quantities.
+        retired: true
+      - id: qwen-three-case-study.base.2
+        prompt: Do the original MoE blocks activate all 128 experts per token?
+        options:
+          - id: a
+            text: No; the reported selection is eight
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only when a prompt is English
+        answer: a
+        feedback: Sparse routing executes a selected subset.
+        retired: true
+  - id: qwen-three-case-study.transfer
+    objective_ref: objective.qwen-three-case-study
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: List everything that differs between the two models before crediting any single cause.
+    remediation_scene: qwen-three-case-study.s6
+    variants:
+      - id: qwen-three-case-study.transfer.1
+        prompt: Should every small model be assigned the flagship post-training recipe without checking?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if model names share Qwen3
+        answer: a
+        feedback: Distillation can change the stage history.
+        retired: true
+      - id: qwen-three-case-study.transfer.2
+        prompt: Why compare reasoning modes at matched budgets?
+        options:
+          - id: b
+            text: Modes always have identical cost
+          - id: c
+            text: Only parameter counts affect latency
+          - id: a
+            text: Longer generated traces consume resources that affect the tradeoff
+        answer: a
+        feedback: Inference behavior and cost depend on generation length and settings.
+        retired: true
+  - id: qwen-three-case-study.base.v2
+    objective_ref: objective.qwen-three-case-study
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask which part of the model each number touches. Experts live in the feed-forward layers, the cache holds only attention keys and values, and the modes live in the chat template.
+    remediation_scene: qwen-three-case-study.s5
+    variants:
+      - id: qwen-three-case-study.base.v2.1
+        prompt: What do "30B" and "A3B" in Qwen3-30B-A3B tell you?
+        options:
+          - id: b
+            text: 30B are routed experts, and 3B is a shared expert that runs for every token
+          - id: a
+            text: About 30B parameters must be stored, and about 3B are used per token
+          - id: c
+            text: About 30B parameters are used in training, and 3B remain after pruning
+        answer: a
+        feedback: Total parameters must all be resident, since any token may route to any expert; about 3.3B are active per token. Qwen3's MoEs have no shared expert, and nothing is pruned after training.
+      - id: qwen-three-case-study.base.v2.2
+        prompt: Qwen3-235B-A22B caches 188 KiB per token, while the dense Qwen3-32B caches 256 KiB. What explains this?
+        options:
+          - id: c
+            text: Its width is smaller, 4,096 against 5,120, and the cache scales with width
+          - id: b
+            text: Only the 8 chosen experts in each layer store keys and values
+          - id: a
+            text: It has 4 KV heads instead of 8, which outweighs its extra layers
+        answer: a
+        feedback: Cache per token is 2 × layers × KV heads × head width × bytes. 94 × 4 = 376 against 64 × 8 = 512, with the same head width. Experts sit in the feed-forward layers and cache nothing, and with GQA the cache depends on KV heads × head width, not on the model width.
+      - id: qwen-three-case-study.base.v2.3
+        prompt: What happened in Qwen3's "thinking mode fusion" stage?
+        options:
+          - id: a
+            text: SFT on the reasoning-RL model, mixing thinking and non-thinking examples marked with flags
+          - id: b
+            text: The weights of a separate reasoning model and chat model were averaged into one
+          - id: c
+            text: RL with a length penalty taught the model to skip reasoning on easy questions
+        answer: a
+        feedback: Fusion is continued supervised fine-tuning on flagged examples, using the chat template with /think and /no_think. No weights were merged, and no length reward was used to create the direct mode.
+      - id: qwen-three-case-study.base.v2.4
+        prompt: A Qwen3 deployment sets a 4,000-token thinking budget. What happens when the reasoning reaches it?
+        options:
+          - id: b
+            text: The model has learned from RL to wrap up its reasoning near the limit
+          - id: c
+            text: Decoding switches to greedy sampling so the answer arrives sooner
+          - id: a
+            text: The code stops the reasoning, inserts a fixed instruction, and the model answers
+        answer: a
+        feedback: The serving code halts the thinking, appends the stop-thinking instruction and closes the block, and the model answers from its partial reasoning. The report says this ability emerged from mode fusion; it wasn't trained with a length reward.
+  - id: qwen-three-case-study.transfer.v2
+    objective_ref: objective.qwen-three-case-study
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide what the situation needs (memory, compute, a mode, or a fair comparison), then use the Qwen3 fact that governs it.
+    remediation_scene: qwen-three-case-study.s4
+    variants:
+      - id: qwen-three-case-study.transfer.v2.1
+        prompt: A tutoring app gets quick formula lookups and long proofs, and can afford only one deployment. How should it use Qwen3?
+        options:
+          - id: c
+            text: Use thinking mode for everything, since reasoning never lowers accuracy
+          - id: a
+            text: Send /no_think for lookups and a thinking budget for proofs, measuring both
+          - id: b
+            text: Run a Qwen3 model for proofs next to a separate chat model for lookups
+        answer: a
+        feedback: One checkpoint serves both modes, so the app chooses per request and checks accuracy and tokens for each setting. Thinking on every lookup spends tokens and waiting time for little gain, and a second model gives up the single deployment.
+      - id: qwen-three-case-study.transfer.v2.2
+        prompt: A manager says Qwen3-30B-A3B "only needs about 6 GB of GPU memory in bf16, since just 3B parameters are active." What's the correction?
+        options:
+          - id: a
+            text: All 30.5B parameters must be resident, about 61 GB in bf16
+          - id: b
+            text: It needs 3.3B × 8 experts × 2 bytes, about 53 GB in bf16
+          - id: c
+            text: 6 GB is right for weights; the KV cache adds the rest
+        answer: a
+        feedback: Any token can route to any of the 128 experts, so all of them must be loaded; the active count sets compute, not memory. The 3.3B active count already includes the 8 chosen experts.
+      - id: qwen-three-case-study.transfer.v2.3
+        prompt: A lab wants to improve its 7B maths student and has a strong 70B teacher. It must choose between RL on the student and on-policy distillation from the teacher. What does Qwen3's 8B experiment suggest?
+        options:
+          - id: b
+            text: RL, since learning from its own rewards generalizes better than imitation
+          - id: c
+            text: Off-policy fine-tuning only, since student-generated samples are too costly
+          - id: a
+            text: On-policy distillation, which scored higher for about a tenth of the GPU-hours
+        answer: a
+        feedback: From the same start, on-policy distillation reached 74.4 on AIME'24 in 1,800 GPU-hours, against 67.6 in 17,920 for RL. Qwen3 used off-policy distillation first, then added the on-policy phase because it helped further.
+      - id: qwen-three-case-study.transfer.v2.4
+        prompt: In thinking mode, Qwen3-32B outscores Qwen3-30B-A3B on a coding benchmark. A colleague concludes that dense beats MoE. What's wrong with that?
+        options:
+          - id: c
+            text: Nothing, since the two models have nearly the same total size
+          - id: a
+            text: Active size and post-training recipe also differ, so architecture isn't isolated
+          - id: b
+            text: Thinking-mode scores can't be compared across different Qwen3 models
+        answer: a
+        feedback: The 32B uses about ten times more parameters per token and went through all four stages, while 30B-A3B was distilled. Similar total size doesn't make it a controlled test, though scores under the same mode and budget can still be compared.
+  - id: qwen-three-case-study.calculate
+    objective_ref: objective.qwen-three-case-study
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Memory uses total parameters × bytes. The cache uses 2 × layers × KV heads × 128 × 2 bytes. Training compute uses 6 × active parameters × tokens."
+    remediation_scene: qwen-three-case-study.s5
+    absolute_tolerance: 1
+    variants:
+      - id: qwen-three-case-study.calculate.1
+        prompt: Qwen3-235B-A22B has 235 billion total parameters. How many GB do its weights take in FP8 (1 byte each)?
+        answer: 235
+        feedback: 235 × 10⁹ × 1 byte = 235 GB. The 22B active count doesn't reduce it, because every expert must be stored.
+      - id: qwen-three-case-study.calculate.2
+        prompt: Qwen3-235B-A22B has 94 layers and 4 KV heads of width 128. With a 2-byte cache, how many KiB does each token add?
+        answer: 188
+        feedback: 2 × 94 × 4 × 128 × 2 = 192,512 bytes, and 192,512 ÷ 1,024 = 188 KiB.
+      - id: qwen-three-case-study.calculate.3
+        prompt: Using 6ND with 22 billion active parameters and 36 trillion tokens, what is Qwen3-235B-A22B's pretraining compute, in units of 10²³ FLOPs?
+        answer: 47.5
+        feedback: 6 × 22 × 10⁹ × 36 × 10¹² = 4.75 × 10²⁴ = 47.5 × 10²³ FLOPs. For an MoE, use the active count, since each token passes through only the chosen experts.
+      - id: qwen-three-case-study.calculate.4
+        prompt: Qwen3-30B-A3B has 48 layers and 4 KV heads of width 128. With a 2-byte cache, how many KiB does each token add?
+        answer: 96
+        feedback: 2 × 48 × 4 × 128 × 2 = 98,304 bytes = 96 KiB.
+      - id: qwen-three-case-study.calculate.5
+        prompt: Qwen3-30B-A3B has 30.5 billion total parameters. How many GB do its weights take in bf16?
+        answer: 61
+        feedback: 30.5 × 10⁹ × 2 bytes = 61 GB, even though only about 3.3B parameters work on each token.

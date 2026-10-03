@@ -1,213 +1,464 @@
 schema_version: 0.2-draft
 lesson:
   id: counterfactuals-and-identification
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: State the assumptions behind effects that cannot all be observed
   state: draft
-  summary: State what must be assumed before comparing outcomes that cannot all be observed.
+  summary: Ana got a coupon and spent $60. Would she have spent it anyway? You can never see both answers, but with the right design you can still measure the effect.
   slot: M31.2
   category: learning
   sources:
-  - title: 'Causal Inference: What If — authors’ book'
-    url: https://miguelhernan.org/whatifbook
-  - title: 'Causal inference in statistics: An overview'
-    url: https://ftp.cs.ucla.edu/pub/stat_ser/r350.pdf
+    - title: "Causal Inference: What If (Hernán & Robins)"
+      url: https://miguelhernan.org/whatifbook
+    - title: "Estimating causal effects of treatments in randomized and nonrandomized studies (Rubin, 1974)"
+      url: https://eric.ed.gov/?id=EJ118470
+    - title: "Minimum Wages and Employment: A Case Study of the Fast-Food Industry in New Jersey and Pennsylvania (Card & Krueger, NBER working paper, 1993; American Economic Review, 1994)"
+      url: https://www.nber.org/papers/w4509
+    - title: "The Book of Why (Pearl & Mackenzie, 2018)"
+      url: http://bayes.cs.ucla.edu/WHY/
+    - title: "Causal inference in statistics: An overview (Pearl, 2009)"
+      url: https://ftp.cs.ucla.edu/pub/stat_ser/r350.pdf
 objectives:
-- id: objective.counterfactuals-and-identification
-  version: 1-draft
-  statement: Counterfactual reasoning compares potential outcomes under alternative interventions; identification
-    requires assumptions such as consistency, exchangeability, and positivity, and causal discovery has observational
-    limits.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - counterfactuals-and-identification.base
-  - counterfactuals-and-identification.transfer
-  prerequisites:
-  - anyOf:
-    - objective.causal-graphs-and-interventions
+  - id: objective.counterfactuals-and-identification
+    version: 2-draft
+    statement: Define an effect with potential outcomes, compute an average treatment effect, name the assumptions (ignorability, positivity, SUTVA) that let observed data identify it, and use difference-in-differences or an instrument when randomization is impossible.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - counterfactuals-and-identification.base.v2
+      - counterfactuals-and-identification.transfer.v2
+      - counterfactuals-and-identification.calculate
+      - counterfactuals-and-identification.did
+    prerequisites:
+      - anyOf:
+          - objective.causal-graphs-and-interventions
 scenes:
-- id: counterfactuals-and-identification.s1
-  title: One unit has alternative potential outcomes
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.counterfactuals-and-identification
-  markdown: 'For a person considering a training program, imagine two **potential outcomes**: their result
-    if they participate and their result if they do not.
+  - id: counterfactuals-and-identification.s1
+    title: Two futures, one record
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.counterfactuals-and-identification
+    markdown: |-
+      Ana gets a 20%-off coupon from a clothing store and spends \$60 the next month. Did the coupon make her spend more? To answer, you'd need a second number: what Ana would have spent *without* the coupon.
 
+      Write the two possible results as **potential outcomes**: $Y(1)$ is the outcome if a person is treated (gets the coupon), and $Y(0)$ is the outcome if not. The effect on that person is $Y(1) - Y(0)$. This framework comes from Jerzy Neyman (1923) and was developed for observational data by Donald Rubin (1974).
 
-    We observe only the result under the condition that actually occurs. The other outcome is unobserved. We
-    therefore cannot generally read that person''s causal gain directly from one record. Population-level comparisons
-    require a study design and assumptions that connect observed groups to the effects we want to estimate.'
-  text_mode: 'For a person considering a training program, imagine two **potential outcomes**: their result
-    if they participate and their result if they do not.
+      Suppose, impossibly, we could see both futures for six customers:
 
+      | Customer | $Y(0)$: no coupon | $Y(1)$: coupon | Effect |
+      | --- | ---: | ---: | ---: |
+      | Ana | \$50 | \$60 | +10 |
+      | Ben | \$40 | \$45 | +5 |
+      | Cai | \$80 | \$95 | +15 |
+      | Dee | \$10 | \$10 | 0 |
+      | Eli | \$20 | \$40 | +20 |
+      | Fay | \$70 | \$80 | +10 |
 
-    We observe only the result under the condition that actually occurs. The other outcome is unobserved. We
-    therefore cannot generally read that person''s causal gain directly from one record. Population-level comparisons
-    require a study design and assumptions that connect observed groups to the effects we want to estimate.'
-  bridges: []
-- id: counterfactuals-and-identification.s2
-  title: Name identification assumptions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.counterfactuals-and-identification
-  markdown: 'Three common identification assumptions are:
+      The **average treatment effect (ATE)** is the mean of the individual effects: $(10 + 5 + 15 + 0 + 20 + 10) / 6 = 60 / 6 = 10$ dollars. The coupon adds \$10 per customer on average, though Dee gains nothing and Eli gains \$20.
 
+      In real life each customer gets the coupon or doesn't, so we see one column per row and the other stays blank. Paul Holland (1986) called this the **fundamental problem of causal inference**: an individual effect is never observed directly. The rest of this lesson is about estimating averages like the ATE anyway.
+    bridges: []
+  - id: counterfactuals-and-identification.s5
+    title: Why the obvious comparison lies
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.counterfactuals-and-identification
+    markdown: |-
+      The store sends coupons to its three biggest spenders: Ana, Cai, and Fay. It then compares what the two groups actually spent.
 
-    - **Consistency:** the observed outcome matches the potential outcome for the specified intervention actually
-    received.
+      | Group | Customers | Observed spend | Mean |
+      | --- | --- | --- | ---: |
+      | Coupon | Ana, Cai, Fay | $Y(1)$: 60, 95, 80 | \$78.33 |
+      | No coupon | Ben, Dee, Eli | $Y(0)$: 40, 10, 20 | \$23.33 |
 
-    - **Exchangeability:** the treatment groups are comparable for the relevant potential outcomes, possibly
-    after accounting for measured characteristics.
+      :::predict The true ATE is \$10. What does this comparison say?
+      \$78.33 − \$23.33 = \$55, more than five times the truth. Coupon holders would have spent far more anyway: their $Y(0)$ values average \$66.67, against \$23.33 for the others. That \$43.33 gap is **selection bias**, and it has nothing to do with the coupon.
+      :::
 
-    - **Positivity:** each needed treatment alternative has a nonzero probability within the relevant groups.
+      Now let a coin decide. The program tries every way of giving coupons to three of the six customers:
 
+      ```python run
+      from itertools import combinations
 
-    Suppose a randomized study observes average scores of 75 with training and 70 without. **Identification**
-    asks whether the design and assumptions let this comparison represent the desired causal effect. **Estimation**
-    asks how to calculate it from the sample, with uncertainty. A five-point average difference does not mean
-    every individual gained five points.'
-  text_mode: 'Three common identification assumptions are:
+      # Both potential outcomes: next month's spend ($) without and with a coupon
+      y0 = {"Ana": 50, "Ben": 40, "Cai": 80, "Dee": 10, "Eli": 20, "Fay": 70}
+      y1 = {"Ana": 60, "Ben": 45, "Cai": 95, "Dee": 10, "Eli": 40, "Fay": 80}
+      people = list(y0)
 
+      ate = sum(y1[p] - y0[p] for p in people) / len(people)
+      print(f"true ATE: {ate:.2f}")
 
-    - **Consistency:** the observed outcome matches the potential outcome for the specified intervention actually
-    received.
+      def naive(treated):
+          """Mean observed spend of coupon holders minus mean of everyone else."""
+          control = [p for p in people if p not in treated]
+          return (sum(y1[p] for p in treated) / len(treated)
+                  - sum(y0[p] for p in control) / len(control))
 
-    - **Exchangeability:** the treatment groups are comparable for the relevant potential outcomes, possibly
-    after accounting for measured characteristics.
+      print(f"coupons to the 3 biggest spenders: {naive(['Ana', 'Cai', 'Fay']):.2f}")
 
-    - **Positivity:** each needed treatment alternative has a nonzero probability within the relevant groups.
+      splits = [naive(list(t)) for t in combinations(people, 3)]
+      print(f"random coupons: {len(splits)} possible splits, from {min(splits):.2f} "
+            f"to {max(splits):.2f}, average {sum(splits) / len(splits):.2f}")
+      ```
 
+      Averaged over all 20 random splits, the comparison gives exactly \$10. Any single split of six people can land anywhere from −\$35 to \$55, which is why real trials use hundreds or thousands of people. Try changing Dee's `y1` to 40 and predict the new ATE before you run it.
+    bridges: []
+  - id: counterfactuals-and-identification.s2
+    title: Three assumptions that make the blanks fillable
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.counterfactuals-and-identification
+    markdown: |-
+      **Identification** means writing the causal quantity you want, such as the ATE, in terms of things you can observe. **Estimation** comes after: computing it from a finite sample, with its uncertainty. Write $T$ for the treatment (1 = coupon, 0 = none) and $X$ for the traits you measured. Without randomization, identifying the ATE from records takes three assumptions:
 
-    Suppose a randomized study observes average scores of 75 with training and 70 without. **Identification**
-    asks whether the design and assumptions let this comparison represent the desired causal effect. **Estimation**
-    asks how to calculate it from the sample, with uncertainty. A five-point average difference does not mean
-    every individual gained five points.'
-  bridges: []
-- id: counterfactuals-and-identification.s3
-  title: See a support failure
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.counterfactuals-and-identification
-  markdown: If every experienced worker receives training and no inexperienced worker does, the data may lack
-    overlap needed to compare training effects within experience levels. A flexible model can still output
-    a number, but extrapolation does not create the missing causal evidence.
-  text_mode: If every experienced worker receives training and no inexperienced worker does, the data may lack
-    overlap needed to compare training effects within experience levels. A flexible model can still output
-    a number, but extrapolation does not create the missing causal evidence.
-  bridges: []
-- id: counterfactuals-and-identification.s4
-  title: Limit discovery claims
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.counterfactuals-and-identification
-  markdown: Different causal graphs can imply the same observational independences. Hidden variables, selection,
-    measurement error, and feedback complicate inference. Additional interventions, temporal knowledge, or
-    substantive assumptions can help; a discovered graph should be reported with equivalence and uncertainty
-    limits rather than presented as the uniquely proven world mechanism.
-  text_mode: Different causal graphs can imply the same observational independences. Hidden variables, selection,
-    measurement error, and feedback complicate inference. Additional interventions, temporal knowledge, or
-    substantive assumptions can help; a discovered graph should be reported with equivalence and uncertainty
-    limits rather than presented as the uniquely proven world mechanism.
-  bridges: []
-- id: counterfactuals-and-identification.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.counterfactuals-and-identification
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: We cannot observe every alternative outcome for the same person. Causal effect estimates need a
-    design, overlap, and explicit assumptions that justify the comparison.
-- id: counterfactuals-and-identification.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.counterfactuals-and-identification
-  markdown: We cannot observe every alternative outcome for the same person. Causal effect estimates need a
-    design, overlap, and explicit assumptions that justify the comparison.
-  text_mode: We cannot observe every alternative outcome for the same person. Causal effect estimates need
-    a design, overlap, and explicit assumptions that justify the comparison.
+      | Assumption | Plain meaning | How the coupon study breaks it |
+      | --- | --- | --- |
+      | **Ignorability** (also *exchangeability*) | Within groups that share the measured traits $X$, who got treated is unrelated to their potential outcomes | Staff hand coupons to customers who look keen, and keenness isn't recorded |
+      | **Positivity** (also *overlap*) | Every kind of person had some chance of each treatment: $0 < P(T{=}1 \mid X) < 1$ | *Every* big spender got a coupon, so there's no big spender without one to compare against |
+      | **SUTVA** (*stable unit treatment value assumption*) | One person's treatment doesn't change another's outcome, and "treated" means one thing | Customers forward their codes to friends; some coupons are 10% off, others 30% |
+
+      SUTVA's "one version of treatment" part gives **consistency**: the outcome you observe for a treated person is their $Y(1)$.
+
+      :::papers Identification by adjustment
+      If ignorability holds given $X$, and positivity holds, then
+
+      $$\text{ATE} = \mathbb{E}[Y(1) - Y(0)] = \sum_x \big(\mathbb{E}[Y \mid T{=}1, x] - \mathbb{E}[Y \mid T{=}0, x]\big)\,P(x)$$
+
+      That's the backdoor adjustment from the causal graphs lesson, in potential-outcome notation. If the store had recorded last year's spending as $X$, it could compare coupon and no-coupon customers within each spending band, then weight the bands by how common they are.
+      :::
+
+      :::mixup "If I fit a flexible model, it can predict the missing outcomes where the data have no overlap."
+      A model will happily output a number for big spenders without coupons, but no such customer exists in the data. The number comes from the model's shape, not from evidence. When positivity fails, narrow the question to the people you can compare, or collect new data.
+      :::
+    bridges: []
+  - id: counterfactuals-and-identification.s3
+    title: "When you can't randomize: compare changes"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.counterfactuals-and-identification
+    markdown: |-
+      A food-delivery app launches a loyalty program in City A in March. City B doesn't get it. Average weekly orders per user:
+
+      | City | Before | After | Change |
+      | --- | ---: | ---: | ---: |
+      | A (loyalty program) | 4.0 | 5.0 | +1.0 |
+      | B (no program) | 3.5 | 4.0 | +0.5 |
+      | **Difference in changes** | | | **+0.5** |
+
+      A's +1.0 includes whatever lifted orders everywhere that spring. B shows that background change was +0.5, so the program's estimated effect is $1.0 - 0.5 = 0.5$ orders per week. This is **difference-in-differences (DiD)**:
+
+      $$\widehat{\text{effect}} = (\bar Y_{A,\text{after}} - \bar Y_{A,\text{before}}) - (\bar Y_{B,\text{after}} - \bar Y_{B,\text{before}})$$
+
+      The cities needn't start equal (4.0 versus 3.5). The key assumption is **parallel trends**: without the program, A would have changed by the same amount as B. Check it by plotting several months before the launch; the two lines should move together.
+
+      An **instrumental variable** is another way round a hidden confounder. It's something that nudges the treatment but affects the outcome only through the treatment. Say the company randomly sends half its users a reminder to join the program, which raises joining from 20% to 60%, and orders in the reminded half rise by 0.2 per week. Only the extra 40% of users who joined because of the reminder can explain that rise, so the effect on them is $0.2 / (0.60 - 0.20) = 0.5$ orders per week. This ratio, the outcome gap divided by the treatment gap, is called the **Wald estimator**.
+
+      :::story A natural experiment wins a Nobel
+      In 1992 New Jersey raised its minimum wage and neighboring Pennsylvania didn't. David Card and Alan Krueger compared fast-food employment in both states, before and after, a difference-in-differences, and found no sign that the raise cut jobs. Joshua Angrist used the Vietnam-era lottery that decided who was called up as an instrument for military service. Half of the 2021 economics Nobel went to Card, and the other half to Angrist and Guido Imbens, for this kind of work.
+      :::
+    bridges: []
+  - id: counterfactuals-and-identification.s4
+    title: Pearl's ladder of causation
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.counterfactuals-and-identification
+    markdown: |-
+      Judea Pearl sorts causal questions into three rungs (*The Book of Why*, 2018). Each rung needs more than the one below.
+
+      | Rung | Activity | Coupon question | What answers it |
+      | --- | --- | --- | --- |
+      | 1. Association | Seeing | Do coupon holders spend more? | Any dataset; ordinary prediction models |
+      | 2. Intervention | Doing | How much would sales rise if we sent coupons to everyone? | A randomized test, or data plus a causal graph |
+      | 3. Counterfactuals | Imagining | Ana got a coupon and spent \$60. Would she have spent less without it? | A model of how each person responds |
+
+      Most machine learning lives on rung 1: it predicts well from patterns. An A/B test climbs to rung 2. Rung 3 asks about one person's other, unseen future, the blank cell from the first table. It needs assumptions about the mechanism, because no experiment can show both of Ana's futures.
+
+      Climbing needs causal assumptions, and data alone can't supply them all. "X causes Y" and "Y causes X" fit any correlation between them equally well, so time order, domain knowledge, or an experiment has to pick the arrow.
+    bridges: []
+  - id: counterfactuals-and-identification.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.counterfactuals-and-identification
+    markdown: Average effects and difference-in-differences to compute by hand, then bike lanes, pill reminders, a bank's credit limits, and a churn model test which assumption each design leans on.
+    takeaway: |-
+      Every effect compares two futures, and only one is ever seen. Randomization, or ignorability plus positivity plus SUTVA, lets group averages stand in for the missing ones; DiD and instruments help when you can't randomize.
+  - id: counterfactuals-and-identification.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.counterfactuals-and-identification
+    markdown: |-
+      We cannot observe every alternative outcome for the same person. Causal effect estimates need a design, overlap, and explicit assumptions that justify the comparison.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - counterfactuals-and-identification.s1
-    - counterfactuals-and-identification.s2
-    - counterfactuals-and-identification.s3
-    - counterfactuals-and-identification.s4
-    - counterfactuals-and-identification.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - counterfactuals-and-identification.s1
+        - counterfactuals-and-identification.s5
+        - counterfactuals-and-identification.s2
+        - counterfactuals-and-identification.s3
+        - counterfactuals-and-identification.s4
+        - counterfactuals-and-identification.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     counterfactuals-and-identification.recap: counterfactuals-and-identification.check
 assessment_families:
-- id: counterfactuals-and-identification.base
-  objective_ref: objective.counterfactuals-and-identification
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Name identification assumptions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: counterfactuals-and-identification.s2
-  variants:
-  - id: counterfactuals-and-identification.base.1
-    prompt: Can one record generally reveal both potential outcomes for the same person?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the model is large
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Only the factual condition is observed directly.
-  - id: counterfactuals-and-identification.base.2
-    prompt: What does positivity require?
-    options:
-    - id: c
-      text: Every coefficient is positive
-    - id: a
-      text: Relevant alternatives have nonzero probability in the needed strata
-    - id: b
-      text: Every outcome is beneficial
-    answer: a
-    feedback: Effect estimation needs support for comparisons.
-- id: counterfactuals-and-identification.transfer
-  objective_ref: objective.counterfactuals-and-identification
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Limit discovery claims: trace the inputs, operation, and result before choosing.'
-  remediation_scene: counterfactuals-and-identification.s4
-  variants:
-  - id: counterfactuals-and-identification.transfer.1
-    prompt: Does a model prediction repair absent treatment overlap automatically?
-    options:
-    - id: c
-      text: Only if the model uses trees
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Extrapolation adds assumptions rather than observed counterfactual evidence.
-  - id: counterfactuals-and-identification.transfer.2
-    prompt: Can observationally equivalent graphs remain causally different?
-    options:
-    - id: a
-      text: 'Yes'
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if arrows are mislabeled
-    answer: a
-    feedback: Observations may not uniquely identify causal structure.
+  - id: counterfactuals-and-identification.base
+    objective_ref: objective.counterfactuals-and-identification
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Name identification assumptions: trace the inputs, operation, and result before choosing.'
+    remediation_scene: counterfactuals-and-identification.s2
+    variants:
+      - id: counterfactuals-and-identification.base.1
+        prompt: Can one record generally reveal both potential outcomes for the same person?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the model is large
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Only the factual condition is observed directly.
+        retired: true
+      - id: counterfactuals-and-identification.base.2
+        prompt: What does positivity require?
+        options:
+          - id: c
+            text: Every coefficient is positive
+          - id: a
+            text: Relevant alternatives have nonzero probability in the needed strata
+          - id: b
+            text: Every outcome is beneficial
+        answer: a
+        feedback: Effect estimation needs support for comparisons.
+        retired: true
+  - id: counterfactuals-and-identification.transfer
+    objective_ref: objective.counterfactuals-and-identification
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Limit discovery claims: trace the inputs, operation, and result before choosing.'
+    remediation_scene: counterfactuals-and-identification.s4
+    variants:
+      - id: counterfactuals-and-identification.transfer.1
+        prompt: Does a model prediction repair absent treatment overlap automatically?
+        options:
+          - id: c
+            text: Only if the model uses trees
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Extrapolation adds assumptions rather than observed counterfactual evidence.
+        retired: true
+      - id: counterfactuals-and-identification.transfer.2
+        prompt: Can observationally equivalent graphs remain causally different?
+        options:
+          - id: a
+            text: 'Yes'
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if arrows are mislabeled
+        answer: a
+        feedback: Observations may not uniquely identify causal structure.
+        retired: true
+  - id: counterfactuals-and-identification.base.v2
+    objective_ref: objective.counterfactuals-and-identification
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Write down both potential outcomes, Y(1) and Y(0), and ask which one is missing. Then ask which assumption would let a group average stand in for it."
+    remediation_scene: counterfactuals-and-identification.s2
+    variants:
+      - id: counterfactuals-and-identification.base.v2.1
+        prompt: A customer received a coupon and spent $60. What prevents you from computing the coupon's effect on her?
+        options:
+          - id: b
+            text: One customer's spending is too noisy to measure reliably
+          - id: a
+            text: Her spend without the coupon, Y(0), was never observed
+          - id: c
+            text: Her spend with the coupon, Y(1), isn't known until next month
+        answer: a
+        feedback: Her effect is Y(1) − Y(0), and only Y(1) = $60 was observed. That missing column is the fundamental problem of causal inference. Noise isn't the issue; even a perfectly measured $60 leaves Y(0) blank.
+      - id: counterfactuals-and-identification.base.v2.2
+        prompt: A store gave coupons to its biggest spenders. Coupon holders spent $55 more than everyone else, but the true ATE is $10. Where did most of the gap come from?
+        options:
+          - id: c
+            text: The coupon's effect was far larger for big spenders than for others
+          - id: b
+            text: Random noise, since only a handful of customers were compared
+          - id: a
+            text: Coupon holders would have spent more than the others even without coupons
+        answer: a
+        feedback: Coupon holders' Y(0) averaged $66.67 against $23.33, a $43.33 selection bias. Their own coupon effect averaged only $11.67, close to the ATE, so bigger effects for big spenders explain very little of the $55.
+      - id: counterfactuals-and-identification.base.v2.3
+        prompt: Every customer who spent over $500 last year got a coupon, and no one under $500 did. Which assumption fails when you try to compare within spending levels?
+        options:
+          - id: a
+            text: Positivity, since no high spender went without a coupon
+          - id: b
+            text: SUTVA, since coupons change how much each customer spends
+          - id: c
+            text: Consistency, since the coupon amounts differ between customers
+        answer: a
+        feedback: Within the over-$500 group, the chance of a coupon was 1, so there's nobody to compare against. That's a positivity (overlap) failure. SUTVA is about interference and treatment versions, and changing spending is the effect itself, not a violation.
+      - id: counterfactuals-and-identification.base.v2.4
+        prompt: In a coupon trial, customers in the coupon group forwarded their codes to friends in the no-coupon group. Which assumption does this break?
+        options:
+          - id: b
+            text: Positivity, since some people had no chance of a coupon
+          - id: a
+            text: SUTVA, since one person's treatment changed another's outcome
+          - id: c
+            text: Ignorability, since the coin flip was no longer random
+        answer: a
+        feedback: Forwarded codes mean a control customer's outcome depends on someone else's treatment, which is interference, part of SUTVA. The coin flip itself was still random, and everyone still had a chance of either group.
+      - id: counterfactuals-and-identification.base.v2.5
+        prompt: Which question sits on the third rung of Pearl's ladder of causation?
+        options:
+          - id: c
+            text: Do customers who receive coupons tend to spend more than others?
+          - id: b
+            text: How much would sales rise if every customer were sent a coupon?
+          - id: a
+            text: Would Ana have spent less last month if she hadn't received her coupon?
+        answer: a
+        feedback: Asking about one person's unseen alternative, given what actually happened, is a counterfactual (rung 3). "If every customer were sent a coupon" is an intervention (rung 2), and "tend to spend more" is association (rung 1).
+  - id: counterfactuals-and-identification.transfer.v2
+    objective_ref: objective.counterfactuals-and-identification
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Name the design first (DiD, instrument, adjustment, or experiment), then the one assumption it can't do without: parallel trends, a clean nudge, overlap, or no hidden causes."
+    remediation_scene: counterfactuals-and-identification.s3
+    variants:
+      - id: counterfactuals-and-identification.transfer.v2.1
+        prompt: A city adds bike lanes on one avenue. Accidents there fall by 30 per year, and by 10 on a similar avenue with no lanes. The DiD estimate is 20 fewer accidents. What must hold for that estimate to be right?
+        options:
+          - id: b
+            text: The two avenues had the same number of accidents before the lanes
+          - id: c
+            text: The avenue for the lanes was chosen at random, like a coin flip
+          - id: a
+            text: Without the lanes, both avenues would have followed parallel trends
+        answer: a
+        feedback: DiD subtracts the comparison avenue's change as the background trend, so the trends must be parallel without the lanes. The avenues can start at different levels, and DiD is used exactly when assignment wasn't random.
+      - id: counterfactuals-and-identification.transfer.v2.2
+        prompt: A clinic randomly texts half its patients a reminder to take their pills. Pill-taking rises from 40% to 60%, and blood pressure in the reminder group ends 2 points lower on average. What does the instrumental-variable estimate say about taking the pills?
+        options:
+          - id: a
+            text: About 10 points lower, for the patients the reminder moved (2 ÷ 0.2)
+          - id: b
+            text: About 2 points lower, the observed difference between the two groups
+          - id: c
+            text: About 0.4 points lower, the difference scaled by uptake (2 × 0.2)
+        answer: a
+        feedback: Only 20% more patients took pills because of the reminder, so the 2-point group difference comes from them. Dividing by the uptake difference gives 10 points per patient moved. The 2 points is the reminder's effect, not the pills'.
+      - id: counterfactuals-and-identification.transfer.v2.3
+        prompt: A bank wants the effect of a credit-limit increase on customers under 21. It has never raised the limit for anyone under 21. What is the core obstacle?
+        options:
+          - id: c
+            text: Ignorability, which adjusting for age in a regression would repair
+          - id: a
+            text: Positivity, since there are no treated under-21s to learn from
+          - id: b
+            text: SUTVA, since young customers might share cards with their friends
+        answer: a
+        feedback: With zero treated customers under 21, any estimate for them is extrapolation from older customers. That's a positivity failure, and adjusting for age can't create the missing comparison group.
+      - id: counterfactuals-and-identification.transfer.v2.4
+        prompt: A support team's model accurately predicts which customers will cancel. A manager asks whether calling at-risk customers will reduce cancellations. What does answering this need?
+        options:
+          - id: b
+            text: Nothing more, since an accurate prediction model already answers it
+          - id: c
+            text: Individual counterfactuals, which no kind of data can ever supply
+          - id: a
+            text: An intervention estimate, such as a randomized test of the calls
+        answer: a
+        feedback: Whether calling reduces cancellations is a rung-2 question about doing. A predictor lives on rung 1. It can say who is likely to cancel, not what a call would change. An A/B test of calls answers it without needing individual counterfactuals.
+      - id: counterfactuals-and-identification.transfer.v2.5
+        prompt: Students who chose to attend an optional review session scored 8 points higher on the exam. Which extra data would most help turn this into a causal estimate?
+        options:
+          - id: a
+            text: Prior grades and study habits of all students, to compare like with like
+          - id: b
+            text: The number of questions each attendee asked during the session
+          - id: c
+            text: Next term's exam scores for the students who attended the session
+        answer: a
+        feedback: Students chose to attend, so keen students may be over-represented. Measuring what drives both attendance and scores makes ignorability more plausible. Details about attendees only, or later scores of attendees only, add no comparison group.
+  - id: counterfactuals-and-identification.calculate
+    objective_ref: objective.counterfactuals-and-identification
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Subtract Y(0) from Y(1) for each unit to get its effect, then average the effects. With trial data, subtract the control mean from the treated mean.
+    remediation_scene: counterfactuals-and-identification.s1
+    absolute_tolerance: 0.01
+    variants:
+      - id: counterfactuals-and-identification.calculate.1
+        prompt: "Four users have potential outcomes (Y(0), Y(1)) in minutes of weekly use: (2, 5), (4, 4), (1, 3), (3, 6). What is the average treatment effect?"
+        answer: 2
+        feedback: The effects are 3, 0, 2, and 3, which sum to 8, so the ATE is 8 / 4 = 2 minutes.
+      - id: counterfactuals-and-identification.calculate.2
+        prompt: "Six students have test scores (Y(0) without tutoring, Y(1) with): (60, 70), (80, 82), (50, 65), (90, 90), (70, 76), (40, 55). What is the average treatment effect of tutoring, in points?"
+        answer: 8
+        feedback: The effects are 10, 2, 15, 0, 6, and 15, summing to 48. The ATE is 48 / 6 = 8 points.
+      - id: counterfactuals-and-identification.calculate.3
+        prompt: In the lesson's six-customer coupon table the ATE is $10. If Dee's spend with a coupon were $40 instead of $10, what would the ATE be, in dollars?
+        answer: 15
+        feedback: Dee's effect rises from 0 to 30, so the effects sum to 60 + 30 = 90, and the ATE is 90 / 6 = $15.
+      - id: counterfactuals-and-identification.calculate.4
+        prompt: "Five patients have systolic blood pressure (Y(0) without a drug, Y(1) with it): (120, 110), (140, 135), (130, 130), (150, 135), (125, 115). What is the average treatment effect, in mmHg? (Give a negative number for a drop.)"
+        answer: -8
+        feedback: The effects are −10, −5, 0, −15, and −10, summing to −40. The ATE is −40 / 5 = −8 mmHg.
+      - id: counterfactuals-and-identification.calculate.5
+        prompt: In a randomized trial, 200 users who got a new onboarding flow averaged 34 minutes in the app in week one, and 200 users with the old flow averaged 30 minutes. What is the estimated ATE, in minutes?
+        answer: 4
+        feedback: Randomization makes the groups comparable, so the difference in means estimates the ATE, 34 − 30 = 4 minutes.
+  - id: counterfactuals-and-identification.did
+    objective_ref: objective.counterfactuals-and-identification
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Compute each group's change (after minus before), then subtract the comparison group's change from the treated group's change.
+    remediation_scene: counterfactuals-and-identification.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: counterfactuals-and-identification.did.1
+        prompt: A town pilots a job program. Its employment rate goes from 20% to 26%; a similar town without the program goes from 18% to 21%. What is the difference-in-differences estimate, in percentage points?
+        answer: 3
+        feedback: The pilot town changed by +6 and the comparison town by +3, so DiD = 6 − 3 = 3 points.
+      - id: counterfactuals-and-identification.did.2
+        prompt: Stores with a new layout went from 100 to 130 sales per day. Stores with the old layout went from 90 to 105 over the same weeks. What is the DiD estimate of the layout's effect, in sales per day?
+        answer: 15
+        feedback: The new-layout stores changed by +30 and the others by +15, so DiD = 30 − 15 = 15. The starting levels (100 versus 90) don't enter the estimate.
+      - id: counterfactuals-and-identification.did.3
+        prompt: A hospital introduces a new triage system and its average wait falls from 50 to 40 minutes. A similar hospital without it goes from 45 to 44 minutes. What is the DiD estimate, in minutes? (Negative means shorter waits.)
+        answer: -9
+        feedback: The changes are −10 and −1, so DiD = −10 − (−1) = −9 minutes.
+      - id: counterfactuals-and-identification.did.4
+        prompt: An app adds a streak feature in one country. Day-7 retention there goes from 40% to 46%; in a comparison country without the feature it goes from 38% to 41%. What is the DiD estimate, in percentage points?
+        answer: 3
+        feedback: The feature country changed by +6 and the comparison by +3, so DiD = 6 − 3 = 3 points. A plain before-and-after in the feature country would have claimed 6.
+      - id: counterfactuals-and-identification.did.5
+        prompt: A school starts a reading program and its average score goes from 62 to 71. A comparison school goes from 60 to 64. What is the DiD estimate, in points?
+        answer: 5
+        feedback: The program school changed by +9 and the comparison by +4, so DiD = 9 − 4 = 5 points.

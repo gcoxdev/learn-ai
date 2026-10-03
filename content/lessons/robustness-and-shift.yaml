@@ -1,198 +1,400 @@
 schema_version: 0.2-draft
 lesson:
   id: robustness-and-shift
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Test the rule where conditions change
   state: draft
-  summary: Change one condition in a familiar task and test whether the learned rule still works.
+  summary: A wildlife camera model scores 94% at the sites it trained on and 71% in the next valley. Learn to name the kind of change, test for shortcuts, and fix the arithmetic.
   slot: M09.4
   category: learning
   sources:
-  - title: An Introduction to Statistical Learning — authors’ materials
-    url: https://www.statlearning.com/
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: An Introduction to Statistical Learning — authors’ materials
+      url: https://www.statlearning.com/
+    - title: Dive into Deep Learning — environment and distribution shift
+      url: https://d2l.ai/chapter_linear-classification/environment-and-distribution-shift.html
+    - title: "Recognition in Terra Incognita (Beery, Van Horn & Perona, 2018)"
+      url: https://arxiv.org/abs/1807.04975
+    - title: "Variable generalization performance of a deep learning model to detect pneumonia in chest radiographs (Zech et al., 2018)"
+      url: https://doi.org/10.1371/journal.pmed.1002683
+    - title: "Benchmarking Neural Network Robustness to Common Corruptions and Perturbations (Hendrycks & Dietterich, 2019)"
+      url: https://arxiv.org/abs/1903.12261
+    - title: "WILDS: A Benchmark of in-the-Wild Distribution Shifts (Koh et al., 2021)"
+      url: https://arxiv.org/abs/2012.07421
 objectives:
-- id: objective.robustness-and-shift
-  version: 1-draft
-  statement: Robustness and out-of-distribution evaluation ask how predictions change under specified shifts
-    or perturbations; success under one change does not imply universal resilience.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - robustness-and-shift.base
-  - robustness-and-shift.transfer
-  prerequisites:
-  - anyOf:
-    - objective.sampling-and-shift
-  - anyOf:
-    - objective.generalization
+  - id: objective.robustness-and-shift
+    version: 2-draft
+    statement: Test how predictions change under specific shifts in the data; passing one shift doesn't prove a model handles others.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - robustness-and-shift.base.v2
+      - robustness-and-shift.transfer.v2
+      - robustness-and-shift.calculate
+    prerequisites:
+      - anyOf:
+          - objective.sampling-and-shift
+      - anyOf:
+          - objective.generalization
 scenes:
-- id: robustness-and-shift.s1
-  title: Name the change you want to test
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.robustness-and-shift
-  markdown: '**Distribution shift** means the pattern of inputs or outcomes differs from the development setting.
-    It could involve new lighting, a different language, or a change in how common a class is. **Out-of-distribution**
-    cases fall outside the familiar pattern.
+  - id: robustness-and-shift.s1
+    title: The camera that moved to a new valley
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.robustness-and-shift
+    markdown: |-
+      A conservation team trains a model to name the animals in photos from motion-triggered cameras at ten sites. On held-out photos from those ten sites it's 94% accurate. The team installs cameras at five new sites, and accuracy drops to 71%. Nothing about the model changed. The photos did.
 
+      When the data a model meets in use differs from the data it was trained and tested on, that's **distribution shift**. (These numbers are invented, but the drop is real: Sara Beery and colleagues showed in 2018 that camera-trap classifiers do markedly worse at locations they never saw in training.) Shifts come in three main kinds:
 
-    A **perturbation** is a specified input change, such as adding bounded image noise. A **threat model**
-    states which changes or attacker capabilities a test covers. Calling a model robust is useful only when
-    we say which of these changes it has handled.'
-  text_mode: '**Distribution shift** means the pattern of inputs or outcomes differs from the development setting.
-    It could involve new lighting, a different language, or a change in how common a class is. **Out-of-distribution**
-    cases fall outside the familiar pattern.
+      | Kind of shift | What changes | Camera-trap example |
+      | --- | --- | --- |
+      | **Covariate shift** | The inputs look different; what they mean stays the same | Snowy backgrounds, night-time infrared photos |
+      | **Label shift** | How common each answer is; each class looks the same | A site where lynx are ten times rarer |
+      | **Concept shift** | What the right answer is for the same input | The project starts counting "tail at frame edge" as an animal, not empty |
 
+      An input unlike anything in training, such as a species the model has never seen, is called **out-of-distribution (OOD)**. Naming the kind of shift matters, because each one is tested and fixed differently.
+    bridges: []
+  - id: robustness-and-shift.s2
+    title: Did it learn the deer or the forest?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robustness-and-shift
+    markdown: |-
+      At the old sites, deer mostly appeared against one kind of pine forest. A model can score well by learning "pine forest means deer." That is a **shortcut**: a feature that predicts the label in the training data but isn't the thing you care about.
 
-    A **perturbation** is a specified input change, such as adding bounded image noise. A **threat model**
-    states which changes or attacker capabilities a test covers. Calling a model robust is useful only when
-    we say which of these changes it has handled.'
-  bridges: []
-- id: robustness-and-shift.s2
-  title: Find a shortcut with a controlled example
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robustness-and-shift
-  markdown: 'Suppose every training photo of a boat contains blue water. Evaluate boats on dry land and non-boats
-    on blue backgrounds. If predictions follow the background, the model has learned a shortcut relevant to
-    the training data but unreliable for the intended object concept.
+      To test for it, change one thing at a time. Keep the animal and swap the background, then keep the background and remove the animal:
 
+      | Test photos | Accuracy |
+      | --- | ---: |
+      | Deer, familiar pine forest | 95% |
+      | Deer, unfamiliar grassland | 62% |
+      | Empty frame, familiar pine forest | labeled "deer" 21% of the time |
 
-    Keep the boat shape fixed and change only its background when possible. Then keep the background and remove
-    the boat. This crossed comparison helps separate reliance on object and scenery. Check that the edited
-    pictures still make sense: a poor edit can introduce a new clue and spoil the intended comparison.'
-  text_mode: 'Suppose every training photo of a boat contains blue water. Evaluate boats on dry land and non-boats
-    on blue backgrounds. If predictions follow the background, the model has learned a shortcut relevant to
-    the training data but unreliable for the intended object concept.
+      :::predict What do the three rows say about the model?
+      It leans on the background. Changing only the background costs 33 points on real deer, and the forest alone triggers "deer" one time in five. A model that had learned deer shapes would barely notice either change.
+      :::
 
+      :::story The hospital in the X-ray
+      In 2018, John Zech and colleagues trained pneumonia detectors on chest X-rays from three hospital systems. They found that a network could also tell which hospital system an X-ray came from, almost perfectly, from subtle details of the images. Because pneumonia rates differed sharply between hospitals, "which hospital" was itself a clue to the label, and the detectors usually did worse on X-rays from a hospital system they hadn't trained on. A shortcut can hide in details no radiologist would think to check.
+      :::
+    bridges: []
+  - id: robustness-and-shift.s3
+    title: When only the mix changes, redo the arithmetic
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robustness-and-shift
+    markdown: |-
+      Label shift has a neat property: you can often fix it with arithmetic instead of new training. Say the lynx detector flags 90% of real lynx photos (its **sensitivity**) and wrongly flags 5% of other photos (its **false-alarm rate**). At the old sites, lynx were in 10% of photos. At the new site, only 1%.
 
-    Keep the boat shape fixed and change only its background when possible. Then keep the background and remove
-    the boat. This crossed comparison helps separate reliance on object and scenery. Check that the edited
-    pictures still make sense: a poor edit can introduce a new clue and spoil the intended comparison.'
-  bridges: []
-- id: robustness-and-shift.s3
-  title: Separate detection from successful prediction
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robustness-and-shift
-  markdown: An out-of-distribution detector may flag an unfamiliar input, but detecting shift is not the same
-    as predicting correctly under it. Abstention can reduce some errors while creating review workload and
-    coverage gaps. Evaluate false alarms, missed shifts, and the behavior of the fallback process.
-  text_mode: An out-of-distribution detector may flag an unfamiliar input, but detecting shift is not the same
-    as predicting correctly under it. Abstention can reduce some errors while creating review workload and
-    coverage gaps. Evaluate false alarms, missed shifts, and the behavior of the fallback process.
-  bridges: []
-- id: robustness-and-shift.s4
-  title: Match remedies to causes
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robustness-and-shift
-  markdown: Augmentation, domain adaptation, causal features, recalibration, and robust optimization address
-    different assumptions. Repeated testing on one stress set can overfit that benchmark too. Report the tested
-    changes and remaining gaps, and collect fresh evidence when the deployment environment changes materially.
-  text_mode: Augmentation, domain adaptation, causal features, recalibration, and robust optimization address
-    different assumptions. Repeated testing on one stress set can overfit that benchmark too. Report the tested
-    changes and remaining gaps, and collect fresh evidence when the deployment environment changes materially.
-  bridges: []
-- id: robustness-and-shift.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.robustness-and-shift
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Test a specific change and report what happened. Recognizing an unfamiliar input, predicting correctly
-    on it, and handling it through a fallback are different abilities.
-- id: robustness-and-shift.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.robustness-and-shift
-  markdown: Test a specific change and report what happened. Recognizing an unfamiliar input, predicting correctly
-    on it, and handling it through a fallback are different abilities.
-  text_mode: Test a specific change and report what happened. Recognizing an unfamiliar input, predicting correctly
-    on it, and handling it through a fallback are different abilities.
+      Out of 1,000 old-site photos, 100 show lynx and 90 are flagged; of the 900 others, 45 are false alarms. So 90 of 135 flags, or 0.667, are real lynx. That share is the detector's **precision**. At the new site: 9 real flags against 49.5 false ones, so precision is just 0.154. The detector behaves exactly as before, yet most of its alarms are now wrong.
+
+      ```python run
+      sensitivity = 0.90   # share of lynx photos the model flags
+      false_alarm = 0.05   # share of non-lynx photos it flags anyway
+
+      print("lynx share   flagged photos that really are lynx")
+      for prior in [0.10, 0.05, 0.01]:
+          true_hits = sensitivity * prior
+          false_hits = false_alarm * (1 - prior)
+          print(f"   {prior:.2f}            {true_hits / (true_hits + false_hits):.3f}")
+
+      # Prior correction for one photo the model scored 0.6 at the old site
+      old_prior, new_prior, score = 0.10, 0.01, 0.6
+      lynx = score * new_prior / old_prior
+      not_lynx = (1 - score) * (1 - new_prior) / (1 - old_prior)
+      print(f"\nscore 0.6 at the old site -> {lynx / (lynx + not_lynx):.3f} at the new site")
+      ```
+
+      :::papers Correcting for a new class mix
+      If only the class frequencies change, Bayes' rule rescales each predicted probability:
+
+      $$p_{\text{new}}(y \mid x) \;\propto\; p_{\text{old}}(y \mid x)\,\frac{\pi_{\text{new}}(y)}{\pi_{\text{old}}(y)}$$
+
+      $\pi(y)$ is how common class $y$ is. A photo scored 0.6 for lynx becomes $0.6 \times \tfrac{0.01}{0.10} = 0.06$ for lynx and $0.4 \times \tfrac{0.99}{0.90} = 0.44$ for not-lynx; normalizing gives $0.06 / 0.50 = 0.12$. If the new mix is unknown, it can be estimated from the model's predictions on unlabeled new photos.
+      :::
+
+      Try `prior = 0.5` in the list: at a lynx hotspot, almost every flag is right.
+  - id: robustness-and-shift.s4
+    title: Knowing it's lost isn't the same as being right
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robustness-and-shift
+    markdown: |-
+      Many systems add an **OOD detector** that flags unfamiliar inputs and sends them to a person instead of answering. Flagging helps, but it moves the problem rather than solving it. Out of 1,000 new-site photos:
+
+      | | Photos | Model accuracy on them |
+      | --- | ---: | ---: |
+      | Kept by the model | 900 | 94% |
+      | Flagged for a person | 100 | 40% (if it had answered) |
+      | All photos | 1,000 | 88.6% |
+
+      The kept photos look great, but that 94% covers only 90% of the work. The 100 flagged photos become a daily review job, and the system is only as good as that review. The detector makes its own mistakes, too: unfamiliar photos it *fails* to flag get answered with full confidence. So measure three things: accuracy on kept inputs, the share flagged, and how well the fallback handles them.
+
+      :::mixup "The OOD detector caught the strange photos, so they're handled."
+      Catching a photo and labeling it correctly are different jobs. The flagged 100 still need a correct answer from somewhere, and someone has to pay for it.
+      :::
+    bridges: []
+  - id: robustness-and-shift.s5
+    title: Match the remedy to the shift
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robustness-and-shift
+    markdown: |-
+      | Diagnosis | Remedy that targets it |
+      | --- | --- |
+      | Covariate shift (new backgrounds, lighting) | Collect or label some photos from new sites; **data augmentation** (training on edited copies, e.g. new colors, crops, blur) |
+      | Shortcut on the background | Crossed tests like the deer table; training data where backgrounds vary within each species |
+      | Label shift | Estimate the new class mix and rescale probabilities or thresholds |
+      | Concept shift | Relabel fresh data under the new definition and retrain |
+
+      Standard stress tests help you check. **ImageNet-C** (Hendrycks and Dietterich, 2019) applies 15 kinds of corruption, like noise, blur, fog, and JPEG artifacts, at five strengths. **WILDS** (Koh et al., 2021) collects real shifts, including camera traps at new locations.
+
+      Be careful with any one stress set. If you tune against it forty times, you'll overfit to it just as you can overfit a test set. So say exactly what you tested: "accuracy stays above 90% under the blur and fog corruptions of ImageNet-C" is a claim someone can check; "robust" on its own is not.
+    bridges: []
+  - id: robustness-and-shift.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.robustness-and-shift
+    markdown: Flu tests, fraud rules, X-rays from a new hospital, and a screening test moved into a general clinic ask you to name the shift, design the check, and recompute precision.
+    takeaway: |-
+      Name the change (inputs, class mix, or meaning), then test that exact change. A new class mix can be fixed with arithmetic; shortcuts and new conditions need new tests and often new data.
+  - id: robustness-and-shift.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.robustness-and-shift
+    markdown: |-
+      Test a specific change and report what happened. Recognizing an unfamiliar input, predicting correctly on it, and handling it through a fallback are different abilities.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - robustness-and-shift.s1
-    - robustness-and-shift.s2
-    - robustness-and-shift.s3
-    - robustness-and-shift.s4
-    - robustness-and-shift.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - robustness-and-shift.s1
+        - robustness-and-shift.s2
+        - robustness-and-shift.s3
+        - robustness-and-shift.s4
+        - robustness-and-shift.s5
+        - robustness-and-shift.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     robustness-and-shift.recap: robustness-and-shift.check
 assessment_families:
-- id: robustness-and-shift.base
-  objective_ref: objective.robustness-and-shift
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Find a shortcut with a controlled example: trace the inputs, operation, and result before choosing.'
-  remediation_scene: robustness-and-shift.s2
-  variants:
-  - id: robustness-and-shift.base.1
-    prompt: What must accompany a robustness claim?
-    options:
-    - id: a
-      text: The specified changes or perturbations tested
-    - id: b
-      text: Only the model’s parameter count
-    - id: c
-      text: A statement that all inputs are possible
-    answer: a
-    feedback: Robustness is relative to a defined evaluation scope.
-  - id: robustness-and-shift.base.2
-    prompt: A classifier follows the background rather than the object. What does this suggest?
-    options:
-    - id: b
-      text: A proof of object-level causal understanding
-    - id: c
-      text: A guarantee of transfer
-    - id: a
-      text: A predictive shortcut
-    answer: a
-    feedback: The learned association may not match the intended concept.
-- id: robustness-and-shift.transfer
-  objective_ref: objective.robustness-and-shift
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Match remedies to causes: trace the inputs, operation, and result before choosing.'
-  remediation_scene: robustness-and-shift.s4
-  variants:
-  - id: robustness-and-shift.transfer.1
-    prompt: A detector flags an unfamiliar case. Has it solved the prediction task on that case?
-    options:
-    - id: b
-      text: Yes; a flag is always a correct answer
-    - id: c
-      text: Only if the flag is confident
-    - id: a
-      text: No; detection and correct prediction differ
-    answer: a
-    feedback: The downstream task and fallback still need evaluation.
-  - id: robustness-and-shift.transfer.2
-    prompt: A model passes one corruption benchmark. What broader claim remains unsupported?
-    options:
-    - id: c
-      text: That evaluation inputs were supplied
-    - id: a
-      text: Resistance to every possible distribution shift
-    - id: b
-      text: Performance on the tested benchmark
-    answer: a
-    feedback: Different shifts can challenge different mechanisms.
+  - id: robustness-and-shift.base
+    objective_ref: objective.robustness-and-shift
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Find a shortcut with a controlled example: trace the inputs, operation, and result before choosing.'
+    remediation_scene: robustness-and-shift.s2
+    variants:
+      - id: robustness-and-shift.base.1
+        prompt: What must accompany a robustness claim?
+        options:
+          - id: a
+            text: The specified changes or perturbations tested
+          - id: b
+            text: Only the model’s parameter count
+          - id: c
+            text: A statement that all inputs are possible
+        answer: a
+        feedback: Robustness is relative to a defined evaluation scope.
+        retired: true
+      - id: robustness-and-shift.base.2
+        prompt: A classifier follows the background rather than the object. What does this suggest?
+        options:
+          - id: b
+            text: A proof of object-level causal understanding
+          - id: c
+            text: A guarantee of transfer
+          - id: a
+            text: A predictive shortcut
+        answer: a
+        feedback: The learned association may not match the intended concept.
+        retired: true
+  - id: robustness-and-shift.transfer
+    objective_ref: objective.robustness-and-shift
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Match remedies to causes: trace the inputs, operation, and result before choosing.'
+    remediation_scene: robustness-and-shift.s4
+    variants:
+      - id: robustness-and-shift.transfer.1
+        prompt: A detector flags an unfamiliar case. Has it solved the prediction task on that case?
+        options:
+          - id: b
+            text: Yes; a flag is always a correct answer
+          - id: c
+            text: Only if the flag is confident
+          - id: a
+            text: No; detection and correct prediction differ
+        answer: a
+        feedback: The downstream task and fallback still need evaluation.
+        retired: true
+      - id: robustness-and-shift.transfer.2
+        prompt: A model passes one corruption benchmark. What broader claim remains unsupported?
+        options:
+          - id: c
+            text: That evaluation inputs were supplied
+          - id: a
+            text: Resistance to every possible distribution shift
+          - id: b
+            text: Performance on the tested benchmark
+        answer: a
+        feedback: Different shifts can challenge different mechanisms.
+        retired: true
+  - id: robustness-and-shift.base.v2
+    objective_ref: objective.robustness-and-shift
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask what changed between training and use. Did the inputs look different, did the class mix change, or did the right answer for the same input change?
+    remediation_scene: robustness-and-shift.s1
+    variants:
+      - id: robustness-and-shift.base.v2.1
+        prompt: A bird-song model trained on quiet spring recordings is used in autumn, when wind noise is heavier. Each species' song means the same species as before. Which kind of shift is this?
+        options:
+          - id: b
+            text: Label shift, because the season has changed
+          - id: c
+            text: Concept shift, because the songs sound different
+          - id: a
+            text: Covariate shift, because the inputs look different
+        answer: a
+        feedback: The recordings (inputs) change while the mapping from song to species stays the same, which is covariate shift. Concept shift would mean the same recording now deserves a different label.
+      - id: robustness-and-shift.base.v2.2
+        prompt: A flu-test classifier's symptoms-given-flu patterns stay the same, but in winter flu becomes five times more common among the patients tested. Which kind of shift is this?
+        options:
+          - id: a
+            text: Label shift, since only the class mix changed
+          - id: b
+            text: Covariate shift, since the patients are different
+          - id: c
+            text: Concept shift, since the correct answers changed
+        answer: a
+        feedback: Each class looks the same as before; only how common flu is has changed. That is label shift, which is why rescaling by the new class frequencies can fix it.
+      - id: robustness-and-shift.base.v2.3
+        prompt: Fraudsters adapt, so a transaction pattern that used to be legitimate now usually signals fraud. Which kind of shift is this?
+        options:
+          - id: c
+            text: Label shift, since fraud became more common
+          - id: a
+            text: Concept shift, since the same input now has a different answer
+          - id: b
+            text: Covariate shift, since transactions look different
+        answer: a
+        feedback: The same input now deserves a different label, which is concept shift. It can't be fixed by rescaling class frequencies; it needs fresh labels and retraining.
+      - id: robustness-and-shift.base.v2.4
+        prompt: You suspect a camera-trap model calls anything on snow an "arctic fox." Which test best isolates that suspicion?
+        options:
+          - id: b
+            text: Add more fox-on-snow photos and retest
+          - id: a
+            text: Test foxes on bare ground and empty snowy frames
+          - id: c
+            text: Retrain for more epochs and compare accuracy
+        answer: a
+        feedback: Crossing the animal and the background separates the two cues. If foxes on bare ground fail and empty snow gets called "fox," the model relies on snow. More fox-on-snow photos keep the two cues tangled together.
+      - id: robustness-and-shift.base.v2.5
+        prompt: An OOD detector flags 10% of incoming photos for review, and the model is 95% accurate on the other 90%. What does that tell you about the flagged photos?
+        options:
+          - id: c
+            text: They're handled correctly, since the detector caught them
+          - id: b
+            text: They lower the overall accuracy to 85.5%
+          - id: a
+            text: They still need a fallback whose accuracy is measured
+        answer: a
+        feedback: Flagging decides who answers, not whether the answer is right. The flagged 10% need a person or other fallback, and the system's quality depends on it; 85.5% would only follow if every flagged photo were counted wrong.
+  - id: robustness-and-shift.transfer.v2
+    objective_ref: objective.robustness-and-shift
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Say exactly which change was tested, and pick the remedy that targets that change rather than a general fix.
+    remediation_scene: robustness-and-shift.s5
+    variants:
+      - id: robustness-and-shift.transfer.v2.1
+        prompt: A chest X-ray model trained at hospital A does worse at hospital B. It can also tell which hospital an X-ray came from almost perfectly. What is the most likely explanation?
+        options:
+          - id: a
+            text: It uses hospital-specific details as a shortcut
+          - id: b
+            text: Hospital B's patients have more pneumonia
+          - id: c
+            text: Hospital B's radiologists label X-rays wrongly
+        answer: a
+        feedback: If the model can recognize the hospital, it has learned site details, and those can stand in for the label when disease rates differ by site. A different pneumonia rate alone would change precision, not make hospital identity learnable.
+      - id: robustness-and-shift.transfer.v2.2
+        prompt: A speech recognizer keeps its accuracy when café noise is added to the test clips at three volumes. Which claim does this support?
+        options:
+          - id: b
+            text: It is robust to a wide range of accents
+          - id: a
+            text: It holds up under café-style noise at those volumes
+          - id: c
+            text: It is robust to real-world audio conditions
+        answer: a
+        feedback: A robustness result covers the change that was tested. Accents and other audio conditions are different shifts that need their own tests.
+      - id: robustness-and-shift.transfer.v2.3
+        prompt: A screening model moves from a specialist clinic, where 20% of patients have the disease, to general practice, where 1% do. Most of its positive calls are now wrong. What is the best first step?
+        options:
+          - id: c
+            text: Collect more data from the specialist clinic
+          - id: b
+            text: Retrain from scratch on the specialist data
+          - id: a
+            text: Rescale its probabilities or threshold for the 1% rate
+        answer: a
+        feedback: This is label shift, so the fix is arithmetic, adjusting for the new prevalence. More data from the old clinic keeps the old 20% mix, and retraining on it changes nothing about the base rate.
+      - id: robustness-and-shift.transfer.v2.4
+        prompt: A team tunes a model against the same corruption benchmark 40 times, raising its score 12 points. On a new corruption type, the score doesn't move. What happened?
+        options:
+          - id: a
+            text: They overfit to that particular benchmark
+          - id: c
+            text: The new corruption type must be mislabeled
+          - id: b
+            text: The model became robust in general
+        answer: a
+        feedback: Repeated tuning on one stress set fits its particular quirks, just like overfitting a test set. General robustness would show up on the new corruption too.
+  - id: robustness-and-shift.calculate
+    objective_ref: objective.robustness-and-shift
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Imagine 1,000 cases. Real hits = sensitivity × prevalence × 1,000; false alarms = false-alarm rate × (1 − prevalence) × 1,000. Precision is real hits divided by all flags.
+    remediation_scene: robustness-and-shift.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: robustness-and-shift.calculate.1
+        prompt: A detector flags 90% of real cases and 5% of non-cases. If 10% of photos are real cases, what fraction of flagged photos are real cases? Give a decimal to two places.
+        answer: 0.667
+        feedback: Real hits 0.9 × 0.1 = 0.09; false alarms 0.05 × 0.9 = 0.045; 0.09 / 0.135 = 0.67.
+      - id: robustness-and-shift.calculate.2
+        prompt: The same detector (90% of real cases flagged, 5% of non-cases) moves to a site where 1% of photos are real cases. What fraction of flags are real now? Give a decimal to two places.
+        answer: 0.154
+        feedback: Real hits 0.9 × 0.01 = 0.009; false alarms 0.05 × 0.99 = 0.0495; 0.009 / 0.0585 = 0.15.
+      - id: robustness-and-shift.calculate.3
+        prompt: A test flags 80% of real cases and 10% of non-cases. If 30% of those tested have the condition, what fraction of positive results are real? Give a decimal to two places.
+        answer: 0.774
+        feedback: Real hits 0.8 × 0.3 = 0.24; false alarms 0.1 × 0.7 = 0.07; 0.24 / 0.31 = 0.77.
+      - id: robustness-and-shift.calculate.4
+        prompt: A screening model flags 95% of real cases and 2% of non-cases. In a clinic where 5% have the disease, what fraction of flags are real? Give a decimal to two places.
+        answer: 0.714
+        feedback: Real hits 0.95 × 0.05 = 0.0475; false alarms 0.02 × 0.95 = 0.019; 0.0475 / 0.0665 = 0.71.
+      - id: robustness-and-shift.calculate.5
+        prompt: The same screening model (95% of real cases flagged, 2% of non-cases) moves to general practice, where 0.5% have the disease. What fraction of flags are real? Give a decimal to two places.
+        answer: 0.193
+        feedback: Real hits 0.95 × 0.005 = 0.00475; false alarms 0.02 × 0.995 = 0.0199; 0.00475 / 0.02465 = 0.19.

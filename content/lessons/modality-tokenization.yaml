@@ -1,194 +1,388 @@
 schema_version: 0.2-draft
 lesson:
   id: modality-tokenization
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Turn images, sound, and video into manageable model inputs
   state: draft
-  summary: Count the pieces a model receives when it reads an image or hears a sound.
+  summary: Ten seconds of video can cost 173,000 tokens or 2,000, depending on how you cut it. Learn the arithmetic that decides what a model can afford to watch.
   slot: M23.4
   category: learning
   sources:
-  - title: Vision Transformer
-    url: https://arxiv.org/abs/2010.11929
-  - title: EnCodec
-    url: https://arxiv.org/abs/2210.13438
-  - title: VQ-VAE
-    url: https://arxiv.org/abs/1711.00937
+    - title: "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale (ViT; Dosovitskiy et al., 2020)"
+      url: https://arxiv.org/abs/2010.11929
+    - title: "Neural Discrete Representation Learning (VQ-VAE; van den Oord, Vinyals & Kavukcuoglu, 2017)"
+      url: https://arxiv.org/abs/1711.00937
+    - title: "Zero-Shot Text-to-Image Generation (DALL·E; Ramesh et al., 2021)"
+      url: https://arxiv.org/abs/2102.12092
+    - title: "High Fidelity Neural Audio Compression (EnCodec; Défossez et al., 2022)"
+      url: https://arxiv.org/abs/2210.13438
+    - title: "Robust Speech Recognition via Large-Scale Weak Supervision (Whisper; Radford et al., 2022)"
+      url: https://arxiv.org/abs/2212.04356
+    - title: "ViViT: A Video Vision Transformer (Arnab et al., 2021)"
+      url: https://arxiv.org/abs/2103.15691
+    - title: "VideoMAE: Masked Autoencoders are Data-Efficient Learners for Self-Supervised Video Pre-Training (Tong et al., 2022)"
+      url: https://arxiv.org/abs/2203.12602
 objectives:
-- id: objective.modality-tokenization
-  version: 1-draft
-  statement: Modality-specific encoders and codecs trade detail, sequence length, and reconstruction quality;
-    continuous features and discrete code tokens are distinct representation choices.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - modality-tokenization.base
-  - modality-tokenization.transfer
-  prerequisites:
-  - anyOf:
-    - objective.digital-representations
-  - anyOf:
-    - objective.tensor-shape-tracing
-  - anyOf:
-    - objective.audio-representations
+  - id: objective.modality-tokenization
+    version: 2-draft
+    statement: Modality-specific encoders and codecs trade detail, sequence length, and reconstruction quality; continuous features and discrete code tokens are distinct representation choices.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - modality-tokenization.base.v2
+      - modality-tokenization.transfer.v2
+      - modality-tokenization.calculate
+    prerequisites:
+      - anyOf:
+          - objective.digital-representations
+      - anyOf:
+          - objective.tensor-shape-tracing
+      - anyOf:
+          - objective.audio-representations
 scenes:
-- id: modality-tokenization.s1
-  title: Token does not always mean a text vocabulary ID
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.modality-tokenization
-  markdown: A visual token can be a continuous projected patch vector, while a codec token can be a discrete
-    index into a learned codebook. Both may be processed in sequences, but their training objectives and decoding
-    interfaces differ. State the representation instead of assuming every token is a word-like symbol.
-  text_mode: A visual token can be a continuous projected patch vector, while a codec token can be a discrete
-    index into a learned codebook. Both may be processed in sequences, but their training objectives and decoding
-    interfaces differ. State the representation instead of assuming every token is a word-like symbol.
-  bridges: []
-- id: modality-tokenization.s2
-  title: Count patches before choosing resolution
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.modality-tokenization
-  markdown: A 224 by 224 image divided into nonoverlapping 16 by 16 patches yields 14×14 = 196 patches. Higher
-    resolution increases token count rapidly. Cropping, adaptive tiling, or pooling can change detail coverage
-    and compute, with consequences for small text and spatial tasks.
-  text_mode: A 224 by 224 image divided into nonoverlapping 16 by 16 patches yields 14×14 = 196 patches. Higher
-    resolution increases token count rapidly. Cropping, adaptive tiling, or pooling can change detail coverage
-    and compute, with consequences for small text and spatial tasks.
-  bridges: []
-- id: modality-tokenization.s3
-  title: Represent audio and time
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.modality-tokenization
-  markdown: 'An audio codec can quantize frames into one or more codebook IDs, then reconstruct sound through
-    a decoder. Frame rate and number of codebooks affect sequence length and fidelity. Video adds temporal
-    sampling and spatial patches, so even short clips can produce many input units.
+  - id: modality-tokenization.s1
+    title: Three things called a token
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.modality-tokenization
+    markdown: |-
+      Amara films ten seconds of a busy street corner and asks Lumen, "Is the walk signal on?" The clip is 300 frames of video plus 160,000 audio samples. A transformer reads sequences, so all of it has to become a sequence of **tokens**. But "token" means different things for different modalities:
 
+      | Kind of token | What one token is | Example |
+      | --- | --- | --- |
+      | Text token | An integer ID from a fixed vocabulary, looked up in an embedding table | "walk" → ID 4,512 |
+      | Continuous token | A vector computed directly from a patch of the input | One 14 × 14 patch → 1,024 numbers (LLaVA, last lesson) |
+      | Discrete code | An integer ID from a *learned* codebook of patterns | One 8 × 8 image region → code 3,071 |
 
-    Suppose a toy audio codec produces 50 frames per second and four codebook IDs per frame. Two seconds require
-    2 × 50 × 4 = 400 IDs. If the model places all IDs in one sequence, that means 400 sequence positions; a
-    design that predicts several codebooks together has a different sequence layout. A codebook is a learned
-    collection of reusable patterns. Its IDs name those patterns, rather than words in a transcript.'
-  text_mode: 'An audio codec can quantize frames into one or more codebook IDs, then reconstruct sound through
-    a decoder. Frame rate and number of codebooks affect sequence length and fidelity. Video adds temporal
-    sampling and spatial patches, so even short clips can produce many input units.
+      The first and third look alike, since both are integers a model can predict one at a time. The second has no vocabulary at all. Which one you use decides two things: how much detail survives, and how long the sequence gets.
+    bridges: []
+  - id: modality-tokenization.s2
+    title: Patches or codes for an image
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.modality-tokenization
+    markdown: |-
+      You met the continuous route in the vision transformer lesson: cut the image into patches and project each one to a vector. Nothing is rounded off, which makes it the usual choice for *understanding* images. LLaVA reads 576 such vectors.
 
+      The discrete route comes from **VQ-VAE** (vector-quantized variational autoencoder; van den Oord et al., 2017). An encoder shrinks the image to a small grid of vectors, and each vector is snapped to the nearest entry in a learned **codebook**, a table of reference vectors. Only the entry's index is kept.
 
-    Suppose a toy audio codec produces 50 frames per second and four codebook IDs per frame. Two seconds require
-    2 × 50 × 4 = 400 IDs. If the model places all IDs in one sequence, that means 400 sequence positions; a
-    design that predicts several codebooks together has a different sequence layout. A codebook is a learned
-    collection of reusable patterns. Its IDs name those patterns, rather than words in a transcript.'
-  bridges: []
-- id: modality-tokenization.s4
-  title: Evaluate compression in context
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.modality-tokenization
-  markdown: A representation that preserves perceptual quality may still discard a feature needed for a downstream
-    decision. Test reconstruction, timing, fine detail, and task performance. Missing frames or audio frequencies
-    cannot be assumed recoverable merely because later generated output looks or sounds plausible.
-  text_mode: A representation that preserves perceptual quality may still discard a feature needed for a downstream
-    decision. Test reconstruction, timing, fine detail, and task performance. Missing frames or audio frequencies
-    cannot be assumed recoverable merely because later generated output looks or sounds plausible.
-  bridges: []
-- id: modality-tokenization.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.modality-tokenization
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A token may be a continuous feature vector or a discrete code. The representation determines what
-    detail survives and how much sequence space the media needs.
-- id: modality-tokenization.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.modality-tokenization
-  markdown: A token may be a continuous feature vector or a discrete code. The representation determines what
-    detail survives and how much sequence space the media needs.
-  text_mode: A token may be a continuous feature vector or a discrete code. The representation determines what
-    detail survives and how much sequence space the media needs.
+      :::example Snap one vector to the codebook
+      The encoder outputs $[0.9, 0.2]$. The codebook has three entries: $[1, 0]$, $[0, 1]$, and $[0.5, 0.5]$. Squared distances: $0.01 + 0.04 = 0.05$, then $0.81 + 0.64 = 1.45$, then $0.16 + 0.09 = 0.25$. The nearest is entry 0, so this region becomes the token **0**. The decoder later rebuilds the region from $[1, 0]$, which isn't quite $[0.9, 0.2]$. That rounding is where detail is lost.
+      :::
+
+      The payoff is compression and a vocabulary. OpenAI's first DALL·E (2021), using a close relative of VQ-VAE, turned a 256 × 256 image into a $32 \times 32 = 1{,}024$ grid of codes from a codebook of 8,192 entries. Each code takes 13 bits ($2^{13} = 8{,}192$), so the image becomes $1{,}024 \times 13 = 13{,}312$ bits, about 1.7 kilobytes, instead of $256 \times 256 \times 3 = 196{,}608$ bytes of raw pixels. And because the codes are integers, a transformer can *generate* an image one code at a time, the way it writes text (the autoregressive modalities lesson).
+
+      :::mixup "Discrete image tokens are like words: each code means something, such as 'eye' or 'sky'."
+      Codes are learned to make reconstruction accurate, not to mean anything. One code might stand for "a bit of blurry blue-gray texture" that shows up in sky, water, and car paint alike. The same point came up for audio codec tokens in the speech generation lesson.
+      :::
+    bridges: []
+  - id: modality-tokenization.s3
+    title: Sound at so many tokens per second
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.modality-tokenization
+    markdown: |-
+      Audio also comes in both flavors, and both are counted per second.
+
+      - **Continuous.** Whisper (OpenAI, 2022) turns 30 seconds of audio into 3,000 log-mel frames (the audio lesson's 100 per second), and its encoder halves that to 1,500 vectors: **50 per second**. Ten seconds is 500 vectors.
+      - **Discrete.** The speech generation lesson's EnCodec codec, at 24 kHz and 6 kbps, makes 75 frames per second with 8 codebooks per frame: **600 codes per second**. Ten seconds is 6,000 codes.
+
+      Those 6,000 codes don't have to mean 6,000 positions. If a model predicts all 8 codes of a frame together at each step, ten seconds takes only 750 steps. The layout is a design choice, and it changes the sequence length by a factor of 8.
+
+      For Lumen, which only needs to *understand* the street sounds, the continuous 500 is the cheaper choice. A system that has to *speak* back in a natural voice would generate codec tokens instead.
+    bridges: []
+  - id: modality-tokenization.s5
+    title: Budget a 10-second clip
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.modality-tokenization
+    markdown: |-
+      Video multiplies everything by time. The simplest scheme treats each sampled frame as an image:
+
+      $$N_\text{video} = \underbrace{T}_\text{frames kept} \times \underbrace{(H/P)^2}_\text{patches per frame}$$
+
+      Keep all 300 frames of Amara's clip at 336 pixels and patch 14, and that's $300 \times 576 = 172{,}800$ tokens, before any audio.
+
+      Two standard ways to cut that:
+
+      - **Sample fewer frames.** One frame per second keeps 10 frames: $10 \times 576 = 5{,}760$.
+      - **Merge time into the patch.** A **tubelet** is a patch that spans several frames, for example 2 frames × 16 × 16 pixels, described for video transformers in ViViT (Arnab et al., 2021). VideoMAE (2022) feeds 16 frames at 224 pixels as $(16/2) \times 14 \times 14 = 1{,}568$ tokens, half what separate frames would cost. Neighboring frames are nearly identical, so little is lost.
+
+      ```python run
+      def video_tokens(frames, side, patch, tubelet=1):
+          """Frames x patches per frame; a tubelet merges `tubelet` frames into one token."""
+          return (frames // tubelet) * (side // patch) ** 2
+
+      seconds, question = 10, 20
+      audio = seconds * 50        # Whisper-style encoder: 50 vectors per second
+
+      plans = {
+          "all 300 frames, 336 px, patch 14":    video_tokens(300, 336, 14),
+          "10 frames (1 per s), 336 px":         video_tokens(10, 336, 14),
+          "20 frames (2 per s), 224 px":         video_tokens(20, 224, 14),
+          "16 frames, 224 px, 2x16x16 tubelets": video_tokens(16, 224, 16, tubelet=2),
+      }
+      for name, v in plans.items():
+          print(f"{name:36s} {v:>7,} video + {audio} audio + {question} text = {v + audio + question:>7,}")
+      ```
+
+      :::predict Lumen's model has a 32,000-token context. Which plans fit with the audio and question included?
+      All but the first. 173,320 tokens is more than five times the context, while the other three need 6,280, 5,640, and 2,088. The tubelet plan leaves the most room for a follow-up conversation.
+      :::
+
+      Change `seconds` to 60 and the frame counts to match, and watch the budget for a one-minute clip.
+    bridges: []
+  - id: modality-tokenization.s4
+    title: Cheap enough, but did the walk signal survive?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.modality-tokenization
+    markdown: |-
+      Every saving above throws something away, and the question is whether it's something Lumen needs.
+
+      The walk signal at Amara's corner is a small lit figure about 20 pixels tall in the full-resolution frame. It changes once in the ten seconds. Check each plan against that:
+
+      | Plan | Video tokens | Walk signal still visible? |
+      | --- | ---: | --- |
+      | 1 frame per second, 336 px | 5,760 | Yes if the frame lands after the change, but it may be only a few pixels tall |
+      | 2 fps, 224 px | 5,120 | Catches the change sooner, but the figure shrinks further |
+      | 16 frames as tubelets, 224 px | 1,568 | Smallest, and the figure may fall below one 16-pixel patch |
+
+      Each plan is right or wrong for *this* question, not in general. A clip that looks fine to a person can still have lost the one feature a decision depends on, so Lumen's team tests each tokenizer setting on the actual questions users ask, especially "Is the signal on?", "What does the sign say?", and "Did the bus stop?", not on overall picture quality. The video lesson next looks more closely at how frame rate decides which brief events a model can see at all.
+    bridges: []
+  - id: modality-tokenization.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.modality-tokenization
+    markdown: Token budgets for clips and sound to work out by hand, plus a podcast tool, a security camera, and a music generator, test whether you can choose and count a tokenization.
+    takeaway: |-
+      A token can be a continuous patch vector or a discrete codebook index. Count tokens as frames × patches for video and rate × seconds for audio, then check that the detail your question needs survived the cut.
+  - id: modality-tokenization.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.modality-tokenization
+    markdown: |-
+      A token may be a continuous feature vector or a discrete code. The representation determines what detail survives and how much sequence space the media needs.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - modality-tokenization.s1
-    - modality-tokenization.s2
-    - modality-tokenization.s3
-    - modality-tokenization.s4
-    - modality-tokenization.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - modality-tokenization.s1
+        - modality-tokenization.s2
+        - modality-tokenization.s3
+        - modality-tokenization.s5
+        - modality-tokenization.s4
+        - modality-tokenization.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     modality-tokenization.recap: modality-tokenization.check
 assessment_families:
-- id: modality-tokenization.base
-  objective_ref: objective.modality-tokenization
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Count patches before choosing resolution: trace the inputs, operation, and result before choosing.'
-  remediation_scene: modality-tokenization.s2
-  variants:
-  - id: modality-tokenization.base.1
-    prompt: 224 by 224 pixels with 16 by 16 patches produce how many patches?
-    options:
-    - id: b
-      text: '14'
-    - id: c
-      text: '224'
-    - id: a
-      text: '196'
-    answer: a
-    feedback: There are 14 patches per side, so 14 squared.
-  - id: modality-tokenization.base.2
-    prompt: Must every visual token be a discrete vocabulary ID?
-    options:
-    - id: c
-      text: Only if it is called a token
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Continuous patch embeddings are also commonly called tokens.
-- id: modality-tokenization.transfer
-  objective_ref: objective.modality-tokenization
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate compression in context: trace the inputs, operation, and result before choosing.'
-  remediation_scene: modality-tokenization.s4
-  variants:
-  - id: modality-tokenization.transfer.1
-    prompt: What can more audio codebooks per frame change?
-    options:
-    - id: c
-      text: The existence of time itself
-    - id: a
-      text: Representation rate and reconstruction fidelity
-    - id: b
-      text: Only the text font
-    answer: a
-    feedback: Multiple codes trade bandwidth and capacity against quality.
-  - id: modality-tokenization.transfer.2
-    prompt: Does pleasant reconstruction prove all task-relevant details survived?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only for compressed video
-    answer: a
-    feedback: Perceptual quality and decision-relevant fidelity differ.
+  - id: modality-tokenization.base
+    objective_ref: objective.modality-tokenization
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Count patches before choosing resolution: trace the inputs, operation, and result before choosing.'
+    remediation_scene: modality-tokenization.s2
+    variants:
+      - id: modality-tokenization.base.1
+        prompt: 224 by 224 pixels with 16 by 16 patches produce how many patches?
+        options:
+          - id: b
+            text: '14'
+          - id: c
+            text: '224'
+          - id: a
+            text: '196'
+        answer: a
+        feedback: There are 14 patches per side, so 14 squared.
+        retired: true
+      - id: modality-tokenization.base.2
+        prompt: Must every visual token be a discrete vocabulary ID?
+        options:
+          - id: c
+            text: Only if it is called a token
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Continuous patch embeddings are also commonly called tokens.
+        retired: true
+  - id: modality-tokenization.transfer
+    objective_ref: objective.modality-tokenization
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate compression in context: trace the inputs, operation, and result before choosing.'
+    remediation_scene: modality-tokenization.s4
+    variants:
+      - id: modality-tokenization.transfer.1
+        prompt: What can more audio codebooks per frame change?
+        options:
+          - id: c
+            text: The existence of time itself
+          - id: a
+            text: Representation rate and reconstruction fidelity
+          - id: b
+            text: Only the text font
+        answer: a
+        feedback: Multiple codes trade bandwidth and capacity against quality.
+        retired: true
+      - id: modality-tokenization.transfer.2
+        prompt: Does pleasant reconstruction prove all task-relevant details survived?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only for compressed video
+        answer: a
+        feedback: Perceptual quality and decision-relevant fidelity differ.
+        retired: true
+  - id: modality-tokenization.base.v2
+    objective_ref: objective.modality-tokenization
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Decide first whether the token is a vector computed from the input or an index into a learned codebook, then ask what that choice costs and allows.
+    remediation_scene: modality-tokenization.s2
+    variants:
+      - id: modality-tokenization.base.v2.1
+        prompt: A VQ encoder outputs the vector [0.2, 0.9]. The codebook entries are 0 = [1, 0], 1 = [0, 1], and 2 = [0.5, 0.5]. Which token does the region become?
+        options:
+          - id: c
+            text: Token 2, since [0.5, 0.5] sits between the other two entries
+          - id: a
+            text: Token 1, the entry with the smallest squared distance
+          - id: b
+            text: Token 0, since its first number is the closest match to 0.2
+        answer: a
+        feedback: Squared distances are 0.64 + 0.81 = 1.45 to entry 0, 0.04 + 0.01 = 0.05 to entry 1, and 0.09 + 0.16 = 0.25 to entry 2. The nearest entry, 1, wins; matching one coordinate isn't enough.
+      - id: modality-tokenization.base.v2.2
+        prompt: Why do image generators that write images one token at a time usually use discrete codes rather than continuous patch vectors?
+        options:
+          - id: a
+            text: A codebook gives a finite set of choices the model can predict with a softmax
+          - id: b
+            text: Discrete codes keep more fine detail than continuous patch vectors do
+          - id: c
+            text: Continuous patch vectors can't be processed by a transformer's attention
+        answer: a
+        feedback: Next-token prediction picks one option from a fixed list, just like choosing a word, so a codebook makes images predictable that way. Snapping to a codebook loses detail rather than keeping more, and transformers read continuous vectors all the time.
+      - id: modality-tokenization.base.v2.3
+        prompt: An audio codec makes 75 frames per second with 8 codes per frame. A speech model predicts all 8 codes of a frame together at each step. How many steps does 4 seconds take?
+        options:
+          - id: b
+            text: 2,400, one step per code
+          - id: a
+            text: 300, one step per frame
+          - id: c
+            text: 32, one step per codebook per second
+        answer: a
+        feedback: 4 × 75 = 300 frames, and each step produces a whole frame's 8 codes. Flattening every code into its own position would give 2,400 steps.
+      - id: modality-tokenization.base.v2.4
+        prompt: A video model switches from single-frame 16 × 16 patches to 2 × 16 × 16 tubelets on the same 16 frames. What happens to the token count?
+        options:
+          - id: c
+            text: It doubles, since each tubelet holds twice as many pixels
+          - id: b
+            text: It stays the same, since the patch area in each frame is unchanged
+          - id: a
+            text: It halves, since each token now covers two frames
+        answer: a
+        feedback: Tokens = (frames ÷ tubelet length) × patches per frame, so 16 frames become 8 time slots. A tubelet holds more pixels per token, which means fewer tokens, not more.
+  - id: modality-tokenization.transfer.v2
+    objective_ref: objective.modality-tokenization
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name the detail the task depends on (a short event, small print, a voice to reproduce), then pick the tokenization that keeps it at a cost that fits.
+    remediation_scene: modality-tokenization.s4
+    variants:
+      - id: modality-tokenization.transfer.v2.1
+        prompt: A podcast tool summarizes hour-long episodes; it never has to produce audio. Which audio representation fits best?
+        options:
+          - id: b
+            text: Codec tokens at 600 per second, so the audio can be decoded again later
+          - id: a
+            text: A speech encoder's continuous vectors at about 50 per second
+          - id: c
+            text: Raw audio samples at 16,000 per second, so that nothing is lost
+        answer: a
+        feedback: Understanding only needs good features, and 50 per second is 180,000 vectors an hour, versus 2.16 million codec tokens. Codec tokens are worth their length when you need to generate sound; raw samples are far too long.
+      - id: modality-tokenization.transfer.v2.2
+        prompt: A security camera model samples one frame every 2 seconds to save tokens. It misses people who dash through a doorway in under a second. What is the most direct fix?
+        options:
+          - id: a
+            text: Sample frames more often, and use tubelets to keep the token count down
+          - id: c
+            text: Raise each frame's resolution so each person looks larger and sharper
+          - id: b
+            text: Replace the continuous patch tokens with discrete codes from a codebook
+        answer: a
+        feedback: The event falls between samples, so no frame shows it. More frames catch it, and tubelets merge nearly identical neighbors to pay for the extra frames. Resolution and token type don't help with a frame that was never taken.
+      - id: modality-tokenization.transfer.v2.3
+        prompt: A text-to-music model must generate songs that people will listen to. Which output representation fits best?
+        options:
+          - id: c
+            text: Continuous encoder features, since they keep the most detail
+          - id: b
+            text: A log-mel spectrogram, since a model can read it directly
+          - id: a
+            text: Codec tokens, predicted step by step and decoded to sound
+        answer: a
+        feedback: Generation needs a finite set of choices to predict and a decoder back to waveform, which codec tokens give. Continuous encoder features have no decoder back to sound; a spectrogram would still need a separate vocoder.
+      - id: modality-tokenization.transfer.v2.4
+        prompt: A sign-reading assistant downsizes every frame to 112 pixels to fit more frames per clip. It now reads almost no street signs. What went wrong?
+        options:
+          - id: b
+            text: Too many frames were kept, so the sign's frames were crowded out
+          - id: a
+            text: The small print shrank below what a single patch can resolve
+          - id: c
+            text: At 112 pixels the patch tokens become discrete codes, not vectors
+        answer: a
+        feedback: Downsizing trades spatial detail for more frames, and small text is the first casualty. Frame count affects cost, not legibility, and the token type doesn't change with resolution.
+  - id: modality-tokenization.calculate
+    objective_ref: objective.modality-tokenization
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Video tokens = frames kept ÷ tubelet length × (side ÷ patch)². Audio tokens = seconds × rate. Add the pieces.
+    remediation_scene: modality-tokenization.s5
+    absolute_tolerance: 0.5
+    variants:
+      - id: modality-tokenization.calculate.1
+        prompt: An 8-second clip is sampled at 2 frames per second. Each frame is 336 pixels at patch 14 (576 tokens). How many video tokens?
+        answer: 9216
+        feedback: 8 × 2 = 16 frames, and 16 × 576 = 9,216 tokens.
+      - id: modality-tokenization.calculate.2
+        prompt: A 10-second clip is sampled at 1 frame per second. Each frame is 224 pixels at patch 16. How many video tokens?
+        answer: 1960
+        feedback: 10 frames × (224 ÷ 16)² = 10 × 196 = 1,960 tokens.
+      - id: modality-tokenization.calculate.3
+        prompt: A video model takes 32 frames at 224 pixels, using 2 × 16 × 16 tubelets. How many tokens?
+        answer: 3136
+        feedback: 32 ÷ 2 = 16 time slots, each with 14 × 14 = 196 patches, so 16 × 196 = 3,136 tokens.
+      - id: modality-tokenization.calculate.4
+        prompt: A codec makes 75 frames per second with 8 codebooks per frame. If every code gets its own position, how many tokens are 12 seconds of audio?
+        answer: 7200
+        feedback: 75 × 8 = 600 codes per second, and 600 × 12 = 7,200 tokens.
+      - id: modality-tokenization.calculate.5
+        prompt: A 5-second clip is sampled at 2 frames per second, 224 pixels at patch 14 (256 tokens per frame). Its audio is encoded at 50 vectors per second. How many tokens for video and audio together?
+        answer: 2810
+        feedback: 10 frames × 256 = 2,560 video tokens, plus 5 × 50 = 250 audio vectors, for 2,810.

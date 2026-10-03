@@ -1,194 +1,378 @@
 schema_version: 0.2-draft
 lesson:
   id: robot-imitation-learning
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn physical actions from demonstrations
   state: draft
-  summary: Copy useful demonstrations without averaging away valid choices.
+  summary: Half your demonstrations steer left of the fruit bowl and half steer right. Train a robot to copy them the obvious way and it drives straight into the bowl. Here's why, and the fixes.
   slot: M30.5
   category: learning
   sources:
-  - title: Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware
-    url: https://arxiv.org/abs/2304.13705
-  - title: Diffusion Policy
-    url: https://arxiv.org/abs/2303.04137
+    - title: "Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware (ALOHA and ACT; Zhao et al., 2023)"
+      url: https://arxiv.org/abs/2304.13705
+    - title: "Diffusion Policy: Visuomotor Policy Learning via Action Diffusion (Chi et al., 2023)"
+      url: https://arxiv.org/abs/2303.04137
+    - title: "A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning (DAgger; Ross, Gordon & Bagnell, 2011)"
+      url: https://arxiv.org/abs/1011.0686
 objectives:
-- id: objective.robot-imitation-learning
-  version: 1-draft
-  statement: Robot imitation learning maps observations to demonstrated actions or trajectories; collection
-    interfaces, action representations, distribution shift, and execution constraints determine transfer.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - robot-imitation-learning.base
-  - robot-imitation-learning.transfer
-  prerequisites:
-  - anyOf:
-    - objective.offline-rl-and-imitation
-  - anyOf:
-    - objective.kinematics-and-motion-planning
+  - id: objective.robot-imitation-learning
+    version: 2-draft
+    statement: Explain how robot demonstrations are recorded, why behavior-cloning errors compound and how action chunking and expert corrections help, and why averaging multimodal demonstrations fails while generative policies such as Diffusion Policy succeed.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - robot-imitation-learning.base.v2
+      - robot-imitation-learning.transfer.v2
+      - robot-imitation-learning.calculate
+    prerequisites:
+      - anyOf:
+          - objective.offline-rl-and-imitation
+      - anyOf:
+          - objective.kinematics-and-motion-planning
 scenes:
-- id: robot-imitation-learning.s1
-  title: Record the observation-action relationship
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.robot-imitation-learning
-  markdown: A demonstration can come from **teleoperation**, where a person controls the robot remotely; **kinesthetic
-    teaching**, where a person guides its body through a movement; or another controller. Align images, joint
-    states, commands, and timestamps. The recorded action might be a joint target, velocity, force, or end-effector
-    displacement; these are different interfaces with different execution assumptions.
-  text_mode: A demonstration can come from **teleoperation**, where a person controls the robot remotely; **kinesthetic
-    teaching**, where a person guides its body through a movement; or another controller. Align images, joint
-    states, commands, and timestamps. The recorded action might be a joint target, velocity, force, or end-effector
-    displacement; these are different interfaces with different execution assumptions.
-  bridges: []
-- id: robot-imitation-learning.s2
-  title: Predict one action or a short sequence
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robot-imitation-learning
-  markdown: Behavior cloning can predict the next action, while action-chunking methods predict several future
-    actions together. A chunk can improve temporal coherence and amortize inference, but executing too long
-    without feedback can miss a changing obstacle or contact condition.
-  text_mode: Behavior cloning can predict the next action, while action-chunking methods predict several future
-    actions together. A chunk can improve temporal coherence and amortize inference, but executing too long
-    without feedback can miss a changing obstacle or contact condition.
-  bridges: []
-- id: robot-imitation-learning.s3
-  title: Handle multiple valid demonstrations
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robot-imitation-learning
-  markdown: 'Two experts may move around opposite sides of an obstacle. Averaging their trajectories coordinate
-    by coordinate could pass through the obstacle. Multimodal action distributions or sequence-generating policies
-    can represent alternatives, but still require constraints and closed-loop evaluation.
+  - id: robot-imitation-learning.s1
+    title: Teach Tidy by doing it yourself
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.robot-imitation-learning
+    markdown: |-
+      Writing the rules for "slide the mug off the table, turn it, and rack it upside down" is hopeless: every mug and every table is a little different. It's far easier to *show* Tidy, forty times, and let it learn the pattern.
 
+      There are two common ways to record a **demonstration**:
 
-    In a toy top-down view, one demonstration passes an obstacle at horizontal coordinate −1 and another at
-    +1. Their coordinate average is 0, exactly where the obstacle sits. Here “multimodal” means several distinct
-    action possibilities, not several input media. The training record must say which action representation
-    was actually demonstrated.'
-  text_mode: 'Two experts may move around opposite sides of an obstacle. Averaging their trajectories coordinate
-    by coordinate could pass through the obstacle. Multimodal action distributions or sequence-generating policies
-    can represent alternatives, but still require constraints and closed-loop evaluation.
+      - **Teleoperation**: a person drives the robot remotely. In the ALOHA setup (Zhao et al., 2023), the operator moves a pair of small "leader" arms by hand, and the robot's "follower" arms copy every joint in real time.
+      - **Kinesthetic teaching**: a person physically pushes the robot's own arm through the motion.
 
+      Each demonstration becomes a stream of pairs, logged many times a second: an **observation** (camera images plus joint angles) and the **action** taken (for example, the next target angle for each joint). The recorded action format matters. "Joint targets at 50 Hz" and "gripper velocity at 10 Hz" are different languages, and the robot at test time must speak the one it learned.
 
-    In a toy top-down view, one demonstration passes an obstacle at horizontal coordinate −1 and another at
-    +1. Their coordinate average is 0, exactly where the obstacle sits. Here “multimodal” means several distinct
-    action possibilities, not several input media. The training record must say which action representation
-    was actually demonstrated.'
-  bridges: []
-- id: robot-imitation-learning.s4
-  title: Evaluate recovery and new conditions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.robot-imitation-learning
-  markdown: Measure success across object poses, lighting, demonstrators, and initial states, including small
-    deviations from the demonstrations. A policy that works only on the exact recorded setup has limited transfer.
-    Provide controlled recovery behavior and avoid treating imitation loss as a complete physical performance
-    metric.
-  text_mode: Measure success across object poses, lighting, demonstrators, and initial states, including small
-    deviations from the demonstrations. A policy that works only on the exact recorded setup has limited transfer.
-    Provide controlled recovery behavior and avoid treating imitation loss as a complete physical performance
-    metric.
-  bridges: []
-- id: robot-imitation-learning.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.robot-imitation-learning
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Robot imitation learns demonstrated actions in a specific control interface. Preserve valid alternatives
-    and test how the policy recovers outside the demonstrated situations.
-- id: robot-imitation-learning.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.robot-imitation-learning
-  markdown: Robot imitation learns demonstrated actions in a specific control interface. Preserve valid alternatives
-    and test how the policy recovers outside the demonstrated situations.
-  text_mode: Robot imitation learns demonstrated actions in a specific control interface. Preserve valid alternatives
-    and test how the policy recovers outside the demonstrated situations.
+      Training a network to predict the demonstrated action from the observation is **behavior cloning (BC)**: ordinary supervised learning, with the demonstrator as the label source.
+    bridges: []
+  - id: robot-imitation-learning.s2
+    title: Small slips snowball, so predict in chunks
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-imitation-learning
+    markdown: |-
+      The lesson on learning from recorded decisions showed BC's classic weakness. A small mistake takes the robot to a state no demonstration visited, where its next mistake is likelier, and so on. In Ross and Bagnell's analysis (2010), with a per-step error rate $\epsilon$ over $T$ steps, a clone's expected cost can grow like $\epsilon T^2$, not $\epsilon T$.
+
+      Robots make this painful because $T$ is huge. Tidy decides 50 times a second, so a 10-second mug pick is $T = 500$ decisions. Double the task length and $\epsilon T$ doubles, but $\epsilon T^2$ quadruples.
+
+      Two fixes attack it from different sides:
+
+      - **Collect the missing states.** DAgger (Ross, Gordon & Bagnell, 2011) has an expert label the states the *learner* reaches. On a robot this often looks like a person taking over with the teleop arms whenever the policy wobbles, and adding those corrections to the training data.
+      - **Make fewer decisions.** **Action chunking** predicts the next $k$ actions at once. ACT (Action Chunking with Transformers, Zhao et al., 2023) runs at 50 Hz with chunks of $k = 100$ actions, two seconds of motion. Tidy's 500 steps become just 5 decisions, so there are far fewer chances for errors to feed on each other.
+
+      :::predict A 12-second task at 50 Hz uses chunks of k = 50. How many decisions does the policy make?
+      12 × 50 = 600 steps, and 600 / 50 = 12 chunks. The effective horizon falls from 600 to 12.
+      :::
+
+      Chunks have a cost: during a long chunk the robot isn't reacting to what it sees. ACT softens this with **temporal ensembling**: it predicts a fresh chunk every step and blends the overlapping predictions for the current moment, weighting them with exponentially decaying weights.
+    bridges: []
+  - id: robot-imitation-learning.s3
+    title: Two good ways around a bowl average to a crash
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-imitation-learning
+    markdown: |-
+      A fruit bowl, 8 cm in radius, sits in the middle of Tidy's route across the table. In your forty demonstrations you steered around it: twenty times on the left, passing at $y = +0.15$ m, and twenty on the right, at $y = -0.15$ m. Both are perfect.
+
+      BC trained with squared error predicts, for each observation, the action that minimizes the average squared error, which is the *mean* of the demonstrated actions:
+
+      $$\hat{y} = \tfrac{1}{2}(+0.15) + \tfrac{1}{2}(-0.15) = 0$$
+
+      Straight through the bowl. Distributions with several separate peaks like this are called **multimodal**, and averaging a multimodal set lands between the peaks, exactly where no demonstrator ever went. (Here "multimodal" means several distinct valid actions, not several input types.)
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(1)
+      BOWL_RADIUS = 0.08                        # a fruit bowl sits at y = 0 on Tidy's route (m)
+      # 40 demos: the gripper's sideways offset as it passes the bowl (+ = left, - = right)
+      left = rng.random(40) < 0.5
+      demos = np.where(left, 0.15, -0.15) + rng.normal(0, 0.01, 40)
+      print(f"{left.sum()} demos go left, {(~left).sum()} go right")
+
+      def verdict(y):
+          return "CRASH" if abs(y) < BOWL_RADIUS else "clear"
+
+      # Behavior cloning with squared error learns the average action
+      avg = demos.mean()
+      print(f"squared-error policy:  y = {avg:+.3f} m  {verdict(avg)}")
+
+      # A policy that models both modes: pick a side as often as the demos did, then follow it
+      for run in range(1, 5):
+          side = rng.random() < left.mean()
+          y = demos[left == side].mean()
+          print(f"two-mode policy run {run}: y = {y:+.3f} m  {verdict(y)}")
+      ```
+
+      The average passes at $-0.001$ m, dead center. The two-mode policy goes left on some runs and right on others, and clears the bowl every time. Change `0.5` to `0.8` so most demos go left: the average moves to $+0.096$ m and scrapes past with under 2 cm to spare.
+
+      :::mixup "Collect more demonstrations and the policy will learn which way to go."
+      More data makes the estimate of the mean *more precise*, and the mean is still inside the bowl. The fix is a different kind of model, one that represents a whole distribution of actions and picks one mode at a time.
+      :::
+    bridges: []
+  - id: robot-imitation-learning.diffusion
+    title: "Diffusion Policy: sample a path, don't average"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-imitation-learning
+    markdown: |-
+      **Diffusion Policy** (Chi et al., 2023) brings the image generators' trick to robot actions. Recall from the lesson on how an image can emerge from noise: a network learns to remove noise a little at a time, so it can turn pure noise into a realistic sample. Here the "image" is a short sequence of future actions, and the network also sees the current camera images.
+
+      To act, Tidy starts from a random action sequence and denoises it step by step, conditioned on what it sees. Different starting noise lands on different modes: one run produces a clean left-hand path, another a clean right-hand path, but never the blurry average. Like ACT, it plans a chunk (for example, 16 steps), executes part of it (8 steps), then plans again from the new observation.
+
+      :::papers The training objective
+      For a demonstrated action sequence $A^0$, observation $O$, random noise $\epsilon$, and noise level $k$:
+
+      $$\mathcal{L} = \big\|\, \epsilon - \epsilon_\theta\big(O,\; \sqrt{\bar\alpha_k}\,A^0 + \sqrt{1-\bar\alpha_k}\,\epsilon,\; k\big) \big\|^2$$
+
+      This is the standard denoising loss with the observation added as a condition: corrupt a real action sequence, and train $\epsilon_\theta$ to predict the noise. The network never has to output one best action. At sampling time, each small denoising step nudges the sequence toward the demonstrations it most resembles, so a sample that starts slightly left ends up as a whole left-hand path.
+      :::
+
+      ACT tackles the same problem differently: it's trained as a conditional variational autoencoder, whose latent variable can encode "which way this demonstrator went".
+    bridges: []
+  - id: robot-imitation-learning.s4
+    title: Test it where the demos weren't
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.robot-imitation-learning
+    markdown: |-
+      A low training loss says Tidy copies the demos on the demo states. The real test is new ones: nudge the mug 5 cm off its usual spot, try a taller mug, dim the lights, bump the arm mid-motion. Count the successes, and count every time a person had to step in, since a policy that needs rescuing on one run in five isn't finished. Each rescue, recorded, is also a ready-made DAgger-style correction for the next round of training.
+    bridges: []
+  - id: robot-imitation-learning.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.robot-imitation-learning
+    markdown: Average some split demonstrations by hand, then advise a self-driving merge, a warehouse picker with human takeovers, a policy that ignores a cat, and a replay at the wrong rate.
+    takeaway: |-
+      Behavior cloning copies demonstrations but its slips compound; chunking and expert corrections help. When demos disagree, squared error averages them into a path nobody took, so use a model that samples one mode, like Diffusion Policy.
+  - id: robot-imitation-learning.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.robot-imitation-learning
+    markdown: |-
+      Robot imitation learns demonstrated actions in a specific control interface. Preserve valid alternatives and test how the policy recovers outside the demonstrated situations.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - robot-imitation-learning.s1
-    - robot-imitation-learning.s2
-    - robot-imitation-learning.s3
-    - robot-imitation-learning.s4
-    - robot-imitation-learning.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - robot-imitation-learning.s1
+        - robot-imitation-learning.s2
+        - robot-imitation-learning.s3
+        - robot-imitation-learning.diffusion
+        - robot-imitation-learning.s4
+        - robot-imitation-learning.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     robot-imitation-learning.recap: robot-imitation-learning.check
 assessment_families:
-- id: robot-imitation-learning.base
-  objective_ref: objective.robot-imitation-learning
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Predict one action or a short sequence: trace the inputs, operation, and result before choosing.'
-  remediation_scene: robot-imitation-learning.s2
-  variants:
-  - id: robot-imitation-learning.base.1
-    prompt: Why identify whether an action is velocity or position?
-    options:
-    - id: a
-      text: The controller interprets them differently
-    - id: b
-      text: Only the dataset title changes
-    - id: c
-      text: Both are always interchangeable
-    answer: a
-    feedback: Action semantics define execution.
-  - id: robot-imitation-learning.base.2
-    prompt: What can long open-loop action chunks miss?
-    options:
-    - id: b
-      text: Every possible computational benefit
-    - id: c
-      text: Only token formatting
-    - id: a
-      text: Changes requiring immediate feedback
-    answer: a
-    feedback: Longer intervals between feedback can reduce responsiveness.
-- id: robot-imitation-learning.transfer
-  objective_ref: objective.robot-imitation-learning
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate recovery and new conditions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: robot-imitation-learning.s4
-  variants:
-  - id: robot-imitation-learning.transfer.1
-    prompt: Two safe paths go around opposite sides of an obstacle. Is their average necessarily safe?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if both experts succeed
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Averaging modes can produce an invalid path.
-  - id: robot-imitation-learning.transfer.2
-    prompt: Does low imitation loss establish robust physical success?
-    options:
-    - id: c
-      text: Only if the demonstrations are videos
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Closed-loop distribution shift and constraints require evaluation.
+  - id: robot-imitation-learning.base
+    objective_ref: objective.robot-imitation-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Predict one action or a short sequence: trace the inputs, operation, and result before choosing.'
+    remediation_scene: robot-imitation-learning.s2
+    variants:
+      - id: robot-imitation-learning.base.1
+        prompt: Why identify whether an action is velocity or position?
+        options:
+          - id: a
+            text: The controller interprets them differently
+          - id: b
+            text: Only the dataset title changes
+          - id: c
+            text: Both are always interchangeable
+        answer: a
+        feedback: Action semantics define execution.
+        retired: true
+      - id: robot-imitation-learning.base.2
+        prompt: What can long open-loop action chunks miss?
+        options:
+          - id: b
+            text: Every possible computational benefit
+          - id: c
+            text: Only token formatting
+          - id: a
+            text: Changes requiring immediate feedback
+        answer: a
+        feedback: Longer intervals between feedback can reduce responsiveness.
+        retired: true
+  - id: robot-imitation-learning.transfer
+    objective_ref: objective.robot-imitation-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate recovery and new conditions: trace the inputs, operation, and result before choosing.'
+    remediation_scene: robot-imitation-learning.s4
+    variants:
+      - id: robot-imitation-learning.transfer.1
+        prompt: Two safe paths go around opposite sides of an obstacle. Is their average necessarily safe?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if both experts succeed
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Averaging modes can produce an invalid path.
+        retired: true
+      - id: robot-imitation-learning.transfer.2
+        prompt: Does low imitation loss establish robust physical success?
+        options:
+          - id: c
+            text: Only if the demonstrations are videos
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Closed-loop distribution shift and constraints require evaluation.
+        retired: true
+  - id: robot-imitation-learning.base.v2
+    objective_ref: objective.robot-imitation-learning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Squared-error cloning predicts the mean of the demonstrated actions; chunking cuts the number of decisions; a generative policy samples one mode at a time."
+    remediation_scene: robot-imitation-learning.s3
+    variants:
+      - id: robot-imitation-learning.base.v2.1
+        prompt: Half of a robot's demonstrations pass left of an obstacle and half pass right. A policy trained with squared error drives into the obstacle. Why?
+        options:
+          - id: b
+            text: It follows whichever side appeared more often in the demos
+          - id: c
+            text: Two conflicting answers make its training loss diverge
+          - id: a
+            text: It predicts the average action, which lies between the two paths
+        answer: a
+        feedback: Squared error is minimized by the mean, and the mean of +0.15 and −0.15 is 0, inside the obstacle. It doesn't pick the majority side; with a 60/40 split it would still land near the middle. Training converges fine, to the wrong answer.
+      - id: robot-imitation-learning.base.v2.2
+        prompt: A 10-second task runs at 50 Hz. A policy predicts chunks of 100 actions instead of one action at a time. What is the main benefit?
+        options:
+          - id: a
+            text: 500 steps become 5 decisions, so errors have fewer chances to compound
+          - id: c
+            text: The policy reacts faster to surprises in the middle of each chunk
+          - id: b
+            text: The policy needs one hundredth as many demonstrations to train
+        answer: a
+        feedback: Chunking shortens the effective horizon from 500 decisions to 5, which limits compounding and smooths the motion. The trade-off runs the other way for surprises, since the robot isn't re-deciding within a chunk, and the demonstration count doesn't shrink by 100.
+      - id: robot-imitation-learning.base.v2.3
+        prompt: How does Diffusion Policy avoid averaging two valid ways around an obstacle?
+        options:
+          - id: b
+            text: It averages the two modes more smoothly than squared error does
+          - id: a
+            text: Each sample starts from random noise and is denoised into one real path
+          - id: c
+            text: It trains one network per mode and switches between them by a rule
+        answer: a
+        feedback: A diffusion model represents the whole distribution of action sequences. Different starting noise is denoised toward different modes, so each sample is a complete left or right path. It doesn't average at all, and it's a single network.
+      - id: robot-imitation-learning.base.v2.4
+        prompt: A cloned policy works well for the first few seconds, then drifts off course and never recovers. What best explains the pattern?
+        options:
+          - id: c
+            text: The motors warm up during the run, so later actions come out weaker
+          - id: b
+            text: The learning rate was too high, so later actions were learned poorly
+          - id: a
+            text: Small errors lead to states the demos never showed, where it errs more
+        answer: a
+        feedback: This is compounding error. The demos covered the states near the expert's path, not the slightly-off states the clone drifts into, so its mistakes feed on each other. DAgger-style corrections or chunking help; motor heat and learning rate don't explain a time-dependent drift.
+  - id: robot-imitation-learning.transfer.v2
+    objective_ref: objective.robot-imitation-learning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Name the failure: averaging several valid choices, drifting into unseen states, reacting too slowly inside a chunk, or a mismatch between recorded and executed actions."
+    remediation_scene: robot-imitation-learning.s2
+    variants:
+      - id: robot-imitation-learning.transfer.v2.1
+        prompt: A driving policy learns highway merges from human logs. Half the drivers merge ahead of a truck and half fall in behind it. The cloned policy aims for the truck's side. What fixes this?
+        options:
+          - id: b
+            text: Collect several times as many merge logs from the same drivers
+          - id: a
+            text: Use a policy that models several modes, such as a diffusion policy
+          - id: c
+            text: Train a larger network with the same squared-error loss
+        answer: a
+        feedback: Ahead-or-behind is a multimodal choice, and squared error averages it into the truck. A model of the full action distribution picks one mode per sample. More logs or a bigger network just learn the same average more precisely.
+      - id: robot-imitation-learning.transfer.v2.2
+        prompt: A warehouse picking policy sometimes wobbles, and an operator takes over with a joystick to recover. How should the team use those takeovers?
+        options:
+          - id: a
+            text: Add the states and the operator's actions to training data
+          - id: b
+            text: Discard those runs, since they aren't clean demonstrations
+          - id: c
+            text: Use them only to count failures, keeping them out of training
+        answer: a
+        feedback: Takeovers are expert labels for exactly the off-course states the policy reaches, the DAgger idea. Discarding them throws away the recovery data the clone is missing; counting them is useful too, but it doesn't teach anything.
+      - id: robot-imitation-learning.transfer.v2.3
+        prompt: A kitchen robot executes 2-second action chunks without re-checking its camera. A cat bumps the cup half a second into a chunk, and the gripper closes on empty air. What change helps most?
+        options:
+          - id: c
+            text: Use longer chunks so the robot's motions stay smoother
+          - id: b
+            text: Collect more demonstrations in kitchens with no cats
+          - id: a
+            text: Execute less of each chunk before predicting a new one
+        answer: a
+        feedback: Long open-loop chunks can't react to surprises. Replanning more often (or blending overlapping chunks, as ACT's temporal ensembling does) restores feedback. Longer chunks make it worse, and avoiding cats doesn't cover the next surprise.
+      - id: robot-imitation-learning.transfer.v2.4
+        prompt: Demonstrations recorded each action as "move the gripper this much since the last step" at 10 Hz. The deployed controller sends the policy's actions at 50 Hz. What goes wrong?
+        options:
+          - id: a
+            text: Each step's move is applied five times as often, so the arm goes 5× too fast
+          - id: b
+            text: The arm moves at one fifth of the demonstrated speed
+          - id: c
+            text: Nothing, as the policy predicts positions that don't depend on timing
+        answer: a
+        feedback: A per-step change applied at 50 Hz instead of 10 Hz is applied five times as often per second, so the arm moves five times as fast. The recorded action format, including its rate, is part of the interface the robot must match.
+  - id: robot-imitation-learning.calculate
+    objective_ref: objective.robot-imitation-learning
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "A squared-error policy outputs the weighted average: multiply each side's offset by its share of the demonstrations and add."
+    remediation_scene: robot-imitation-learning.s3
+    absolute_tolerance: 0.005
+    variants:
+      - id: robot-imitation-learning.calculate.1
+        prompt: Demonstrations pass an obstacle at y = +0.2 m half the time and y = −0.2 m half the time. What y does a squared-error behavior-cloning policy output, in meters?
+        answer: 0
+        feedback: "0.5 × 0.2 + 0.5 × (−0.2) = 0: straight through the obstacle."
+      - id: robot-imitation-learning.calculate.2
+        prompt: 70% of demonstrations pass at y = +0.2 m and 30% at y = −0.2 m. What y does a squared-error policy output, in meters?
+        answer: 0.08
+        feedback: "0.7 × 0.2 + 0.3 × (−0.2) = 0.14 − 0.06 = 0.08 m. Not the majority's 0.2: the minority still drags the mean toward the middle."
+      - id: robot-imitation-learning.calculate.3
+        prompt: 60% of demonstrations pass at y = +0.15 m and 40% at y = −0.15 m. What y does a squared-error policy output, in meters?
+        answer: 0.03
+        feedback: "0.6 × 0.15 + 0.4 × (−0.15) = 0.09 − 0.06 = 0.03 m."
+      - id: robot-imitation-learning.calculate.4
+        prompt: Three demonstrations pass at y = +0.1 m, +0.1 m, and −0.2 m. What y does a squared-error policy output, in meters?
+        answer: 0
+        feedback: "(0.1 + 0.1 − 0.2) / 3 = 0 m."
+      - id: robot-imitation-learning.calculate.5
+        prompt: 80% of demonstrations pass at y = +0.25 m and 20% at y = −0.25 m. What y does a squared-error policy output, in meters?
+        answer: 0.15
+        feedback: "0.8 × 0.25 + 0.2 × (−0.25) = 0.2 − 0.05 = 0.15 m."

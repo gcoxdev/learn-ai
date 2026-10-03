@@ -1,248 +1,456 @@
 schema_version: 0.2-draft
 lesson:
   id: olmo-three-case-study
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Inspect the Olmo 3 model flow
   state: draft
-  summary: Follow released intermediate checkpoints through a model’s training branches.
+  summary: With Olmo 3 you can download the model from halfway through training, and the exact tokens it read. Use that to size it, cost it, and design an experiment only a fully open model allows.
   slot: M35.6
   category: learning
   sources:
-  - title: Olmo 3 report v2
-    url: https://arxiv.org/abs/2512.13961v2
-  - title: Olmo 3 Think model card
-    url: https://huggingface.co/allenai/Olmo-3-7B-Think
-  - title: OLMo-core official training code
-    url: https://github.com/allenai/OLMo-core
+    - title: Olmo 3 report v2
+      url: https://arxiv.org/abs/2512.13961v2
+    - title: Olmo 3 Think model card
+      url: https://huggingface.co/allenai/Olmo-3-7B-Think
+    - title: OLMo-core official training code
+      url: https://github.com/allenai/OLMo-core
 objectives:
-- id: objective.olmo-three-case-study
-  version: 1-draft
-  statement: Olmo 3 connects released training artifacts with dense architecture, staged base training, and
-    distinct Think, Instruct, and RL-Zero branches; reproducibility requires tracing the exact branch and inputs.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - olmo-three-case-study.base
-  - olmo-three-case-study.transfer
-  prerequisites:
-  - anyOf:
-    - objective.model-report-and-artifact-inventory
-  - anyOf:
-    - objective.continued-pretraining
-  - anyOf:
-    - objective.direct-preference-optimization
-  - anyOf:
-    - objective.verifiable-rewards
+  - id: objective.olmo-three-case-study
+    version: 2-draft
+    statement: Olmo 3 connects released training artifacts with dense architecture, staged base training, and distinct Think, Instruct, and RL-Zero branches; reproducibility requires tracing the exact branch and inputs.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - olmo-three-case-study.base.v2
+      - olmo-three-case-study.transfer.v2
+      - olmo-three-case-study.calculate
+    prerequisites:
+      - anyOf:
+          - objective.model-report-and-artifact-inventory
+      - anyOf:
+          - objective.continued-pretraining
+      - anyOf:
+          - objective.direct-preference-optimization
+      - anyOf:
+          - objective.verifiable-rewards
 scenes:
-- id: olmo-three-case-study.s1
-  title: Pin the report and branch
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.olmo-three-case-study
-  markdown: 'Anchor: Olmo 3 report revision 2, April 14, 2026, which also discusses Olmo 3.1 updates. Keep
-    original Olmo 3 checkpoints separate from later 3.1 adaptations. Sources checked September 13, 2026. Begin
-    with a specific model card, not an undifferentiated family name.'
-  text_mode: 'Anchor: Olmo 3 report revision 2, April 14, 2026, which also discusses Olmo 3.1 updates. Keep
-    original Olmo 3 checkpoints separate from later 3.1 adaptations. Sources checked September 13, 2026. Begin
-    with a specific model card, not an undifferentiated family name.'
-  bridges: []
-- id: olmo-three-case-study.s2
-  title: Read the dense configuration
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.olmo-three-case-study
-  markdown: The report describes dense 7B and 32B models; the 7B configuration uses multi-head attention while
-    32B uses grouped-query attention. Read dimensions and attention settings from the matching configuration.
-    Even within one family, architecture differences affect cache estimates and invalidate a copied memory
-    calculation.
-  text_mode: The report describes dense 7B and 32B models; the 7B configuration uses multi-head attention while
-    32B uses grouped-query attention. Read dimensions and attention settings from the matching configuration.
-    Even within one family, architecture differences affect cache estimates and invalidate a copied memory
-    calculation.
-  bridges: []
-- id: olmo-three-case-study.s3
-  title: Trace the base model flow
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.olmo-three-case-study
-  markdown: 'Base development proceeds through pretraining, midtraining, and long-context extension using the
-    Dolma 3 data pipeline.
+  - id: olmo-three-case-study.s1
+    title: A model you can rewind
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.olmo-three-case-study
+    markdown: |-
+      Maya is a graduate student who wants to know *when* a language model learns to solve word problems. With Llama 3.1 or DeepSeek-V3 she can only test the finished model. With Ai2's Olmo 3 she can load the checkpoint saved at the end of each training stage, read the exact tokens each stage trained on, and rerun a stage with the released code.
 
+      That's what **fully open** means: the inputs and intermediate states are published, not just the result. This lesson follows Olmo 3's **model flow**, Ai2's name for the path from data to released models.
 
-    **Midtraining** continues next-token learning on a more targeted data mixture before assistant adaptation.
-    It differs from supervised chat training. Across the base stages, the recipe changes which examples receive
-    emphasis and how long a sequence the model sees.
+      Pin the objects. We use **Olmo 3 report revision 2 (April 14, 2026)**, which also covers the later **Olmo 3.1** updates. Keep original Olmo 3 checkpoints and 3.1 checkpoints in separate rows, and start from a specific model card, such as `allenai/Olmo-3-7B-Think`, not the family name.
+    bridges: []
+  - id: olmo-three-case-study.s2
+    title: Two sizes, two attention designs
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.olmo-three-case-study
+    markdown: |-
+      From the report's Table 33 and the released configs:
 
+      | | Olmo 3 7B | Olmo 3 32B |
+      | --- | ---: | ---: |
+      | Layers / width | 32 / 4,096 | 64 / 5,120 |
+      | Query / KV heads | 32 / 32 (full multi-head) | 40 / 8 (grouped-query) |
+      | Parameters (computed) | 7.3B | 32.2B |
+      | Pretraining tokens | 5.93T | 5.5T |
+      | Context | 8K in pretraining, 65K after extension | same |
 
-    Released intermediate artifacts let you investigate when behavior changed. To compare them, keep evaluation
-    settings matched and verify that the checkpoints belong to the same documented lineage.'
-  text_mode: 'Base development proceeds through pretraining, midtraining, and long-context extension using
-    the Dolma 3 data pipeline.
+      Both use a 100,278-entry vocabulary derived from OpenAI's cl100k tokenizer, QK-Norm, and a new **sliding-window attention** pattern: in three of every four layers, each token attends only to the previous 4,096 tokens. The last layer always sees everything.
 
+      :::predict Olmo 3 7B and Llama 3.1 8B are close in size. How do their KV caches per token compare?
+      The 7B caches all 32 heads: 2 × 32 × 32 × 128 × 2 bytes = 512 KiB per token, four times Llama 3.1 8B's 128 KiB with 8 KV heads. Copying a Llama cache estimate would be four times too small.
+      :::
 
-    **Midtraining** continues next-token learning on a more targeted data mixture before assistant adaptation.
-    It differs from supervised chat training. Across the base stages, the recipe changes which examples receive
-    emphasis and how long a sequence the model sees.
+      The sliding window claws much of that back at long lengths. A windowed layer never keeps more than 4,096 tokens, so in 24 of the 7B's 32 layers the cache stops growing. At 65,536 tokens, the cache is 9.5 GiB instead of 32 GiB, if your serving engine takes advantage of the window.
+    bridges: []
+  - id: olmo-three-case-study.s3
+    title: Three base stages and their bill
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.olmo-three-case-study
+    markdown: |-
+      The base model goes through three stages, each with its own released data mix:
 
+      1. **Pretraining** on Dolma 3 Mix, about 6T tokens drawn from a 9T-token pool, at 8,192 context.
+      2. **Midtraining** on Dolma 3 Dolmino Mix, 100B tokens. **Midtraining** is still next-token prediction, like pretraining, but on a small mix aimed at target skills: math, code, question answering, plus some instruction data and thinking traces to prepare for post-training. The 32B ran it twice with different data orders and averaged the two results.
+      3. **Long-context extension** on Dolma 3 Longmino Mix: 50B tokens for the 7B and 100B for the 32B, at 65,536 context, with YaRN applied to the full-attention layers only.
 
-    Released intermediate artifacts let you investigate when behavior changed. To compare them, keep evaluation
-    settings matched and verify that the checkpoints belong to the same documented lineage.'
-  bridges: []
-- id: olmo-three-case-study.s4
-  title: Follow the adaptation branch
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.olmo-three-case-study
-  markdown: The Think branch uses SFT, DPO, and reinforcement learning with verifiable rewards. Instruct targets
-    more direct responses, while RL-Zero explores RL from a base checkpoint. Do not merge all branch histories
-    into one universal recipe. The report’s later 3.1 updates need separate rows in a comparison.
-  text_mode: The Think branch uses SFT, DPO, and reinforcement learning with verifiable rewards. Instruct targets
-    more direct responses, while RL-Zero explores RL from a base checkpoint. Do not merge all branch histories
-    into one universal recipe. The report’s later 3.1 updates need separate rows in a comparison.
-  bridges: []
-- id: olmo-three-case-study.s5
-  title: Follow links to executable evidence
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.olmo-three-case-study
-  markdown: The official Olmo-3-7B-Think card links model, data, and training resources. OLMo-core supplies
-    training building blocks. Inventory exact data versions, configurations, checkpoints, and evaluation dependencies
-    before attempting reproduction; openness gives inspectable ingredients but does not eliminate hardware
-    cost, preprocessing, or environment differences.
-  text_mode: The official Olmo-3-7B-Think card links model, data, and training resources. OLMo-core supplies
-    training building blocks. Inventory exact data versions, configurations, checkpoints, and evaluation dependencies
-    before attempting reproduction; openness gives inspectable ingredients but does not eliminate hardware
-    cost, preprocessing, or environment differences.
-  bridges: []
-- id: olmo-three-case-study.s6
-  title: Design a checkpoint comparison
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.olmo-three-case-study
-  markdown: 'Choose two checkpoints on the same documented branch and a small fresh evaluation set. Record
-    changes in task quality, formatting, response length, and uncertainty. Attribute differences to the interval
-    as a whole unless an ablation isolates one cause. This lesson requires a written comparison, not a large
-    training run.
+      The report also gives measured training speed, which lets you check its compute:
 
+      ```python run
+      # Olmo 3 model sheet: report Table 33 (architecture) and Tables 34-35 (training)
+      # name: (layers, width, FFN, q heads, kv heads, pretraining tokens, tokens/s per H100)
+      models = {"Olmo 3 7B":  (32, 4096, 11008, 32, 32, 5.93e12, 7700),
+                "Olmo 3 32B": (64, 5120, 27648, 40, 8, 5.5e12, 2000)}
+      vocab, hd, ctx, window = 100278, 128, 65536, 4096
 
-    Make a two-row worksheet: exact checkpoint, completed training stage, prompt format, scoring rule, score,
-    and generated length. If the later checkpoint performs better, the result supports an improvement across
-    that training interval. To attribute it to one data source, you would need a controlled comparison varying
-    that source. For cache estimates, also inspect the specific attention configuration: equal model-family
-    names do not imply equal numbers of KV heads.'
-  text_mode: 'Choose two checkpoints on the same documented branch and a small fresh evaluation set. Record
-    changes in task quality, formatting, response length, and uncertainty. Attribute differences to the interval
-    as a whole unless an ablation isolates one cause. This lesson requires a written comparison, not a large
-    training run.
+      for name, (L, d, ffn, q, kvh, D, tps) in models.items():
+          N = L * (2 * d * q * hd + 2 * d * kvh * hd + 3 * d * ffn) + 2 * vocab * d
+          per_layer = 2 * kvh * hd * 2                     # K and V bytes per token per layer
+          full = L * per_layer * ctx                       # every layer keeps all 65,536 tokens
+          swa = (L // 4) * per_layer * ctx + (L - L // 4) * per_layer * window
+          hours = D / tps / 3600
+          print(f"{name}: {N / 1e9:.1f}B, bf16 {2 * N / 1e9:.1f} GB | KV {L * per_layer / 1024:.0f} KiB/token | "
+                f"65K cache {full / 2**30:.1f} GiB, with window {swa / 2**30:.1f} GiB")
+          print(f"   6ND {6 * N * D:.2e} FLOPs, {hours / 1e3:.0f}K GPU-hours -> "
+                f"{6 * N * tps / 989e12:.0%} of H100 bf16 peak")
+      ```
 
+      For the 32B, 6ND gives 1.06 × 10²⁴ FLOPs and about 764K H100-hours, running at 39% of peak. The report states roughly 41% utilization for the 32B and 43% for the 7B; 6ND leaves out attention's own arithmetic, and attention is a bigger share of the smaller model's work, so the 7B's 6ND figure (34%) falls further short.
 
-    Make a two-row worksheet: exact checkpoint, completed training stage, prompt format, scoring rule, score,
-    and generated length. If the later checkpoint performs better, the result supports an improvement across
-    that training interval. To attribute it to one data source, you would need a controlled comparison varying
-    that source. For cache estimates, also inspect the specific attention configuration: equal model-family
-    names do not imply equal numbers of KV heads.'
-  bridges: []
-- id: olmo-three-case-study.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.olmo-three-case-study
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Olmo 3 exposes intermediate artifacts and distinct adaptation branches. Trace the exact branch,
-    data, and configuration before comparing checkpoints or attempting reproduction.
-- id: olmo-three-case-study.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.olmo-three-case-study
-  markdown: Olmo 3 exposes intermediate artifacts and distinct adaptation branches. Trace the exact branch,
-    data, and configuration before comparing checkpoints or attempting reproduction.
-  text_mode: Olmo 3 exposes intermediate artifacts and distinct adaptation branches. Trace the exact branch,
-    data, and configuration before comparing checkpoints or attempting reproduction.
+      The 764K is computed from the throughput. The report's own wall-clock breakdown, about 9.5 days on 512 GPUs and then 35 days on 1,024, comes to nearly 980K GPU-hours, because it includes crash restarts. It prices the whole effort, about 56 days on a 1,024-GPU cluster up to Olmo 3 Think 32B, at \$2.75M at \$2 per H100-hour.
+    bridges: []
+  - id: olmo-three-case-study.s4
+    title: Three branches from one base
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.olmo-three-case-study
+    markdown: |-
+      After the base, the flow splits into three post-trained families, each with its own released Dolci datasets:
+
+      - **Think**: SFT, then DPO, then RL with verifiable rewards (RLVR). It writes long reasoning before answering.
+      - **Instruct**: SFT, DPO, and RL tuned for short, direct replies and function calling.
+      - **RL-Zero**: RLVR applied directly to the base, with no SFT or DPO, in math, code, instruction-following, general-chat, and mixed versions (7B). It's an open counterpart to DeepSeek's R1-Zero. Because the pretraining and midtraining data are public, the team could remove any RL problems that already appeared there, so RL gains aren't just the model recalling text it had seen.
+
+      The 3.1 updates are later points on these branches. Olmo 3.1 Think 32B, for example, continued the best Think RL run for 21 more days on 224 GPUs. That makes it a different checkpoint from Olmo 3 Think 32B, so it gets its own row.
+    diagram:
+      caption: The Olmo 3 model flow. Every box has released data and checkpoints.
+      description: Pretraining on Dolma 3 Mix feeds midtraining on Dolmino Mix, which feeds long-context extension on Longmino Mix, producing Olmo 3 Base. The base feeds three branches. Think goes through SFT, DPO, and RLVR. Instruct goes through SFT, DPO, and RL for short answers. RL-Zero applies RLVR directly to the base.
+      nodes:
+        - id: pre
+          label: Pretraining
+          note: Dolma 3 Mix, ~6T tokens
+          col: 0
+          row: 0
+          tone: data
+        - id: mid
+          label: Midtraining
+          note: Dolmino Mix, 100B tokens
+          col: 1
+          row: 0
+          tone: data
+        - id: long
+          label: Long-context extension
+          note: Longmino Mix, to 65K
+          col: 2
+          row: 0
+          tone: data
+        - id: base
+          label: Olmo 3 Base
+          col: 3
+          row: 0
+          tone: accent
+        - id: think
+          label: Think
+          note: SFT, DPO, RLVR
+          col: 4
+          row: 0
+        - id: instruct
+          label: Instruct
+          note: SFT, DPO, RL; short replies
+          col: 4
+          row: 1
+        - id: zero
+          label: RL-Zero
+          note: RLVR straight from base
+          col: 4
+          row: 2
+      edges:
+        - from: pre
+          to: mid
+        - from: mid
+          to: long
+        - from: long
+          to: base
+        - from: base
+          to: think
+        - from: base
+          to: instruct
+        - from: base
+          to: zero
+    bridges: []
+  - id: olmo-three-case-study.s5
+    title: What "fully open" puts in your hands
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.olmo-three-case-study
+    markdown: |-
+      Run the inventory from the lesson on reading a release, and nearly every row fills in:
+
+      - weights under Apache 2.0, with checkpoints at the end of every stage and `step_XXXX` revisions during post-training
+      - the actual training mixes *and* the larger pools they were drawn from
+      - small sample mixes (150B tokens for pretraining, 10B for midtraining) for cheap experiments
+      - training code (OLMo-core for the base, Open Instruct for post-training)
+
+      Openness gives you the ingredients, not the kitchen. Rerunning the 32B's pretraining still takes hundreds of thousands of H100-hours, and a different cluster or data order gives a slightly different model. The sample mixes make small, controlled experiments affordable.
+    bridges: []
+  - id: olmo-three-case-study.s6
+    title: Design Maya's checkpoint comparison
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.olmo-three-case-study
+    markdown: |-
+      Maya compares two 7B checkpoints on the same branch: the end of pretraining and the end of midtraining. She writes 50 fresh word problems, fixes one prompt format and one scoring rule, and records score and answer length for each.
+
+      Suppose the scores come back 31/50 and then 38/50. What can she claim?
+
+      | Claim | Supported? |
+      | --- | --- |
+      | "Math improved over the midtraining interval" | Yes, with matched settings on the same lineage |
+      | "The math data in Dolmino caused it" | Not yet |
+
+      Midtraining changed several things at once: math *and* code *and* QA data, instruction examples, and a learning rate decaying to zero. Only Olmo lets her go further. She can retrain from the pretraining checkpoint on the 10B midtraining sample mix twice, once with the math sources and once without, keeping everything else fixed.
+
+      :::mixup "A jump between two checkpoints tells you which data caused it."
+      It tells you *when* the change happened. Everything that changed in that interval is a suspect until an ablation removes one of them.
+      :::
+    bridges: []
+  - id: olmo-three-case-study.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.olmo-three-case-study
+    markdown: Size Olmo 3's caches and training compute, then advise a team copying a cache estimate, a researcher testing one data source, and a lab planning a reproduction.
+    takeaway: |-
+      Olmo 3 releases data, code, and checkpoints for every stage: pretraining, midtraining, long-context extension, then Think, Instruct, and RL-Zero branches. Use its configs for memory, its throughput for compute, and its sample mixes for controlled experiments.
+  - id: olmo-three-case-study.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.olmo-three-case-study
+    markdown: |-
+      Olmo 3 exposes intermediate artifacts and distinct adaptation branches. Trace the exact branch, data, and configuration before comparing checkpoints or attempting reproduction.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - olmo-three-case-study.s1
-    - olmo-three-case-study.s2
-    - olmo-three-case-study.s3
-    - olmo-three-case-study.s4
-    - olmo-three-case-study.s5
-    - olmo-three-case-study.s6
-    - olmo-three-case-study.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - olmo-three-case-study.s1
+        - olmo-three-case-study.s2
+        - olmo-three-case-study.s3
+        - olmo-three-case-study.s4
+        - olmo-three-case-study.s5
+        - olmo-three-case-study.s6
+        - olmo-three-case-study.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     olmo-three-case-study.recap: olmo-three-case-study.check
 assessment_families:
-- id: olmo-three-case-study.base
-  objective_ref: objective.olmo-three-case-study
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Read the dense configuration: trace the inputs, operation, and result before choosing.'
-  remediation_scene: olmo-three-case-study.s2
-  variants:
-  - id: olmo-three-case-study.base.1
-    prompt: Do the reported 7B and 32B configurations both use GQA?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Neither uses attention
-    - id: a
-      text: No; 7B uses MHA and 32B uses GQA
-    answer: a
-    feedback: Inspect architecture at the checkpoint level.
-  - id: olmo-three-case-study.base.2
-    prompt: What separates the base development stages?
-    options:
-    - id: c
-      text: A change from dense to MoE in every stage
-    - id: a
-      text: Pretraining, midtraining, and long-context extension
-    - id: b
-      text: Only a file rename
-    answer: a
-    feedback: Training stages differ in data and schedule choices.
-- id: olmo-three-case-study.transfer
-  objective_ref: objective.olmo-three-case-study
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Design a checkpoint comparison: trace the inputs, operation, and result before choosing.'
-  remediation_scene: olmo-three-case-study.s6
-  variants:
-  - id: olmo-three-case-study.transfer.1
-    prompt: Should a Think recipe automatically be assigned to RL-Zero?
-    options:
-    - id: c
-      text: Only if both are 7B
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Branch initialization and adaptation differ.
-  - id: olmo-three-case-study.transfer.2
-    prompt: Do released artifacts remove the need to record the execution environment?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if intermediate checkpoints exist
-    answer: a
-    feedback: Reproduction still depends on versions, hardware, and procedure.
+  - id: olmo-three-case-study.base
+    objective_ref: objective.olmo-three-case-study
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Read the attention design for the exact size you're asking about; the 7B and 32B differ.
+    remediation_scene: olmo-three-case-study.s2
+    variants:
+      - id: olmo-three-case-study.base.1
+        prompt: Do the reported 7B and 32B configurations both use GQA?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Neither uses attention
+          - id: a
+            text: No; 7B uses MHA and 32B uses GQA
+        answer: a
+        feedback: Inspect architecture at the checkpoint level.
+        retired: true
+      - id: olmo-three-case-study.base.2
+        prompt: What separates the base development stages?
+        options:
+          - id: c
+            text: A change from dense to MoE in every stage
+          - id: a
+            text: Pretraining, midtraining, and long-context extension
+          - id: b
+            text: Only a file rename
+        answer: a
+        feedback: Training stages differ in data and schedule choices.
+        retired: true
+  - id: olmo-three-case-study.transfer
+    objective_ref: objective.olmo-three-case-study
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: A jump between checkpoints shows when something changed; only an ablation shows which change caused it.
+    remediation_scene: olmo-three-case-study.s6
+    variants:
+      - id: olmo-three-case-study.transfer.1
+        prompt: Should a Think recipe automatically be assigned to RL-Zero?
+        options:
+          - id: c
+            text: Only if both are 7B
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Branch initialization and adaptation differ.
+        retired: true
+      - id: olmo-three-case-study.transfer.2
+        prompt: Do released artifacts remove the need to record the execution environment?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if intermediate checkpoints exist
+        answer: a
+        feedback: Reproduction still depends on versions, hardware, and procedure.
+        retired: true
+  - id: olmo-three-case-study.base.v2
+    objective_ref: objective.olmo-three-case-study
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Place the question on the model flow (base stage, branch, or attention layer), then recall what that step does.
+    remediation_scene: olmo-three-case-study.s3
+    variants:
+      - id: olmo-three-case-study.base.v2.1
+        prompt: Olmo 3 7B and Llama 3.1 8B are similar in size, yet the Olmo model caches 512 KiB per token against Llama's 128. Why?
+        options:
+          - id: b
+            text: Olmo's larger vocabulary needs a wider key for each token
+          - id: a
+            text: Olmo 3 7B keeps all 32 KV heads, while Llama shares 8 across its heads
+          - id: c
+            text: Sliding-window layers store each token twice, once per window
+        answer: a
+        feedback: Cache per token is 2 × layers × KV heads × head width × bytes, and 32 KV heads against 8 gives the factor of four. Olmo's vocabulary is actually smaller, and vocabulary doesn't enter the cache; the window limits how many tokens are kept, and doesn't duplicate them.
+      - id: olmo-three-case-study.base.v2.2
+        prompt: What is Olmo 3's midtraining stage?
+        options:
+          - id: c
+            text: Supervised fine-tuning on chat pairs, with the loss masked on prompts
+          - id: b
+            text: RL on verifiable problems, inserted between two pretraining runs
+          - id: a
+            text: Next-token training on a 100B-token mix aimed at target skills
+        answer: a
+        feedback: Midtraining keeps the pretraining objective but switches to a small, targeted mix (math, code, QA, some instruction data and thinking traces). SFT and RLVR come later, in the post-training branches.
+      - id: olmo-three-case-study.base.v2.3
+        prompt: How does the Olmo 3 RL-Zero branch differ from the Think branch?
+        options:
+          - id: a
+            text: It applies RLVR straight to the base, skipping SFT and DPO
+          - id: b
+            text: It runs RLVR after Think's SFT and DPO, but with fewer steps
+          - id: c
+            text: It distills Think's outputs into the base, without RL at all
+        answer: a
+        feedback: RL-Zero starts from Olmo 3 Base with no supervised or preference stage, like DeepSeek's R1-Zero. Think goes SFT, DPO, then RLVR.
+      - id: olmo-three-case-study.base.v2.4
+        prompt: Olmo 3 uses sliding-window attention in three of every four layers. What does that change?
+        options:
+          - id: b
+            text: It shrinks the weights, since windowed layers have fewer parameters
+          - id: a
+            text: Those layers keep at most 4,096 past tokens, so long-context cache grows slower
+          - id: c
+            text: It cuts the number of KV heads in those layers from 32 to 8
+        answer: a
+        feedback: A windowed layer attends to, and needs to cache, only the last 4,096 tokens. For the 7B at 65,536 tokens that's 9.5 GiB instead of 32. The window doesn't change the weights or the head counts.
+  - id: olmo-three-case-study.transfer.v2
+    objective_ref: objective.olmo-three-case-study
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the released artifacts make possible (a checkpoint comparison, an ablation, or a rerun) and what each can and can't tell you.
+    remediation_scene: olmo-three-case-study.s6
+    variants:
+      - id: olmo-three-case-study.transfer.v2.1
+        prompt: A researcher wants to know whether the olmOCR science PDFs in Dolma 3 improved science question answering. What does Olmo's release let her do?
+        options:
+          - id: c
+            text: Ask the final model which sources it learned its science answers from
+          - id: b
+            text: Compare the checkpoints before and after pretraining on science questions
+          - id: a
+            text: Train small models on the sample mix, with and without that source
+        answer: a
+        feedback: Released data and code allow a controlled ablation that varies one source. Checkpoint comparisons mix every source together, and a model can't report where it learned something.
+      - id: olmo-three-case-study.transfer.v2.2
+        prompt: After midtraining, a 7B checkpoint solves 7 more of 50 math problems than before. A colleague writes "the math data caused the gain." What's the better claim?
+        options:
+          - id: a
+            text: Math improved over the midtraining interval, whose data and schedule both changed
+          - id: b
+            text: The math data caused the gain, since the report says midtraining targets math
+          - id: c
+            text: Nothing can be concluded, since the two checkpoints came from different stages
+        answer: a
+        feedback: The interval added math, code, QA, and instruction data, and decayed the learning rate. Matched settings on one lineage support "it improved here"; picking one cause needs an ablation. Different stages are exactly what this comparison is for.
+      - id: olmo-three-case-study.transfer.v2.3
+        prompt: A team sizing GPUs for Olmo 3 7B at 32K-token contexts reuses its Llama 3.1 8B estimate of 128 KiB per token. What have they missed?
+        options:
+          - id: b
+            text: Olmo's larger vocabulary, which raises the cache per token
+          - id: c
+            text: Olmo's longer 65K context, which doubles the cache per token
+          - id: a
+            text: Olmo's full multi-head attention, 512 KiB per token before windowing
+        answer: a
+        feedback: The 7B caches 32 KV heads, four times Llama's 8, so the estimate is 4× too small before any sliding-window savings. Context length changes how many tokens are cached, not the bytes per token, and Olmo's vocabulary is smaller.
+      - id: olmo-three-case-study.transfer.v2.4
+        prompt: A startup says "Olmo 3 is fully open, so we'll reproduce the 32B next month on our 16 GPUs." What's the realistic response?
+        options:
+          - id: c
+            text: Possible, since the released code resumes from any checkpoint in hours
+          - id: a
+            text: The inputs are public, but pretraining alone took about 764K H100-hours
+          - id: b
+            text: Impossible, since the full pretraining data was withheld for licensing reasons
+        answer: a
+        feedback: At 2,000 tokens per second per GPU, 5.5T tokens is about 764K GPU-hours (computed; the report's wall-clock figures, with restarts, come to nearly 980K), roughly five years on 16 GPUs. The data mixes were released; the sample mixes are the affordable way to experiment.
+  - id: olmo-three-case-study.calculate
+    objective_ref: objective.olmo-three-case-study
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Cache per token = 2 × layers × KV heads × 128 × 2 bytes. Weights = parameters × 2 bytes. Compute = 6 × parameters × tokens. GPU-hours = tokens ÷ (tokens per second per GPU) ÷ 3,600."
+    remediation_scene: olmo-three-case-study.s3
+    absolute_tolerance: 1
+    variants:
+      - id: olmo-three-case-study.calculate.1
+        prompt: Olmo 3 7B has 32 layers and 32 KV heads of width 128, with a 2-byte cache. How many KiB does each token add?
+        answer: 512
+        feedback: 2 × 32 × 32 × 128 × 2 = 524,288 bytes = 512 KiB.
+      - id: olmo-three-case-study.calculate.2
+        prompt: Olmo 3 32B has about 32.2 billion parameters. How many GB are its weights in bf16?
+        answer: 64.4
+        feedback: 32.2 × 10⁹ × 2 bytes = 64.4 GB.
+      - id: olmo-three-case-study.calculate.3
+        prompt: Using 6ND, what is the pretraining compute of Olmo 3 32B (32.2 billion parameters, 5.5 trillion tokens), in units of 10²² FLOPs?
+        answer: 106.3
+        feedback: 6 × 32.2 × 10⁹ × 5.5 × 10¹² = 1.063 × 10²⁴ = 106.3 × 10²² FLOPs.
+      - id: olmo-three-case-study.calculate.4
+        prompt: Olmo 3 32B trained at about 2,000 tokens per second per GPU. How many thousand GPU-hours do its 5.5 trillion pretraining tokens take?
+        answer: 764
+        feedback: 5.5 × 10¹² ÷ 2,000 = 2.75 × 10⁹ GPU-seconds, and ÷ 3,600 ≈ 763.9 thousand GPU-hours.
+      - id: olmo-three-case-study.calculate.5
+        prompt: Olmo 3 7B stores 16 KiB per token in each layer. At 65,536 tokens, 8 full-attention layers keep every token and 24 windowed layers keep only 4,096. How many GiB is the cache?
+        answer: 9.5
+        feedback: Full layers take 8 × 16 KiB × 65,536 = 8 GiB, and windowed layers 24 × 16 KiB × 4,096 = 1.5 GiB, for 9.5 GiB in total, against 32 GiB without the window.
+      - id: olmo-three-case-study.calculate.6
+        prompt: Olmo 3 7B has about 7.3 billion parameters. How many GB are its weights in bf16?
+        answer: 14.6
+        feedback: 7.3 × 10⁹ × 2 bytes = 14.6 GB.

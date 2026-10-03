@@ -4,219 +4,385 @@ lesson:
   version: 0.3.0-draft
   title: Constrain a solution or change the update
   state: draft
-  summary: Separate discouraging large weights, enforcing a limit, and shortening an update that is too large.
+  summary: One typo in one order can fling a model's weights into nonsense. Meet the three safeguards (penalties, weight decay, and clipping) and learn which problem each one solves.
   slot: M10.5
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: Decoupled Weight Decay Regularization
-    url: https://arxiv.org/abs/1711.05101
+    - title: Dive into Deep Learning — authors’ open textbook
+      url: https://d2l.ai/
+    - title: Decoupled Weight Decay Regularization
+      url: https://arxiv.org/abs/1711.05101
+    - title: On the difficulty of training recurrent neural networks (Pascanu, Mikolov & Bengio, 2013)
+      url: https://arxiv.org/abs/1211.5063
 objectives:
-- id: objective.penalties-and-clipping
-  version: 1-draft
-  statement: Penalties, decoupled weight decay, projection, and gradient clipping act at different points in
-    learning; they should not be treated as interchangeable safeguards.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - penalties-and-clipping.base
-  - penalties-and-clipping.transfer
-  prerequisites:
-  - anyOf:
-    - objective.optimization-math
-  - anyOf:
-    - objective.momentum-and-adam
+  - id: objective.penalties-and-clipping
+    version: 2-draft
+    statement: Penalties, decoupled weight decay, projection, and gradient clipping act at different points in learning; they should not be treated as interchangeable safeguards.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - penalties-and-clipping.base.v2
+      - penalties-and-clipping.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.optimization-math
+      - anyOf:
+          - objective.momentum-and-adam
 scenes:
-- id: penalties-and-clipping.s1
-  title: A penalty changes the objective
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.penalties-and-clipping
-  markdown: 'Adding a multiple of squared weights to the loss discourages large coefficients. Its derivative
-    contributes to the gradient. A hard constraint instead restricts feasible parameters, perhaps through projection
-    after a step. A finite penalty does not necessarily enforce a hard limit exactly.
+  - id: penalties-and-clipping.s1
+    title: Discourage a weight, or forbid it
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.penalties-and-clipping
+    markdown: |-
+      The bakery model has learned a price of \$3 per box. Then a typo slips into the data: an order of 500 boxes for \$15 (someone meant 5). At weight 3 the model predicts \$1,500, and the gradient for that one order is 2 × 500 × (1,500 − 15) = **1,485,000**. With learning rate 0.01, a single step moves the weight by 14,850. Months of training, gone in one step.
 
+      There are several ways to keep weights under control, and they work at different points in the training step:
 
-    If a weight must stay between 0 and 1, an update proposing 1.2 can be **projected** back to 1, the nearest
-    allowed value in this scalar example. A penalty merely makes some choices more expensive: a sufficiently
-    valuable reduction in prediction loss could still outweigh it. “Discourage” and “forbid” describe different
-    operations.'
-  text_mode: 'Adding a multiple of squared weights to the loss discourages large coefficients. Its derivative
-    contributes to the gradient. A hard constraint instead restricts feasible parameters, perhaps through projection
-    after a step. A finite penalty does not necessarily enforce a hard limit exactly.
+      | Safeguard | What it changes | Effect |
+      | --- | --- | --- |
+      | **Penalty** | The loss | Large weights cost extra, so they're *discouraged* |
+      | **Projection** | The weight, after each step | Values outside the allowed range are *forbidden* |
+      | Weight decay | The update | Every weight shrinks a little each step |
+      | Gradient clipping | The gradient, before the step | Oversized steps are shortened |
 
+      A penalty adds a term to the loss. The most common, the **L2 penalty**, adds λw² (λ, "lambda", sets its strength), which adds 2λw to the gradient. With λ = 0.1 and w = 2, that's an extra 0.4 pulling the weight toward zero. But a penalty only makes big weights expensive. If a big weight cuts the prediction loss by more than the penalty costs, the optimizer keeps it.
 
-    If a weight must stay between 0 and 1, an update proposing 1.2 can be **projected** back to 1, the nearest
-    allowed value in this scalar example. A penalty merely makes some choices more expensive: a sufficiently
-    valuable reduction in prediction loss could still outweigh it. “Discourage” and “forbid” describe different
-    operations.'
-  bridges: []
-- id: penalties-and-clipping.s2
-  title: Decay need not equal a loss penalty
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.penalties-and-clipping
-  markdown: 'With plain gradient descent, a squared-weight penalty can correspond to multiplicative shrinkage
-    under matching conventions. With adaptive optimizers, applying a gradient penalty and applying decoupled
-    weight decay can have different effects. AdamW makes the decay separate from the adaptive gradient transformation.
+      A projection enforces a hard rule. If a weight must stay between 0 and 1 and a step proposes 1.2, you move it back to 1, the nearest allowed value. Nothing is traded off; 1.2 simply isn't allowed.
+    diagram:
+      caption: One training step, and where each safeguard acts on it.
+      description: The current weights feed the loss, where a penalty can be added. The backward pass turns the loss into a gradient. Clipping shortens the gradient if it is too long. The optimizer (such as Adam) turns the clipped gradient into a step. Decoupled weight decay then shrinks the weights, and projection moves any out-of-bounds weight back into range before the updated weights start the next step.
+      nodes:
+        - id: weights
+          label: Weights
+          col: 0
+          row: 0
+          tone: data
+        - id: loss
+          label: Loss
+          note: penalty adds λw² here
+          col: 1
+          row: 0
+        - id: grad
+          label: Gradient
+          note: from the backward pass
+          col: 2
+          row: 0
+        - id: clip
+          label: Clip
+          note: shortens a too-long gradient
+          col: 3
+          row: 0
+          tone: warn
+        - id: step
+          label: Optimizer step
+          note: e.g. Adam's rescaling
+          col: 3
+          row: 1
+          tone: accent
+        - id: decay
+          label: Weight decay
+          note: shrinks every weight (AdamW)
+          col: 2
+          row: 1
+        - id: project
+          label: Projection
+          note: moves weights back into bounds
+          col: 1
+          row: 1
+          tone: warn
+      edges:
+        - from: weights
+          to: loss
+        - from: loss
+          to: grad
+          label: backward pass
+        - from: grad
+          to: clip
+        - from: clip
+          to: step
+        - from: step
+          to: decay
+        - from: decay
+          to: project
+        - from: project
+          to: weights
+          label: next step
+    bridges: []
+  - id: penalties-and-clipping.s2
+    title: Why AdamW decays weights outside Adam
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.penalties-and-clipping
+    markdown: |-
+      **Weight decay** shrinks every weight by a small fraction on each step: w ← w − ηλw. With learning rate η = 0.1 and λ = 0.1, each step multiplies every weight by 1 − 0.01 = 0.99, so a weight of 2 becomes 1.98 before the gradient step is applied.
 
+      With plain SGD, weight decay is the same thing as an L2 penalty of (λ/2)w². That penalty adds λw to the gradient, SGD multiplies it by η, and the weight loses ηλw, exactly the decay step.
 
-    **Decoupled** means the shrinkage is applied separately from the optimizer''s transformation of the prediction
-    gradient. An illustrative shrink factor of 0.99 changes a weight of 2 to 1.98. The precise factor depends
-    on learning rate and the stated decay convention; it is not an instruction to subtract the same amount
-    from every weight.'
-  text_mode: 'With plain gradient descent, a squared-weight penalty can correspond to multiplicative shrinkage
-    under matching conventions. With adaptive optimizers, applying a gradient penalty and applying decoupled
-    weight decay can have different effects. AdamW makes the decay separate from the adaptive gradient transformation.
+      With Adam, they come apart. Adam divides the *whole* gradient, penalty term included, by $\sqrt{\hat v}$, the typical gradient size for that weight. So the penalty's pull gets divided too. The fix is to **decouple** the decay: apply it straight to the weights, separately from Adam's rescaling. Take two weights, both equal to 2, one with typical gradient size 100 and one with 0.1:
 
+      | | Weight A ($\sqrt{\hat v}$ = 100) | Weight B ($\sqrt{\hat v}$ = 0.1) |
+      | --- | ---: | ---: |
+      | L2 penalty inside Adam: shrink ≈ ηλw / $\sqrt{\hat v}$ | 0.0002 | 0.2 |
+      | Decoupled decay (AdamW): shrink = ηλw | 0.02 | 0.02 |
 
-    **Decoupled** means the shrinkage is applied separately from the optimizer''s transformation of the prediction
-    gradient. An illustrative shrink factor of 0.99 changes a weight of 2 to 1.98. The precise factor depends
-    on learning rate and the stated decay convention; it is not an instruction to subtract the same amount
-    from every weight.'
-  bridges:
-  - vectors
-  - optimization-math
-- id: penalties-and-clipping.s3
-  title: Shorten a gradient that is too large
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.penalties-and-clipping
-  markdown: 'The **Euclidean norm** is a vector’s length: square its coordinates, add them, and take the square
-    root. For gradient [3, 4], the norm is √(9 + 16) = 5.
+      With the penalty inside Adam, the weight with big gradients barely shrinks at all, and the one with small gradients shrinks a thousand times faster. That's rarely what anyone wants.
 
+      :::papers AdamW (Loshchilov and Hutter, 2017)
+      "Decoupled Weight Decay Regularization" moved the decay outside Adam's rescaling:
 
-    **Global norm clipping** scales the entire gradient down if its norm exceeds a threshold. To limit this
-    gradient to norm 2, multiply both coordinates by 2 / 5, giving [1.2, 1.6]. Scaling them equally preserves
-    direction.
+      $$w_t = w_{t-1} - \eta\left(\frac{\hat m_t}{\sqrt{\hat v_t} + \epsilon} + \lambda\, w_{t-1}\right)$$
 
+      The first term is the ordinary Adam step from the previous lesson. The second, $\eta\lambda w$, is plain weight decay that never passes through $\sqrt{\hat v}$, so every weight shrinks by the same fraction, 0.02 / 2 = 1% per step in our table. That's what *decoupled* means: the decay is kept separate from the gradient. The paper appeared as a preprint in 2017 and at ICLR in 2019, and AdamW has since become the usual default for training transformers.
+      :::
+    bridges:
+      - vectors
+      - optimization-math
+  - id: penalties-and-clipping.s3
+    title: Shorten the step, keep the direction
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.penalties-and-clipping
+    markdown: |-
+      Back to the typo order. The fix that saves the run is **gradient clipping**: before each step, check how long the gradient is, and if it's too long, shrink it.
 
-    Clamping each coordinate separately is a different form of clipping and can change direction. State which
-    method you use when explaining an update.'
-  text_mode: 'The **Euclidean norm** is a vector’s length: square its coordinates, add them, and take the square
-    root. For gradient [3, 4], the norm is √(9 + 16) = 5.
+      A vector's length is its **norm**: square every coordinate, add them up, and take the square root. For gradient [3, 4], the norm is √(9 + 16) = 5. **Global-norm clipping** treats *all* the model's gradients as one long vector with threshold $c$:
 
+      $$g \leftarrow g \cdot \min\!\left(1, \frac{c}{\lVert g \rVert}\right)$$
 
-    **Global norm clipping** scales the entire gradient down if its norm exceeds a threshold. To limit this
-    gradient to norm 2, multiply both coordinates by 2 / 5, giving [1.2, 1.6]. Scaling them equally preserves
-    direction.
+      With $c = 2$, gradient [3, 4] is scaled by 2 / 5 = 0.4 to [1.2, 1.6]. Its length is now 2 and it points in exactly the same direction. A gradient already shorter than $c$ is left untouched.
 
+      :::predict What if you clamp each coordinate to at most 2 instead?
+      [3, 4] becomes [2, 2]. Its length is 2.83, not 2, and its direction has changed: the two coordinates used to be in the ratio 3 : 4, and now they're equal. Clamping coordinates, sometimes called *value clipping*, bends the step. Norm clipping only shortens it.
+      :::
 
-    Clamping each coordinate separately is a different form of clipping and can change direction. State which
-    method you use when explaining an update.'
-  bridges: []
-- id: penalties-and-clipping.s4
-  title: Diagnose before adding a safeguard
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.penalties-and-clipping
-  markdown: Clipping can reduce destructive updates but can also conceal a persistent problem if nearly every
-    step is clipped. Penalties encode preferences, decay changes parameter evolution, and constraints encode
-    feasibility. Inspect gradient norms, loss, validation, and the exact update order before deciding which
-    mechanism is appropriate.
-  text_mode: Clipping can reduce destructive updates but can also conceal a persistent problem if nearly every
-    step is clipped. Penalties encode preferences, decay changes parameter evolution, and constraints encode
-    feasibility. Inspect gradient norms, loss, validation, and the exact update order before deciding which
-    mechanism is appropriate.
-  bridges: []
-- id: penalties-and-clipping.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.penalties-and-clipping
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A penalty discourages a solution, a hard constraint forbids it, and clipping limits a gradient.
-    Choose the mechanism that addresses the problem you actually observed.
-- id: penalties-and-clipping.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.penalties-and-clipping
-  markdown: A penalty discourages a solution, a hard constraint forbids it, and clipping limits a gradient.
-    Choose the mechanism that addresses the problem you actually observed.
-  text_mode: A penalty discourages a solution, a hard constraint forbids it, and clipping limits a gradient.
-    Choose the mechanism that addresses the problem you actually observed.
+      Here's global-norm clipping across two weight tensors, on a normal step and on the typo-order spike:
+
+      ```python run
+      import numpy as np
+
+      def clip_global_norm(grads, max_norm):
+          total = np.sqrt(sum(np.sum(g**2) for g in grads))     # one length for everything
+          scale = min(1.0, max_norm / total)
+          return [g * scale for g in grads], total
+
+      # Gradients for two weight tensors: a normal step, then a step hit by a typo order
+      normal = [np.array([0.03, -0.04]), np.array([0.12])]
+      spike  = [np.array([300.0, -400.0]), np.array([1200.0])]
+
+      for name, grads in [("normal", normal), ("spike", spike)]:
+          clipped, total = clip_global_norm(grads, max_norm=1.0)
+          print(f"{name}: norm {total:8.2f} -> clipped {[np.round(g, 3).tolist() for g in clipped]}")
+
+      # Clamping each coordinate to [-1, 1] instead changes the direction:
+      clamped = [np.clip(g, -1.0, 1.0) for g in spike]
+      print("clamped spike:", [g.tolist() for g in clamped])
+      ```
+
+      The normal gradient (norm 0.13) passes through unchanged. The spike (norm 1,300) shrinks to length 1 and keeps its 3 : −4 : 12 proportions. Clamping flattens it to [1, −1, 1], a different direction entirely. Norm clipping became standard for recurrent networks after Pascanu, Mikolov, and Bengio (2013) analyzed why their gradients sometimes explode and proposed it. A threshold of 1.0 is a common choice in published recipes for training large language models.
+  - id: penalties-and-clipping.s4
+    title: Count how often you clip
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.penalties-and-clipping
+    markdown: |-
+      Clipping is a seat belt: it should do nothing on nearly every step and save you on the rare bad one. So log the gradient norm before clipping, and the fraction of steps that got clipped.
+
+      Suppose two runs both clip at norm 1.0:
+
+      - **Run A** clips 3 steps out of 10,000. Its logged norms sit around 0.3, with three spikes above 50. Clipping is doing its job. The spikes are also worth a look: all three came from batches containing the typo order, which is now fixed in the data.
+      - **Run B** clips 9,800 steps out of 10,000, with norms steady around 40. Every step is shrunk by about 40×, so clipping has quietly become a 40-times-smaller learning rate. The real problem is elsewhere: a learning rate far too high, a loss summed instead of averaged, or unnormalized inputs. Fix that, and clipping goes back to being a seat belt.
+
+      :::mixup "Clipping, weight decay, and penalties are three names for keeping weights small."
+      Clipping limits the *step* and leaves the destination alone. Decay and penalties change the *destination*, favoring smaller weights even when the gradients are tame. A run with exploding steps needs clipping (and a cause); a model that overfits might need decay. Swapping one for the other fixes neither.
+      :::
+    bridges: []
+  - id: penalties-and-clipping.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.penalties-and-clipping
+    markdown: Clip gradients by hand, then choose between a penalty, a projection, weight decay, and clipping for a range of misbehaving training runs.
+    takeaway: |-
+      A penalty discourages a solution, a hard constraint forbids it, and clipping limits a gradient. Choose the mechanism that addresses the problem you actually observed.
+  - id: penalties-and-clipping.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.penalties-and-clipping
+    markdown: |-
+      A penalty discourages a solution, a hard constraint forbids it, and clipping limits a gradient. Choose the mechanism that addresses the problem you actually observed.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - penalties-and-clipping.s1
-    - penalties-and-clipping.s2
-    - penalties-and-clipping.s3
-    - penalties-and-clipping.s4
-    - penalties-and-clipping.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - penalties-and-clipping.s1
+        - penalties-and-clipping.s2
+        - penalties-and-clipping.s3
+        - penalties-and-clipping.s4
+        - penalties-and-clipping.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     penalties-and-clipping.recap: penalties-and-clipping.check
 assessment_families:
-- id: penalties-and-clipping.base
-  objective_ref: objective.penalties-and-clipping
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Decay need not equal a loss penalty: trace the inputs, operation, and result before choosing.'
-  remediation_scene: penalties-and-clipping.s2
-  variants:
-  - id: penalties-and-clipping.base.1
-    prompt: Gradient [6, 8] has norm 10. Clipping its norm to 5 gives what?
-    options:
-    - id: a
-      text: '[3, 4]'
-    - id: b
-      text: '[5, 5]'
-    - id: c
-      text: '[6, 5]'
-    answer: a
-    feedback: Global norm clipping multiplies every coordinate by 0.5.
-  - id: penalties-and-clipping.base.2
-    prompt: Does a finite penalty always enforce a hard constraint exactly?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if its name includes regularization
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: An optimizer may trade violation against the rest of the objective.
-- id: penalties-and-clipping.transfer
-  objective_ref: objective.penalties-and-clipping
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Diagnose before adding a safeguard: trace the inputs, operation, and result before choosing.'
-  remediation_scene: penalties-and-clipping.s4
-  variants:
-  - id: penalties-and-clipping.transfer.1
-    prompt: Are L2 penalties and decoupled decay always equivalent under adaptive optimization?
-    options:
-    - id: b
-      text: Yes; every optimizer uses the same geometry
-    - id: c
-      text: Only for vector parameters
-    - id: a
-      text: No; update transformations differ
-    answer: a
-    feedback: The penalty gradient can be adaptively scaled while decoupled decay is applied separately.
-  - id: penalties-and-clipping.transfer.2
-    prompt: Almost every step is heavily clipped. What is a useful response?
-    options:
-    - id: c
-      text: Remove all diagnostics
-    - id: a
-      text: Investigate gradient scale and training instability
-    - id: b
-      text: Assume clipping proves healthy training
-    answer: a
-    feedback: Persistent clipping may indicate a deeper issue or an inappropriate threshold.
+  - id: penalties-and-clipping.base
+    objective_ref: objective.penalties-and-clipping
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Find the gradient's length first, then scale every coordinate by threshold ÷ length.
+    remediation_scene: penalties-and-clipping.s2
+    variants:
+      - id: penalties-and-clipping.base.1
+        retired: true
+        prompt: Gradient [6, 8] has norm 10. Clipping its norm to 5 gives what?
+        options:
+          - id: a
+            text: '[3, 4]'
+          - id: b
+            text: '[5, 5]'
+          - id: c
+            text: '[6, 5]'
+        answer: a
+        feedback: Global norm clipping multiplies every coordinate by 0.5.
+      - id: penalties-and-clipping.base.2
+        retired: true
+        prompt: Does a finite penalty always enforce a hard constraint exactly?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if its name includes regularization
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: An optimizer may trade violation against the rest of the objective.
+  - id: penalties-and-clipping.transfer
+    objective_ref: objective.penalties-and-clipping
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask where each safeguard acts (the loss, the gradient, the update, or the weight) before choosing one.
+    remediation_scene: penalties-and-clipping.s4
+    variants:
+      - id: penalties-and-clipping.transfer.1
+        retired: true
+        prompt: Are L2 penalties and decoupled decay always equivalent under adaptive optimization?
+        options:
+          - id: b
+            text: Yes; every optimizer uses the same geometry
+          - id: c
+            text: Only for vector parameters
+          - id: a
+            text: No; update transformations differ
+        answer: a
+        feedback: The penalty gradient can be adaptively scaled while decoupled decay is applied separately.
+      - id: penalties-and-clipping.transfer.2
+        retired: true
+        prompt: Almost every step is heavily clipped. What is a useful response?
+        options:
+          - id: c
+            text: Remove all diagnostics
+          - id: a
+            text: Investigate gradient scale and training instability
+          - id: b
+            text: Assume clipping proves healthy training
+        answer: a
+        feedback: Persistent clipping may indicate a deeper issue or an inappropriate threshold.
+  - id: penalties-and-clipping.base.v2
+    objective_ref: objective.penalties-and-clipping
+    task: base
+    response_type: numeric
+    points: 1
+    absolute_tolerance: 0.001
+    hint: 'Global-norm clipping: compute the length √(sum of squares) of the whole gradient. If it exceeds the threshold, multiply every coordinate by threshold ÷ length; otherwise leave it alone.'
+    remediation_scene: penalties-and-clipping.s3
+    variants:
+      - id: penalties-and-clipping.base.v2.1
+        prompt: A gradient is [6, 8]. Global-norm clipping uses threshold 5. What is the first coordinate after clipping?
+        answer: 3
+        feedback: The norm is √(36 + 64) = 10, so every coordinate is scaled by 5 / 10 = 0.5, giving [3, 4]. Clamping each coordinate to 5 would give 5 instead and change the direction.
+      - id: penalties-and-clipping.base.v2.2
+        prompt: A gradient is [0, 3, 4]. Global-norm clipping uses threshold 1. What is the last coordinate after clipping?
+        answer: 0.8
+        feedback: The norm is √(0 + 9 + 16) = 5, so the scale is 1 / 5 = 0.2, giving [0, 0.6, 0.8]. Dividing by the threshold instead of the norm would get the scale wrong.
+      - id: penalties-and-clipping.base.v2.3
+        prompt: A model has two weight tensors with gradients [2] and [−1, 2]. Global-norm clipping uses threshold 1.5 over all of them together. What does the gradient [2] become?
+        answer: 1
+        feedback: The global norm is √(4 + 1 + 4) = 3, so every coordinate is scaled by 1.5 / 3 = 0.5, and [2] becomes [1]. Clipping each tensor separately would scale [2] to 1.5 instead.
+      - id: penalties-and-clipping.base.v2.4
+        prompt: A gradient is [0.6, −0.8]. Global-norm clipping uses threshold 2. What is the second coordinate after clipping?
+        answer: -0.8
+        feedback: The norm is √(0.36 + 0.64) = 1, which is already under the threshold of 2, so the gradient passes through unchanged. Clipping only ever shrinks; it never stretches a short gradient up to the threshold.
+  - id: penalties-and-clipping.transfer.v2
+    objective_ref: objective.penalties-and-clipping
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: A penalty changes the loss, projection moves weights back into bounds, decoupled decay shrinks weights outside the optimizer, and clipping shortens the step. Match the tool to where the problem shows up.
+    remediation_scene: penalties-and-clipping.s4
+    variants:
+      - id: penalties-and-clipping.transfer.v2.1
+        prompt: A mixing weight in a model must stay between 0 and 1. With an L2 penalty added, it still drifts to 1.3 on some steps. Which approach enforces the rule?
+        options:
+          - id: b
+            text: Make the L2 penalty ten times stronger
+          - id: a
+            text: After each step, project the weight back into [0, 1]
+          - id: c
+            text: Clip the gradient norm so the weight moves more slowly
+        answer: a
+        feedback: A penalty only makes large values expensive, so a stronger one reduces drift without forbidding it. Projection enforces the bound after every step. Clipping slows the drift but doesn't stop it.
+      - id: penalties-and-clipping.transfer.v2.2
+        prompt: A team trains with Adam and an L2 penalty added to the loss. Weights whose gradients are usually large barely shrink at all. What change fixes this?
+        options:
+          - id: c
+            text: Increase the penalty until the large-gradient weights shrink
+          - id: b
+            text: Clip the global gradient norm so the large gradients get smaller
+          - id: a
+            text: Switch to AdamW, which applies the decay outside Adam's scaling
+        answer: a
+        feedback: Inside Adam, the penalty's pull is divided by each weight's typical gradient size, so big-gradient weights feel little decay. AdamW decouples it so every weight shrinks by the same fraction. A bigger penalty would over-shrink the small-gradient weights.
+      - id: penalties-and-clipping.transfer.v2.3
+        prompt: A run's logs show about 97% of steps clipped, with gradient norms steady around 30 and a clipping threshold of 1. What is the most useful next step?
+        options:
+          - id: b
+            text: Raise the threshold to 30 so clipping stops triggering
+          - id: c
+            text: Keep going, since clipping is holding training stable
+          - id: a
+            text: Look for why gradients are 30× larger than expected
+        answer: a
+        feedback: When nearly every step is clipped, clipping is acting as a hidden 30-times-smaller learning rate, and something upstream (learning rate, loss reduction, input scale) needs fixing. Raising the threshold just removes the protection, and carrying on hides the cause.
+      - id: penalties-and-clipping.transfer.v2.4
+        prompt: A recurrent network trains smoothly, except that every few thousand steps the loss spikes to NaN after one enormous gradient. Which safeguard targets this?
+        options:
+          - id: a
+            text: Global-norm clipping, which caps each step's length
+          - id: b
+            text: Weight decay, which shrinks every weight a little each step
+          - id: c
+            text: An L2 penalty, which makes large weights more expensive
+        answer: a
+        feedback: The trouble is one rare, huge step, and clipping shortens exactly those while leaving normal steps alone. Decay and penalties act on every step and change where training ends up; they don't stop a single gradient from being enormous.
+      - id: penalties-and-clipping.transfer.v2.5
+        prompt: To tame a gradient of [12, 1], an engineer clamps each coordinate to at most 2, getting [2, 1]. What has this done to the step?
+        options:
+          - id: c
+            text: Shortened it while keeping the same direction
+          - id: b
+            text: Shortened it and swung it toward the second weight
+          - id: a
+            text: Left it unchanged, since only one coordinate was big
+        answer: b
+        feedback: The ratio went from 12-to-1 to 2-to-1, so the step now leans much more toward the second weight. Global-norm clipping would shrink both coordinates by the same factor and keep the 12-to-1 direction.

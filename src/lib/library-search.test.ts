@@ -77,7 +77,7 @@ describe("library discovery", () => {
         ...base,
         query: "attention",
         moduleFilter: "M15",
-        time: "6-to-10",
+        time: "11-to-20",
         archetype: "mechanism",
         evidence: "not-demonstrated",
       },
@@ -89,8 +89,8 @@ describe("library discovery", () => {
       found.every(
         (lesson) =>
           lesson.slot.startsWith("M15.") &&
-          lesson.minutes > 5 &&
-          lesson.minutes <= 10,
+          lesson.minutes > 10 &&
+          lesson.minutes <= 20,
       ),
     ).toBe(true);
     expect(

@@ -1,207 +1,437 @@
 schema_version: 0.2-draft
 lesson:
   id: recurrent-networks
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Carry a state from one step to the next
   state: draft
-  summary: Reuse a small update rule across a sequence while distinguishing temporary memory from learned weights.
+  summary: A network that reads the café's day one hour at a time and keeps a running hunch about it. Then watch why its memory of 7 a.m. fades by noon.
   slot: M13.2
   category: learning
   sources:
-  - title: Dive into Deep Learning — recurrent neural networks
-    url: https://d2l.ai/chapter_recurrent-neural-networks/rnn.html
+    - title: Dive into Deep Learning — recurrent neural networks
+      url: https://d2l.ai/chapter_recurrent-neural-networks/rnn.html
+    - title: Dive into Deep Learning — backpropagation through time
+      url: https://d2l.ai/chapter_recurrent-neural-networks/bptt.html
+    - title: "Finding Structure in Time (Elman, 1990)"
+      url: https://doi.org/10.1207/s15516709cog1402_1
+    - title: "Learning Long-Term Dependencies with Gradient Descent is Difficult (Bengio, Simard & Frasconi, 1994)"
+      url: https://doi.org/10.1109/72.279181
+    - title: "On the Difficulty of Training Recurrent Neural Networks (Pascanu, Mikolov & Bengio, 2013)"
+      url: https://arxiv.org/abs/1211.5063
+    - title: "DeepAR: Probabilistic Forecasting with Autoregressive Recurrent Networks (Salinas et al., 2017)"
+      url: https://arxiv.org/abs/1704.04110
 objectives:
-- id: objective.recurrent-networks
-  version: 1-draft
-  statement: Recurrent networks update a hidden state using new input and prior state; shared parameters process
-    sequences, while backpropagation through time handles their repeated use.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - recurrent-networks.base
-  - recurrent-networks.transfer
-  prerequisites:
-  - anyOf:
-    - objective.neural-forward-pass
-  - anyOf:
-    - objective.automatic-differentiation
+  - id: objective.recurrent-networks
+    version: 2-draft
+    statement: Recurrent networks update a hidden state using new input and prior state; shared parameters process sequences, while backpropagation through time handles their repeated use.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - recurrent-networks.base.v2
+      - recurrent-networks.transfer.v2
+      - recurrent-networks.calc.v2
+    prerequisites:
+      - anyOf:
+          - objective.neural-forward-pass
+      - anyOf:
+          - objective.automatic-differentiation
 scenes:
-- id: recurrent-networks.s1
-  title: Carry useful information to the next step
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.recurrent-networks
-  markdown: 'A **recurrent neural network (RNN)** reuses an update rule across a sequence. At each position
-    it combines the current input with the previous **hidden state**, a temporary list of values carrying information
-    from earlier positions. The parameters of that rule are shared.
+  - id: recurrent-networks.s1
+    title: A running hunch about the day
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.recurrent-networks
+    markdown: |-
+      The seasonal naive forecast from the last lesson has no sense of *today*. If a tour bus unloads at Pebble Café at 7 a.m. and sales run 10 cups above normal, "same hour last week" still predicts a normal 8 a.m.
 
+      Ana wants a model that reads the day as it happens, one hour at a time, and keeps a running hunch: "today is busier than usual." That's what a **recurrent neural network (RNN)** does. At each step it takes two things, the new input and its own previous hunch, and combines them into an updated hunch. The hunch is a short list of numbers called the **hidden state**, written $h_t$ for step $t$.
 
-    The state summarizes what the model retains; it is not necessarily a copy of the earlier inputs. An **output
-    head** converts it into a task answer, either at every step or after the sequence ends.'
-  text_mode: 'A **recurrent neural network (RNN)** reuses an update rule across a sequence. At each position
-    it combines the current input with the previous **hidden state**, a temporary list of values carrying information
-    from earlier positions. The parameters of that rule are shared.
+      Two features make it recurrent:
 
+      - **The same rule at every step.** The 8 a.m. update and the 2 p.m. update use the same weights. Those shared weights are what training learns, so a model trained on 8-hour days can read a 12-hour day.
+      - **The state is the only memory.** Nothing else is carried forward. Whatever the model will need from 7 a.m. at noon has to survive, squeezed into $h_t$, through every update in between.
 
-    The state summarizes what the model retains; it is not necessarily a copy of the earlier inputs. An **output
-    head** converts it into a task answer, either at every step or after the sequence ends.'
-  bridges: []
-- id: recurrent-networks.s2
-  title: Trace a simple recurrence
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.recurrent-networks
-  markdown: 'For an illustrative scalar update h_next = 0.5h + x, begin h = 0 and inputs [2, 4]. The first
-    state is 2; the second is 0.5 × 2 + 4 = 5. Changing the first input affects later states through the recurrence.
-    Real RNNs commonly add learned matrices and nonlinearities.
+      An **output head**, a small layer on top, turns the state into an answer: here, a forecast for the next hour. Drawing the loop once per step, as below, is called **unrolling** the network.
+    bridges: []
+    diagram:
+      caption: An RNN unrolled over three hours. The same weights update the state at every step, and the last state feeds the forecast.
+      description: The starting state h0 and the first input x1 both feed state h1. State h1 and input x2 feed state h2. State h2 and input x3 feed state h3. Every state-to-state arrow uses the same weight W_h, and every input arrow uses the same weight W_x. State h3 feeds an output head that produces the next-hour forecast.
+      nodes:
+        - id: h0
+          label: h0 = 0
+          note: start of day
+          col: 0
+          row: 1
+          tone: muted
+        - id: h1
+          label: h1
+          col: 1
+          row: 1
+          tone: accent
+        - id: h2
+          label: h2
+          col: 2
+          row: 1
+          tone: accent
+        - id: h3
+          label: h3
+          col: 3
+          row: 1
+          tone: accent
+        - id: x1
+          label: x1, 7 a.m.
+          col: 1
+          row: 2
+          tone: data
+        - id: x2
+          label: x2, 8 a.m.
+          col: 2
+          row: 2
+          tone: data
+        - id: x3
+          label: x3, 9 a.m.
+          col: 3
+          row: 2
+          tone: data
+        - id: yhat
+          label: 10 a.m. forecast
+          note: output head
+          col: 4
+          row: 1
+      edges:
+        - from: h0
+          to: h1
+          label: W_h
+        - from: x1
+          to: h1
+          label: W_x
+        - from: h1
+          to: h2
+          label: same W_h
+        - from: x2
+          to: h2
+          label: same W_x
+        - from: h2
+          to: h3
+          label: same W_h
+        - from: x3
+          to: h3
+          label: same W_x
+        - from: h3
+          to: yhat
+  - id: recurrent-networks.s2
+    title: One hour of the recurrence, by hand
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.recurrent-networks
+    markdown: |-
+      The standard update is
 
+      $$h_t = \tanh(W_h\, h_{t-1} + W_x\, x_t + b)$$
 
-    If the next input is 0, the third state is 0.5 × 5 + 0 = 2.5. The state changed even though the stored
-    multiplier stayed 0.5. This is a new calculation with memory, not a training step. Earlier input information
-    fades in this toy because it is repeatedly multiplied by one-half.'
-  text_mode: 'For an illustrative scalar update h_next = 0.5h + x, begin h = 0 and inputs [2, 4]. The first
-    state is 2; the second is 0.5 × 2 + 4 = 5. Changing the first input affects later states through the recurrence.
-    Real RNNs commonly add learned matrices and nonlinearities.
+      Multiply the old state by one weight, the new input by another, add a bias, and squash the result with $\tanh$, which keeps every value between −1 and 1.
 
+      Shrink everything to single numbers so you can follow it: $W_h = 0.5$, $W_x = 1.0$, $b = 0$, starting from $h_0 = 0$. The input $x_t$ is how far sales ran above normal that hour, in units of 10 cups: $+1.0$ at 7 a.m., $+0.5$ at 8 a.m., and $0$ at 9 a.m.
 
-    If the next input is 0, the third state is 0.5 × 5 + 0 = 2.5. The state changed even though the stored
-    multiplier stayed 0.5. This is a new calculation with memory, not a training step. Earlier input information
-    fades in this toy because it is repeatedly multiplied by one-half.'
-  bridges:
-  - chain-rule
-- id: recurrent-networks.s3
-  title: Draw repeated steps to calculate gradients
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.recurrent-networks
-  markdown: '**Unrolling** draws a copy of the computation for each time step. The copies use the same stored
-    weights. **Backpropagation through time** follows this expanded graph and adds the contributions from each
-    use of a shared weight.
+      | Hour | Inside the tanh | $h_t$ |
+      | --- | --- | ---: |
+      | 7 a.m. | $0.5 \times 0 + 1.0 \times 1.0 = 1.000$ | 0.762 |
+      | 8 a.m. | $0.5 \times 0.762 + 1.0 \times 0.5 = 0.881$ | 0.707 |
+      | 9 a.m. | $0.5 \times 0.707 + 1.0 \times 0 = 0.353$ | 0.339 |
 
+      At 9 a.m. nothing unusual happened, yet the state is still positive. The morning's surprise is carried forward, shrinking by roughly half each hour because $W_h = 0.5$.
 
-    Long chains of derivatives can shrink or grow. **Truncated backpropagation** stops the backward calculation
-    after a chosen number of steps to save resources, even if the forward state continues. Keeping a long-running
-    state therefore does not mean training assigns credit through its entire history.'
-  text_mode: '**Unrolling** draws a copy of the computation for each time step. The copies use the same stored
-    weights. **Backpropagation through time** follows this expanded graph and adds the contributions from each
-    use of a shared weight.
+      :::predict Suppose 9 a.m. is another busy hour, x = +1.0. What is the new h?
+      Inside the tanh: $0.5 \times 0.707 + 1.0 = 1.353$, and $\tanh(1.353) \approx 0.875$. The state climbs instead of fading: "today really is busy." The weights didn't change at all; only the input did.
+      :::
 
+      :::papers The Elman network
+      This is the simple RNN of Jeffrey Elman's 1990 paper *Finding Structure in Time*. In a real model $h_t$ is a vector, say 64 numbers, so $W_h$ is a 64 × 64 matrix, $W_x$ is 64 × (number of input features), and $b$ has 64 entries. Our 0.5, 1.0, and 0 are the one-number versions. The output head is usually one more layer, $\hat{y}_{t+1} = W_y h_t + c$.
+      :::
+    bridges:
+      - chain-rule
+  - id: recurrent-networks.s3
+    title: Backpropagation through time, and the fading gradient
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.recurrent-networks
+    markdown: |-
+      To train an RNN, compute the loss on its forecasts, then run backpropagation on the unrolled diagram, exactly as in the backpropagation lesson of module 11. This is called **backpropagation through time (BPTT)**. Because $W_h$ appears at every step, its gradient is the *sum* of the contributions from every step where it was used.
 
-    Long chains of derivatives can shrink or grow. **Truncated backpropagation** stops the backward calculation
-    after a chosen number of steps to save resources, even if the forward state continues. Keeping a long-running
-    state therefore does not mean training assigns credit through its entire history.'
-  bridges: []
-- id: recurrent-networks.s4
-  title: Separate sequence state from training state
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.recurrent-networks
-  markdown: At inference, a state can be updated as new inputs arrive while model parameters stay fixed. Decide
-    when to reset state between unrelated sequences. Accidentally carrying one user’s or series’ state into
-    another changes the task and can leak information. Evaluate sequence lengths and temporal conditions relevant
-    to deployment.
-  text_mode: At inference, a state can be updated as new inputs arrive while model parameters stay fixed. Decide
-    when to reset state between unrelated sequences. Accidentally carrying one user’s or series’ state into
-    another changes the task and can leak information. Evaluate sequence lengths and temporal conditions relevant
-    to deployment.
-  bridges: []
-- id: recurrent-networks.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.recurrent-networks
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: An RNN passes a temporary state through a sequence while reusing the same parameters. Updating
-    the state during use is different from changing the parameters during training.
-- id: recurrent-networks.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.recurrent-networks
-  markdown: An RNN passes a temporary state through a sequence while reusing the same parameters. Updating
-    the state during use is different from changing the parameters during training.
-  text_mode: An RNN passes a temporary state through a sequence while reusing the same parameters. Updating
-    the state during use is different from changing the parameters during training.
+      To learn that a 7 a.m. surprise matters at 9 a.m., the gradient has to travel from $h_3$ back to $h_1$. By the chain rule, each step back multiplies by one factor, $\partial h_t / \partial h_{t-1} = W_h\,(1 - h_t^2)$, because the derivative of tanh is $1 - \tanh^2$:
+
+      - 9 a.m. → 8 a.m.: $0.5 \times (1 - 0.339^2) = 0.442$
+      - 8 a.m. → 7 a.m.: $0.5 \times (1 - 0.707^2) = 0.250$
+
+      Their product is $0.111$. Two steps back, the signal is already down to a ninth. The program repeats the calculation:
+
+      ```python run
+      import numpy as np
+
+      w_h, w_x, b = 0.5, 1.0, 0.0          # the same three numbers are used at every hour
+      surprise = [1.0, 0.5, 0.0]           # sales above normal, in units of 10 cups
+
+      h, states = 0.0, []
+      for t, x in enumerate(surprise, start=1):
+          h = np.tanh(w_h * h + w_x * x + b)
+          states.append(h)
+          print(f"hour {t}: x = {x:+.1f}  ->  h = {h:.3f}")
+
+      # Backpropagation through time: how much does h_1 still move the last state?
+      factors = [w_h * (1 - h**2) for h in states[1:]]   # dh_t/dh_(t-1) = w_h * tanh'
+      print("factors:", [round(float(f), 3) for f in factors])
+      print(f"dh_{len(states)} / dh_1 = {np.prod(factors):.3g}")
+      ```
+
+      Change `surprise` to `[1.0] + [0.0] * 23`, a surprise followed by 23 ordinary hours (three days of opening hours). The last line drops to about $10^{-7}$. With `w_h = 0.9` it's about 0.02: better, but still faint.
+
+      This is the **vanishing gradient** problem from the lesson on stable training, stretched across time steps instead of layers. Sepp Hochreiter analyzed it for RNNs in 1991, and Bengio, Simard, and Frasconi described it in 1994. A long product of factors below 1 shrinks toward zero, so events many steps back barely affect learning. Factors above 1 do the opposite: 24 factors of 1.5 multiply to about 16,800, an **exploding gradient**. The standard fix for explosions is the **gradient clipping** you met in module 10: if the gradient's length exceeds a threshold, scale it down. Pascanu, Mikolov, and Bengio (2013) analyzed exploding gradients in RNNs and made this norm clipping standard practice. Vanishing needed a new architecture, the subject of the next lesson.
+
+      For long series, training usually uses **truncated BPTT**: run the state forward through the whole series, but send gradients back only, say, 24 steps. It's cheaper, and the model can't learn dependencies longer than the window.
+    bridges: []
+  - id: recurrent-networks.s4
+    title: Reading changes the state, not the weights
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.recurrent-networks
+    markdown: |-
+      Once Ana's RNN is trained, its weights are frozen. Every hour, the new sales figure updates $h_t$, and the forecast changes, but $W_h$, $W_x$, and $b$ stay exactly as they were.
+
+      :::mixup "The RNN learns about today as it reads today's sales."
+      It *adapts*, but it doesn't *learn* in the training sense. The hidden state is scratch memory that's rebuilt from $h_0$ every sequence; the weights change only when you run training with a loss and gradients. That's why the 7 a.m. surprise can raise the 10 a.m. forecast today and leave no trace tomorrow.
+      :::
+
+      The state does raise one practical question: when should it reset? Suppose Ana's company runs two cafés, and one model reads both, hour by hour, without resetting between them. The Harbor café's lunch rush would bleed into the first forecasts for Pebble. The fix is a design decision: start each café's day from $h_0 = 0$, or keep one state per café and never mix them.
+
+      RNNs are real forecasting tools, not only history. Amazon's DeepAR (Salinas et al., 2017) trains one recurrent network across many related series, such as the sales of many products, and forecasts each one from its own recent history. Whatever the model, the backtest from the last lesson is still the judge: it has to beat the weekly seasonal naive forecast, 3.29 cups, on the same days.
+    bridges: []
+  - id: recurrent-networks.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.recurrent-networks
+    markdown: A parking-garage sensor, a keyboard that predicts the next word, and a few gradient chains test whether you can trace a hidden state forward and a gradient backward.
+    takeaway: |-
+      An RNN applies one update rule at every step, folding each new input into a hidden state. Training sends gradients back through that chain, and a long product of small factors makes early steps fade.
+  - id: recurrent-networks.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.recurrent-networks
+    markdown: |-
+      An RNN passes a temporary state through a sequence while reusing the same parameters. Updating the state during use is different from changing the parameters during training.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - recurrent-networks.s1
-    - recurrent-networks.s2
-    - recurrent-networks.s3
-    - recurrent-networks.s4
-    - recurrent-networks.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - recurrent-networks.s1
+        - recurrent-networks.s2
+        - recurrent-networks.s3
+        - recurrent-networks.s4
+        - recurrent-networks.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     recurrent-networks.recap: recurrent-networks.check
 assessment_families:
-- id: recurrent-networks.base
-  objective_ref: objective.recurrent-networks
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a simple recurrence: trace the inputs, operation, and result before choosing.'
-  remediation_scene: recurrent-networks.s2
-  variants:
-  - id: recurrent-networks.base.1
-    prompt: For h_next = 0.5h + x, h = 2 and x = 3, what is next state?
-    options:
-    - id: c
-      text: '2.5'
-    - id: a
-      text: '4'
-    - id: b
-      text: '5'
-    answer: a
-    feedback: Half of 2 plus 3 equals 4.
-  - id: recurrent-networks.base.2
-    prompt: What is shared across time in a standard RNN?
-    options:
-    - id: a
-      text: The recurrent transformation parameters
-    - id: b
-      text: Every input value
-    - id: c
-      text: Every target label
-    answer: a
-    feedback: The same parameterized operation is reused at successive steps.
-- id: recurrent-networks.transfer
-  objective_ref: objective.recurrent-networks
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Separate sequence state from training state: trace the inputs, operation, and result before choosing.'
-  remediation_scene: recurrent-networks.s4
-  variants:
-  - id: recurrent-networks.transfer.1
-    prompt: Does updating hidden state at inference necessarily train model weights?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: Yes; every state change is optimization
-    - id: c
-      text: Only for long sequences
-    answer: a
-    feedback: Request state and persistent learned parameters are different objects.
-  - id: recurrent-networks.transfer.2
-    prompt: What can truncated backpropagation through time limit?
-    options:
-    - id: b
-      text: The number of possible text characters only
-    - id: c
-      text: The existence of forward state updates
-    - id: a
-      text: The temporal distance over which gradients assign credit
-    answer: a
-    feedback: Truncation cuts the differentiated history while recurrence may still continue.
+  - id: recurrent-networks.base
+    objective_ref: objective.recurrent-networks
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a simple recurrence: trace the inputs, operation, and result before choosing.'
+    remediation_scene: recurrent-networks.s2
+    variants:
+      - id: recurrent-networks.base.1
+        prompt: For h_next = 0.5h + x, h = 2 and x = 3, what is next state?
+        options:
+          - id: c
+            text: '2.5'
+          - id: a
+            text: '4'
+          - id: b
+            text: '5'
+        answer: a
+        feedback: Half of 2 plus 3 equals 4.
+        retired: true
+      - id: recurrent-networks.base.2
+        prompt: What is shared across time in a standard RNN?
+        options:
+          - id: a
+            text: The recurrent transformation parameters
+          - id: b
+            text: Every input value
+          - id: c
+            text: Every target label
+        answer: a
+        feedback: The same parameterized operation is reused at successive steps.
+        retired: true
+  - id: recurrent-networks.transfer
+    objective_ref: objective.recurrent-networks
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Separate sequence state from training state: trace the inputs, operation, and result before choosing.'
+    remediation_scene: recurrent-networks.s4
+    variants:
+      - id: recurrent-networks.transfer.1
+        prompt: Does updating hidden state at inference necessarily train model weights?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: Yes; every state change is optimization
+          - id: c
+            text: Only for long sequences
+        answer: a
+        feedback: Request state and persistent learned parameters are different objects.
+        retired: true
+      - id: recurrent-networks.transfer.2
+        prompt: What can truncated backpropagation through time limit?
+        options:
+          - id: b
+            text: The number of possible text characters only
+          - id: c
+            text: The existence of forward state updates
+          - id: a
+            text: The temporal distance over which gradients assign credit
+        answer: a
+        feedback: Truncation cuts the differentiated history while recurrence may still continue.
+        retired: true
+  - id: recurrent-networks.base.v2
+    objective_ref: objective.recurrent-networks
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Separate what is fixed from what flows: the weights W_h, W_x, and b are reused at every step, while h_t is recomputed from h_(t−1) and the new input."
+    remediation_scene: recurrent-networks.s2
+    variants:
+      - id: recurrent-networks.base.v2.1
+        prompt: An RNN reads a parking garage's occupancy every hour and forecasts the next hour. Which of these is the same at 6 a.m. and at 6 p.m.?
+        options:
+          - id: b
+            text: The hidden state the model carries forward
+          - id: c
+            text: The forecast produced by the output head
+          - id: a
+            text: The weights used to update the hidden state
+        answer: a
+        feedback: One set of weights is reused at every step; that sharing is what makes the network recurrent. The hidden state and the forecast change every hour as new occupancy readings arrive.
+      - id: recurrent-networks.base.v2.2
+        prompt: 'An RNN has W_h = 0.5, W_x = 1.0, and b = 0. The previous state is 0.8 and the new input is 0.2. What goes inside the tanh?'
+        options:
+          - id: a
+            text: '0.6, from 0.5 × 0.8 + 1.0 × 0.2'
+          - id: b
+            text: '1.0, from 0.8 + 0.2'
+          - id: c
+            text: '0.5, from 0.5 × (0.8 + 0.2)'
+        answer: a
+        feedback: Each term gets its own weight, so 0.5 × 0.8 + 1.0 × 0.2 + 0 = 0.6. Adding the raw values skips both weights, and multiplying the sum by 0.5 applies W_h to the input as well.
+      - id: recurrent-networks.base.v2.3
+        prompt: In the café example, a +1.0 surprise at 7 a.m. gives h = 0.762, but with an ordinary 9 a.m. the state has fallen to 0.339. Why does it fade?
+        options:
+          - id: c
+            text: The weights are nudged after every hour, weakening the memory
+          - id: a
+            text: W_h = 0.5 shrinks the carried state before each new input is added
+          - id: b
+            text: The tanh resets the hidden state to zero whenever the input is 0
+        answer: a
+        feedback: Each step multiplies the old state by W_h = 0.5 before adding the new input, so an old surprise shrinks unless new inputs refresh it. The weights stay fixed while reading, and tanh squashes values rather than resetting them.
+      - id: recurrent-networks.base.v2.4
+        prompt: During backpropagation through time, why is the gradient for W_h a sum of contributions from many steps?
+        options:
+          - id: b
+            text: Each step keeps its own copy of W_h, and the copies are added together after training
+          - id: a
+            text: The same W_h is used at every step, so each use adds its share of the gradient
+          - id: c
+            text: The loss is added up over steps, even though W_h only affects the final step
+        answer: a
+        feedback: Unrolling draws W_h once per step, but it is one shared weight, so its total gradient adds up every place it was used. There are no separate per-step copies, and W_h affects every state, not just the last.
+  - id: recurrent-networks.transfer.v2
+    objective_ref: objective.recurrent-networks
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide which part is involved (the hidden state, the weights, or the gradient chain), then pick the fix that acts on that part.
+    remediation_scene: recurrent-networks.s4
+    variants:
+      - id: recurrent-networks.transfer.v2.1
+        prompt: A phone keyboard uses a trained RNN to suggest the next word. Halfway through a message about hiking, it starts suggesting "trail" and "summit", and by the next message it's back to normal. What changed during that message?
+        options:
+          - id: a
+            text: The hidden state, which carried the message's topic forward
+          - id: b
+            text: The weights, which were fine-tuned on the message and then reset
+          - id: c
+            text: The vocabulary, which gained hiking words for that message
+        answer: a
+        feedback: Reading the message updates the hidden state, which shifts the suggestions; a new message starts from a fresh state. The weights only change during training, which doesn't happen while you type.
+      - id: recurrent-networks.transfer.v2.2
+        prompt: A traffic model reads sensor streams from 50 intersections back to back, carrying one hidden state through all of them. Its first few forecasts at each new intersection are poor. What is the best fix?
+        options:
+          - id: c
+            text: Make the hidden state larger so it can hold every intersection
+          - id: b
+            text: Clip the gradients so the early forecasts can't dominate
+          - id: a
+            text: Reset the state, or keep one per intersection, when streams change
+        answer: a
+        feedback: The state from the previous intersection leaks into the next one's first forecasts. Resetting or separating states removes the mix-up. A larger state still starts each stream with the wrong context, and clipping only affects training.
+      - id: recurrent-networks.transfer.v2.3
+        prompt: A model trained with truncated backpropagation through time (20 steps) never learns a pattern where an event predicts something 50 steps later. What's the most likely reason?
+        options:
+          - id: b
+            text: The forward hidden state is also cut off after 20 steps
+          - id: a
+            text: Gradients never reach 50 steps back, so no training signal links the two events
+          - id: c
+            text: The learning rate is too low for patterns that are more than 20 steps long
+        answer: a
+        feedback: Truncation stops the backward pass after 20 steps, so the weights never get credit for the long dependency. The forward state still runs through the whole sequence; a higher learning rate can't create a gradient that was never computed.
+      - id: recurrent-networks.transfer.v2.4
+        prompt: While training an RNN on sensor data, the loss suddenly jumps to "NaN" and the logged gradient length was over a million just before. What is the standard fix?
+        options:
+          - id: c
+            text: Reset the hidden state more often between training batches
+          - id: b
+            text: Replace tanh in the recurrence with a function that has no limit
+          - id: a
+            text: Rescale any gradient whose length is above a set threshold
+        answer: a
+        feedback: A huge gradient is an exploding gradient, from a long product of factors above 1, and gradient clipping scales it back. Resetting the state doesn't bound the gradient, and removing tanh's squashing makes growth more likely.
+  - id: recurrent-networks.calc.v2
+    objective_ref: objective.recurrent-networks
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Each step back multiplies the gradient by one factor, W_h × (1 − h_t²) for a tanh RNN. Multiply all the factors along the path.
+    remediation_scene: recurrent-networks.s3
+    absolute_tolerance: 0.005
+    variants:
+      - id: recurrent-networks.calc.v2.1
+        prompt: The gradient travels back three steps, and the step factors are 0.5, 0.4, and 0.5. By what number is it multiplied in total?
+        answer: 0.1
+        feedback: 0.5 × 0.4 × 0.5 = 0.1, so the signal arriving three steps back is a tenth of its starting size.
+      - id: recurrent-networks.calc.v2.2
+        prompt: 'A scalar tanh RNN has W_h = 0.5. The states are h_2 = 0.6 and h_3 = 0. Compute ∂h_3/∂h_1, the product of the factors W_h × (1 − h_t²) for t = 3 and t = 2.'
+        answer: 0.16
+        feedback: For t = 3, 0.5 × (1 − 0) = 0.5. For t = 2, 0.5 × (1 − 0.36) = 0.32. The product is 0.5 × 0.32 = 0.16.
+      - id: recurrent-networks.calc.v2.3
+        prompt: Every step back multiplies the gradient by 0.8. How much of it is left five steps back? Give three decimal places.
+        answer: 0.328
+        feedback: 0.8⁵ = 0.32768 ≈ 0.328. Multiplying 0.8 by 5 instead of raising it to the fifth power is the common slip.
+      - id: recurrent-networks.calc.v2.4
+        prompt: In a stretch where the states stay near 0, each step factor is about W_h = 1.2. By what number is the gradient multiplied over four steps? Give two decimal places.
+        answer: 2.07
+        feedback: 1.2⁴ = 2.0736 ≈ 2.07. Factors above 1 make the gradient grow with distance, the start of an exploding gradient.

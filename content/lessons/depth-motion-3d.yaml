@@ -1,215 +1,424 @@
 schema_version: 0.2-draft
 lesson:
   id: depth-motion-3d
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Infer structure that a flat image does not directly reveal
   state: draft
-  summary: Use different views to reason about depth, and separate a plausible picture from accurate geometry.
+  summary: Portrait mode blurs the background, so your phone must know how far away every pixel is. Work out depth from two cameras, motion from two frames, and meet NeRF and Gaussian splats.
   slot: M12.7
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: Modern Robotics — authors’ textbook and resources
-    url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
+    - title: "Computer Vision: Algorithms and Applications, 2nd edition, chapters on motion, stereo and 3D reconstruction (Szeliski, 2022)"
+      url: https://szeliski.org/Book/
+    - title: "RAFT: Recurrent All-Pairs Field Transforms for Optical Flow (Teed & Deng, 2020)"
+      url: https://arxiv.org/abs/2003.12039
+    - title: "NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis (Mildenhall et al., 2020)"
+      url: https://arxiv.org/abs/2003.08934
+    - title: "3D Gaussian Splatting for Real-Time Radiance Field Rendering (Kerbl et al., 2023)"
+      url: https://arxiv.org/abs/2308.04079
+    - title: Modern Robotics — authors’ textbook and resources
+      url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
 objectives:
-- id: objective.depth-motion-3d
-  version: 1-draft
-  statement: Depth, optical flow, and 3D reconstruction estimate hidden geometry from visual evidence; camera
-    models, multiple views, motion, and learned priors introduce essential assumptions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - depth-motion-3d.base
-  - depth-motion-3d.transfer
-  prerequisites:
-  - anyOf:
-    - objective.image-geometry
-  - anyOf:
-    - objective.state-estimation
+  - id: objective.depth-motion-3d
+    version: 2-draft
+    statement: Depth, optical flow, and 3D reconstruction estimate hidden geometry from visual evidence; camera models, multiple views, motion, and learned priors introduce essential assumptions.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - depth-motion-3d.base.v2
+      - depth-motion-3d.transfer.v2
+      - depth-motion-3d.calculate
+    prerequisites:
+      - anyOf:
+          - objective.image-geometry
+      - anyOf:
+          - objective.state-estimation
 scenes:
-- id: depth-motion-3d.s1
-  title: Why one picture leaves depth uncertain
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.depth-motion-3d
-  markdown: 'Hold a coin near your eye and a larger disk farther away. They can cover the same area of your
-    view. Image size alone therefore cannot tell you an object’s size and distance.
+  - id: depth-motion-3d.s1
+    title: One photo can't tell near from big
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.depth-motion-3d
+    markdown: |-
+      Portrait mode keeps Biscuit sharp and blurs the garden behind him, so the phone needs the **depth** of every pixel: its distance from the camera.
 
+      One photo alone can't settle it. A camera flattens the world by **projection**: an object of height $H$ at distance $Z$ appears $h = f \cdot H / Z$ pixels tall, where $f$ is the camera's **focal length** measured in pixels. With $f = 1{,}000$:
 
-    **Depth** measures distance from a camera under a stated convention. **Calibration** relates camera measurements
-    to the scene, while **pose** describes position and orientation. Known dimensions, multiple views, motion,
-    or learned assumptions can reduce the ambiguity. Which evidence you have determines what scale and geometry
-    can be recovered.'
-  text_mode: 'Hold a coin near your eye and a larger disk farther away. They can cover the same area of your
-    view. Image size alone therefore cannot tell you an object’s size and distance.
+      - a 1.7 m person 5 m away: $1{,}000 \times 1.7 / 5 = 340$ pixels tall
+      - a 3.4 m statue 10 m away: $1{,}000 \times 3.4 / 10 = 340$ pixels tall
 
+      Same image, different worlds. Double the size and double the distance, and the picture doesn't change. Knowing the camera's $f$ and position is called **calibration**.
 
-    **Depth** measures distance from a camera under a stated convention. **Calibration** relates camera measurements
-    to the scene, while **pose** describes position and orientation. Known dimensions, multiple views, motion,
-    or learned assumptions can reduce the ambiguity. Which evidence you have determines what scale and geometry
-    can be recovered.'
-  bridges: []
-- id: depth-motion-3d.s2
-  title: Use motion and correspondence
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.depth-motion-3d
-  markdown: 'Optical flow estimates apparent image displacement between frames. It can reflect object motion,
-    camera motion, and projection effects. Matching points across views can support triangulation when camera
-    geometry is known. Textureless regions, reflections, occlusion, and repeated patterns can make those matches
-    ambiguous.
+      Two ways out: add information (a second camera, a second moment, a depth sensor), or train a network on photos with known depth so it learns the cues people use, like typical sizes and converging lines. Because it leans on typical sizes, a toy car can fool it.
+    bridges: []
+  - id: depth-motion-3d.s2
+    title: Two cameras turn a shift into a distance
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.depth-motion-3d
+    markdown: |-
+      Hold up a finger and close each eye in turn: the finger jumps, the far wall barely moves. Two side-by-side cameras see the same effect. A point's horizontal shift between the left and right images is its **disparity**, $d$, in pixels.
 
+      Finding which right-image pixel matches a left-image pixel is the **correspondence** problem. Once matched, the two viewing rays meet at the 3D point (**triangulation**), which for side-by-side cameras reduces to one formula.
 
-    A **correspondence** says two image points depict the same scene point. With two known camera positions,
-    draw a viewing ray from each corresponding point. Their geometry can locate the scene point through **triangulation**,
-    allowing for measurement error. Apparent pixel motion, called **optical flow**, is not by itself a full
-    three-dimensional velocity.'
-  text_mode: 'Optical flow estimates apparent image displacement between frames. It can reflect object motion,
-    camera motion, and projection effects. Matching points across views can support triangulation when camera
-    geometry is known. Textureless regions, reflections, occlusion, and repeated patterns can make those matches
-    ambiguous.
+      :::papers Depth from disparity
+      $$Z = \frac{f \, B}{d}$$
 
+      $Z$ is depth, $f$ the focal length in pixels, $B$ the **baseline** (distance between the cameras), and $d$ the disparity. It follows from similar triangles: a point at depth $Z$ lands $fX/Z$ pixels from center in one camera and $f(X - B)/Z$ in the other, so the difference is $d = fB/Z$.
+      :::
 
-    A **correspondence** says two image points depict the same scene point. With two known camera positions,
-    draw a viewing ray from each corresponding point. Their geometry can locate the scene point through **triangulation**,
-    allowing for measurement error. Apparent pixel motion, called **optical flow**, is not by itself a full
-    three-dimensional velocity.'
-  bridges:
-  - geometry-and-symmetry
-- id: depth-motion-3d.s3
-  title: Choose how to store the 3D scene
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.depth-motion-3d
-  markdown: 'A **point cloud** stores sampled positions. A **mesh** connects positions, called vertices, into
-    surface pieces such as triangles. A **voxel** stores a value in a cell of a three-dimensional grid, like
-    a pixel extended into depth.
+      Take a hypothetical phone with $f = 1{,}000$ pixels and cameras $B = 1.2$ cm apart. Biscuit's nose shifts 24 pixels: $Z = 1{,}000 \times 0.012 / 24 = 0.5$ m. A tree outside shifts 2 pixels: $Z = 1{,}000 \times 0.012 / 2 = 6$ m.
 
+      :::predict The matcher is off by one pixel on the tree and reports d = 3 instead of 2. What depth does the phone compute?
+      $Z = 1{,}000 \times 0.012 / 3 = 4$ m instead of 6 m. For Biscuit, the same 1-pixel slip moves the answer from 0.50 to about 0.48 m. Because $d$ is in the denominator, distant points have tiny disparities, and depth error grows roughly with $Z^2$.
+      :::
 
-    An **implicit field** instead answers questions at coordinates: is this point inside an object, or what
-    appearance should it have? These representations describe the same physical setting in different computational
-    forms. They trade off detail, memory, rendering behavior, and how they express uncertainty.'
-  text_mode: 'A **point cloud** stores sampled positions. A **mesh** connects positions, called vertices, into
-    surface pieces such as triangles. A **voxel** stores a value in a cell of a three-dimensional grid, like
-    a pixel extended into depth.
+      ```python run
+      f = 1000      # focal length, in pixels
+      B = 0.012     # baseline: distance between the two cameras, in meters
 
+      def depth(d):
+          """Depth in meters from disparity d in pixels: Z = f * B / d."""
+          return f * B / d
 
-    An **implicit field** instead answers questions at coordinates: is this point inside an object, or what
-    appearance should it have? These representations describe the same physical setting in different computational
-    forms. They trade off detail, memory, rendering behavior, and how they express uncertainty.'
-  bridges: []
-- id: depth-motion-3d.s4
-  title: Evaluate geometry separately from appearance
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.depth-motion-3d
-  markdown: A reconstruction can render attractive images from familiar viewpoints while having incorrect geometry
-    or scale. Evaluate depth, pose, new-view behavior, and task-specific use under known conditions. For a
-    robot, an aesthetically plausible surface is weaker evidence than a validated estimate with suitable uncertainty
-    and collision margins.
-  text_mode: A reconstruction can render attractive images from familiar viewpoints while having incorrect
-    geometry or scale. Evaluate depth, pose, new-view behavior, and task-specific use under known conditions.
-    For a robot, an aesthetically plausible surface is weaker evidence than a validated estimate with suitable
-    uncertainty and collision margins.
-  bridges: []
-- id: depth-motion-3d.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.depth-motion-3d
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A convincing picture does not uniquely determine a 3D scene. Use camera information and multiple
-    views where available, and evaluate recovered geometry separately from appearance.
-- id: depth-motion-3d.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.depth-motion-3d
-  markdown: A convincing picture does not uniquely determine a 3D scene. Use camera information and multiple
-    views where available, and evaluate recovered geometry separately from appearance.
-  text_mode: A convincing picture does not uniquely determine a 3D scene. Use camera information and multiple
-    views where available, and evaluate recovered geometry separately from appearance.
+      for name, d in [("Biscuit's nose", 24), ("the sofa", 6), ("a tree outside", 2)]:
+          near, far = depth(d + 1), depth(d - 1)     # what a 1-pixel matching error does
+          print(f"{name:15} d = {d:2d} px -> Z = {depth(d):5.2f} m  "
+                f"(if off by 1 px: {near:.2f} to {far:.2f} m)")
+      ```
+
+      Try a rig twice as wide: set `B = 0.024` and double each disparity (48, 12, 4), since that's what the wider rig sees for the same scene. The depths stay the same, but the tree's 1-pixel error range shrinks from 4–12 m to 4.8–8 m. That's why wide stereo rigs are used to measure distance.
+
+      :::mixup "If the depth map looks smooth, the distances are accurate."
+      Matching fails on blank walls, shiny surfaces, and repeated patterns such as fence posts, where a pixel can match the wrong post. The depth can look perfectly smooth and still be meters off.
+      :::
+    bridges:
+      - geometry-and-symmetry
+  - id: depth-motion-3d.s5
+    title: "Optical flow: where did each pixel go?"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.depth-motion-3d
+    markdown: |-
+      Video gives another pair: one camera at two moments. **Optical flow** is the apparent motion of each pixel between frames, a 2-D arrow $(u, v)$ per pixel. The photo app uses it to steady shaky video and keep a blur on a moving face.
+
+      The classic starting point is **brightness constancy**: a point keeps its brightness as it moves. Take one row of pixels, [10, 20, 30, 40, 50], and the next frame, [0, 10, 20, 30, 40]. At the middle pixel, brightness rises by 10 per pixel to the right ($I_x = 10$), and it fell by 10 between frames ($I_t = -10$).
+
+      :::papers The optical flow constraint
+      $$I_x\,u + I_y\,v + I_t = 0$$
+
+      In our row there is no vertical change, so $10\,u - 10 = 0$ and $u = 1$: the pattern moved one pixel right. In 2-D, one equation can't pin down two unknowns $(u, v)$; this is the **aperture problem**. Lucas and Kanade (1981) solve it by assuming all pixels in a small window share one motion, and Horn and Schunck (1981) by assuming the motion changes smoothly. Modern networks such as RAFT (Teed & Deng, 2020) learn to estimate flow directly.
+      :::
+
+      Flow is motion *in the image*, not in the world. Pan the phone across a still garden and every pixel flows, though nothing moved. And a pixel moving 5 pixels could be a slow nearby object or a fast distant one, the same ambiguity as a single photo.
+    bridges: []
+  - id: depth-motion-3d.s3
+    title: Five ways to store a 3D scene
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.depth-motion-3d
+    markdown: |-
+      Walk around Biscuit taking 50 photos, and you can rebuild him in 3D. First the camera poses are estimated (a **pose** is a camera's position and direction), then the scene is stored in one of several forms:
+
+      | Representation | What it stores | Good for |
+      | --- | --- | --- |
+      | **Point cloud** | a list of 3D points with colors | fast capture, e.g. from lidar |
+      | **Mesh** | points joined into triangles | games, 3D printing |
+      | **Voxel grid** | a value in each cube of a 3D grid | simple, but memory grows with the cube of resolution |
+      | **Neural radiance field (NeRF)** | a network answering "what's at this point?" | photorealistic new views |
+      | **3D Gaussians** | millions of small colored blobs | new views in real time |
+
+      NeRF (Mildenhall et al., 2020) trains a small network that takes a 3D position and viewing direction and returns a color and a density. To draw a pixel, it samples points along that pixel's ray and blends their colors, weighted by density; training adjusts the network until rendered pixels match the photos. **3D Gaussian splatting** (Kerbl et al., 2023) replaces the network with millions of fuzzy 3D blobs, each with a position, shape, color, and opacity, which graphics hardware can draw fast enough for real-time viewing.
+    diagram:
+      caption: How NeRF learns a scene. Rendered pixels are compared with real photos, and the error trains the network.
+      description: For each pixel in a training photo, a camera ray is traced into the scene. Points are sampled along the ray, and each point's 3D position and viewing direction go into the network, which returns a color and a density. Volume rendering blends these along the ray into one predicted pixel color. That color is compared with the real photo's pixel, and the error is used to update the network.
+      nodes:
+        - id: ray
+          label: Camera ray
+          note: one per pixel
+          col: 0
+          row: 0
+          tone: data
+        - id: points
+          label: Sample points
+          note: position + direction
+          col: 1
+          row: 0
+        - id: mlp
+          label: NeRF network
+          note: → color + density
+          col: 2
+          row: 0
+          tone: accent
+        - id: render
+          label: Volume rendering
+          note: blend along the ray
+          col: 3
+          row: 0
+        - id: compare
+          label: Compare with photo
+          note: pixel error
+          col: 3
+          row: 1
+          tone: warn
+      edges:
+        - from: ray
+          to: points
+        - from: points
+          to: mlp
+        - from: mlp
+          to: render
+        - from: render
+          to: compare
+          label: predicted color
+        - from: compare
+          to: mlp
+          label: update weights
+          dashed: true
+    bridges: []
+  - id: depth-motion-3d.s4
+    title: Beautiful views, wrong distances
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.depth-motion-3d
+    markdown: |-
+      A NeRF of your living room can look flawless from where you stood and still hide floating blobs, a bent sofa, or the wrong scale. Photos alone don't fix scale: the same pictures fit a room or a dollhouse unless something has a known size or the camera positions were measured.
+
+      So test geometry directly. Render from viewpoints you held out, not just the training ones. Compare depths with measured distances. For portrait mode, check the hard spots: hair, glasses, and the gaps between a dog's legs. If a robot will drive through the room, a 10 cm depth error matters far more than a slightly soft texture.
+    bridges: []
+  - id: depth-motion-3d.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.depth-motion-3d
+    markdown: Compute depth from disparity for new camera rigs, then reason about a drone's flow field, a warehouse robot's stereo camera, and a 3D scan that looks perfect.
+    takeaway: |-
+      One photo can't separate size from distance. Two views give depth through Z = fB/d, two frames give image motion (optical flow), and many views build a 3D scene, whose geometry you should check apart from how good it looks.
+  - id: depth-motion-3d.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.depth-motion-3d
+    markdown: |-
+      A convincing picture does not uniquely determine a 3D scene. Use camera information and multiple views where available, and evaluate recovered geometry separately from appearance.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - depth-motion-3d.s1
-    - depth-motion-3d.s2
-    - depth-motion-3d.s3
-    - depth-motion-3d.s4
-    - depth-motion-3d.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - depth-motion-3d.s1
+        - depth-motion-3d.s2
+        - depth-motion-3d.s5
+        - depth-motion-3d.s3
+        - depth-motion-3d.s4
+        - depth-motion-3d.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     depth-motion-3d.recap: depth-motion-3d.check
 assessment_families:
-- id: depth-motion-3d.base
-  objective_ref: objective.depth-motion-3d
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Use motion and correspondence: trace the inputs, operation, and result before choosing.'
-  remediation_scene: depth-motion-3d.s2
-  variants:
-  - id: depth-motion-3d.base.1
-    prompt: Can a single uncalibrated image generally determine absolute scene scale uniquely?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: Yes; pixels contain meters automatically
-    - id: c
-      text: Only if the image is colorful
-    answer: a
-    feedback: Projection permits multiple size-distance explanations without additional information.
-  - id: depth-motion-3d.base.2
-    prompt: What does optical flow estimate directly?
-    options:
-    - id: b
-      text: Every object’s exact 3D velocity
-    - id: c
-      text: A guaranteed camera calibration
-    - id: a
-      text: Apparent displacement in image coordinates
-    answer: a
-    feedback: Image motion and physical 3D motion are related but not identical.
-- id: depth-motion-3d.transfer
-  objective_ref: objective.depth-motion-3d
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate geometry separately from appearance: trace the inputs, operation, and result before choosing.'
-  remediation_scene: depth-motion-3d.s4
-  variants:
-  - id: depth-motion-3d.transfer.1
-    prompt: A novel-view rendering looks realistic. What can still be wrong?
-    options:
-    - id: b
-      text: Whether any image was produced
-    - id: c
-      text: The existence of pixels
-    - id: a
-      text: Underlying geometry or metric scale
-    answer: a
-    feedback: Photometric plausibility does not fully validate geometry.
-  - id: depth-motion-3d.transfer.2
-    prompt: Repeated identical windows confuse matching across views. What assumption is challenged?
-    options:
-    - id: c
-      text: The use of color channels
-    - id: a
-      text: Reliable correspondence between observed points
-    - id: b
-      text: The definition of addition
-    answer: a
-    feedback: Ambiguous matches can produce wrong geometric reconstruction.
+  - id: depth-motion-3d.base
+    objective_ref: objective.depth-motion-3d
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Use motion and correspondence: trace the inputs, operation, and result before choosing.'
+    remediation_scene: depth-motion-3d.s2
+    variants:
+      - id: depth-motion-3d.base.1
+        prompt: Can a single uncalibrated image generally determine absolute scene scale uniquely?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: Yes; pixels contain meters automatically
+          - id: c
+            text: Only if the image is colorful
+        answer: a
+        feedback: Projection permits multiple size-distance explanations without additional information.
+        retired: true
+      - id: depth-motion-3d.base.2
+        prompt: What does optical flow estimate directly?
+        options:
+          - id: b
+            text: Every object’s exact 3D velocity
+          - id: c
+            text: A guaranteed camera calibration
+          - id: a
+            text: Apparent displacement in image coordinates
+        answer: a
+        feedback: Image motion and physical 3D motion are related but not identical.
+        retired: true
+  - id: depth-motion-3d.transfer
+    objective_ref: objective.depth-motion-3d
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate geometry separately from appearance: trace the inputs, operation, and result before choosing.'
+    remediation_scene: depth-motion-3d.s4
+    variants:
+      - id: depth-motion-3d.transfer.1
+        prompt: A novel-view rendering looks realistic. What can still be wrong?
+        options:
+          - id: b
+            text: Whether any image was produced
+          - id: c
+            text: The existence of pixels
+          - id: a
+            text: Underlying geometry or metric scale
+        answer: a
+        feedback: Photometric plausibility does not fully validate geometry.
+        retired: true
+      - id: depth-motion-3d.transfer.2
+        prompt: Repeated identical windows confuse matching across views. What assumption is challenged?
+        options:
+          - id: c
+            text: The use of color channels
+          - id: a
+            text: Reliable correspondence between observed points
+          - id: b
+            text: The definition of addition
+        answer: a
+        feedback: Ambiguous matches can produce wrong geometric reconstruction.
+        retired: true
+  - id: depth-motion-3d.base.v2
+    objective_ref: objective.depth-motion-3d
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask what each measurement really gives. Image size mixes size with distance, disparity gives depth through Z = fB/d, and flow is motion in the image, not in the world.
+    remediation_scene: depth-motion-3d.s2
+    variants:
+      - id: depth-motion-3d.base.v2.1
+        prompt: In one photo, a dog appears 200 pixels tall. What can you conclude about its distance without other information?
+        options:
+          - id: b
+            text: It is about 5 m away, since 200 pixels matches a typical dog at that range
+          - id: a
+            text: Nothing exact, since a bigger dog farther away would look the same
+          - id: c
+            text: It is closer than any object that appears under 200 pixels tall
+        answer: a
+        feedback: Image height is f × H / Z, so doubling both size and distance gives the same 200 pixels. Guessing from a "typical dog" is what learned depth networks do, and it fails on unusual sizes; smaller-looking objects can be small rather than far.
+      - id: depth-motion-3d.base.v2.2
+        prompt: In a stereo pair, point P shifts 30 pixels between the left and right images, and point Q shifts 3 pixels. Which is closer to the cameras?
+        options:
+          - id: a
+            text: P, since depth is inversely proportional to disparity
+          - id: c
+            text: Q, since a smaller shift means a point nearer the cameras
+          - id: b
+            text: Neither can be judged without knowing the objects' sizes
+        answer: a
+        feedback: Z = fB/d, so the larger disparity means the smaller depth, like your finger jumping more than the far wall. Stereo doesn't need object sizes; that's what it adds over one photo.
+      - id: depth-motion-3d.base.v2.3
+        prompt: A phone pans slowly across a still garden while recording. What does optical flow show?
+        options:
+          - id: c
+            text: Zero across the frame, since nothing in the garden is moving
+          - id: b
+            text: Motion at plant edges alone, since flat areas have no texture
+          - id: a
+            text: Motion across the whole frame, caused by the camera turning
+        answer: a
+        feedback: Flow measures how pixels move in the image, and camera motion moves all of them. Real 3D motion is only one cause of flow. Textureless areas are hard to measure, but they are moving too.
+      - id: depth-motion-3d.base.v2.4
+        prompt: A pixel row reads [5, 15, 25, 35] and in the next frame [15, 25, 35, 45]. At the second pixel, I_x = 10 and I_t = 10. What does the flow constraint give for u?
+        options:
+          - id: b
+            text: u = 1, the pattern moved one pixel to the right
+          - id: a
+            text: u = −1, the pattern moved one pixel to the left
+          - id: c
+            text: u = 0, since brightness changed rather than position
+        answer: a
+        feedback: I_x u + I_t = 0 gives 10u + 10 = 0, so u = −1. Each value now sits one place to the left (15 moved from position 2 to position 1). Getting +1 means dropping the minus sign; brightness constancy says the change is due to motion.
+  - id: depth-motion-3d.transfer.v2
+    objective_ref: objective.depth-motion-3d
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Look for where the evidence runs out. Matching needs distinct texture, depth precision falls with distance, and a good-looking render says little about geometry.
+    remediation_scene: depth-motion-3d.s4
+    variants:
+      - id: depth-motion-3d.transfer.v2.1
+        prompt: A warehouse robot's stereo camera measures pallets well at 2 m but gives jumpy depths at 15 m. Which change most directly helps?
+        options:
+          - id: a
+            text: Mount the two cameras farther apart to increase the baseline
+          - id: b
+            text: Lower the image resolution so the matching runs faster
+          - id: c
+            text: Paint the far pallets white so they are brighter in view
+        answer: a
+        feedback: Far points have tiny disparities, so a 1-pixel matching error causes a large depth error; a wider baseline makes every disparity bigger. Lower resolution shrinks disparities further, and brightness doesn't fix the geometry.
+      - id: depth-motion-3d.transfer.v2.2
+        prompt: A stereo depth map of an office has wild errors on one plain white wall and along a row of identical filing cabinets. What is the shared cause?
+        options:
+          - id: c
+            text: White and metal surfaces are too far away for stereo to measure
+          - id: a
+            text: Pixels there match many places equally well, so correspondence fails
+          - id: b
+            text: The baseline is too wide for surfaces with no color in them
+        answer: a
+        feedback: A blank wall has no distinctive texture, and repeated cabinets offer several equally good matches, so the matcher can pick the wrong one. Distance and baseline aren't the problem here; better matching or a textured light pattern is.
+      - id: depth-motion-3d.transfer.v2.3
+        prompt: A NeRF of a museum hall looks photorealistic from the capture path. A robot will use it to plan routes. What should be checked first?
+        options:
+          - id: b
+            text: Render more frames from the capture path to confirm the realism
+          - id: c
+            text: Increase the rendering resolution so that edges look sharper
+          - id: a
+            text: Compare its depths and scale with measured distances in the hall
+        answer: a
+        feedback: A NeRF can render convincing views while hiding floating blobs or the wrong scale, and photos alone don't fix scale. The robot needs correct geometry, so test it against real measurements and held-out viewpoints; more or sharper renders test appearance again.
+      - id: depth-motion-3d.transfer.v2.4
+        prompt: A drone video shows a car's pixels moving 10 pixels per frame. The team wants the car's speed in km/h. What else do they need?
+        options:
+          - id: a
+            text: The car's distance from the camera and the drone's own motion
+          - id: b
+            text: Nothing, since 10 pixels per frame converts directly to km/h
+          - id: c
+            text: A higher frame rate, so that the flow arrows become shorter
+        answer: a
+        feedback: Flow is image motion; the same 10 pixels could be a slow car nearby or a fast one far away, and the drone's movement adds flow of its own. Pixels only convert to meters once distance is known. A higher frame rate changes the arrows but not that ambiguity.
+  - id: depth-motion-3d.calculate
+    objective_ref: objective.depth-motion-3d
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Use Z = f × B / d, with f and d in pixels and B in meters; the answer comes out in meters. Convert centimeters to meters first.
+    remediation_scene: depth-motion-3d.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: depth-motion-3d.calculate.1
+        prompt: A stereo rig has f = 800 pixels and a baseline of 10 cm. A point has disparity 20 pixels. How far away is it, in meters?
+        answer: 4
+        feedback: Z = 800 × 0.1 / 20 = 80 / 20 = 4 m.
+      - id: depth-motion-3d.calculate.2
+        prompt: A stereo rig has f = 1,200 pixels and a baseline of 5 cm. A point has disparity 30 pixels. How far away is it, in meters?
+        answer: 2
+        feedback: Z = 1,200 × 0.05 / 30 = 60 / 30 = 2 m.
+      - id: depth-motion-3d.calculate.3
+        prompt: A car's stereo camera has f = 1,000 pixels and a baseline of 20 cm. A road sign has disparity 8 pixels. How far away is it, in meters?
+        answer: 25
+        feedback: Z = 1,000 × 0.2 / 8 = 200 / 8 = 25 m.
+      - id: depth-motion-3d.calculate.4
+        prompt: A stereo rig has f = 700 pixels and a baseline of 12 cm. A point has disparity 42 pixels. How far away is it, in meters?
+        answer: 2
+        feedback: Z = 700 × 0.12 / 42 = 84 / 42 = 2 m.
+      - id: depth-motion-3d.calculate.5
+        prompt: A phone has f = 1,000 pixels and cameras 1.2 cm apart. The matcher reports disparity 3 pixels for a tree. How far away does the phone think the tree is, in meters?
+        answer: 4
+        feedback: Z = 1,000 × 0.012 / 3 = 12 / 3 = 4 m. (If the true disparity were 2, the tree would be at 6 m; one pixel matters a lot at this range.)

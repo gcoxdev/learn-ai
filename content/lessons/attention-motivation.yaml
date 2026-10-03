@@ -1,197 +1,412 @@
 schema_version: 0.2-draft
 lesson:
   id: attention-motivation
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Look back at the information needed for this step
   state: draft
-  summary: Let each output step consult the source information it needs instead of relying on one fixed summary.
+  summary: In 2014, translation networks had to squeeze a whole sentence into one vector, and long sentences fell apart. See the small fix that grew into the transformer.
   slot: M15.1
   category: learning
   sources:
-  - title: Attention Is All You Need
-    url: https://arxiv.org/abs/1706.03762
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: "Neural Machine Translation by Jointly Learning to Align and Translate (Bahdanau, Cho & Bengio, 2014)"
+      url: https://arxiv.org/abs/1409.0473
+    - title: "On the Properties of Neural Machine Translation: Encoder–Decoder Approaches (Cho et al., 2014)"
+      url: https://arxiv.org/abs/1409.1259
+    - title: "Sequence to Sequence Learning with Neural Networks (Sutskever, Vinyals & Le, 2014)"
+      url: https://arxiv.org/abs/1409.3215
+    - title: "Effective Approaches to Attention-based Neural Machine Translation (Luong, Pham & Manning, 2015)"
+      url: https://arxiv.org/abs/1508.04025
+    - title: "Attention Is All You Need (Vaswani et al., 2017)"
+      url: https://arxiv.org/abs/1706.03762
+    - title: "Attention is not Explanation (Jain & Wallace, 2019)"
+      url: https://arxiv.org/abs/1902.10186
+    - title: "Attention is not not Explanation (Wiegreffe & Pinter, 2019)"
+      url: https://arxiv.org/abs/1908.04626
+    - title: Dive into Deep Learning — Bahdanau attention
+      url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/bahdanau-attention.html
 objectives:
-- id: objective.attention-motivation
-  version: 1-draft
-  statement: Attention replaces a fixed summary bottleneck with context-dependent access to representations;
-    its mixtures are learned computations rather than guaranteed explanations of importance.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - attention-motivation.base
-  - attention-motivation.transfer
-  prerequisites:
-  - anyOf:
-    - objective.sequence-to-sequence
-  - anyOf:
-    - objective.vectors
+  - id: objective.attention-motivation
+    version: 2-draft
+    statement: Attention replaces a fixed summary bottleneck with context-dependent access to representations; its mixtures are learned computations rather than guaranteed explanations of importance.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - attention-motivation.base.v2
+      - attention-motivation.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.sequence-to-sequence
+      - anyOf:
+          - objective.vectors
 scenes:
-- id: attention-motivation.s1
-  title: Keep more of the source available
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.attention-motivation
-  markdown: 'An **encoder** turns source information into numerical representations. A **decoder** uses that
-    information to produce an output. If the encoder compresses a long source into one fixed vector, that list
-    of numbers must carry every detail the decoder will need.
+  - id: attention-motivation.s1
+    title: A whole sentence in one vector
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.attention-motivation
+    markdown: |-
+      In 2014 the newest neural translators worked in two halves, as in the sequence-to-sequence lesson. A recurrent **encoder** reads the English sentence one word at a time, updating its hidden state. Its *final* hidden state is handed to a recurrent **decoder**, which writes the French.
 
+      That final state is one vector of fixed size, say 1,000 numbers. It holds "the cat sat" and it must also hold a 40-word sentence with three names, a date, and a "but not". Everything the decoder will ever know about the source has to fit in that one vector.
 
-    This is a **bottleneck**, like trying to fit a long set of directions on one small card. **Attention**
-    keeps several prepared source representations available so each later step can combine the information
-    it needs.'
-  text_mode: 'An **encoder** turns source information into numerical representations. A **decoder** uses that
-    information to produce an output. If the encoder compresses a long source into one fixed vector, that list
-    of numbers must carry every detail the decoder will need.
+      :::predict You double the sentence length. What happens to the size of the vector the decoder receives?
+      Nothing. It is still 1,000 numbers. Twice as much meaning has to be packed into the same space, so details get blurred or lost.
+      :::
 
+      That squeeze is the **bottleneck** you met in the sequence-to-sequence lesson. Cho and colleagues measured the damage in 2014: translation quality from a basic encoder–decoder dropped quickly as sentences got longer. That lesson sketched the fix in one step. Here we work through it slowly, because the transformer is built from the same move.
+  - id: attention-motivation.s2
+    title: Keep every word's state and look back
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention-motivation
+    markdown: |-
+      The fix came from Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio, in a paper posted in September 2014. Don't throw away the encoder's work. Keep a hidden state for *every* source word, $h_1, h_2, \dots$, and let the decoder look back at all of them each time it writes a word.
 
-    This is a **bottleneck**, like trying to fit a long set of directions on one small card. **Attention**
-    keeps several prepared source representations available so each later step can combine the information
-    it needs.'
-  bridges: []
-- id: attention-motivation.s2
-  title: Ask a different question at each step
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention-motivation
-  markdown: A translation decoder generating a name may need different source information from when it generates
-    a verb. A query summarizes what the current step seeks. Keys support comparison with candidate positions,
-    and values supply the information to combine. Learned transformations determine these numerical roles.
-  text_mode: A translation decoder generating a name may need different source information from when it generates
-    a verb. A query summarizes what the current step seeks. Keys support comparison with candidate positions,
-    and values supply the information to combine. Learned transformations determine these numerical roles.
-  bridges:
-  - vectors
-- id: attention-motivation.s3
-  title: Combine the selected information
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention-motivation
-  markdown: 'Take value vectors [2, 0] and [0, 4], with weights 0.75 and 0.25. Multiply first: 0.75 × [2, 0]
-    = [1.5, 0], and 0.25 × [0, 4] = [0, 1]. Then add them to obtain [1.5, 1].
+      At each output step the decoder does three things:
 
+      1. **Score** each source state: how useful is $h_j$ for the word I'm about to write? A small learned network compares the decoder's current state with each $h_j$.
+      2. **Normalize** the scores with softmax (from the next-token prediction lesson), giving positive weights that sum to 1.
+      3. **Mix**: add up the source states, each multiplied by its weight. The result is the **context vector** for this step.
 
-    The weights control how much each candidate contributes. The values determine what information it contributes.
-    This is a mixture, rather than a vote for one entire input. Later layers can transform and mix the result
-    again, producing features that depend on the current context.'
-  text_mode: 'Take value vectors [2, 0] and [0, 4], with weights 0.75 and 0.25. Multiply first: 0.75 × [2,
-    0] = [1.5, 0], and 0.25 × [0, 4] = [0, 1]. Then add them to obtain [1.5, 1].
+      This look-back is **attention**. The next step recomputes the scores, so each output word gets its own context vector.
 
+      :::papers Bahdanau attention
+      $$e_{ij} = a(s_{i-1}, h_j), \qquad \alpha_{ij} = \frac{\exp(e_{ij})}{\sum_k \exp(e_{ik})}, \qquad c_i = \sum_j \alpha_{ij}\, h_j$$
 
-    The weights control how much each candidate contributes. The values determine what information it contributes.
-    This is a mixture, rather than a vote for one entire input. Later layers can transform and mix the result
-    again, producing features that depend on the current context.'
-  bridges: []
-- id: attention-motivation.s4
-  title: Keep the interpretation modest
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.attention-motivation
-  markdown: An attention weight describes one internal mixing operation under a model and input. It does not
-    automatically measure causal importance or factual truth. Compare self-attention within one sequence with
-    cross-attention between representation sets. The mask and objective determine which information is permitted.
-  text_mode: An attention weight describes one internal mixing operation under a model and input. It does not
-    automatically measure causal importance or factual truth. Compare self-attention within one sequence with
-    cross-attention between representation sets. The mask and objective determine which information is permitted.
-  bridges: []
-- id: attention-motivation.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.attention-motivation
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Attention lets a step combine information from several available representations. The mixture changes
-    with context, but its weights alone do not explain the model’s whole decision.
-- id: attention-motivation.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.attention-motivation
-  markdown: Attention lets a step combine information from several available representations. The mixture changes
-    with context, but its weights alone do not explain the model’s whole decision.
-  text_mode: Attention lets a step combine information from several available representations. The mixture
-    changes with context, but its weights alone do not explain the model’s whole decision.
+      $s_{i-1}$ is the decoder's state before writing output word $i$, $h_j$ is the encoder state for source word $j$, and $a$ is the small scoring network: $a(s, h) = v_a^\top \tanh(W_a s + U_a h)$, often called **additive attention**. $\alpha_{ij}$ is the weight on source word $j$, and $c_i$ is the context vector.
+      :::
+    diagram:
+      caption: One decoder step with attention. The weights are recomputed for every output word.
+      description: Three encoder states, for "the", "red", and "bicycle", each flow into the context vector, with weights 0.1, 0.8, and 0.1. The decoder step compares its own state with each encoder state to produce those weights (dashed arrow back to the context vector). The context vector feeds the decoder step, which writes the output word "rouge".
+      nodes:
+        - id: the
+          label: "h₁: “the”"
+          col: 0
+          row: 0
+          tone: data
+        - id: red
+          label: "h₂: “red”"
+          col: 0
+          row: 1
+          tone: data
+        - id: bike
+          label: "h₃: “bicycle”"
+          col: 0
+          row: 2
+          tone: data
+        - id: context
+          label: Context vector c
+          note: weighted sum, rebuilt each step
+          col: 2
+          row: 1
+          tone: accent
+        - id: dec
+          label: Decoder step
+          note: about to write the next word
+          col: 3
+          row: 1
+        - id: out
+          label: Output word
+          note: "“rouge”"
+          col: 4
+          row: 1
+      edges:
+        - from: the
+          to: context
+          label: "× 0.1"
+        - from: red
+          to: context
+          label: "× 0.8"
+        - from: bike
+          to: context
+          label: "× 0.1"
+        - from: context
+          to: dec
+        - from: dec
+          to: context
+          label: scores each hⱼ
+          dashed: true
+          bend: 2
+        - from: dec
+          to: out
+    bridges:
+      - vectors
+  - id: attention-motivation.s3
+    title: Three words, three different context vectors
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention-motivation
+    markdown: |-
+      Translate "the red bicycle" into French: "le vélo rouge". French puts the color *after* the noun, so the words don't line up one to one.
+
+      Give the encoder states tiny made-up values: $h_{\text{the}} = [1, 0]$, $h_{\text{red}} = [0, 2]$, $h_{\text{bicycle}} = [2, 1]$. When the decoder is about to write "rouge", suppose the scores are $[0,\ 2.08,\ 0]$. Softmax gives $e^{2.08} \approx 8$, so the weights are $[1, 8, 1] / 10 = [0.1,\ 0.8,\ 0.1]$. The context vector is
+
+      $$0.1\,[1, 0] + 0.8\,[0, 2] + 0.1\,[2, 1] = [0.3,\ 1.7]$$
+
+      mostly "red", as it should be.
+
+      :::predict When the decoder writes "vélo", the scores move the 0.8 onto "bicycle". What is the new context vector?
+      $0.1\,[1, 0] + 0.1\,[0, 2] + 0.8\,[2, 1] = [0.1 + 1.6,\ 0.2 + 0.8] = [1.7,\ 1.0]$. Same encoder states, different weights, different context.
+      :::
+
+      ```python run
+      import numpy as np
+
+      h = np.array([[1.0, 0.0],    # encoder state for "the"
+                    [0.0, 2.0],    # "red"
+                    [2.0, 1.0]])   # "bicycle"
+
+      def softmax(scores):
+          e = np.exp(scores - scores.max())
+          return e / e.sum()
+
+      # Scores for each decoder step (normally computed by a small learned network)
+      steps = {"writing 'le'   ": [2.079, 0.0, 0.0],
+               "writing 'vélo' ": [0.0, 0.0, 2.079],
+               "writing 'rouge'": [0.0, 2.079, 0.0]}
+      for step, scores in steps.items():
+          alpha = softmax(np.array(scores))
+          context = alpha @ h
+          print(step, " weights", alpha.round(2), " context", context.round(2))
+      ```
+
+      Notice the order: "vélo" (output word 2) looks at source word 3, and "rouge" (output word 3) looks at source word 2. Try making one step's scores equal, such as `[0, 0, 0]`. The context becomes a plain average, which is roughly what a single summary vector forces on every step.
+  - id: attention-motivation.s4
+    title: What attention weights can't tell you
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention-motivation
+    markdown: |-
+      Bahdanau's paper plotted the weights as a grid, source words across and output words down. For "European Economic Area" → "zone économique européenne", the bright cells ran backwards, matching the French word order. Nobody had told the network about alignment; it learned where to look because that helped it translate.
+
+      Those pictures are so readable that it's tempting to treat them as the model's reasons.
+
+      :::mixup "The word with the biggest attention weight is the reason for the output."
+      A weight says how much one mixing step drew on each position. It doesn't show what the model would do if that word changed. In deep models, many heads and layers mix information and the mixtures are transformed again. Jain and Wallace (2019) found that quite different attention patterns can often give the same prediction. Wiegreffe and Pinter (2019) replied that weights can still be informative, if you test them. To find out whether a word *matters*, change or remove it and see whether the output changes.
+      :::
+  - id: attention-motivation.s5
+    title: From a helper to the whole model
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.attention-motivation
+    markdown: |-
+      Attention spread fast. In 2015 Luong, Pham, and Manning showed that simpler scores work well, including a plain dot product between the decoder state and each source state. Other groups used attention to caption images, looking back at image regions instead of words.
+
+      Two names help from here on. When the looking-back crosses from one sequence to another, as in translation, it's **cross-attention**. When the positions of one sequence look at each other, it's **self-attention**. In "the bird rested because it was tired", self-attention lets "it" pull information from "bird".
+
+      In 2017 Vaswani and colleagues asked what happens if attention does all the work. Their **transformer** ("Attention Is All You Need") dropped the recurrent network entirely. That had a big practical payoff. An RNN must process word 1 before word 2 before word 3. Self-attention compares all positions at once, so a whole sentence can be processed in parallel on a GPU.
+
+      | | RNN encoder–decoder | + attention (2014) | Transformer (2017) |
+      | --- | --- | --- | --- |
+      | What the decoder sees | One final vector | Every encoder state | Every encoder state |
+      | How words in a sentence interact | Step by step through the hidden state | Step by step through the hidden state | Self-attention, all at once |
+      | Long sentences | Degrade quickly | Much better | Much better |
+
+      The next lesson opens up that self-attention step: where the scores come from, and the three roles of query, key, and value.
+  - id: attention-motivation.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.attention-motivation
+    markdown: Speech, image captions, and translation test whether you can spot a bottleneck, compute a context vector, and read an attention map carefully.
+    takeaway: |-
+      A single summary vector has to carry a whole sentence, so long inputs lose detail. Attention keeps every source state and builds a fresh weighted mix for each output step.
+  - id: attention-motivation.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.attention-motivation
+    markdown: |-
+      Attention lets a step combine information from several available representations. The mixture changes with context, but its weights alone do not explain the model’s whole decision.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - attention-motivation.s1
-    - attention-motivation.s2
-    - attention-motivation.s3
-    - attention-motivation.s4
-    - attention-motivation.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - attention-motivation.s1
+        - attention-motivation.s2
+        - attention-motivation.s3
+        - attention-motivation.s4
+        - attention-motivation.s5
+        - attention-motivation.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     attention-motivation.recap: attention-motivation.check
 assessment_families:
-- id: attention-motivation.base
-  objective_ref: objective.attention-motivation
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Ask a different question at each step: trace the inputs, operation, and result before choosing.'
-  remediation_scene: attention-motivation.s2
-  variants:
-  - id: attention-motivation.base.1
-    prompt: What bottleneck can attention reduce in an encoder-decoder model?
-    options:
-    - id: c
-      text: The need for any training objective
-    - id: a
-      text: Dependence on one fixed source summary
-    - id: b
-      text: All computational cost
-    answer: a
-    feedback: It supplies context-dependent access to multiple source representations.
-  - id: attention-motivation.base.2
-    prompt: Values [4, 0] and [0, 2] with equal weights mix to what?
-    options:
-    - id: a
-      text: '[2, 1]'
-    - id: b
-      text: '[4, 2]'
-    - id: c
-      text: '[1, 2]'
-    answer: a
-    feedback: Multiply each vector by 0.5 and add corresponding coordinates.
-- id: attention-motivation.transfer
-  objective_ref: objective.attention-motivation
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Keep the interpretation modest: trace the inputs, operation, and result before choosing.'
-  remediation_scene: attention-motivation.s4
-  variants:
-  - id: attention-motivation.transfer.1
-    prompt: A high attention weight is observed. What is not automatically established?
-    options:
-    - id: a
-      text: Causal importance to the final answer
-    - id: b
-      text: That a mixing coefficient was computed
-    - id: c
-      text: That the model had an input
-    answer: a
-    feedback: Internal weights need further evidence for explanatory or causal claims.
-  - id: attention-motivation.transfer.2
-    prompt: A decoder attends to encoder outputs from another sequence. What kind of attention is this?
-    options:
-    - id: b
-      text: Only self-attention by definition
-    - id: c
-      text: A parameter update
-    - id: a
-      text: Cross-attention
-    answer: a
-    feedback: Queries and key/value representations come from different sets.
+  - id: attention-motivation.base
+    objective_ref: objective.attention-motivation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Ask a different question at each step: trace the inputs, operation, and result before choosing.'
+    remediation_scene: attention-motivation.s2
+    variants:
+      - id: attention-motivation.base.1
+        prompt: What bottleneck can attention reduce in an encoder-decoder model?
+        options:
+          - id: c
+            text: The need for any training objective
+          - id: a
+            text: Dependence on one fixed source summary
+          - id: b
+            text: All computational cost
+        answer: a
+        feedback: It supplies context-dependent access to multiple source representations.
+        retired: true
+      - id: attention-motivation.base.2
+        prompt: Values [4, 0] and [0, 2] with equal weights mix to what?
+        options:
+          - id: a
+            text: '[2, 1]'
+          - id: b
+            text: '[4, 2]'
+          - id: c
+            text: '[1, 2]'
+        answer: a
+        feedback: Multiply each vector by 0.5 and add corresponding coordinates.
+        retired: true
+  - id: attention-motivation.transfer
+    objective_ref: objective.attention-motivation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Keep the interpretation modest: trace the inputs, operation, and result before choosing.'
+    remediation_scene: attention-motivation.s4
+    variants:
+      - id: attention-motivation.transfer.1
+        prompt: A high attention weight is observed. What is not automatically established?
+        options:
+          - id: a
+            text: Causal importance to the final answer
+          - id: b
+            text: That a mixing coefficient was computed
+          - id: c
+            text: That the model had an input
+        answer: a
+        feedback: Internal weights need further evidence for explanatory or causal claims.
+        retired: true
+      - id: attention-motivation.transfer.2
+        prompt: A decoder attends to encoder outputs from another sequence. What kind of attention is this?
+        options:
+          - id: b
+            text: Only self-attention by definition
+          - id: c
+            text: A parameter update
+          - id: a
+            text: Cross-attention
+        answer: a
+        feedback: Queries and key/value representations come from different sets.
+        retired: true
+  - id: attention-motivation.base.v2
+    objective_ref: objective.attention-motivation
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Picture what the decoder receives. Without attention it gets one fixed-size vector; with attention it gets a fresh weighted sum of every source state at each step.
+    remediation_scene: attention-motivation.s2
+    variants:
+      - id: attention-motivation.base.v2.1
+        prompt: An RNN encoder–decoder turns an 8-word sentence and a 60-word sentence each into a vector of 512 numbers. Its translations of the 60-word sentence are much worse. What is the most likely cause?
+        options:
+          - id: b
+            text: The 60-word vector has more numbers in it, so the decoder can't read it all
+          - id: a
+            text: The same 512 numbers must carry far more detail for the long sentence
+          - id: c
+            text: The decoder has a limit on output length that the long sentence exceeds
+        answer: a
+        feedback: The summary vector is the same size for every input, so a long sentence has to be squeezed harder and details get lost. The vector does not grow with the sentence, which is exactly the problem.
+      - id: attention-motivation.base.v2.2
+        prompt: In Bahdanau-style attention, what gets recomputed each time the decoder writes a new output word?
+        options:
+          - id: c
+            text: The encoder's hidden state for every source word
+          - id: b
+            text: The single summary vector for the whole source sentence
+          - id: a
+            text: The weights on the source states and the resulting context vector
+        answer: a
+        feedback: The encoder states are computed once and kept. Each output step rescores them and builds its own context vector. There is no single summary vector anymore; that is what attention replaced.
+      - id: attention-motivation.base.v2.3
+        prompt: 'Source states are [2, 0] and [0, 2]. For the current output word the attention weights are 0.25 and 0.75. What context vector does the decoder receive?'
+        options:
+          - id: a
+            text: '[0.5, 1.5]'
+          - id: c
+            text: '[1.5, 0.5]'
+          - id: b
+            text: '[1, 1]'
+        answer: a
+        feedback: 0.25 × [2, 0] + 0.75 × [0, 2] = [0.5, 0] + [0, 1.5] = [0.5, 1.5]. Swapping the weights gives [1.5, 0.5], and [1, 1] is the plain average you'd get with equal weights.
+      - id: attention-motivation.base.v2.4
+        prompt: Adding attention helped encoder–decoder translators most on long sentences. Why there in particular?
+        options:
+          - id: b
+            text: Attention reads the source backwards, which shortens the distance to the first words
+          - id: c
+            text: Attention adds extra layers, and bigger networks handle long sentences better
+          - id: a
+            text: Each output step can draw on the source words it needs, not one compressed summary
+        answer: a
+        feedback: Long sentences suffered most from the fixed-size bottleneck, and attention removes it by giving every step direct access to all source states. Reversing the source was a separate trick from Sutskever and colleagues, and attention adds very few parameters.
+  - id: attention-motivation.transfer.v2
+    objective_ref: objective.attention-motivation
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide whether the question is about where information can flow (a bottleneck, self- or cross-attention) or about what a weight can prove. A weight shows mixing; only changing the input shows influence.
+    remediation_scene: attention-motivation.s4
+    variants:
+      - id: attention-motivation.transfer.v2.1
+        prompt: A speech recognizer's encoder produces one state per 10 ms slice of audio, 500 in all, and a decoder writes the transcript word by word. Which design lets each written word draw mainly on the slices where it was spoken?
+        options:
+          - id: a
+            text: Let the decoder attend over all 500 encoder states at each output word
+          - id: b
+            text: Pass only the encoder's final state, but make it twice as large
+          - id: c
+            text: Average the 500 encoder states once and give that to every step
+        answer: a
+        feedback: Attention gives each output word its own weighted mix, so it can focus on the right stretch of audio. A bigger final state is still one fixed summary, and a single average blurs every word together.
+      - id: attention-motivation.transfer.v2.2
+        prompt: An attention map from a translation model shows weight 0.9 between the source word "Area" and the output word "zone". A colleague says this proves "Area" caused the model to write "zone". What is the better way to check?
+        options:
+          - id: c
+            text: Confirm that the weights in that row add up to 1
+          - id: a
+            text: Change or remove "Area" in the source and see if the output changes
+          - id: b
+            text: Look for an even higher weight in another row of the map
+        answer: a
+        feedback: A weight shows how one mixing step drew on each position, not what would happen without that word. Changing the input tests influence directly. Weights always sum to 1 after softmax, so checking the sum tells you nothing new.
+      - id: attention-motivation.transfer.v2.3
+        prompt: In an image-captioning model, the encoder keeps one vector for each of 49 image regions. While writing each caption word, the decoder builds a weighted sum of those region vectors. What kind of attention is this?
+        options:
+          - id: b
+            text: Self-attention, since the decoder attends to its own earlier words
+          - id: a
+            text: Cross-attention, since caption words look back at image regions
+          - id: c
+            text: A fixed bottleneck, since the image is encoded before captioning starts
+        answer: a
+        feedback: The looking-back crosses from one sequence (the caption) to another (the image regions), which is cross-attention. Encoding the image first isn't a bottleneck here, because all 49 region vectors stay available.
+      - id: attention-motivation.transfer.v2.4
+        prompt: 'A summarizer uses an RNN encoder–decoder without attention. Its summaries of long reports keep the opening topic but get later facts wrong. Which change targets the cause?'
+        options:
+          - id: c
+            text: Train longer so that the final hidden state memorizes more reports
+          - id: b
+            text: Feed the report to the encoder twice so that it is read more carefully
+          - id: a
+            text: Keep all encoder states and let each summary word attend over them
+        answer: a
+        feedback: The symptom points to the fixed-size bottleneck, so the fix is access to every encoder state. Training longer or reading twice still ends in one fixed vector.

@@ -1,285 +1,443 @@
 schema_version: 0.2-draft
 lesson:
   id: softmax-attention
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: From attention scores to a causal mask
   state: draft
-  summary: Compute normalized attention weights and explain how a causal mask prevents future-token leakage.
+  summary: One line of math, softmax(QKᵀ/√d_k)V, runs inside every transformer. Work it by hand on three tokens, and see why one missing mask lets a model cheat.
   slot: M15.3
   category: learning
   sources:
-  - title: Dive into Deep Learning — attention scoring functions
-    url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/attention-scoring-functions.html
-  - title: Attention Is All You Need
-    url: https://arxiv.org/abs/1706.03762
+    - title: "Attention Is All You Need, section 3.2.1 and footnote 4 (Vaswani et al., 2017)"
+      url: https://arxiv.org/abs/1706.03762
+    - title: Dive into Deep Learning — attention scoring functions
+      url: https://d2l.ai/chapter_attention-mechanisms-and-transformers/attention-scoring-functions.html
+    - title: "The Annotated Transformer (Harvard NLP)"
+      url: https://nlp.seas.harvard.edu/annotated-transformer/
 objectives:
-- id: objective.softmax-attention
-  version: 1-draft
-  statement: Compute normalized attention weights and explain how a causal mask prevents future-token leakage.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - softmax-attention.base
-  - softmax-attention.transfer
-  prerequisites:
-  - anyOf:
-    - objective.attention
-  - anyOf:
-    - objective.probability
-  - anyOf:
-    - objective.powers-logs
+  - id: objective.softmax-attention
+    version: 2-draft
+    statement: Compute normalized attention weights and explain how a causal mask prevents future-token leakage.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - softmax-attention.base.v2
+      - softmax-attention.transfer.v2
+      - softmax-attention.calculate
+    prerequisites:
+      - anyOf:
+          - objective.attention
+      - anyOf:
+          - objective.probability
+      - anyOf:
+          - objective.powers-logs
 scenes:
-- title: First compare; then scale
-  markdown: 'A dot-product attention head compares a query with each key. If the query and key have d coordinates,
-    standard scaled dot-product attention divides the dot product by the square root of d before normalization.
+  - title: Softmax turns scores into weights
+    markdown: |-
+      The last lesson left "make" in "bees make honey" with raw scores [2, 0, 2]. You can't mix values with those directly: they don't add up to 1, and scores can be negative. **Softmax** fixes both. Raise $e$ to each score, which makes everything positive, then divide by the total, which makes the results sum to 1.
 
+      Warm up with friendly numbers, treated as already scaled (the next scene explains the scaling). $\ln 2$ is the natural logarithm of 2, the power of $e$ that gives 2, so $e^{\ln 2} = 2$; and $e^0 = 1$. For scores $[\ln 2, 0, 0]$ the exponentials are [2, 1, 1], their total is 4, and the weights are [0.5, 0.25, 0.25]. A score that's bigger by $\ln 2 \approx 0.69$ gets twice the weight.
 
-    The square root of 4 is 2 because 2 × 2 = 4. So a dot product of 6 in a four-coordinate head becomes a
-    scaled score of 3. Scaling helps control score magnitudes; it does not decide which token is factually
-    correct.'
-  bridges:
-  - vectors
-  - powers-logs
-  id: softmax-attention.s1
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.softmax-attention
-  text_mode: 'A dot-product attention head compares a query with each key. If the query and key have d coordinates,
-    standard scaled dot-product attention divides the dot product by the square root of d before normalization.
+      These weights mix the value vectors of input positions. They are not probabilities over the vocabulary; that softmax comes much later, at the model's output.
+    bridges:
+      - powers-logs
+      - probability
+    type: table
+    columns:
+      - Candidate
+      - Scaled score
+      - Exponential
+      - Unmasked weight
+    rows:
+      - - First
+        - ln 2
+        - 2
+        - 0.5
+      - - Second
+        - 0
+        - 1
+        - 0.25
+      - - Third
+        - 0
+        - 1
+        - 0.25
+    id: softmax-attention.s2
+    depth: mechanics
+    objective_refs:
+      - objective.softmax-attention
+  - title: Divide by √d_k, or softmax freezes
+    markdown: |-
+      Before softmax, every score is divided by $\sqrt{d_k}$, where $d_k$ is the number of entries in each query and key. Our toy has $d_k = 2$, so the scores of "make" become $[2, 0, 2] / \sqrt{2} = [1.41, 0, 1.41]$.
 
+      Why? Real heads use $d_k = 64$ or 128. If the entries of a query and a key are roughly random, with average 0 and variance 1, their dot product adds up $d_k$ such products. Its variance is then $d_k$, so its typical size is $\sqrt{d_k}$: about 8 when $d_k = 64$. Scores like [16, 8, 0] are routine.
 
-    The square root of 4 is 2 because 2 × 2 = 4. So a dot product of 6 in a four-coordinate head becomes a
-    scaled score of 3. Scaling helps control score magnitudes; it does not decide which token is factually
-    correct.'
-- title: Calculate three attention weights
-  markdown: 'Softmax exponentiates each eligible score and divides by the sum of those exponentials. The notation
-    **ln 2** means the natural logarithm of 2; exponentiation reverses it, so exp(ln 2) = 2. Also, exp(0) =
-    1.
+      :::predict What does softmax do to [16, 8, 0]? And to [16, 8, 0] / 8 = [2, 1, 0]?
+      $e^{16} \approx 8{,}886{,}000$ and $e^8 \approx 2{,}981$, so the weights are about [0.99966, 0.00034, 0.0000001]: all on one token. After dividing by 8, the weights are [0.665, 0.245, 0.090], a real blend.
+      :::
 
+      A softmax pinned at almost exactly 1 and 0 is **saturated**, and it barely responds to changes in its scores. The rate at which a weight $p$ changes with its own score is $p(1-p)$: $0.99966 \times 0.00034 \approx 0.0003$ when saturated, versus $0.665 \times 0.335 \approx 0.22$ after scaling. Gradients through a saturated softmax are tiny, and $W_Q$ and $W_K$ stop learning. Dividing by $\sqrt{d_k}$ keeps typical scores near 1 whatever the head size.
 
-    For scaled scores [ln 2, 0, 0], the exponentials are [2, 1, 1]. Their total is 4, giving attention weights
-    [0.5, 0.25, 0.25]. You can follow the calculation using these supplied values, or visit the powers-and-logs
-    side lesson for the inverse relationship.
+      ```python run
+      import numpy as np
 
+      np.set_printoptions(suppress=True)
+      rng = np.random.default_rng(0)
+      d_k = 64
+      q = rng.standard_normal((10000, d_k))      # 10,000 random queries
+      k = rng.standard_normal((10000, d_k))      # and keys, entries with variance 1
+      dots = (q * k).sum(axis=1)
+      print("typical size of q·k:", dots.std().round(2), " sqrt(d_k) =", np.sqrt(d_k))
 
-    These weights mix the value vectors at candidate input positions. They are not probabilities over the model’s
-    output vocabulary; the rest of the network still has work to do.'
-  bridges:
-  - powers-logs
-  - probability
-  type: table
-  columns:
-  - Candidate
-  - Scaled score
-  - Exponential
-  - Unmasked weight
-  rows:
-  - - First
-    - ln 2
-    - 2
-    - 0.5
-  - - Second
-    - 0
-    - 1
-    - 0.25
-  - - Third
-    - 0
-    - 1
-    - 0.25
-  id: softmax-attention.s2
-  depth: mechanics
-  objective_refs:
-  - objective.softmax-attention
-  text_mode: 'Softmax exponentiates each eligible score and divides by the sum of those exponentials. The notation
-    **ln 2** means the natural logarithm of 2; exponentiation reverses it, so exp(ln 2) = 2. Also, exp(0) =
-    1.
+      def softmax(s):
+          e = np.exp(s - s.max())
+          return e / e.sum()
 
+      scores = np.array([16.0, 8.0, 0.0])
+      print("softmax(raw):   ", softmax(scores).round(5))
+      print("softmax(raw/8): ", softmax(scores / np.sqrt(d_k)).round(5))
+      ```
 
-    For scaled scores [ln 2, 0, 0], the exponentials are [2, 1, 1]. Their total is 4, giving attention weights
-    [0.5, 0.25, 0.25]. You can follow the calculation using these supplied values, or visit the powers-and-logs
-    side lesson for the inverse relationship.
+      Try `d_k = 256`: the typical dot product grows to about 16, and you'd divide by 16.
+    bridges:
+      - vectors
+      - powers-logs
+    id: softmax-attention.s1
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.softmax-attention
+  - title: The future can't supply the answer
+    markdown: |-
+      A language model, as in the next-token prediction lesson, learns by predicting the next token at every position. At "make", the right answer is "honey". If "make" could attend to "honey", it could simply copy the answer, and the model would learn nothing useful for real generation, where the next word doesn't exist yet.
 
+      A **causal mask** blocks this. Before softmax, every score from a position to a *later* position is set to $-\infty$. Since $e^{-\infty} = 0$, those positions get exactly zero weight, and softmax renormalizes over the rest automatically.
 
-    These weights mix the value vectors at candidate input positions. They are not probabilities over the model’s
-    output vocabulary; the rest of the network still has work to do.'
-- title: The future cannot supply the training answer
-  markdown: 'An autoregressive decoder at position two must not use position three to predict the next token.
-    A causal mask excludes future positions from attention. Conceptually, disallowed scores become negative
-    infinity, giving those positions zero weight after softmax.
+      Back to the warm-up scores $[\ln 2, 0, 0]$ with the third position hidden: the exponentials become [2, 1, 0], the total is 3, and the weights are [2/3, 1/3, 0].
 
+      :::mixup "To hide a position, set its score to 0."
+      A score of 0 isn't "nothing": $e^0 = 1$, so the hidden position would still get weight 1/4 here. Zeroing the *weight* after softmax is also wrong, because the remaining weights would no longer sum to 1. Use $-\infty$ before softmax (in code, a very large negative number or `-inf`).
+      :::
+    id: softmax-attention.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.softmax-attention
+  - id: softmax-attention.equation
+    title: The whole equation on three tokens
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.softmax-attention
+    markdown: |-
+      :::papers Scaled dot-product attention
+      $$\text{Attention}(Q, K, V) = \text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}} + M\right) V$$
 
-    Masking the third candidate above leaves exponentials [2, 1, 0]. Renormalizing gives [2/3, 1/3, 0]. Merely
-    replacing its score by zero would leave exp(0) = 1 and would not exclude it.'
-  id: softmax-attention.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.softmax-attention
-  text_mode: 'An autoregressive decoder at position two must not use position three to predict the next token.
-    A causal mask excludes future positions from attention. Conceptually, disallowed scores become negative
-    infinity, giving those positions zero weight after softmax.
+      $Q$, $K$, $V$ hold one query, key, and value per row. $QK^\top$ is the grid of every query–key score. $\sqrt{d_k}$ is the scaling. $M$ is the mask: 0 where attending is allowed and $-\infty$ where it isn't (the 2017 paper describes the mask in words; code adds it like this). Softmax runs along each row, and multiplying by $V$ mixes the values.
+      :::
 
+      For "bees make honey", with the $Q$, $K$, $V$ from the last lesson and $d_k = 2$, row by row:
 
-    Masking the third candidate above leaves exponentials [2, 1, 0]. Renormalizing gives [2/3, 1/3, 0]. Merely
-    replacing its score by zero would leave exp(0) = 1 and would not exclude it.'
-- title: Change the query; switch the mask
-  markdown: 'The experiment uses invented two-coordinate queries, keys, and values. We inspect the query at
-    position two, so a causal mask allows positions one and two. Change the query direction and observe the
-    score, weight, and output changes.
+      | Row (query) | $QK^\top$ | $\div \sqrt{2}$, then mask | Weights | Output |
+      | --- | --- | --- | --- | --- |
+      | bees | [0, 2, 2] | [0, −∞, −∞] | [1, 0, 0] | [4, 0] |
+      | make | [2, 0, 2] | [1.41, 0, −∞] | [0.804, 0.196, 0] | [3.22, 0.78] |
+      | honey | [2, 2, 4] | [1.41, 1.41, 2.83] | [0.164, 0.164, 0.673] | [3.35, 3.35] |
 
+      Walk the "make" row: $e^{1.41} \approx 4.11$ and $e^0 = 1$, total 5.11, weights $4.11/5.11 = 0.804$ and $1/5.11 = 0.196$. The output is $0.804 \times [4, 0] + 0.196 \times [0, 4] = [3.22, 0.78]$.
 
-    Then allow the future position for comparison. An encoder may legitimately see an entire input sequence,
-    but an autoregressive next-token training position may not read its future target. The same unmasked arithmetic
-    has different validity under different tasks.'
-  simulation: attention
-  id: softmax-attention.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.softmax-attention
-  text_mode: 'The experiment uses invented two-coordinate queries, keys, and values. We inspect the query at
-    position two, so a causal mask allows positions one and two. Change the query direction and observe the
-    score, weight, and output changes.
+      ```python run
+      import numpy as np
 
+      X = np.array([[1.0, 0.0], [0.0, 1.0], [1.0, 1.0]])   # bees, make, honey
+      W_Q = np.array([[0.0, 2.0], [2.0, 0.0]])
+      W_K = np.eye(2)
+      W_V = 4 * np.eye(2)
+      Q, K, V = X @ W_Q, X @ W_K, X @ W_V
 
-    Then allow the future position for comparison. An encoder may legitimately see an entire input sequence,
-    but an autoregressive next-token training position may not read its future target. The same unmasked arithmetic
-    has different validity under different tasks.'
-  bridges:
-  - vectors
-  - powers-logs
-- title: Parallel computation can still respect causal order
-  markdown: 'During training, the full recorded sequence is available to the program. The program can calculate
-    many positions together while masking each position’s future. Having the tensor in memory does not mean
-    every attention row may use every column.
+      def attention(Q, K, V, causal=True):
+          d_k = K.shape[1]
+          scores = Q @ K.T / np.sqrt(d_k)                  # QKᵀ/√d_k
+          if causal:
+              future = np.triu(np.ones(scores.shape, dtype=bool), k=1)
+              scores = np.where(future, -np.inf, scores)   # add M: −∞ above the diagonal
+          e = np.exp(scores - scores.max(axis=1, keepdims=True))
+          weights = e / e.sum(axis=1, keepdims=True)       # softmax, row by row
+          return weights, weights @ V
 
+      weights, out = attention(Q, K, V, causal=True)
+      print("scaled scores:\n", (Q @ K.T / np.sqrt(2)).round(2))
+      print("weights:\n", weights.round(3))
+      print("outputs:\n", out.round(2))
+      ```
 
-    Each row has its own eligible positions and normalization. The mask prevents information leakage within
-    the forward computation; shifting labels so each position predicts its successor supplies the corresponding
-    training task.
+      :::predict Change `causal=True` to `causal=False`. What happens to the "make" row?
+      Its weights become [0.446, 0.108, 0.446] and its output [3.57, 2.22]. Almost half the mix now comes from "honey", the very word "make" is supposed to predict. The "honey" row doesn't change at all, because it was already allowed to see everything before it.
+      :::
+    bridges:
+      - matrices-tensors
+  - title: Change the query; switch the mask
+    markdown: |-
+      The experiment below is the "make" row, live. Its keys [1, 0], [0, 1], [1, 1] and values [4, 0], [0, 4], [4, 4] are exactly the $K$ and $V$ from our three tokens, and its first query, [2, 0], is the query of "make". With the causal mask on, you should see weights 0.8 and 0.2 and the output [3.22, 0.78].
 
+      Now switch the query to [0, 2]. The scores become [0, 2, 2], so position two now wins the allowed pair, and the output tilts toward [0, 4]. Then turn the mask off and watch position three, the future token, take its share.
 
-    The example assumes each query has at least one allowed key. Masking every key leaves no valid set of probabilities
-    to normalize in the usual formula. Real implementations need a defined way to handle padding and empty
-    rows rather than treating “all excluded” as an ordinary distribution.'
-  id: softmax-attention.s5
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.softmax-attention
-  text_mode: 'During training, the full recorded sequence is available to the program. The program can calculate
-    many positions together while masking each position’s future. Having the tensor in memory does not mean
-    every attention row may use every column.
+      For an encoder classifying a whole review, the unmasked version is fine. In next-token training, it's a leak.
+    simulation: attention
+    id: softmax-attention.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.softmax-attention
+    bridges:
+      - vectors
+      - powers-logs
+  - title: Whole batches at once, with padding
+    markdown: |-
+      During training the whole sequence is known, so every row of the grid is computed at once, and the mask gives each row its own allowed columns.
 
+      Batches add one more mask. Sentences in a batch must be the same length, so short ones are filled out with a **padding** token. Put "bees make honey" and "cats nap" in one batch, and the second becomes "cats nap [PAD]". A **padding mask** sets the score to $-\infty$ in the [PAD] column of every row, so no real token ever mixes in padding. In a language model, both masks are added to the same grid:
 
-    Each row has its own eligible positions and normalization. The mask prevents information leakage within
-    the forward computation; shifting labels so each position predicts its successor supplies the corresponding
-    training task.
+      | Query | cats | nap | [PAD] |
+      | --- | --- | --- | --- |
+      | cats | allowed | −∞ (future) | −∞ (both) |
+      | nap | allowed | allowed | −∞ (padding) |
+      | [PAD] | allowed | allowed | −∞ (padding) |
 
-
-    The example assumes each query has at least one allowed key. Masking every key leaves no valid set of probabilities
-    to normalize in the usual formula. Real implementations need a defined way to handle padding and empty
-    rows rather than treating “all excluded” as an ordinary distribution.'
-- id: softmax-attention.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.softmax-attention
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Scaled scores become normalized mixing weights. A causal mask changes the eligible positions before
-    normalization, keeping future targets out of an autoregressive position’s input.
-- id: softmax-attention.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.softmax-attention
-  markdown: Scaled scores become normalized mixing weights. A causal mask changes the eligible positions before
-    normalization, keeping future targets out of an autoregressive position’s input.
-  text_mode: Scaled scores become normalized mixing weights. A causal mask changes the eligible positions before
-    normalization, keeping future targets out of an autoregressive position’s input.
+      The [PAD] row still produces an output, which the loss ignores. Watch for a row where *every* entry is masked: softmax would divide 0 by 0 and produce NaN ("not a number"), which spreads through everything it touches. In custom masks, keep at least one allowed position in every row.
+    id: softmax-attention.s5
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.softmax-attention
+  - id: softmax-attention.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.softmax-attention
+    markdown: Softmax weights to compute by hand, plus a cheating language model, a stalled training run, and a padded batch, test the scaling and masking steps.
+    takeaway: |-
+      Attention is softmax(QKᵀ/√d_k + M)V. Dividing by √d_k keeps softmax from saturating, and setting blocked scores to −∞ before softmax gives future or padding positions exactly zero weight.
+  - id: softmax-attention.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.softmax-attention
+    markdown: |-
+      Scaled scores become normalized mixing weights. A causal mask changes the eligible positions before normalization, keeping future targets out of an autoregressive position’s input.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - softmax-attention.s1
-    - softmax-attention.s2
-    - softmax-attention.s3
-    - softmax-attention.s4
-    - softmax-attention.s5
-    - softmax-attention.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - softmax-attention.s2
+        - softmax-attention.s1
+        - softmax-attention.s3
+        - softmax-attention.equation
+        - softmax-attention.s4
+        - softmax-attention.s5
+        - softmax-attention.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     softmax-attention.recap: softmax-attention.check
 assessment_families:
-- response_type: single_choice
-  hint: Exponentiate eligible scores, zero excluded contributions, and normalize over the remaining total.
-  variants:
-  - prompt: Scaled scores are [ln 3, 0, 0]. With no mask, what are their softmax weights?
-    options:
-    - id: answer
-      text: '[0.6, 0.2, 0.2]'
-    - id: a
-      text: '[3, 0, 0]'
-    - id: b
-      text: '[1/3, 1/3, 1/3]'
-    answer: answer
-    feedback: The exponentials are [3, 1, 1], whose total is 5. Dividing by 5 gives [0.6, 0.2, 0.2].
-    id: softmax-attention.base.1
-  - prompt: Scaled scores are [ln 3, 0, 0], but the third position is excluded. What are the weights?
-    options:
-    - id: a
-      text: '[0.6, 0.2, 0.2]'
-    - id: b
-      text: '[0.75, 0, 0.25]'
-    - id: answer
-      text: '[0.75, 0.25, 0]'
-    answer: answer
-    feedback: The eligible exponential weights are [3, 1, 0]. The total is 4, so the excluded future position
-      receives exactly zero.
-    id: softmax-attention.base.2
-  id: softmax-attention.base
-  objective_ref: objective.softmax-attention
-  task: base
-  points: 1
-  remediation_scene: softmax-attention.s1
-- response_type: single_choice
-  hint: Separate the entire sequence stored by the program from the positions available to one query.
-  variants:
-  - prompt: To hide a future position, an implementation changes its finite score to 0 before softmax. Is that
-      sufficient?
-    options:
-    - id: a
-      text: Yes; a zero score always produces a zero softmax weight.
-    - id: b
-      text: Yes; masks are unnecessary when the target sequence is stored in memory.
-    - id: answer
-      text: No; exp(0) is 1, so the future position can still receive weight.
-    answer: answer
-    feedback: Zero is a valid finite score. Exclusion needs a proper mask, equivalent to a zero exponential
-      contribution before normalization.
-    id: softmax-attention.transfer.1
-  - prompt: A decoder’s training batch contains full sentences. How can many positions be processed together
-      without reading future targets?
-    options:
-    - id: b
-      text: Replace every training label with the first token.
-    - id: answer
-      text: Apply a causal mask separately to each position’s attention row.
-    - id: a
-      text: Permit every position to copy its target from the next position.
-    answer: answer
-    feedback: The program may hold all positions while restricting each row to its permitted prefix. Parallel
-      execution and causal information flow are compatible.
-    id: softmax-attention.transfer.2
-  id: softmax-attention.transfer
-  objective_ref: objective.softmax-attention
-  task: transfer
-  points: 1
-  remediation_scene: softmax-attention.s1
+  - response_type: single_choice
+    hint: Exponentiate eligible scores, zero excluded contributions, and normalize over the remaining total.
+    variants:
+      - prompt: Scaled scores are [ln 3, 0, 0]. With no mask, what are their softmax weights?
+        options:
+          - id: answer
+            text: '[0.6, 0.2, 0.2]'
+          - id: a
+            text: '[3, 0, 0]'
+          - id: b
+            text: '[1/3, 1/3, 1/3]'
+        answer: answer
+        feedback: The exponentials are [3, 1, 1], whose total is 5. Dividing by 5 gives [0.6, 0.2, 0.2].
+        id: softmax-attention.base.1
+        retired: true
+      - prompt: Scaled scores are [ln 3, 0, 0], but the third position is excluded. What are the weights?
+        options:
+          - id: a
+            text: '[0.6, 0.2, 0.2]'
+          - id: b
+            text: '[0.75, 0, 0.25]'
+          - id: answer
+            text: '[0.75, 0.25, 0]'
+        answer: answer
+        feedback: The eligible exponential weights are [3, 1, 0]. The total is 4, so the excluded future position receives exactly zero.
+        id: softmax-attention.base.2
+        retired: true
+    id: softmax-attention.base
+    objective_ref: objective.softmax-attention
+    task: base
+    points: 1
+    remediation_scene: softmax-attention.s1
+  - response_type: single_choice
+    hint: Separate the entire sequence stored by the program from the positions available to one query.
+    variants:
+      - prompt: To hide a future position, an implementation changes its finite score to 0 before softmax. Is that sufficient?
+        options:
+          - id: a
+            text: Yes; a zero score always produces a zero softmax weight.
+          - id: b
+            text: Yes; masks are unnecessary when the target sequence is stored in memory.
+          - id: answer
+            text: No; exp(0) is 1, so the future position can still receive weight.
+        answer: answer
+        feedback: Zero is a valid finite score. Exclusion needs a proper mask, equivalent to a zero exponential contribution before normalization.
+        id: softmax-attention.transfer.1
+        retired: true
+      - prompt: A decoder’s training batch contains full sentences. How can many positions be processed together without reading future targets?
+        options:
+          - id: b
+            text: Replace every training label with the first token.
+          - id: answer
+            text: Apply a causal mask separately to each position’s attention row.
+          - id: a
+            text: Permit every position to copy its target from the next position.
+        answer: answer
+        feedback: The program may hold all positions while restricting each row to its permitted prefix. Parallel execution and causal information flow are compatible.
+        id: softmax-attention.transfer.2
+        retired: true
+    id: softmax-attention.transfer
+    objective_ref: objective.softmax-attention
+    task: transfer
+    points: 1
+    remediation_scene: softmax-attention.s1
+  - id: softmax-attention.base.v2
+    objective_ref: objective.softmax-attention
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Place each step in the equation softmax(QKᵀ/√d_k + M)V. Scaling happens before softmax, and so does the mask; softmax itself is what makes each row sum to 1.
+    remediation_scene: softmax-attention.equation
+    variants:
+      - id: softmax-attention.base.v2.1
+        prompt: Why does scaled dot-product attention divide the scores by √d_k before softmax?
+        options:
+          - id: b
+            text: So that each row of attention weights adds up to exactly 1
+          - id: c
+            text: So that longer sentences don't get larger total attention
+          - id: a
+            text: So that large head sizes don't push softmax into saturation
+        answer: a
+        feedback: Dot products grow like √d_k, and large scores make softmax put nearly all weight on one token, with tiny gradients. Summing to 1 is softmax's own job, and d_k is the vector size, not the sentence length.
+      - id: softmax-attention.base.v2.2
+        prompt: Which way of applying a causal mask gives future positions zero weight while the allowed weights still sum to 1?
+        options:
+          - id: a
+            text: Set future scores to −∞ before softmax
+          - id: c
+            text: Set future scores to 0 before softmax
+          - id: b
+            text: Set future weights to 0 after softmax
+        answer: a
+        feedback: e^(−∞) = 0, and softmax then normalizes over the allowed positions. A score of 0 still gives e^0 = 1, and zeroing weights after softmax leaves a row that sums to less than 1.
+      - id: softmax-attention.base.v2.3
+        prompt: A head uses queries and keys with 256 entries each. By what number should its raw scores be divided before softmax?
+        options:
+          - id: c
+            text: '256'
+          - id: a
+            text: '16'
+          - id: b
+            text: '128'
+        answer: a
+        feedback: The divisor is √d_k = √256 = 16, the typical size of a dot product of 256 random entries. Dividing by 256 would shrink scores too far, and 128 is half of d_k, not its square root.
+      - id: softmax-attention.base.v2.4
+        prompt: A batch pads "cats nap" to "cats nap [PAD]". Which scores does the padding mask set to −∞?
+        options:
+          - id: b
+            text: Every score in the [PAD] row, so the pad token attends to nothing
+          - id: a
+            text: The [PAD] column in every row, so no token mixes in the pad
+          - id: c
+            text: None; instead the value vector of [PAD] is set to all zeros
+        answer: a
+        feedback: Masking the [PAD] column keeps padding out of every real token's mix. Masking the whole [PAD] row would leave a row with nothing allowed, which produces NaN, and zeroing the value would still let the pad soak up weight.
+  - id: softmax-attention.transfer.v2
+    objective_ref: objective.softmax-attention
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what each position is allowed to see for this task, and what a missing mask or missing scale would do to the weights during training.
+    remediation_scene: softmax-attention.s5
+    variants:
+      - id: softmax-attention.transfer.v2.1
+        prompt: A new language model's training loss drops almost to zero within minutes, but its generated text is gibberish. Which bug best explains both symptoms?
+        options:
+          - id: c
+            text: The √d_k scaling was left out, so softmax saturated
+          - id: a
+            text: The causal mask is missing, so each position can see its target
+          - id: b
+            text: The padding mask is missing, so pad tokens are mixed in
+        answer: a
+        feedback: Without the causal mask, every position can copy the next token, so training looks perfect, but at generation time there is no next token to copy. A missing scale would slow learning, not make it suspiciously easy.
+      - id: softmax-attention.transfer.v2.2
+        prompt: An encoder reads whole product reviews, padded to 128 tokens, and outputs a star rating. Which masks should its attention use?
+        options:
+          - id: a
+            text: A padding mask only, since every real token may see the whole review
+          - id: b
+            text: A causal mask and a padding mask, as in a language model
+          - id: c
+            text: A causal mask only, since the pad tokens come at the end anyway
+        answer: a
+        feedback: Classifying a complete review has no "future" to hide, so a causal mask would only throw away useful context. Padding still has to be masked out; appearing at the end doesn't stop earlier tokens from attending to it.
+      - id: softmax-attention.transfer.v2.3
+        prompt: An engineer removes the division by √d_k from a model with d_k = 128. Training slows to a crawl. What is the most likely reason?
+        options:
+          - id: b
+            text: The weights in each row no longer sum to 1, so outputs grow
+          - id: c
+            text: The model can now see future tokens, which confuses it
+          - id: a
+            text: Scores around ±11 saturate softmax, so gradients become tiny
+        answer: a
+        feedback: Typical scores grow to about √128 ≈ 11, softmax puts nearly all weight on one token, and p(1 − p) is close to 0. Softmax still normalizes each row, and the scale has nothing to do with the mask.
+      - id: softmax-attention.transfer.v2.4
+        prompt: To train on a 1,000-token document, a GPU computes the full 1,000 × 1,000 grid of scores in one step. A reviewer worries this lets tokens read ahead. Which reply is right?
+        options:
+          - id: c
+            text: Right to worry; training should process the tokens one at a time
+          - id: a
+            text: Each row is masked, so row i only mixes in positions 1 to i
+          - id: b
+            text: Softmax spreads weight thinly over 1,000 tokens, so leaks are tiny
+        answer: a
+        feedback: Computing the whole grid at once is fine because the causal mask gives each row its own allowed columns. Processing one token at a time would give the same answer much more slowly, and thin weights are still a leak.
+  - id: softmax-attention.calculate
+    objective_ref: objective.softmax-attention
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Divide the raw scores by √d_k, give masked positions weight 0, then raise e to each remaining score and divide by their total.
+    remediation_scene: softmax-attention.equation
+    absolute_tolerance: 0.005
+    variants:
+      - id: softmax-attention.calculate.1
+        prompt: A query has raw scores [4, 0] against two keys, with d_k = 4 and no mask. What attention weight does the first key get? (Give 3 decimal places.)
+        answer: 0.881
+        feedback: Scaled scores are [4, 0] / 2 = [2, 0]. e² ≈ 7.389, so the weight is 7.389 / (7.389 + 1) ≈ 0.881.
+      - id: softmax-attention.calculate.2
+        prompt: Scaled scores are [ln 3, 0, 0], and a causal mask hides the third position. What weight does the first position get?
+        answer: 0.75
+        feedback: The exponentials are [3, 1, 0] after masking, the total is 4, and the first weight is 3/4 = 0.75.
+      - id: softmax-attention.calculate.3
+        prompt: A query has raw scores [3, 0] against two keys, with d_k = 9 and no mask. What attention weight does the first key get? (Give 3 decimal places.)
+        answer: 0.731
+        feedback: Scaled scores are [3, 0] / 3 = [1, 0]. e ≈ 2.718, so the weight is 2.718 / (2.718 + 1) ≈ 0.731.
+      - id: softmax-attention.calculate.4
+        prompt: A query has raw scores [0, 8, 0] against three keys, with d_k = 16 and no mask. What weight does the middle key get? (Give 3 decimal places.)
+        answer: 0.787
+        feedback: Scaled scores are [0, 2, 0]. The exponentials are [1, 7.389, 1], total 9.389, so the middle weight is 7.389 / 9.389 ≈ 0.787.
+      - id: softmax-attention.calculate.5
+        prompt: Position 2 of a decoder has raw scores [2, 2, 6] against positions 1–3, with d_k = 4 and a causal mask. What weight does position 1 get?
+        answer: 0.5
+        feedback: The mask hides position 3, so only [2, 2] / 2 = [1, 1] remain. Equal scores give equal weights, 0.5 each. The large score of 6 belongs to the future and doesn't count.

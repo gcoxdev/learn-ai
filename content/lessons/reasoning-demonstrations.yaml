@@ -1,203 +1,450 @@
 schema_version: 0.2-draft
 lesson:
   id: reasoning-demonstrations
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Teach a useful starting style for problem solving
   state: draft
-  summary: Build short, checkable problem-solving demonstrations before attributing gains to later training
-    stages.
+  summary: A model trained purely by reward learned to reason but mixed languages mid-thought. A few thousand good worked examples fixed that. Learn what makes a demonstration worth copying.
   slot: M21.2
   category: learning
   sources:
-  - title: DeepSeek-R1
-    url: https://arxiv.org/abs/2501.12948
-  - title: Distilling Step-by-Step
-    url: https://arxiv.org/abs/2305.02301
+    - title: "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning (DeepSeek-AI, 2025)"
+      url: https://arxiv.org/abs/2501.12948
+    - title: "STaR: Bootstrapping Reasoning With Reasoning (Zelikman et al., 2022)"
+      url: https://arxiv.org/abs/2203.14465
+    - title: "Distilling Step-by-Step! Outperforming Larger Language Models with Less Training Data and Smaller Model Sizes (Hsieh et al., 2023)"
+      url: https://arxiv.org/abs/2305.02301
 objectives:
-- id: objective.reasoning-demonstrations
-  version: 1-draft
-  statement: Reasoning demonstrations and cold-start tuning supply examples of problem decomposition and presentation;
-    curate valid, diverse traces and distinguish supervised imitation from later reward optimization.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - reasoning-demonstrations.base
-  - reasoning-demonstrations.transfer
-  prerequisites:
-  - anyOf:
-    - objective.reasoning-and-explanations
-  - anyOf:
-    - objective.supervised-fine-tuning
+  - id: objective.reasoning-demonstrations
+    version: 2-draft
+    statement: Reasoning demonstrations and cold-start tuning supply examples of problem decomposition and presentation; curate valid, diverse traces and distinguish supervised imitation from later reward optimization.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - reasoning-demonstrations.base.v2
+      - reasoning-demonstrations.transfer.v2
+      - reasoning-demonstrations.calculate
+    prerequisites:
+      - anyOf:
+          - objective.reasoning-and-explanations
+      - anyOf:
+          - objective.supervised-fine-tuning
 scenes:
-- id: reasoning-demonstrations.s1
-  title: Demonstrate a checkable solution
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.reasoning-demonstrations
-  markdown: 'A **solution trace** records the steps used to solve a problem. A useful demonstration shows how
-    to interpret the question, work through it, and check the result.
+  - id: reasoning-demonstrations.s1
+    title: What a solution worth copying looks like
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.reasoning-demonstrations
+    markdown: |-
+      You're building a maths tutor. The pretrained model you start from can continue text, but ask it a word problem and it might ramble, jump straight to a number, or wander off topic. So you write out worked solutions for it to learn from.
 
+      Each one is a **reasoning demonstration**: a problem paired with a written-out solution, often called a **trace**. Training on them is ordinary supervised fine-tuning, exactly as in the SFT lesson: the loss is on the solution tokens, and the model learns to imitate them. That includes their habits, good and bad.
 
-    For “three boxes contain four pencils each,” a short trace is: “3 groups of 4 gives 12 pencils. Dividing
-    12 by 3 returns 4 per box.” Each step connects to the question and can be checked. The amount of explanation
-    should fit the task; statements such as “I should think carefully” add no calculation.'
-  text_mode: 'A **solution trace** records the steps used to solve a problem. A useful demonstration shows
-    how to interpret the question, work through it, and check the result.
+      *A recipe for 12 cookies uses 3 eggs. How many eggs for 20 cookies?*
 
+      | Trace | What it teaches |
+      | --- | --- |
+      | "Eggs per cookie: 3 ÷ 12 = 0.25. For 20 cookies: 20 × 0.25 = 5. Check: 5 ÷ 20 = 0.25, same rate. **5 eggs.**" | Find the rate, apply it, check it, answer clearly |
+      | "Let me think very carefully about this. After careful thought, the answer is 5." | Sounding careful, with nothing to check |
+      | "12 + 8 = 20 cookies, and 3 + 2 = 5 eggs. **5 eggs.**" | A method that only works by luck |
 
-    For “three boxes contain four pencils each,” a short trace is: “3 groups of 4 gives 12 pencils. Dividing
-    12 by 3 returns 4 per box.” Each step connects to the question and can be checked. The amount of explanation
-    should fit the task; statements such as “I should think carefully” add no calculation.'
-  bridges: []
-- id: reasoning-demonstrations.s2
-  title: Cold start means an initial adaptation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reasoning-demonstrations
-  markdown: 'Some reasoning-training recipes begin with a small set of curated demonstrations before reinforcement
-    learning. This initial supervised adaptation is called **cold-start tuning** in that setting.
+      The third trace reaches 5 by adding 2 eggs for 8 more cookies, which happens to match the real rate here. Train on it and the model learns a method that fails as soon as the numbers change.
+    bridges: []
+  - id: reasoning-demonstrations.s2
+    title: "Cold start: a small, readable seed before RL"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reasoning-demonstrations
+    markdown: |-
+      :::story DeepSeek-R1-Zero learned to reason, but hard to read
+      In January 2025, DeepSeek reported an experiment called DeepSeek-R1-Zero. They took their pretrained DeepSeek-V3-Base and applied reinforcement learning directly, with no demonstrations first, rewarding only correct final answers and a simple output format. On the AIME 2024 maths competition, its average single-attempt score rose from 15.6% to 71.0% during training. But its reasoning was often hard to read, lacked clear formatting, and switched between languages mid-thought.
+      :::
 
+      For the full DeepSeek-R1, they first fine-tuned the base model on "thousands" of long, readable reasoning demonstrations, and only then ran reinforcement learning. That first supervised stage is called a **cold start**: a small set of demonstrations that gives RL a sensible starting behavior, such as a readable format, one language, and a summary at the end. RL then improves *what* the model concludes; the cold start shapes *how* it writes.
 
-    It gives later training a useful starting behavior, such as readable formatting or checkable solution steps.
-    It is one role a supervised stage can play, rather than a required stage for every reasoning model.'
-  text_mode: 'Some reasoning-training recipes begin with a small set of curated demonstrations before reinforcement
-    learning. This initial supervised adaptation is called **cold-start tuning** in that setting.
+      In the full R1 recipe below, imitation (SFT) and reward (RL) stages alternate.
+    diagram:
+      caption: The DeepSeek-R1 recipe (2025), next to the RL-only R1-Zero experiment. SFT stages imitate demonstrations; RL stages optimize rewards.
+      description: DeepSeek-V3-Base feeds three paths. Along the RL-only path it becomes DeepSeek-R1-Zero. Along the R1 path, it is first fine-tuned on thousands of cold-start demonstrations, then trained with reasoning RL on checkable rewards. That RL checkpoint samples responses, keeps the correct ones, and adds general data, giving about 800,000 examples. Those examples fine-tune DeepSeek-V3-Base again from the start. A final RL stage for all scenarios produces DeepSeek-R1.
+      nodes:
+        - id: base
+          label: DeepSeek-V3-Base
+          note: pretrained
+          col: 0
+          row: 1
+          tone: muted
+        - id: cold
+          label: Cold-start SFT
+          note: thousands of readable traces
+          col: 1
+          row: 0
+          tone: accent
+        - id: rl1
+          label: Reasoning RL
+          note: checkable rewards
+          col: 2
+          row: 0
+        - id: data
+          label: Sample and keep correct
+          note: about 800k examples incl. general data
+          col: 3
+          row: 0
+          tone: data
+        - id: sft2
+          label: SFT on the 800k examples
+          col: 3
+          row: 1
+          tone: accent
+        - id: rl2
+          label: RL for all scenarios
+          col: 4
+          row: 1
+        - id: r1
+          label: DeepSeek-R1
+          col: 5
+          row: 1
+        - id: zero
+          label: DeepSeek-R1-Zero
+          note: RL only; hard to read
+          col: 1
+          row: 2
+          tone: warn
+      edges:
+        - from: base
+          to: cold
+        - from: cold
+          to: rl1
+        - from: rl1
+          to: data
+        - from: data
+          to: sft2
+        - from: base
+          to: sft2
+          label: restart from base
+          dashed: true
+        - from: sft2
+          to: rl2
+        - from: rl2
+          to: r1
+        - from: base
+          to: zero
+          label: RL only
+    bridges: []
+  - id: reasoning-demonstrations.s3
+    title: Let the model write its own demonstrations
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reasoning-demonstrations
+    markdown: |-
+      Writing thousands of traces by hand is slow, so a common trick is to let the model write them and keep the good ones. **STaR** ("Self-Taught Reasoner", Zelikman et al., 2022) runs this loop:
 
+      1. Prompt the model, with a few worked examples, to write a rationale and answer for each training question.
+      2. Keep the rationales whose final answer is correct.
+      3. For questions it got wrong, show it the correct answer and ask it to write a rationale that reaches it. Keep those that succeed too.
+      4. Fine-tune on everything kept, then repeat with the improved model.
 
-    It gives later training a useful starting behavior, such as readable formatting or checkable solution steps.
-    It is one role a supervised stage can play, rather than a required stage for every reasoning model.'
-  bridges: []
-- id: reasoning-demonstrations.s3
-  title: Curate beyond successful final answers
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reasoning-demonstrations
-  markdown: 'A trace may reach the right answer through an invalid step or exploit leaked information. Check
-    its derivation, data provenance, difficulty coverage, and format. Retaining only one style can narrow the
-    model’s behavior; include concise direct solutions where long derivations are unnecessary.
+      On the CommonsenseQA benchmark, the authors report that STaR performed comparably to fine-tuning a model 30 times larger. It is the generate-and-filter idea from the distillation lesson, with the model as its own teacher.
 
+      The filter in step 2 checks only the final answer. On multiple-choice questions that's a real gap, because a wrong chain can still land on the right letter by chance. Suppose the model genuinely solves 40% of questions and guesses at random on the rest:
 
-    A final-answer filter could keep “3 × 4 = 10, then add 2 to get 12,” despite the invalid first step. Review
-    the steps as well as the answer when the demonstration is intended to teach a method. Include changed-number
-    examples so a memorized final answer cannot stand in for the relationship.'
-  text_mode: 'A trace may reach the right answer through an invalid step or exploit leaked information. Check
-    its derivation, data provenance, difficulty coverage, and format. Retaining only one style can narrow the
-    model’s behavior; include concise direct solutions where long derivations are unnecessary.
+      ```python run
+      solve_rate = 0.40   # fraction of problems the model really solves
 
+      def lucky_share(n_options):
+          """Among traces kept by an answer-only filter, what fraction were lucky guesses?"""
+          guess_right = (1 - solve_rate) * (1 / n_options if n_options else 0)
+          kept = solve_rate + guess_right
+          return kept, guess_right / kept
 
-    A final-answer filter could keep “3 × 4 = 10, then add 2 to get 12,” despite the invalid first step. Review
-    the steps as well as the answer when the demonstration is intended to teach a method. Include changed-number
-    examples so a memorized final answer cannot stand in for the relationship.'
-  bridges: []
-- id: reasoning-demonstrations.s4
-  title: Separate the stages experimentally
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.reasoning-demonstrations
-  markdown: Compare the base, demonstration-tuned, and later reward-trained checkpoints under matched evaluation.
-    If a skill improves only after reward training, do not attribute it solely to the demonstrations. The number
-    of examples alone does not describe their quality or the strength of their influence.
-  text_mode: Compare the base, demonstration-tuned, and later reward-trained checkpoints under matched evaluation.
-    If a skill improves only after reward training, do not attribute it solely to the demonstrations. The number
-    of examples alone does not describe their quality or the strength of their influence.
-  bridges: []
-- id: reasoning-demonstrations.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.reasoning-demonstrations
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Use demonstrations with valid, checkable steps. Compare training stages separately to see which
-    stage produced each improvement.
-- id: reasoning-demonstrations.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.reasoning-demonstrations
-  markdown: Use demonstrations with valid, checkable steps. Compare training stages separately to see which
-    stage produced each improvement.
-  text_mode: Use demonstrations with valid, checkable steps. Compare training stages separately to see which
-    stage produced each improvement.
+      for n in [2, 4, 5, None]:
+          kept, lucky = lucky_share(n)
+          label = f"{n} options" if n else "numeric answer"
+          print(f"{label:15}: filter keeps {kept:.0%} of traces; {lucky:.1%} of kept traces are lucky guesses")
+      ```
+
+      :::predict With 4 options, what share of the kept traces are lucky guesses?
+      Wrong-but-lucky traces: 0.6 × ¼ = 0.15. Kept traces: 0.40 + 0.15 = 0.55. So 0.15 ÷ 0.55 ≈ 27.3% of the "good" demonstrations teach a bad method. With true/false questions it's 42.9%. With free-form numeric answers, lucky guesses almost vanish, which is one reason maths and code are favorite domains for this loop.
+      :::
+
+      Try `solve_rate = 0.8`: the lucky share on 4 options falls to about 5.9%. The filter gets cleaner as the model gets better.
+    bridges: []
+  - id: reasoning-demonstrations.s4
+    title: Curate the traces, not just the answers
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reasoning-demonstrations
+    markdown: |-
+      Here is a curation pass on 2,000 model-written traces for 500 maths problems:
+
+      | Step | Traces left | What it removed |
+      | --- | ---: | --- |
+      | Generated (4 per problem) | 2,000 | |
+      | Final answer correct | 1,100 | 900 wrong answers |
+      | Steps checked, invalid ones dropped | 968 | 132 lucky or broken chains, 12% of those kept |
+      | Near-duplicates merged | 800 | 168 copies of the same solution |
+
+      Then look at what's left, not just how much. In this set, 70% of the traces run past 1,000 tokens, even for problems like "what is 15% of 80?". A model trained on them learns to write essays for one-line questions. So add short, direct solutions for easy problems. Add changed-number versions of common problems too, so the model can't get by on a memorized answer. And include a few different valid methods, so it doesn't learn that there's only one way.
+
+      :::mixup "Any trace that reaches the right answer is a good demonstration."
+      The final answer is only one line of the trace; the model imitates all of it. The lucky "12 + 8" cookie trace, a padded 3,000-token solution to an easy question, and 100 copies of the same problem all have right answers, and all three teach the wrong thing.
+      :::
+    bridges: []
+  - id: reasoning-demonstrations.s5
+    title: Which stage made the gain?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.reasoning-demonstrations
+    markdown: |-
+      Your tutor went through a cold start and then RL. It's much better now, but which stage did that? Evaluate every checkpoint on the same held-out problems, with the same prompt and token budget:
+
+      | Checkpoint | Held-out accuracy | Readable, one-language answers |
+      | --- | ---: | ---: |
+      | Pretrained base | 22% | 40% |
+      | After cold-start SFT (3,000 traces) | 27% | 95% |
+      | After RL | 58% | 93% |
+
+      Reading across the rows, the demonstrations mostly bought format: readability jumped from 40% to 95%, while accuracy rose only 5 points. RL bought most of the accuracy, 31 more points. If you had evaluated only the final model, you might have credited the 3,000 traces for a gain that came mostly from reward training. Compare the two middle rows whenever you change the demonstration set, and you'll know what your curation work is actually buying.
+    bridges: []
+  - id: reasoning-demonstrations.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.reasoning-demonstrations
+    markdown: A contract reviewer, a chemistry tutor, a coding helper, and a few lucky-guess calculations test whether you can tell a good demonstration set from a merely correct one.
+    takeaway: |-
+      Demonstrations teach a model how to work, not just what to answer, so check the steps, the length, and the variety, not only the final answers. Compare checkpoints to see what the demonstrations bought and what later RL bought.
+  - id: reasoning-demonstrations.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.reasoning-demonstrations
+    markdown: |-
+      Use demonstrations with valid, checkable steps. Compare training stages separately to see which stage produced each improvement.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - reasoning-demonstrations.s1
-    - reasoning-demonstrations.s2
-    - reasoning-demonstrations.s3
-    - reasoning-demonstrations.s4
-    - reasoning-demonstrations.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - reasoning-demonstrations.s1
+        - reasoning-demonstrations.s2
+        - reasoning-demonstrations.s3
+        - reasoning-demonstrations.s4
+        - reasoning-demonstrations.s5
+        - reasoning-demonstrations.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     reasoning-demonstrations.recap: reasoning-demonstrations.check
 assessment_families:
-- id: reasoning-demonstrations.base
-  objective_ref: objective.reasoning-demonstrations
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Cold start means an initial adaptation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: reasoning-demonstrations.s2
-  variants:
-  - id: reasoning-demonstrations.base.1
-    prompt: What does a reasoning demonstration provide?
-    options:
-    - id: b
-      text: A guarantee of faithful internal self-report
-    - id: c
-      text: Only a scalar optimizer state
-    - id: a
-      text: A supervised example of a solution and its presentation
-    answer: a
-    feedback: It is a target behavior for learning.
-  - id: reasoning-demonstrations.base.2
-    prompt: Is a cold-start supervised stage mandatory for all reasoning models?
-    options:
-    - id: c
-      text: Only if the model uses tokens
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Recipes can differ in their starting stages.
-- id: reasoning-demonstrations.transfer
-  objective_ref: objective.reasoning-demonstrations
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Separate the stages experimentally: trace the inputs, operation, and result before choosing.'
-  remediation_scene: reasoning-demonstrations.s4
-  variants:
-  - id: reasoning-demonstrations.transfer.1
-    prompt: A correct final answer contains an invalid derivation. Should the trace be accepted as fully valid?
-    options:
-    - id: c
-      text: Only if it is long
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Step validity requires checking beyond the final result.
-  - id: reasoning-demonstrations.transfer.2
-    prompt: How can the contribution of demonstrations be assessed?
-    options:
-    - id: a
-      text: Compare checkpoints before and after that stage under matched conditions
-    - id: b
-      text: Inspect only the final model name
-    - id: c
-      text: Count generated words alone
-    answer: a
-    feedback: Stage-level comparisons isolate evidence about the transition.
+  - id: reasoning-demonstrations.base
+    objective_ref: objective.reasoning-demonstrations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Cold start means an initial adaptation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: reasoning-demonstrations.s2
+    variants:
+      - id: reasoning-demonstrations.base.1
+        prompt: What does a reasoning demonstration provide?
+        options:
+          - id: b
+            text: A guarantee of faithful internal self-report
+          - id: c
+            text: Only a scalar optimizer state
+          - id: a
+            text: A supervised example of a solution and its presentation
+        answer: a
+        feedback: It is a target behavior for learning.
+        retired: true
+      - id: reasoning-demonstrations.base.2
+        prompt: Is a cold-start supervised stage mandatory for all reasoning models?
+        options:
+          - id: c
+            text: Only if the model uses tokens
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Recipes can differ in their starting stages.
+        retired: true
+  - id: reasoning-demonstrations.transfer
+    objective_ref: objective.reasoning-demonstrations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Separate the stages experimentally: trace the inputs, operation, and result before choosing.'
+    remediation_scene: reasoning-demonstrations.s4
+    variants:
+      - id: reasoning-demonstrations.transfer.1
+        prompt: A correct final answer contains an invalid derivation. Should the trace be accepted as fully valid?
+        options:
+          - id: c
+            text: Only if it is long
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Step validity requires checking beyond the final result.
+        retired: true
+      - id: reasoning-demonstrations.transfer.2
+        prompt: How can the contribution of demonstrations be assessed?
+        options:
+          - id: a
+            text: Compare checkpoints before and after that stage under matched conditions
+          - id: b
+            text: Inspect only the final model name
+          - id: c
+            text: Count generated words alone
+        answer: a
+        feedback: Stage-level comparisons isolate evidence about the transition.
+        retired: true
+  - id: reasoning-demonstrations.base.v2
+    objective_ref: objective.reasoning-demonstrations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Supervised training copies the whole trace, habits included. Ask what the traces teach beyond their final answers, and what a filter that checks only answers lets through.
+    remediation_scene: reasoning-demonstrations.s3
+    variants:
+      - id: reasoning-demonstrations.base.v2.1
+        prompt: What does supervised fine-tuning on reasoning demonstrations teach a model?
+        options:
+          - id: b
+            text: To maximize a reward for correct final answers on new problems
+          - id: a
+            text: To imitate the demonstrated way of working, mistakes included
+          - id: c
+            text: To store the demonstrated answers so it can look them up later
+        answer: a
+        feedback: SFT puts the loss on every token of the trace, so the model learns to produce solutions like the demonstrations, flaws and all. Rewarding correct answers is what RL does, and the model doesn't keep a lookup table of answers.
+      - id: reasoning-demonstrations.base.v2.2
+        prompt: Why did DeepSeek-R1 add a cold-start stage that DeepSeek-R1-Zero didn't have?
+        options:
+          - id: a
+            text: R1-Zero's reasoning was often hard to read and mixed languages
+          - id: c
+            text: R1-Zero couldn't improve at all with RL applied to a base model
+          - id: b
+            text: RL can't compute rewards unless a supervised stage comes first
+        answer: a
+        feedback: R1-Zero improved a lot through RL alone (15.6% to 71.0% on AIME 2024), but its output was hard to read. The cold start gave RL a readable starting style. Rule-based rewards can be computed with or without a supervised stage.
+      - id: reasoning-demonstrations.base.v2.3
+        prompt: In STaR, which rationales go into the fine-tuning set?
+        options:
+          - id: c
+            text: Each rationale it generates, so that the model sees its own mistakes
+          - id: b
+            text: Those that a human reviewer rated as clearly and carefully written
+          - id: a
+            text: Those that reached the correct answer, including hint-assisted ones
+        answer: a
+        feedback: STaR keeps rationales whose final answer is correct, and for failed questions it gives the correct answer as a hint and keeps rationales that then reach it. Including wrong rationales would teach wrong methods, and STaR uses no human rating step.
+      - id: reasoning-demonstrations.base.v2.4
+        prompt: An answer-only filter selects model-written traces. Why does it let through more flawed reasoning on 4-option questions than on questions with free-form numeric answers?
+        options:
+          - id: a
+            text: A flawed chain often lands on the right option by chance
+          - id: b
+            text: The filter reads multiple-choice traces less carefully
+          - id: c
+            text: Numeric problems are easier, so flawed steps are rarer
+        answer: a
+        feedback: With four options, a random guess is right a quarter of the time, so bad chains pass the answer check. Hitting an exact number by luck is far rarer. The filter treats both kinds the same way, and numeric problems aren't necessarily easier.
+      - id: reasoning-demonstrations.base.v2.5
+        prompt: Every demonstration in a dataset is a 2,000-token derivation, even for questions like "What is 15% of 80?" What is the likely effect of fine-tuning on it?
+        options:
+          - id: b
+            text: The model gets more accurate on hard problems and leaves easy ones alone
+          - id: c
+            text: The model learns to skip steps on hard problems to keep answers short
+          - id: a
+            text: The model writes long derivations even when a quick answer would do
+        answer: a
+        feedback: The model imitates the length as well as the content, so it learns that every question deserves an essay. Mixing in short, direct solutions for easy problems teaches it to match effort to difficulty.
+  - id: reasoning-demonstrations.transfer.v2
+    objective_ref: objective.reasoning-demonstrations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Look past the answer count. Ask what the traces would teach if copied exactly, and compare checkpoints stage by stage before crediting any one of them.
+    remediation_scene: reasoning-demonstrations.s5
+    variants:
+      - id: reasoning-demonstrations.transfer.v2.1
+        prompt: 'A team fine-tunes a contract-review model on 300 demonstrations, then runs RL. On held-out contracts, accuracy is 30% (base), 33% (after SFT), and 55% (after RL); correct output format is 40%, 96%, and 95%. Which summary fits?'
+        options:
+          - id: c
+            text: The demonstrations produced the accuracy gain, and RL polished the format
+          - id: a
+            text: SFT mainly fixed the format, and RL produced most of the accuracy gain
+          - id: b
+            text: Neither stage helped much, because format and accuracy moved separately
+        answer: a
+        feedback: Format jumped from 40% to 96% at the SFT stage while accuracy rose 3 points; RL then added 22 points of accuracy with format unchanged. Comparing each pair of neighboring checkpoints is what reveals this.
+      - id: reasoning-demonstrations.transfer.v2.2
+        prompt: You're building a dataset of worked chemistry solutions from a model's own outputs, keeping those with correct final answers. Which addition would improve the data most?
+        options:
+          - id: a
+            text: Check the steps in the kept traces and drop those with invalid ones
+          - id: b
+            text: Keep only the longest traces, since they show the most working
+          - id: c
+            text: Remove the final check step from each trace to save training tokens
+        answer: a
+        feedback: A correct answer can hide a lucky or broken chain, and the model will copy it. Length isn't quality; long traces can be padded. Dropping the check step removes one of the most useful habits a demonstration can teach.
+      - id: reasoning-demonstrations.transfer.v2.3
+        prompt: A coding-help model was fine-tuned on demonstrations that all solve problems with recursion. Users complain that it writes recursive code even for simple loops. What is the best fix?
+        options:
+          - id: b
+            text: Add more recursive demonstrations so it gets better at recursion
+          - id: a
+            text: Add demonstrations that use a range of valid approaches, loops included
+          - id: c
+            text: Keep the same demonstrations and fine-tune on them for more epochs
+        answer: a
+        feedback: The model copied the one style it was shown. Varied, valid methods teach it that the approach should fit the problem. More of the same style, or more epochs on it, would only deepen the habit.
+      - id: reasoning-demonstrations.transfer.v2.4
+        prompt: A demonstration set for a physics tutor contains 120 rewordings of the same projectile problem, all with the same numbers and answer. What is the main risk?
+        options:
+          - id: c
+            text: The model will refuse to answer that projectile problem again
+          - id: b
+            text: None, since each reworded copy is still a correct solution
+          - id: a
+            text: The model can memorize that answer rather than learn the method
+        answer: a
+        feedback: With the numbers fixed, repeating the final answer works as well as solving the problem, so the model may never learn the method. Changed-number versions make memorization useless. Being correct doesn't make 120 copies useful.
+  - id: reasoning-demonstrations.calculate
+    objective_ref: objective.reasoning-demonstrations
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Add the traces the model truly solves to the wrong ones that guess right (the unsolved share times 1 ÷ number of options). The lucky share is lucky ÷ total kept.
+    remediation_scene: reasoning-demonstrations.s3
+    absolute_tolerance: 0.5
+    variants:
+      - id: reasoning-demonstrations.calculate.1
+        prompt: A model truly solves 50% of 4-option questions and guesses at random on the rest. An answer-only filter keeps every trace with the right option. What percentage of the kept traces are lucky guesses?
+        answer: 20
+        feedback: Lucky traces are 0.5 × ¼ = 0.125 and kept traces are 0.5 + 0.125 = 0.625, so 0.125 ÷ 0.625 = 20%.
+      - id: reasoning-demonstrations.calculate.2
+        prompt: On true/false questions, a model truly solves 40% and guesses at random on the rest. What percentage of the traces kept by an answer-only filter are lucky guesses?
+        answer: 42.86
+        feedback: Lucky traces are 0.6 × ½ = 0.3 and kept traces are 0.4 + 0.3 = 0.7, so 0.3 ÷ 0.7 ≈ 42.86%. Two options make the answer filter very leaky.
+      - id: reasoning-demonstrations.calculate.3
+        prompt: A model truly solves 60% of 5-option questions and guesses at random on the rest. What percentage of the traces kept by an answer-only filter are lucky guesses?
+        answer: 11.76
+        feedback: Lucky traces are 0.4 × ⅕ = 0.08 and kept traces are 0.6 + 0.08 = 0.68, so 0.08 ÷ 0.68 ≈ 11.76%.
+      - id: reasoning-demonstrations.calculate.4
+        prompt: An early model truly solves only 20% of 4-option questions and guesses at random on the rest. What percentage of the traces kept by an answer-only filter are lucky guesses?
+        answer: 50
+        feedback: Lucky traces are 0.8 × ¼ = 0.2 and kept traces are 0.2 + 0.2 = 0.4, so half the kept traces, 50%, teach a bad method. Answer-only filtering is weakest when the model is weakest.

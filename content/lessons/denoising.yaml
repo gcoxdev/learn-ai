@@ -1,291 +1,507 @@
 schema_version: 0.2-draft
 lesson:
   id: denoising
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: How an image can emerge from noise
   state: draft
-  summary: A diffusion-style image generator learns a denoising-related task and uses a chosen sampling procedure
-    to turn noise into a structured sample, often conditioned on text.
+  summary: Add static to a photo a thousand times and it becomes pure snow. Teach a network to undo one step, and it can turn fresh snow into a picture nobody took.
   slot: M22.6
   category: destination
   sources:
-  - title: Denoising Diffusion Probabilistic Models
-    url: https://arxiv.org/abs/2006.11239
-  - title: Scalable Diffusion Models with Transformers
-    url: https://arxiv.org/abs/2212.09748
-  - title: Score-Based Generative Modeling through SDEs
-    url: https://arxiv.org/abs/2011.13456
+    - title: Denoising Diffusion Probabilistic Models (Ho, Jain & Abbeel, 2020)
+      url: https://arxiv.org/abs/2006.11239
+    - title: Deep Unsupervised Learning using Nonequilibrium Thermodynamics (Sohl-Dickstein et al., 2015)
+      url: https://arxiv.org/abs/1503.03585
+    - title: Score-Based Generative Modeling through Stochastic Differential Equations (Song et al., 2020)
+      url: https://arxiv.org/abs/2011.13456
+    - title: Scalable Diffusion Models with Transformers (Peebles & Xie, 2022)
+      url: https://arxiv.org/abs/2212.09748
+    - title: "U-Net: Convolutional Networks for Biomedical Image Segmentation (Ronneberger, Fischer & Brox, 2015)"
+      url: https://arxiv.org/abs/1505.04597
 objectives:
-- id: objective.denoising
-  version: 1-draft
-  statement: A diffusion-style image generator learns a denoising-related task and uses a chosen sampling procedure
-    to turn noise into a structured sample, often conditioned on text.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - denoising.base
-  - denoising.transfer
-  prerequisites:
-  - anyOf:
-    - objective.backpropagation
-  - anyOf:
-    - objective.data
+  - id: objective.denoising
+    version: 2-draft
+    statement: A diffusion-style image generator learns a denoising-related task and uses a chosen sampling procedure to turn noise into a structured sample, often conditioned on text.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - denoising.base.v2
+      - denoising.transfer.v2
+      - denoising.calculate
+    prerequisites:
+      - anyOf:
+          - objective.backpropagation
+      - anyOf:
+          - objective.data
 scenes:
-- id: denoising.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.denoising
-  text_mode: 'A digital image can be represented by an array of pixel values. Color channels describe quantities
-    such as red, green, and blue. Some generators instead work in a compressed learned representation called
-    a latent.
+  - id: denoising.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.denoising
+    title: Run the film backwards
+    markdown: |-
+      Take a photo of a lighthouse and sprinkle a little static over it. Then a little more. After a thousand rounds, the lighthouse is gone: you're looking at pure TV snow. Destroying the picture was easy. Now imagine a film of those thousand frames, run backwards: snow slowly clears into a lighthouse. A **diffusion model** learns to run that film backwards, one frame at a time. Start it from brand-new snow and a brand-new picture appears.
 
+      To a computer, a grayscale image is a grid of brightness values between 0 (black) and 1 (white); a color image has three such grids, for red, green, and blue. Everything in this lesson happens to each value in the grid at once, so we can follow a single pixel with brightness 0.8.
 
-    For this introduction, imagine a small grayscale array: each cell is one brightness value.'
-  title: An image is an array of values
-  markdown: 'A digital image can be represented by an array of pixel values. Color channels describe quantities
-    such as red, green, and blue. Some generators instead work in a compressed learned representation called
-    a latent.
+      :::story From physics to photographs
+      Sohl-Dickstein and colleagues introduced diffusion models in 2015, borrowing the idea from the physics of ink spreading through water. In 2020, Ho, Jain, and Abbeel's **DDPM** (denoising diffusion probabilistic models) simplified training to "predict the noise" and rivaled the best GANs. By 2022, diffusion powered DALL·E 2, Imagen, and Stable Diffusion.
+      :::
+  - id: denoising.s2
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.denoising
+    title: Make a training problem by adding noise
+    markdown: |-
+      Training pairs are free to make. Take a clean image and draw random **noise** $\varepsilon$ (epsilon): one number per pixel from the standard bell curve, with mean 0 and standard deviation 1. DDPM mixes them like this:
 
+      $$x_t = \sqrt{\bar\alpha_t}\; x_0 + \sqrt{1 - \bar\alpha_t}\; \varepsilon$$
 
-    For this introduction, imagine a small grayscale array: each cell is one brightness value.'
-- id: denoising.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.denoising
-  text_mode: 'A diffusion training setup can choose an image, a noise level, and random noise, then create
-    a noisy example. The network learns a specified target related to the clean sample or noise.
+      Here $x_0$ is the clean pixel, $x_t$ the noisy one, and $\bar\alpha_t$ (alpha-bar) a number between 0 and 1 that says how much signal survives at noise level $t$. Say $\bar\alpha_t = 0.64$, so the signal multiplier is $\sqrt{0.64} = 0.8$ and the noise multiplier is $\sqrt{0.36} = 0.6$. With $x_0 = 0.8$ and a draw $\varepsilon = -0.4$:
 
+      $$x_t = 0.8 \times 0.8 + 0.6 \times (-0.4) = 0.64 - 0.24 = 0.40$$
 
-    Predicting noise is one important parameterization. It is not the only valid objective. Data preparation,
-    noise schedule and target definition are separate design choices.
+      Notice the signal is *shrunk* as noise is added. Because $0.8^2 + 0.6^2 = 1$, the blend never inflates the spread of the values (for data scaled to spread 1, it stays exactly 1). As $\bar\alpha_t$ falls toward 0, nothing is left but a standard bell curve.
 
+      The explorer below uses a simpler recipe: it adds a fixed pattern of disturbances scaled by the noise amount, without shrinking the image, and clips to the range 0 to 1. At the defaults, pixel 15 (row 3, column 3) shows $0.2 + 0.4 \times (-0.16) = 0.136$. Slide the amount to 1 and the dark disk dissolves, while the clean reference never changes: the training program always knows both halves of the pair.
+    figure:
+      kind: image-noise
+      caption: A clean image and an explicitly corrupted version make the training-pair idea visible.
+      description: Add a repeatable bounded disturbance to a six-by-six grayscale image. Inspect a pixel’s clean value, disturbance, and clipped displayed value. This demonstrates constructing a corrupted input; it is not a learned reverse-diffusion sampler.
+    bridges:
+      - random-variables
+  - id: denoising.schedule
+    title: A thousand small steps, one shortcut
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.denoising
+    markdown: |-
+      Where does $\bar\alpha_t$ come from? The **forward process** adds noise in small steps. At step $t$ it keeps a fraction $\alpha_t = 1 - \beta_t$ of the variance and adds fresh noise with variance $\beta_t$. The list of $\beta$ values is the **noise schedule**. Surviving signal multiplies up:
 
-    For one toy value, let clean brightness be 0.8, signal multiplier 0.75, noise multiplier 0.5 and sampled
-    noise −0.4. The noisy value is 0.75 × 0.8 + 0.5 × (−0.4) = 0.4. The training program knows which clean
-    value and noise created the example. A fresh generation request has no such hidden target image waiting
-    to be uncovered.'
-  title: Make a training problem by adding noise
-  markdown: 'A diffusion training setup can choose an image, a noise level, and random noise, then create a
-    noisy example. The network learns a specified target related to the clean sample or noise.
+      $$\bar\alpha_t = \alpha_1 \times \alpha_2 \times \cdots \times \alpha_t$$
 
+      With a tiny schedule $\beta = 0.2, 0.2, 0.5$: $\bar\alpha_1 = 0.8$, $\bar\alpha_2 = 0.8 \times 0.8 = 0.64$ (our example above), and $\bar\alpha_3 = 0.64 \times 0.5 = 0.32$.
 
-    Predicting noise is one important parameterization. It is not the only valid objective. Data preparation,
-    noise schedule and target definition are separate design choices.
+      :::papers The closed-form forward process (Ho et al., 2020)
+      $$q(x_t \mid x_0) = \mathcal{N}\!\big(\sqrt{\bar\alpha_t}\,x_0,\; (1 - \bar\alpha_t)\,I\big) \quad\Longleftrightarrow\quad x_t = \sqrt{\bar\alpha_t}\,x_0 + \sqrt{1 - \bar\alpha_t}\,\varepsilon$$
 
+      You never have to add noise step by step: jump straight to any level $t$ with one draw of $\varepsilon$. DDPM used $T = 1{,}000$ steps with $\beta$ rising linearly from 0.0001 to 0.02.
+      :::
 
-    For one toy value, let clean brightness be 0.8, signal multiplier 0.75, noise multiplier 0.5 and sampled
-    noise −0.4. The noisy value is 0.75 × 0.8 + 0.5 × (−0.4) = 0.4. The training program knows which clean
-    value and noise created the example. A fresh generation request has no such hidden target image waiting
-    to be uncovered.'
-  figure:
-    kind: image-noise
-    caption: A clean image and an explicitly corrupted version make the training-pair idea visible.
-    description: Add a repeatable bounded disturbance to a six-by-six grayscale image. Inspect a pixel’s clean
-      value, disturbance, and clipped displayed value. This demonstrates constructing a corrupted input; it
-      is not a learned reverse-diffusion sampler.
-  bridges:
-  - random-variables
-- id: denoising.s3
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.denoising
-  text_mode: 'At inference, a sampling procedure starts from noise and uses model predictions over several
-    steps to form a sample. The selected solver or sampler defines how the state changes.
+      ```python run
+      import numpy as np
 
+      x0, eps = 0.8, -0.4                 # one clean pixel and one fixed noise draw
 
-    The interactive illustration below blends fixed arrays to make the direction visible. It is a teaching
-    illustration, not an actual trained diffusion model.'
-  title: Generate using repeated model computations
-  markdown: 'At inference, a sampling procedure starts from noise and uses model predictions over several steps
-    to form a sample. The selected solver or sampler defines how the state changes.
+      # A tiny schedule: beta is the fresh noise added at each step
+      betas = np.array([0.2, 0.2, 0.5])
+      alpha_bar = np.cumprod(1 - betas)   # 0.8, 0.64, 0.32
+      for t, ab in enumerate(alpha_bar, start=1):
+          xt = np.sqrt(ab) * x0 + np.sqrt(1 - ab) * eps
+          print(f"t={t}: alpha_bar={ab:.3f}  signal={np.sqrt(ab):.3f}  "
+                f"noise={np.sqrt(1 - ab):.3f}  x_t={xt:.3f}")
 
+      # DDPM's schedule: 1,000 steps, beta rising linearly from 0.0001 to 0.02
+      betas = np.linspace(1e-4, 0.02, 1000)
+      alpha_bar = np.cumprod(1 - betas)
+      print("\nDDPM schedule")
+      for t in [1, 100, 250, 500, 1000]:
+          ab = alpha_bar[t - 1]
+          xt = np.sqrt(ab) * x0 + np.sqrt(1 - ab) * eps
+          print(f"t={t:4}: signal={np.sqrt(ab):.3f}  noise={np.sqrt(1 - ab):.3f}  x_t={xt:.3f}")
+      ```
 
-    The interactive illustration below blends fixed arrays to make the direction visible. It is a teaching
-    illustration, not an actual trained diffusion model.'
-  simulation: denoising
-- id: denoising.s4
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.denoising
-  text_mode: 'A text-conditioned generator encodes the prompt and supplies that representation to a model through
-    a specified conditioning mechanism. The prompt influences the sample; it is not simply a photograph hidden
-    inside the starting noise.
+      :::predict In DDPM's schedule, how much of the original pixel survives at t = 1,000?
+      The signal multiplier is 0.006, so the pixel contributes $0.006 \times 0.8 \approx 0.005$, and $x_{1000} = -0.395$ is almost exactly the noise draw. That's the point: the last step is indistinguishable from fresh noise, so generation can start from fresh noise.
+      :::
+  - id: denoising.loss
+    title: "The network's only job: guess the noise"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.denoising
+    markdown: |-
+      The **denoiser** is a neural network $\varepsilon_\theta(x_t, t)$ that sees a noisy image and its noise level $t$ and predicts the noise that was added. One training step:
 
+      1. Pick a training image $x_0$, a random level $t$, and fresh noise $\varepsilon$.
+      2. Make $x_t$ with the closed form.
+      3. Predict $\hat\varepsilon = \varepsilon_\theta(x_t, t)$.
+      4. Take the loss $\|\varepsilon - \hat\varepsilon\|^2$ and update the weights by backpropagation.
 
-    Different architectures can use different denoisers. A U-Net and a transformer denoiser are alternatives;
-    neither defines every diffusion system.'
-  title: Where does the prompt enter?
-  markdown: 'A text-conditioned generator encodes the prompt and supplies that representation to a model through
-    a specified conditioning mechanism. The prompt influences the sample; it is not simply a photograph hidden
-    inside the starting noise.
+      For our pixel, the true noise was $-0.4$. If the network predicts $\hat\varepsilon = -0.3$, the loss is $(-0.4 + 0.3)^2 = 0.01$. A noise guess also gives a clean-image guess, by solving the forward formula for $x_0$:
 
+      $$\hat{x}_0 = \frac{x_t - \sqrt{1 - \bar\alpha_t}\,\hat\varepsilon}{\sqrt{\bar\alpha_t}} = \frac{0.40 - 0.6 \times (-0.3)}{0.8} = 0.725$$
 
-    Different architectures can use different denoisers. A U-Net and a transformer denoiser are alternatives;
-    neither defines every diffusion system.'
-- id: denoising.s5
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.denoising
-  text_mode: 'The **training loop** creates noisy examples, predicts a target, measures loss, and updates trainable
-    weights.
+      That's close to the true 0.8. Predicting noise is the choice DDPM found worked best; some systems predict $x_0$ or a mix of the two instead, and the formula above converts between them.
 
+      :::mixup "The denoiser uncovers the one real photo hidden in the noise."
+      During training there is a real photo, because we made the noise. At generation time there isn't: the snow is fresh, and the denoiser's guesses steer it toward *some* image that looks like the training data.
+      :::
+  - id: denoising.s3
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.denoising
+    title: From snow to picture, one step at a time
+    markdown: |-
+      To generate, start from pure noise $x_T$ and walk down the levels. At each step the denoiser predicts the noise, the sampler removes some of it, then adds back a little fresh noise so the image doesn't settle too early on one blurry average. DDPM took 1,000 such steps.
 
-    The **sampling loop** uses the trained model to update a developing sample. Its changing values are the
-    sample itself; the model''s weights ordinarily stay fixed.
+      :::papers One DDPM reverse step
+      $$x_{t-1} = \frac{1}{\sqrt{\alpha_t}}\left(x_t - \frac{\beta_t}{\sqrt{1 - \bar\alpha_t}}\,\hat\varepsilon\right) + \sigma_t z$$
 
+      From $x_2 = 0.40$ in the tiny schedule ($\alpha_2 = 0.8$, $\beta_2 = 0.2$) with $\hat\varepsilon = -0.3$: $(0.40 + \tfrac{0.2}{0.6} \times 0.3) / \sqrt{0.8} = 0.5 / 0.894 = 0.559$, then add fresh noise $\sigma_t z$ with a new random $z$. DDPM's simplest choice is $\sigma_t = \sqrt{\beta_t}$.
+      :::
 
-    Keeping these loops separate explains why training starts with known images while a fresh text-to-image
-    request can start with noise.'
-  title: Two loops, different jobs
-  markdown: 'The **training loop** creates noisy examples, predicts a target, measures loss, and updates trainable
-    weights.
+      The illustration below shows only the *direction* of that journey, with no network: each pixel slides in a straight line from a fixed noise value to a fixed landscape. At step $s$ of 10, a pixel shows $(1 - s/10) \times \text{noise} + (s/10) \times \text{picture}$. The top-left pixel starts at 0.29 and ends as sky at 0.67; at step 5 it's 0.48. A trained model finds a different picture for every new start. (This straight-line path returns in the flow matching lesson.)
+    simulation: denoising
+  - id: denoising.s4
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.denoising
+    title: Where does the prompt enter?
+    markdown: |-
+      A text-to-image model gives the denoiser one more input, an encoding of the prompt: $\varepsilon_\theta(x_t, t, \text{text})$. Its noise guesses then steer toward images that match "a lighthouse at dusk". The prompt shapes every step's prediction; it isn't hiding in the starting noise.
 
+      The network inside is a separate choice. DDPM used a **U-Net**, the segmentation network from module 12: it shrinks the image to see the big picture, then expands it back, with skip connections carrying fine detail across. DiT (Peebles & Xie, 2022) uses a transformer over image patches instead. The latent diffusion lesson shows how Stable Diffusion combines these pieces.
+  - id: denoising.s5
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.denoising
+    title: Two loops, different jobs
+    markdown: |-
+      Diffusion has two loops that are easy to confuse:
 
-    The **sampling loop** uses the trained model to update a developing sample. Its changing values are the
-    sample itself; the model''s weights ordinarily stay fixed.
+      | | Training loop | Sampling loop |
+      | --- | --- | --- |
+      | Starts from | A real image plus noise you drew | Pure noise |
+      | Each pass | One random level $t$ | Every level from $T$ down to 1 |
+      | Network output used for | The loss $\|\varepsilon - \hat\varepsilon\|^2$ | Removing noise from the image |
+      | What changes | The weights | The image; weights stay frozen |
 
+      A 1,000-step sampler runs the network 1,000 times per picture, which is why the flow matching lesson looks for ways to take fewer steps.
+    diagram:
+      caption: Training teaches the denoiser on real images; sampling reuses it, frozen, on fresh noise.
+      description: In the training loop, a training image is mixed with drawn noise at a random level to make a noisy image. The denoiser predicts the noise, the loss compares it with the true noise, and the loss updates the denoiser's weights. The trained weights are copied to the sampling loop. There, sampling starts from pure noise; the frozen denoiser predicts the noise, a sampler step removes some of it and adds a little fresh noise, and the step repeats T times until an image emerges.
+      nodes:
+        - id: clean
+          label: Training image x₀
+          col: 0
+          row: 0
+          tone: data
+        - id: noisy
+          label: Noisy x_t
+          note: √ᾱ·x₀ + √(1−ᾱ)·ε
+          col: 1
+          row: 0
+        - id: den1
+          label: Denoiser ε_θ(x_t, t)
+          note: learning
+          col: 2
+          row: 0
+          tone: accent
+        - id: loss
+          label: Loss ‖ε − ε̂‖²
+          col: 3
+          row: 0
+          tone: warn
+        - id: start
+          label: Pure noise x_T
+          col: 0
+          row: 2
+          tone: muted
+        - id: den2
+          label: Same denoiser
+          note: weights frozen
+          col: 1
+          row: 2
+          tone: accent
+        - id: step
+          label: Sampler step
+          note: remove some noise, add a little
+          col: 2
+          row: 2
+        - id: image
+          label: New image
+          note: after T steps
+          col: 3
+          row: 2
+          tone: data
+      edges:
+        - from: clean
+          to: noisy
+        - from: noisy
+          to: den1
+        - from: den1
+          to: loss
+        - from: loss
+          to: den1
+          label: update weights
+          dashed: true
+          bend: 1
+        - from: den1
+          to: den2
+          label: trained weights
+          dashed: true
+        - from: start
+          to: den2
+        - from: den2
+          to: step
+        - from: step
+          to: den2
+          label: repeat T times
+          dashed: true
+          bend: 2
+        - from: step
+          to: image
+  - id: denoising.extension-schedule-score
+    title: Predicting noise is predicting the score
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.denoising
+    markdown: |-
+      There's a second way to read the denoiser. The **score** of a distribution is the direction that makes an image more probable: the gradient of the log-density with respect to the pixels, $\nabla_x \log p(x_t)$. For Gaussian noise, the noise prediction and the score are the same arrow, rescaled and flipped:
 
-    Keeping these loops separate explains why training starts with known images while a fresh text-to-image
-    request can start with noise.'
-- id: denoising.extension-schedule-score
-  title: Noise schedules and the score
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.denoising
-  markdown: 'A **noise schedule** controls the mixture of signal and noise at each training time. A common
-    form is x_t = a_t x_clean + b_t ε. Here t names the time or noise level, a_t and b_t are chosen multipliers,
-    and ε is a draw from a standard Gaussian distribution. The network receives both the noisy state and time
-    so it knows which noise level to handle.
+      $$\nabla_{x}\log p(x_t) \approx -\frac{\hat\varepsilon}{\sqrt{1 - \bar\alpha_t}}$$
 
-
-    The **score** is the gradient of log density with respect to the noisy input. It points toward a local
-    increase in density; it is not a human rating of image quality. The derivatives and integrals side lessons
-    explain the calculus behind this quantity.
-
-
-    Under specified Gaussian corruption, noise prediction and score estimation are related by a known scale
-    and sign. Clean-sample, noise, and velocity targets are other related parameterizations, with conversions
-    determined by the recipe. Choosing the training target and schedule is separate from choosing the network
-    architecture or inference solver.'
-  text_mode: 'A **noise schedule** controls the mixture of signal and noise at each training time. A common
-    form is x_t = a_t x_clean + b_t ε. Here t names the time or noise level, a_t and b_t are chosen multipliers,
-    and ε is a draw from a standard Gaussian distribution. The network receives both the noisy state and time
-    so it knows which noise level to handle.
-
-
-    The **score** is the gradient of log density with respect to the noisy input. It points toward a local
-    increase in density; it is not a human rating of image quality. The derivatives and integrals side lessons
-    explain the calculus behind this quantity.
-
-
-    Under specified Gaussian corruption, noise prediction and score estimation are related by a known scale
-    and sign. Clean-sample, noise, and velocity targets are other related parameterizations, with conversions
-    determined by the recipe. Choosing the training target and schedule is separate from choosing the network
-    architecture or inference solver.'
-  bridges:
-  - random-variables
-  - multivariable-calculus
-- id: denoising.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.denoising
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Training teaches a model about noisy data. Sampling uses its predictions and a chosen update rule
-    to turn noise into a structured sample.
-- id: denoising.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.denoising
-  markdown: Training teaches a model about noisy data. Sampling uses its predictions and a chosen update rule
-    to turn noise into a structured sample.
-  text_mode: Training teaches a model about noisy data. Sampling uses its predictions and a chosen update rule
-    to turn noise into a structured sample.
+      With $\hat\varepsilon = -0.3$ and $\sqrt{1 - \bar\alpha_t} = 0.6$, the score is $+0.5$: brighten this pixel, pushing back against the negative noise the network thinks was added. Song and colleagues (2020) rebuilt diffusion around this view, treating noising as a continuous process and sampling by following the learned score.
+    bridges:
+      - random-variables
+      - multivariable-calculus
+  - id: denoising.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.denoising
+    markdown: Noisy-pixel and schedule calculations, plus an audio denoiser, a slow sampler, and a model that won't follow prompts, test whether you can trace diffusion training and sampling.
+    takeaway: |-
+      Training mixes a clean image with noise, x_t = √ᾱ·x₀ + √(1−ᾱ)·ε, and teaches a network to predict the noise. Sampling starts from fresh noise and removes predicted noise step by step until a new image appears.
+  - id: denoising.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.denoising
+    markdown: |-
+      Training teaches a model about noisy data. Sampling uses its predictions and a chosen update rule to turn noise into a structured sample.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - denoising.s1
-    - denoising.s2
-    - denoising.s3
-    - denoising.s4
-    - denoising.s5
-    - denoising.extension-schedule-score
-    - denoising.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - denoising.s1
+        - denoising.s2
+        - denoising.schedule
+        - denoising.loss
+        - denoising.s3
+        - denoising.s4
+        - denoising.s5
+        - denoising.extension-schedule-score
+        - denoising.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     denoising.recap: denoising.check
 assessment_families:
-- id: denoising.base
-  objective_ref: objective.denoising
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: A diffusion-style image generator learns a denoising-related task and uses a chosen sampling procedure
-    to turn noise into a structured sample, often conditioned on text.
-  variants:
-  - id: denoising.base.1
-    prompt: What is the sampling loop changing during image generation?
-    options:
-    - id: correct
-      text: The current sample according to model predictions and a sampling rule.
-    - id: a
-      text: Necessarily all network weights at each step.
-    - id: b
-      text: The historical training dataset itself.
-    answer: correct
-    feedback: The current sample according to model predictions and a sampling rule.
-  - id: denoising.base.2
-    prompt: What can a grayscale image be represented as?
-    options:
-    - id: a
-      text: Only a sentence.
-    - id: b
-      text: A single fixed class label with no spatial arrangement.
-    - id: correct
-      text: An array of brightness values.
-    answer: correct
-    feedback: An array of brightness values.
-- id: denoising.transfer
-  objective_ref: objective.denoising
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: A diffusion-style image generator learns a denoising-related task and uses a chosen sampling procedure
-    to turn noise into a structured sample, often conditioned on text.
-  variants:
-  - id: denoising.transfer.1
-    prompt: Does every diffusion generator need a U-Net denoiser?
-    options:
-    - id: a
-      text: Yes. U-Net is the definition of diffusion.
-    - id: b
-      text: Yes. A transformer cannot process image representations.
-    - id: correct
-      text: No. Other denoiser architectures, including transformers, can be used.
-    answer: correct
-    feedback: No. Other denoiser architectures, including transformers, can be used.
-  - id: denoising.transfer.2
-    prompt: Why is a toy blend from noise to a fixed image not proof of a working diffusion model?
-    options:
-    - id: b
-      text: Because a diffusion model cannot start from noise.
-    - id: correct
-      text: It has no learned denoiser or actual model-based sampling mechanism.
-    - id: a
-      text: Because all image generation is impossible.
-    answer: correct
-    feedback: It has no learned denoiser or actual model-based sampling mechanism.
+  - id: denoising.base
+    objective_ref: objective.denoising
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: A diffusion-style image generator learns a denoising-related task and uses a chosen sampling procedure to turn noise into a structured sample, often conditioned on text.
+    variants:
+      - id: denoising.base.1
+        prompt: What is the sampling loop changing during image generation?
+        options:
+          - id: correct
+            text: The current sample according to model predictions and a sampling rule.
+          - id: a
+            text: Necessarily all network weights at each step.
+          - id: b
+            text: The historical training dataset itself.
+        answer: correct
+        feedback: The current sample according to model predictions and a sampling rule.
+        retired: true
+      - id: denoising.base.2
+        prompt: What can a grayscale image be represented as?
+        options:
+          - id: a
+            text: Only a sentence.
+          - id: b
+            text: A single fixed class label with no spatial arrangement.
+          - id: correct
+            text: An array of brightness values.
+        answer: correct
+        feedback: An array of brightness values.
+        retired: true
+  - id: denoising.transfer
+    objective_ref: objective.denoising
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: A diffusion-style image generator learns a denoising-related task and uses a chosen sampling procedure to turn noise into a structured sample, often conditioned on text.
+    variants:
+      - id: denoising.transfer.1
+        prompt: Does every diffusion generator need a U-Net denoiser?
+        options:
+          - id: a
+            text: Yes. U-Net is the definition of diffusion.
+          - id: b
+            text: Yes. A transformer cannot process image representations.
+          - id: correct
+            text: No. Other denoiser architectures, including transformers, can be used.
+        answer: correct
+        feedback: No. Other denoiser architectures, including transformers, can be used.
+        retired: true
+      - id: denoising.transfer.2
+        prompt: Why is a toy blend from noise to a fixed image not proof of a working diffusion model?
+        options:
+          - id: b
+            text: Because a diffusion model cannot start from noise.
+          - id: correct
+            text: It has no learned denoiser or actual model-based sampling mechanism.
+          - id: a
+            text: Because all image generation is impossible.
+        answer: correct
+        feedback: It has no learned denoiser or actual model-based sampling mechanism.
+        retired: true
+  - id: denoising.base.v2
+    objective_ref: objective.denoising
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Separate the loops. Training makes a noisy copy of a real image and scores the noise guess; sampling starts from pure noise and changes the image, never the weights.
+    remediation_scene: denoising.s5
+    variants:
+      - id: denoising.base.v2.1
+        prompt: During sampling, what changes from one step to the next?
+        options:
+          - id: b
+            text: The denoiser's weights, nudged toward the prompt
+          - id: a
+            text: The image, as predicted noise is removed
+          - id: c
+            text: The noise schedule, which is re-learned each step
+        answer: a
+        feedback: Sampling updates the image with the frozen network's noise predictions. Weights change only during training, and the schedule is fixed in advance.
+      - id: denoising.base.v2.2
+        prompt: In one training step, what does the loss compare?
+        options:
+          - id: c
+            text: The noisy image and the clean image
+          - id: b
+            text: The generated image and the prompt
+          - id: a
+            text: The added noise and the predicted noise
+        answer: a
+        feedback: The loss is ‖ε − ε̂‖², the drawn noise against the network's guess. The training program knows ε because it made the noisy image itself.
+      - id: denoising.base.v2.3
+        prompt: Why does DDPM shrink the clean signal by √ᾱ as it adds noise?
+        options:
+          - id: a
+            text: So the spread stays constant and the final level is pure standard noise
+          - id: b
+            text: So the pixel values stay between 0 and 1 at every noise level
+          - id: c
+            text: So the network can undo each step by multiplying by √ᾱ
+        answer: a
+        feedback: Because ᾱ + (1 − ᾱ) = 1, the variance never grows, and as ᾱ → 0 the image becomes indistinguishable from fresh standard noise, which is where sampling starts. Values can go below 0 or above 1, and undoing a step needs the noise guess.
+      - id: denoising.base.v2.4
+        prompt: A noise level has √ᾱ = 0.8 and √(1 − ᾱ) = 0.6. The noisy pixel is 0.4 and the network predicts ε̂ = −0.3. What is its guess for the clean pixel?
+        options:
+          - id: b
+            text: '0.58, from 0.4 + 0.18 without dividing'
+          - id: c
+            text: '0.275, from (0.4 − 0.18) / 0.8'
+          - id: a
+            text: '0.725, from (0.4 + 0.18) / 0.8'
+        answer: a
+        feedback: x̂₀ = (x_t − √(1 − ᾱ)·ε̂)/√ᾱ = (0.4 − 0.6 × (−0.3))/0.8 = 0.58/0.8 = 0.725. Forgetting the minus sign on ε̂ gives 0.275, and forgetting to divide by √ᾱ leaves 0.58.
+  - id: denoising.transfer.v2
+    objective_ref: objective.denoising
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Map the new situation onto the two loops, then ask which piece (noise level, network input, number of steps) the problem is really about.
+    remediation_scene: denoising.s4
+    variants:
+      - id: denoising.transfer.v2.1
+        prompt: A team adapts diffusion to generate 1-second audio clips as arrays of 16,000 samples. What stays the same as for images?
+        options:
+          - id: c
+            text: The U-Net, since diffusion needs a two-dimensional grid
+          - id: a
+            text: Mixing clean clips with noise and training a network to predict it
+          - id: b
+            text: The noise schedule, since images and audio share one scale
+        answer: a
+        feedback: The recipe of adding noise and predicting it works on any array of numbers. The network and schedule are design choices you'd retune for audio.
+      - id: denoising.transfer.v2.2
+        prompt: A product team finds that a 1,000-step diffusion sampler takes 40 seconds per image. Where is most of the time going?
+        options:
+          - id: a
+            text: Running the denoiser once for every one of the 1,000 steps
+          - id: b
+            text: Drawing the 1,000 fresh noise values between steps
+          - id: c
+            text: Updating the weights after each of the 1,000 steps
+        answer: a
+        feedback: Each step is a full network pass, so cost scales with the step count. Drawing random numbers is cheap, and sampling never updates weights.
+      - id: denoising.transfer.v2.3
+        prompt: A text-to-image model's pictures look good but ignore the prompt. Which part of the design would you check first?
+        options:
+          - id: b
+            text: The noise schedule, since it sets how much of the prompt survives
+          - id: c
+            text: The starting noise, since the prompt is encoded inside it
+          - id: a
+            text: How the prompt encoding reaches the denoiser at each step
+        answer: a
+        feedback: The prompt steers generation only through the denoiser's extra input, ε_θ(x_t, t, text). The schedule controls noise levels, and the prompt was never inside the starting noise.
+      - id: denoising.transfer.v2.4
+        prompt: A photo app uses a trained diffusion denoiser to clean up grainy night shots. Why can the same network help here?
+        options:
+          - id: c
+            text: It memorized clean versions of the user's photos during training
+          - id: a
+            text: It learned to predict noise at many levels, so it can remove real grain too
+          - id: b
+            text: It adds noise first, which cancels out the grain in the photo
+        answer: a
+        feedback: A denoiser trained across noise levels has learned what images look like beneath noise. It hasn't seen the user's photos, and adding noise doesn't cancel grain.
+  - id: denoising.calculate
+    objective_ref: objective.denoising
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "x_t = √ᾱ·x₀ + √(1 − ᾱ)·ε, and ᾱ_t is the product of (1 − β) over the steps so far. Take square roots of ᾱ and of 1 − ᾱ, not of the pixel."
+    remediation_scene: denoising.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: denoising.calculate.1
+        prompt: 'With ᾱ = 0.64, a clean pixel x₀ = 0.5 and noise draw ε = 1.0, what is the noisy pixel x_t?'
+        answer: 1
+        feedback: √0.64 = 0.8 and √0.36 = 0.6, so x_t = 0.8 × 0.5 + 0.6 × 1.0 = 0.4 + 0.6 = 1.0.
+      - id: denoising.calculate.2
+        prompt: 'With ᾱ = 0.36, a clean pixel x₀ = 1.0 and noise draw ε = −0.5, what is x_t?'
+        answer: 0.2
+        feedback: √0.36 = 0.6 and √0.64 = 0.8, so x_t = 0.6 × 1.0 + 0.8 × (−0.5) = 0.6 − 0.4 = 0.2.
+      - id: denoising.calculate.3
+        prompt: 'A schedule has β₁ = 0.1 and β₂ = 0.2. What is ᾱ₂?'
+        answer: 0.72
+        feedback: ᾱ₂ = (1 − 0.1) × (1 − 0.2) = 0.9 × 0.8 = 0.72. Adding the betas (0.3) or subtracting their sum from 1 (0.7) are the usual slips.
+      - id: denoising.calculate.4
+        prompt: 'With ᾱ = 0.25, what is the noise multiplier √(1 − ᾱ)?'
+        answer: 0.866
+        feedback: √(1 − 0.25) = √0.75 ≈ 0.866. The signal multiplier is √0.25 = 0.5, and 0.5² + 0.866² = 1.
+      - id: denoising.calculate.5
+        prompt: 'The true noise was ε = 0.5 and the network predicted ε̂ = 0.2. What is the squared-error loss?'
+        answer: 0.09
+        feedback: (0.5 − 0.2)² = 0.3² = 0.09.

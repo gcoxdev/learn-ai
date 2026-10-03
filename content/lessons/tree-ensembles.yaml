@@ -1,214 +1,385 @@
 schema_version: 0.2-draft
 lesson:
   id: tree-ensembles
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Combine many imperfect predictors
   state: draft
-  summary: Compare averaging several trees with building a sequence of small corrections.
+  summary: One decision tree is jumpy. Fifty trees voting, or a chain of small trees each fixing the last one's mistakes, give the models that still win most spreadsheet problems.
   slot: M07.5
   category: learning
   sources:
-  - title: An Introduction to Statistical Learning — authors’ materials
-    url: https://www.statlearning.com/
+    - title: An Introduction to Statistical Learning — authors’ materials
+      url: https://www.statlearning.com/
+    - title: "Breiman (2001), Random Forests"
+      url: https://doi.org/10.1023/A:1010933404324
+    - title: "Chen & Guestrin (2016), XGBoost: A Scalable Tree Boosting System"
+      url: https://arxiv.org/abs/1603.02754
 objectives:
-- id: objective.tree-ensembles
-  version: 1-draft
-  statement: Bagging reduces instability by averaging varied fits; random forests add feature randomness, while
-    boosting builds an additive model that targets remaining error.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - tree-ensembles.base
-  - tree-ensembles.transfer
-  prerequisites:
-  - anyOf:
-    - objective.decision-trees
-  - anyOf:
-    - objective.randomness-reproducibility
+  - id: objective.tree-ensembles
+    version: 2-draft
+    statement: Bagging reduces instability by averaging varied fits; random forests add feature randomness, while boosting builds an additive model that targets remaining error.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - tree-ensembles.base.v2
+      - tree-ensembles.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.decision-trees
+      - anyOf:
+          - objective.randomness-reproducibility
 scenes:
-- id: tree-ensembles.s1
-  title: Combine models that make different mistakes
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.tree-ensembles
-  markdown: 'An **ensemble** combines several models. **Bagging**, short for bootstrap aggregating, trains
-    each model on a resampled training set and combines their predictions.
+  - id: tree-ensembles.s1
+    title: Ask fifty jumpy trees instead of one
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.tree-ensembles
+    markdown: |-
+      In 1907 Francis Galton reported on a country-fair contest to guess an ox's weight. Single guesses varied wildly, but the middle guess of roughly 800 entries was 1,207 lb, against a true 1,198 lb: within 1%. Errors pointing in different directions cancel.
 
+      A deep decision tree is jumpy: a few changed rows can reshape it. So grow many trees and let them vote. A group of models whose predictions are combined is an **ensemble**.
 
-    A **bootstrap sample** draws examples with replacement: one record can appear twice while another is left
-    out. These different samples can lead the models to make different errors. Predictions 8, 10, and 12 average
-    to 10; three predictions of 8 still average to 8.
+      To get different trees from one dataset, give each tree a different **bootstrap sample**: draw rows at random *with replacement* until you have as many as the original. Some rows get drawn twice or more, and others not at all. Train one deep tree per sample, then average their predictions (or take a majority vote for classes). That's **bagging**, short for bootstrap aggregating, introduced by Leo Breiman in 1996.
 
+      How much of the data does each tree see? One draw misses a given row with probability $1 - 1/n$, so all $n$ draws miss it with probability
 
-    Averaging can reduce variation between fitted models when their errors are not perfectly correlated. The
-    models need both useful predictions and enough differences for the combination to help.'
-  text_mode: 'An **ensemble** combines several models. **Bagging**, short for bootstrap aggregating, trains
-    each model on a resampled training set and combines their predictions.
+      $$\left(1 - \frac{1}{n}\right)^n \approx \frac{1}{e} \approx 0.368$$
 
+      Each bootstrap sample therefore contains about 63.2% of the distinct rows ($1 - 1/e$). The other 36.8% are that tree's **out-of-bag** rows: rows it never trained on, which come in handy shortly.
+    bridges: []
+  - id: tree-ensembles.s5
+    title: Averaging shrinks the wobble
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tree-ensembles
+    markdown: |-
+      Does averaging help? Simulate 300 fresh datasets of 30 streaming users, predicting next month's viewing hours from this week's (the true answer at 5 hours is 5). On one feature, a fully grown tree predicts with the closest training user, which the code uses as a shortcut.
 
-    A **bootstrap sample** draws examples with replacement: one record can appear twice while another is left
-    out. These different samples can lead the models to make different errors. Predictions 8, 10, and 12 average
-    to 10; three predictions of 8 still average to 8.
+      ```python run
+      import numpy as np
+      data_rng, boot_rng = np.random.default_rng(0), np.random.default_rng(1)
+      B = 50                                     # number of trees in the bag
 
+      def deep_tree(x, y, q):
+          """Prediction at q of a tree grown until every leaf holds one distinct x value
+          (thresholds halfway between neighbors): the target of the closest training point."""
+          gap = np.abs(x - q)
+          return y[gap == gap.min()].mean()
 
-    Averaging can reduce variation between fitted models when their errors are not perfectly correlated. The
-    models need both useful predictions and enough differences for the combination to help.'
-  bridges: []
-- id: tree-ensembles.s2
-  title: A forest randomizes the splits too
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tree-ensembles
-  markdown: 'Random forests use trees with randomness in examples and candidate features. Restricting features
-    considered at a split can reduce correlation between trees. Out-of-bag examples offer a useful internal
-    evaluation mechanism under the bootstrap setup, but do not replace every external validation requirement.
+      single, bagged, seen = [], [], []
+      for trial in range(300):                   # 300 fresh datasets of 30 users
+          x = data_rng.uniform(0, 10, 30)        # hours watched this week
+          y = x + data_rng.normal(0, 2, 30)      # hours watched next month (noisy)
+          single.append(deep_tree(x, y, 5.0))
+          votes = []
+          for b in range(B):                     # B trees, each on a bootstrap sample
+              i = boot_rng.integers(0, 30, 30)   # draw 30 rows with replacement
+              seen.append(len(np.unique(i)) / 30)
+              votes.append(deep_tree(x[i], y[i], 5.0))
+          bagged.append(np.mean(votes))
 
+      print("true value at 5 hours: 5.00")
+      print(f"one deep tree:     average {np.mean(single):.2f}, spread (std) {np.std(single):.2f}")
+      print(f"bag of {B:3d} trees: average {np.mean(bagged):.2f}, spread (std) {np.std(bagged):.2f}")
+      print(f"share of rows each bootstrap sample contains: {np.mean(seen):.3f}")
+      ```
 
-    An **out-of-bag** example was not drawn for a particular tree''s training sample. That tree can predict
-    it without having fitted it directly. Aggregating these predictions supplies an internal check, provided
-    the sampling assumptions fit the data. Repeated records from the same person can still create dependence.'
-  text_mode: 'Random forests use trees with randomness in examples and candidate features. Restricting features
-    considered at a split can reduce correlation between trees. Out-of-bag examples offer a useful internal
-    evaluation mechanism under the bootstrap setup, but do not replace every external validation requirement.
+      Both are right on average (5.04 and 4.97), but the single tree's predictions spread with a standard deviation of 2.02, the bag's only 1.41. Each sample held 63.8% of the rows, just as $1 - (1 - 1/30)^{30}$ predicts (it approaches $1 - 1/e$ for large datasets).
 
+      :::predict Would 200 trees instead of 50 shrink the spread to nearly zero?
+      No. Set `B = 200` (the run takes a few seconds) and the spread stays at 1.41. The trees were all grown from the same 30 users, so their errors are correlated. For $B$ trees, each with variance $\sigma^2$ and pairwise correlation $\rho$ (how closely two trees' errors move together: 0 for unrelated, 1 for identical), the average has variance $\rho\sigma^2 + (1 - \rho)\sigma^2 / B$. Here $\sigma = 2.02$ and the bag's 1.41 imply $\rho \approx 0.48$. More trees shrink only the second term, so the spread can't fall below about $\sqrt{0.48} \times 2.02 \approx 1.40$. To do better, make the trees less alike. (Try `B = 1` too: one bootstrapped tree wobbles as much as a plain one.)
+      :::
+    bridges: []
+  - id: tree-ensembles.s2
+    title: A forest randomizes the splits too
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tree-ensembles
+    markdown: |-
+      If one feature, say "shows watched in week 1," is much stronger than the rest, almost every bagged tree splits on it first, so the trees stay alike.
 
-    An **out-of-bag** example was not drawn for a particular tree''s training sample. That tree can predict
-    it without having fitted it directly. Aggregating these predictions supplies an internal check, provided
-    the sampling assumptions fit the data. Repeated records from the same person can still create dependence.'
-  bridges: []
-- id: tree-ensembles.s3
-  title: Boosting adds corrections sequentially
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tree-ensembles
-  markdown: 'Gradient boosting adds a weak learner aimed at reducing the current objective, often by fitting
-    negative-gradient targets. For squared error, these correspond to residual-like corrections. A learning
-    rate scales each addition. The method depends on loss, tree complexity, number of stages, and regularization.
+      A **random forest** (Breiman, 2001) breaks this up. At every split, each tree may choose only from a random handful of features, often about $\sqrt{p}$ of the $p$ available for classification. Some trees must start with a weaker feature and find other patterns. Each tree gets a little worse, but they disagree more, and the lower $\rho$ improves the average.
 
+      Forests also come with a free check. Each row is out-of-bag for roughly 37% of the trees, about 184 of 500. Predict each row using only those trees, which never trained on it, and score the results: the **out-of-bag error** is an estimate of performance on new data without setting aside a separate validation set. If one household appears in many rows, though, its other rows sit in the trees' training samples and flatter the out-of-bag score, so group such rows together or use a proper held-out set.
+    bridges: []
+  - id: tree-ensembles.s3
+    title: Boosting fixes the leftovers, one small tree at a time
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tree-ensembles
+    markdown: |-
+      Bagging grows trees independently and averages them. **Boosting** builds a model in stages instead. Each stage adds a **weak learner**, a deliberately simple model such as a two-level tree, trained to fix what the current model still gets wrong.
 
-    A **weak learner** is a deliberately limited component, often a shallow tree. Suppose the current prediction
-    is 6 and the target is 10. For a half-squared-error objective, the desired correction is target minus prediction,
-    or +4. If a new tree predicts that correction and the learning rate is 0.25, the updated prediction is
-    6 + 0.25 × 4 = 7. The next stage works on what remains.'
-  text_mode: 'Gradient boosting adds a weak learner aimed at reducing the current objective, often by fitting
-    negative-gradient targets. For squared error, these correspond to residual-like corrections. A learning
-    rate scales each addition. The method depends on loss, tree complexity, number of stages, and regularization.
+      For squared error, that's just the residual, taken here as target minus current prediction, so adding it moves the prediction the right way. Take one user whose next-month viewing is 10 hours while the current model predicts 6. The new tree learns the correction +4, and a **learning rate** of 0.25 adds a quarter of it: 6 + 0.25 × 4 = 7. The next stage sees a residual of 3 and moves the prediction to 7.75, then 8.31. If every tree fixed its residual exactly, the gap after 10 stages would be 4 × 0.75¹⁰ ≈ 0.23.
 
+      :::papers Gradient boosting
+      Friedman's gradient boosting (2001) writes the model after $m$ stages as
 
-    A **weak learner** is a deliberately limited component, often a shallow tree. Suppose the current prediction
-    is 6 and the target is 10. For a half-squared-error objective, the desired correction is target minus prediction,
-    or +4. If a new tree predicts that correction and the learning rate is 0.25, the updated prediction is
-    6 + 0.25 × 4 = 7. The next stage works on what remains.'
-  bridges: []
-- id: tree-ensembles.s4
-  title: Compare the mechanisms and risks
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.tree-ensembles
-  markdown: Bagging emphasizes averaging variable fits; boosting builds a staged additive predictor. Neither
-    is simply “more trees means better.” Excessive boosting can fit noise, and correlated training data can
-    undermine evaluation. Use held-out tests, inspect errors, and compare resource cost with simpler alternatives.
-  text_mode: Bagging emphasizes averaging variable fits; boosting builds a staged additive predictor. Neither
-    is simply “more trees means better.” Excessive boosting can fit noise, and correlated training data can
-    undermine evaluation. Use held-out tests, inspect errors, and compare resource cost with simpler alternatives.
-  bridges: []
-- id: tree-ensembles.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.tree-ensembles
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Bagging averages models fitted to different samples. Random forests also vary the features considered
-    at each split. Boosting adds models in sequence to improve the current prediction.
-- id: tree-ensembles.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.tree-ensembles
-  markdown: Bagging averages models fitted to different samples. Random forests also vary the features considered
-    at each split. Boosting adds models in sequence to improve the current prediction.
-  text_mode: Bagging averages models fitted to different samples. Random forests also vary the features considered
-    at each split. Boosting adds models in sequence to improve the current prediction.
+      $$F_m(x) = F_{m-1}(x) + \nu\, h_m(x)$$
+
+      where $h_m$ is a small tree fitted to the residuals $r_i = y_i - F_{m-1}(x_i)$ and $\nu$ is the learning rate. For squared loss, the residual is the negative gradient of $\tfrac{1}{2}(y - F)^2$ with respect to $F$; other losses swap in their own negative gradient. Above, $F_0 = 6$, $r = 4$, $\nu = 0.25$, and $F_1 = 7$.
+      :::
+
+      :::mixup "Boosting can't overfit, since every stage lowers the training error."
+      That's exactly why it can overfit: keep adding stages and the trees fit noise. Stop adding trees when validation error stops falling (**early stopping**). A small learning rate with more trees usually generalizes better than big steps.
+      :::
+    bridges: []
+  - id: tree-ensembles.s4
+    title: Why boosted trees still win on spreadsheets
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.tree-ensembles
+    markdown: |-
+      | | Bagging and random forests | Gradient boosting |
+      | --- | --- | --- |
+      | Trees are grown | Independently (easy to run in parallel) | In sequence, each fixing the last |
+      | Typical tree | Deep, jumpy | Shallow, weak |
+      | Mainly reduces | Variance (the wobble) | Bias (the systematic miss) |
+      | Main knobs | Number of trees, features per split | Learning rate, tree depth, number of stages |
+
+      XGBoost (Chen and Guestrin, 2016) made gradient boosting fast and well regularized, and it became a competition staple: its paper reports that 17 of the 29 winning solutions published on Kaggle's blog in 2015 used it. LightGBM and CatBoost followed. For tables, with rows of customers or transactions and columns that each mean something different, boosted trees remain among the strongest choices; Grinsztajn, Oyallon and Varoquaux (2022) found them ahead of deep networks on many medium-sized tabular benchmarks. Trees shrug off columns in wildly different units, sudden jumps in the target, and useless columns.
+
+      So for a new spreadsheet problem, a sensible first plan is a simple baseline, then a random forest, then gradient boosting with early stopping, all scored on the same held-out rows.
+    bridges: []
+  - id: tree-ensembles.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.tree-ensembles
+    markdown: Step boosting predictions forward by hand, then diagnose forests that stop improving, boosting runs that overfit, and out-of-bag counts.
+    takeaway: |-
+      Bagging and random forests average many varied trees to cancel their wobble. Boosting adds small trees in sequence, each fixing what's left of the error, so stop it when validation error stops falling.
+  - id: tree-ensembles.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.tree-ensembles
+    markdown: |-
+      Bagging averages models fitted to different samples. Random forests also vary the features considered at each split. Boosting adds models in sequence to improve the current prediction.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - tree-ensembles.s1
-    - tree-ensembles.s2
-    - tree-ensembles.s3
-    - tree-ensembles.s4
-    - tree-ensembles.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - tree-ensembles.s1
+        - tree-ensembles.s5
+        - tree-ensembles.s2
+        - tree-ensembles.s3
+        - tree-ensembles.s4
+        - tree-ensembles.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     tree-ensembles.recap: tree-ensembles.check
 assessment_families:
-- id: tree-ensembles.base
-  objective_ref: objective.tree-ensembles
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'A forest randomizes the splits too: trace the inputs, operation, and result before choosing.'
-  remediation_scene: tree-ensembles.s2
-  variants:
-  - id: tree-ensembles.base.1
-    prompt: When does averaging help least with model error?
-    options:
-    - id: c
-      text: Whenever there is more than one model
-    - id: a
-      text: When all models make the same error
-    - id: b
-      text: When errors differ usefully
-    answer: a
-    feedback: Perfectly correlated errors are not canceled by averaging.
-  - id: tree-ensembles.base.2
-    prompt: What additional randomness is characteristic of random forests?
-    options:
-    - id: a
-      text: Considering subsets of features at splits
-    - id: b
-      text: Changing the test labels after scoring
-    - id: c
-      text: Removing every tree objective
-    answer: a
-    feedback: Feature randomness helps diversify tree predictions.
-- id: tree-ensembles.transfer
-  objective_ref: objective.tree-ensembles
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compare the mechanisms and risks: trace the inputs, operation, and result before choosing.'
-  remediation_scene: tree-ensembles.s4
-  variants:
-  - id: tree-ensembles.transfer.1
-    prompt: A new boosting stage is fitted to negative-gradient targets. What is its role?
-    options:
-    - id: a
-      text: Reduce the current objective through an additive correction
-    - id: b
-      text: Vote independently with no relation to earlier stages
-    - id: c
-      text: Replace the data-collection process
-    answer: a
-    feedback: Boosting stages respond to the current model’s remaining error signal.
-  - id: tree-ensembles.transfer.2
-    prompt: Adding hundreds of stages lowers training loss but worsens validation. What should be considered?
-    options:
-    - id: b
-      text: A guarantee that validation is invalid
-    - id: c
-      text: Only adding more stages indefinitely
-    - id: a
-      text: Overfitting and regularization or early stopping
-    answer: a
-    feedback: Training fit and generalization can diverge as complexity grows.
+  - id: tree-ensembles.base
+    objective_ref: objective.tree-ensembles
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'A forest randomizes the splits too: trace the inputs, operation, and result before choosing.'
+    remediation_scene: tree-ensembles.s2
+    variants:
+      - id: tree-ensembles.base.1
+        prompt: When does averaging help least with model error?
+        options:
+          - id: c
+            text: Whenever there is more than one model
+          - id: a
+            text: When all models make the same error
+          - id: b
+            text: When errors differ usefully
+        answer: a
+        feedback: Perfectly correlated errors are not canceled by averaging.
+        retired: true
+      - id: tree-ensembles.base.2
+        prompt: What additional randomness is characteristic of random forests?
+        options:
+          - id: a
+            text: Considering subsets of features at splits
+          - id: b
+            text: Changing the test labels after scoring
+          - id: c
+            text: Removing every tree objective
+        answer: a
+        feedback: Feature randomness helps diversify tree predictions.
+        retired: true
+  - id: tree-ensembles.transfer
+    objective_ref: objective.tree-ensembles
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compare the mechanisms and risks: trace the inputs, operation, and result before choosing.'
+    remediation_scene: tree-ensembles.s4
+    variants:
+      - id: tree-ensembles.transfer.1
+        prompt: A new boosting stage is fitted to negative-gradient targets. What is its role?
+        options:
+          - id: a
+            text: Reduce the current objective through an additive correction
+          - id: b
+            text: Vote independently with no relation to earlier stages
+          - id: c
+            text: Replace the data-collection process
+        answer: a
+        feedback: Boosting stages respond to the current model’s remaining error signal.
+        retired: true
+      - id: tree-ensembles.transfer.2
+        prompt: Adding hundreds of stages lowers training loss but worsens validation. What should be considered?
+        options:
+          - id: b
+            text: A guarantee that validation is invalid
+          - id: c
+            text: Only adding more stages indefinitely
+          - id: a
+            text: Overfitting and regularization or early stopping
+        answer: a
+        feedback: Training fit and generalization can diverge as complexity grows.
+        retired: true
+  - id: tree-ensembles.base.v2
+    objective_ref: objective.tree-ensembles
+    task: base
+    response_type: numeric_fields_with_reason
+    points: 1
+    hint: The residual is target minus current prediction. Each stage adds learning rate × residual (here the new tree fits the residual exactly); then recompute the residual for the next stage.
+    remediation_scene: tree-ensembles.s3
+    variants:
+      - id: tree-ensembles.base.v2.1
+        prompt: 'A boosted model currently predicts 20 for a house whose true value is 12, with learning rate 0.5. Each new tree fits the current residual exactly. Find the first residual, the prediction after one stage, and the prediction after two stages.'
+        feedback: The residual is 12 − 20 = −8, so stage one gives 20 + 0.5 × (−8) = 16. The new residual is −4, so stage two gives 16 − 2 = 14. Each stage closes half the remaining gap.
+        answers:
+          residual: -8
+          stage1: 16
+          stage2: 14
+        reason_answer: leftover
+        reason_options:
+          - id: leftover
+            text: Each new tree is fitted to what the current model still gets wrong.
+          - id: fresh
+            text: Each new tree is fitted to the original targets from scratch.
+          - id: average
+            text: Each new tree is fitted to the average of the earlier trees.
+      - id: tree-ensembles.base.v2.2
+        prompt: 'A boosted model currently predicts 5 for a customer who actually spends 15, with learning rate 0.1. Each new tree fits the current residual exactly. Find the first residual, the prediction after one stage, and the prediction after two stages.'
+        feedback: The residual is 15 − 5 = 10, so stage one gives 5 + 0.1 × 10 = 6. The new residual is 9, so stage two gives 6 + 0.9 = 6.9. A small learning rate takes many stages but moves carefully.
+        answers:
+          residual: 10
+          stage1: 6
+          stage2: 6.9
+        reason_answer: leftover
+        reason_options:
+          - id: fresh
+            text: Each new tree is fitted to the original targets from scratch.
+          - id: leftover
+            text: Each new tree is fitted to what the current model still gets wrong.
+          - id: average
+            text: Each new tree is fitted to the average of the earlier trees.
+      - id: tree-ensembles.base.v2.3
+        prompt: 'A boosted model currently predicts 100 for a delivery that actually took 140 minutes, with learning rate 0.25. Each new tree fits the current residual exactly. Find the first residual, the prediction after one stage, and the prediction after two stages.'
+        feedback: The residual is 140 − 100 = 40, so stage one gives 100 + 0.25 × 40 = 110. The new residual is 30, so stage two gives 110 + 7.5 = 117.5.
+        answers:
+          residual: 40
+          stage1: 110
+          stage2: 117.5
+        reason_answer: leftover
+        reason_options:
+          - id: average
+            text: Each new tree is fitted to the average of the earlier trees.
+          - id: fresh
+            text: Each new tree is fitted to the original targets from scratch.
+          - id: leftover
+            text: Each new tree is fitted to what the current model still gets wrong.
+      - id: tree-ensembles.base.v2.4
+        prompt: 'A boosted model currently predicts 3 for a patient whose true score is 1, with learning rate 0.5. Each new tree fits the current residual exactly. Find the first residual, the prediction after one stage, and the prediction after two stages.'
+        feedback: The residual is 1 − 3 = −2, so stage one gives 3 + 0.5 × (−2) = 2. The new residual is −1, so stage two gives 2 − 0.5 = 1.5. Negative residuals pull the prediction down.
+        answers:
+          residual: -2
+          stage1: 2
+          stage2: 1.5
+        reason_answer: leftover
+        reason_options:
+          - id: leftover
+            text: Each new tree is fitted to what the current model still gets wrong.
+          - id: average
+            text: Each new tree is fitted to the average of the earlier trees.
+          - id: fresh
+            text: Each new tree is fitted to the original targets from scratch.
+    absolute_tolerance: 0.01
+    numeric_fields:
+      - id: residual
+        label: First residual (target − prediction)
+      - id: stage1
+        label: Prediction after one stage
+      - id: stage2
+        label: Prediction after two stages
+  - id: tree-ensembles.transfer.v2
+    objective_ref: objective.tree-ensembles
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Bagging and forests average many varied trees to cut their wobble, so ask how alike the trees are. Boosting adds small corrections in sequence, so ask where validation error stops falling.
+    remediation_scene: tree-ensembles.s2
+    variants:
+      - id: tree-ensembles.transfer.v2.1
+        prompt: A random forest of 300 trees is trained on 10,000 loan applications, each tree on its own bootstrap sample. For one application, about how many trees never saw it during training?
+        options:
+          - id: a
+            text: About 190, since a sample misses roughly 63% of rows
+          - id: b
+            text: About 110, since a sample misses roughly 37% of rows
+          - id: c
+            text: None, since each sample has 10,000 rows like the original
+        answer: b
+        feedback: A sample misses a given row with probability (1 − 1/n)^n ≈ 1/e ≈ 0.368, and 0.368 × 300 ≈ 110. The 63% is the share of rows a sample does contain; the sample has 10,000 draws, but many are repeats.
+      - id: tree-ensembles.transfer.v2.2
+        prompt: A team bags deep trees to predict crop yield. One feature, rainfall, is far stronger than the others. Going from 50 to 500 trees barely changes validation error. What is the most promising change?
+        options:
+          - id: a
+            text: Grow each tree deeper so that it captures more of the detail
+          - id: b
+            text: Add another 500 trees so the extra votes average out noise
+          - id: c
+            text: Let each split choose from a random subset of features
+        answer: c
+        feedback: With rainfall dominating, every tree splits on it first, so the trees are highly correlated and more of them can't lower the ρσ² floor. Random feature subsets (a random forest) make the trees disagree. Deeper trees would add wobble, not diversity.
+      - id: tree-ensembles.transfer.v2.3
+        prompt: A gradient-boosting run for insurance claims shows validation error falling until about stage 300, then slowly rising through stage 2,000, while training error keeps falling. What should the team do?
+        options:
+          - id: a
+            text: Keep the model from around stage 300 and stop there
+          - id: b
+            text: Keep going past 2,000, since training error still falls
+          - id: c
+            text: Switch to deeper trees so each stage fixes more error
+        answer: a
+        feedback: This is early stopping. After stage 300 the new trees fit noise in the training data, so validation error rises. Falling training error is exactly what overfitting looks like, and deeper trees would overfit sooner.
+      - id: tree-ensembles.transfer.v2.4
+        prompt: Two boosting runs on the same data reach similar training error. Run A uses learning rate 1.0 and 50 trees; run B uses 0.1 and 500 trees. B does better on validation. What is the best explanation?
+        options:
+          - id: b
+            text: B averages its 500 trees, so their noise cancels like in bagging
+          - id: c
+            text: Small steps spread each fix over many trees and fit less noise
+          - id: a
+            text: A lower learning rate grows deeper, more detailed trees
+        answer: c
+        feedback: With a small learning rate, each tree contributes a little and later trees can correct earlier ones, which tends to generalize better. Boosting adds its trees in sequence rather than averaging them, and the learning rate doesn't change tree depth.
+      - id: tree-ensembles.transfer.v2.5
+        prompt: 'A retailer predicts next month''s returns from a 40-column table of 50,000 orders: prices, dates, regions, and product codes in very different units. Which model is a strong first choice after a simple baseline?'
+        options:
+          - id: c
+            text: One deep decision tree, as it can be read and explained
+          - id: b
+            text: Gradient-boosted trees, stopped early on held-out rows
+          - id: a
+            text: kNN on the raw columns, since it has no weights to fit
+        answer: b
+        feedback: Boosted trees handle mixed units, jumps, and weak columns without special preparation and do very well on tables like this. A single deep tree is readable but jumpy, and kNN on unscaled columns would let the biggest units dominate every distance.

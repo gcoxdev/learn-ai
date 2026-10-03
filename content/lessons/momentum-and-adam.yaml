@@ -4,272 +4,331 @@ lesson:
   version: 0.3.0-draft
   title: How momentum and Adam use earlier gradients
   state: draft
-  summary: Compare step-size schedules and gradient memory, then see what Adam stores between updates.
+  summary: Plain gradient descent zigzags down narrow valleys. See how a rolling ball's momentum and Adam's per-weight step sizes get to the bottom in a fraction of the steps.
   slot: M10.4
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
-  - title: Dive into Deep Learning — learning rate scheduling
-    url: https://d2l.ai/chapter_optimization/lr-scheduler.html
-  - title: 'Adam: A Method for Stochastic Optimization'
-    url: https://arxiv.org/abs/1412.6980
+    - title: Dive into Deep Learning — authors’ open textbook
+      url: https://d2l.ai/
+    - title: Dive into Deep Learning — learning rate scheduling
+      url: https://d2l.ai/chapter_optimization/lr-scheduler.html
+    - title: 'Adam: A Method for Stochastic Optimization'
+      url: https://arxiv.org/abs/1412.6980
+    - title: 'SGDR: Stochastic Gradient Descent with Warm Restarts (cosine schedule)'
+      url: https://arxiv.org/abs/1608.03983
 objectives:
-- id: objective.momentum-and-adam
-  version: 1-draft
-  statement: Learning-rate schedules and momentum-based optimizers transform the gradient history; Adam estimates
-    first and second moments, and its settings still require validation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - momentum-and-adam.base
-  - momentum-and-adam.transfer
-  prerequisites:
-  - anyOf:
-    - objective.stochastic-gradients
+  - id: objective.momentum-and-adam
+    version: 2-draft
+    statement: Learning-rate schedules and momentum-based optimizers transform the gradient history; Adam estimates first and second moments, and its settings still require validation.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - momentum-and-adam.base.v2
+      - momentum-and-adam.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.stochastic-gradients
 scenes:
-- id: momentum-and-adam.s1
-  title: The learning rate controls the step scale
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.momentum-and-adam
-  markdown: 'A gradient gives a direction and scale for changing a parameter. The learning rate multiplies
-    that gradient to determine the update size. A schedule changes this multiplier over training. Warmup gradually
-    raises it early; decay reduces it under a chosen rule.
+  - id: momentum-and-adam.s1
+    title: Big steps early, small steps late
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.momentum-and-adam
+    markdown: |-
+      A golfer far from the hole takes a full swing; on the green they switch to gentle taps. Training does the same by changing the learning rate as it goes. The plan for how the rate changes is called a **learning-rate schedule**.
 
+      Try it on the bowl-shaped loss L(w) = w², whose gradient is 2w and whose bottom is at 0. Start at w = 4 with rate 0.8. The first step is 0.8 × 8 = 6.4, landing at −2.4: past zero, but closer, so the loss still falls from 16 to 5.76.
 
-    Use the small bowl-shaped loss L(w) = w² to isolate the schedule. Its minimum is at zero. Starting from
-    w = 4, the gradient is 8; a learning rate of 0.8 takes the parameter across zero to −2.4. Crossing the
-    minimum is an overshoot, but the loss still falls because the new point is closer to zero.
+      :::predict One run keeps the rate at 0.8. The other divides it by the step number, so step 2 uses 0.4. Which has the smaller loss after two steps?
+      Both take the same first step to −2.4, where the gradient is −4.8. The constant run steps 0.8 × 4.8 = 3.84 and overshoots to 1.44 (loss 2.07). The decaying run steps 0.4 × 4.8 = 1.92 and lands at −0.48 (loss 0.23), nine times lower. Near the bottom, a smaller step stops you bouncing across it. Try other starting rates in the lab below.
+      :::
 
+      Many large models use **warmup** followed by **cosine decay**. For the first $T_w$ steps the rate climbs in a straight line from 0 to its peak $\eta_{\max}$; then it glides back down along half a cosine wave:
 
-    Predict which run has the smaller loss after two updates: a constant rate, or a rate divided by the update
-    number. Then try a smaller starting rate. A familiar schedule is a hypothesis to test, not a universal
-    optimum. Real results also depend on the loss, initialization, batches, and optimizer state.'
-  text_mode: 'A gradient gives a direction and scale for changing a parameter. The learning rate multiplies
-    that gradient to determine the update size. A schedule changes this multiplier over training. Warmup gradually
-    raises it early; decay reduces it under a chosen rule.
+      $$\eta_t = \eta_{\max}\cdot\frac{t}{T_w} \;\;(t < T_w), \qquad \eta_t = \frac{\eta_{\max}}{2}\left(1 + \cos\!\left(\pi\,\frac{t - T_w}{T - T_w}\right)\right) \;\;(t \ge T_w)$$
 
+      With peak 0.001, 1,000 warmup steps, and $T$ = 10,000 steps in total, the rate is 0.0005 at step 500, 0.001 at step 1,000, 0.0005 again at step 5,500 (halfway through the decay), and 0 at the end. Warmup protects the first steps, when the weights are random, gradients can be erratic, and Adam's running averages (below) rest on very few gradients. Loshchilov and Hutter's SGDR paper (2016) popularized the cosine shape.
+    bridges: []
+    figure:
+      kind: learning-rate
+      caption: Predict, then compare constant and decaying learning rates on the same scalar quadratic.
+      description: Both runs begin at w=4 with loss w². Each update recomputes gradient 2w. One run uses a constant rate; the other divides its starting rate by the update number. Their losses and trajectories remain separate from assessment evidence.
+  - id: momentum-and-adam.s2
+    title: A rolling ball remembers its direction
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.momentum-and-adam
+    markdown: |-
+      Picture a long, narrow valley: steep walls side to side, a gentle slope along the floor. The gradient points mostly at the nearest wall, so plain gradient descent bounces from wall to wall and creeps along the floor. A heavy ball rolling down the same valley does better: its side-to-side motion cancels out, while its motion along the floor builds up speed.
 
-    Use the small bowl-shaped loss L(w) = w² to isolate the schedule. Its minimum is at zero. Starting from
-    w = 4, the gradient is 8; a learning rate of 0.8 takes the parameter across zero to −2.4. Crossing the
-    minimum is an overshoot, but the loss still falls because the new point is closer to zero.
+      **Momentum** gives the optimizer that memory. It keeps a running total of recent gradients, called the **velocity** $v$ (one per weight), and steps along the velocity instead of the raw gradient:
 
+      $$v \leftarrow \beta\, v + g, \qquad w \leftarrow w - \eta\, v$$
 
-    Predict which run has the smaller loss after two updates: a constant rate, or a rate divided by the update
-    number. Then try a smaller starting rate. A familiar schedule is a hypothesis to test, not a universal
-    optimum. Real results also depend on the loss, initialization, batches, and optimizer state.'
-  bridges: []
-  figure:
-    kind: learning-rate
-    caption: Predict, then compare constant and decaying learning rates on the same scalar quadratic.
-    description: Both runs begin at w=4 with loss w². Each update recomputes gradient 2w. One run uses a constant
-      rate; the other divides its starting rate by the update number. Their losses and trajectories remain
-      separate from assessment evidence.
-- id: momentum-and-adam.s2
-  title: Remember earlier gradients with momentum
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.momentum-and-adam
-  markdown: 'A learning-rate schedule changes the step multiplier. **Momentum** also changes the direction
-    estimate by keeping a **buffer**, a stored memory of earlier gradients. One convention is v = βv_previous
-    + g. Here g is the current gradient and β, read “beta,” controls how much of the old buffer remains.
+      Here $g$ is the current gradient and $\beta$ ("beta", usually 0.9) sets how much of the old velocity survives each step. With $\beta = 0.9$, old velocity 2, and new gradient 1, the velocity becomes 0.9 × 2 + 1 = **2.8**, and with $\eta = 0.1$ the weight moves by 0.28. If the new gradient had been −1 instead, the velocity would be 1.8 − 1 = 0.8: still forward, because the past outweighs one contrary gradient. That's how the wall-to-wall bounces cancel. The idea goes back to Boris Polyak's "heavy ball" method (1964).
 
+      :::mixup "Momentum is just a bigger learning rate."
+      Only when the gradient keeps pointing the same way. Then the velocity grows toward $g/(1-\beta)$, 10 times the gradient for $\beta = 0.9$: a tenfold rate along the valley floor, exactly where you want one. Gradients that alternate, like the ones across the walls, cancel instead, where a bigger rate would make the bouncing worse. (Some libraries write $v \leftarrow \beta v + (1-\beta) g$, which shrinks $v$ by a factor of $1-\beta$; check the form before comparing learning rates.)
+      :::
+    bridges:
+      - algebra-notation
+  - id: momentum-and-adam.s3
+    title: Adam gives every weight its own step size
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.momentum-and-adam
+    markdown: |-
+      Momentum still uses one learning rate for every weight. But in the narrow valley, the steep direction wants tiny steps and the shallow one wants big ones. **Adam** (Kingma and Ba, 2014), one of the most widely used optimizers in deep learning, keeps two running averages for each weight:
 
-    With β = 0.9, previous buffer 2, and gradient 1, the new buffer is 2.8. At learning rate 0.1, subtract
-    0.28 from the model parameter. The buffer is not itself the new parameter.
+      - $m$, an average of recent gradients: which way to go (like momentum)
+      - $v$, an average of recent *squared* gradients: how big the gradients usually are
 
+      Each step divides $m$ by $\sqrt{v}$. A weight whose gradients are usually huge gets its step shrunk; one whose gradients are tiny gets its step enlarged. Squaring matters: gradients of +2 and −2 average to 0, but their squares are both 4, so $v$ still sees the size.
 
-    What if the current gradient is −1? The buffer becomes 0.8: earlier gradients still outweigh the latest
-    change of direction. This memory can smooth updates or carry them past a minimum. With β = 0, this convention
-    keeps no earlier memory. Other conventions scale the gradient contribution differently, so read the stated
-    update rule.'
-  text_mode: 'A learning-rate schedule changes the step multiplier. **Momentum** also changes the direction
-    estimate by keeping a **buffer**, a stored memory of earlier gradients. One convention is v = βv_previous
-    + g. Here g is the current gradient and β, read “beta,” controls how much of the old buffer remains.
+      :::papers The Adam update
+      With $\beta_1 = 0.9$, $\beta_2 = 0.999$, and $\epsilon = 10^{-8}$ (the paper's defaults), each step $t$ computes
 
+      $$m_t = \beta_1 m_{t-1} + (1-\beta_1)\,g_t, \qquad v_t = \beta_2 v_{t-1} + (1-\beta_2)\,g_t^2$$
 
-    With β = 0.9, previous buffer 2, and gradient 1, the new buffer is 2.8. At learning rate 0.1, subtract
-    0.28 from the model parameter. The buffer is not itself the new parameter.
+      $$\hat m_t = \frac{m_t}{1-\beta_1^t}, \qquad \hat v_t = \frac{v_t}{1-\beta_2^t}, \qquad w_t = w_{t-1} - \eta\,\frac{\hat m_t}{\sqrt{\hat v_t} + \epsilon}$$
 
+      On step 1 with gradient $g_1 = 2$: $m_1 = 0.1 \times 2 = 0.2$ and $v_1 = 0.001 \times 4 = 0.004$. Both started at 0, so they're far too small. **Bias correction** divides by $1 - \beta^t$ to undo that: $\hat m_1 = 0.2 / 0.1 = 2$ and $\hat v_1 = 0.004 / 0.001 = 4$. The step is $\eta \times 2 / \sqrt{4} = \eta$. Without the correction it would be $\eta \times 0.2/\sqrt{0.004} \approx 3.16\eta$, more than three times too big on the very first step.
+      :::
 
-    What if the current gradient is −1? The buffer becomes 0.8: earlier gradients still outweigh the latest
-    change of direction. This memory can smooth updates or carry them past a minimum. With β = 0, this convention
-    keeps no earlier memory. Other conventions scale the gradient contribution differently, so read the stated
-    update rule.'
-  bridges:
-  - algebra-notation
-- id: momentum-and-adam.s3
-  title: Adam remembers direction and scale
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.momentum-and-adam
-  markdown: 'An **exponential average** keeps a fixed fraction of its old value and adds the remaining fraction
-    of a new observation. **Adam** uses two such running averages, called moments: one of gradients and one
-    of squared gradients.
+      :::predict The same first step, but the gradient is 200 instead of 2. How big is Adam's step?
+      Still $\eta$. Now $\hat m_1 = 200$ and $\sqrt{\hat v_1} = 200$, so the ratio is 1. Adam's steps are roughly $\eta$ in size whatever the scale of the gradient, which is why defaults like 0.001 or 0.0003 make a sensible starting point for so many models.
+      :::
 
+      Race all three on a valley 100 times steeper in one direction than the other, starting from $(1, 1)$, and count the steps needed to get within 0.01 of the bottom:
 
-    The first tracks signed direction. The second tracks scale even when signs change. Gradients +2 and −2
-    cancel in a simple average, but both squares are 4. Adam uses exponential averages rather than this two-item
-    average; the example shows why the two memories contain different information.
+      ```python run
+      import numpy as np
 
+      # A long, narrow valley: loss = 0.5 * (100*a**2 + b**2), lowest point at a = b = 0
+      steep = np.array([100.0, 1.0])            # a is steep, b is shallow
 
-    Starting the averages at zero initially pulls them toward zero. **Bias correction** compensates for that
-    initialization. It concerns these estimates, not the additive bias in a neuron.
+      def steps_to_bottom(method, lr, beta1=0.9, beta2=0.999, eps=1e-8):
+          w, m, v = np.array([1.0, 1.0]), np.zeros(2), np.zeros(2)
+          for t in range(1, 5001):
+              g = steep * w                       # the gradient
+              if method == "gradient descent":
+                  w = w - lr * g
+              elif method == "momentum":
+                  m = beta1 * m + g
+                  w = w - lr * m
+              else:                               # Adam
+                  m = beta1 * m + (1 - beta1) * g
+                  v = beta2 * v + (1 - beta2) * g**2
+                  m_hat, v_hat = m / (1 - beta1**t), v / (1 - beta2**t)
+                  w = w - lr * m_hat / (np.sqrt(v_hat) + eps)
+              if np.linalg.norm(w) < 0.01:        # close enough to the bottom
+                  return t
+          return "did not arrive in 5000 steps"
 
+      print("gradient descent, lr 0.019:", steps_to_bottom("gradient descent", 0.019))
+      print("momentum, lr 0.015:        ", steps_to_bottom("momentum", 0.015))
+      print("Adam, lr 0.1:              ", steps_to_bottom("Adam", 0.1))
+      ```
 
-    A common Adam update divides the corrected first moment by the square root of the corrected second moment
-    plus a small stabilizer, then applies the learning rate. This gives different coordinates different effective
-    step sizes. The squared-gradient history is not a **Hessian**, a table of second derivatives, and it cannot
-    repair an unsuitable loss.'
-  text_mode: 'An **exponential average** keeps a fixed fraction of its old value and adds the remaining fraction
-    of a new observation. **Adam** uses two such running averages, called moments: one of gradients and one
-    of squared gradients.
+      Gradient descent needs 241 steps, momentum 70, and Adam 11. Plain descent can't go faster: above rate 0.02 the steep direction blows up (change 0.019 to 0.021 and watch). Adam shines here because the valley's steep and shallow directions line up exactly with the two weights. Tilt it 45° and per-weight scaling helps much less, while momentum still helps.
+  - id: momentum-and-adam.s4
+    title: Save the optimizer, not just the weights
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.momentum-and-adam
+    markdown: |-
+      Momentum and Adam carry memory from step to step. Adam stores two extra numbers ($m$ and $v$) for every weight, plus the step count $t$ used in bias correction. For a 7-billion-weight model with $m$ and $v$ each kept as 32-bit floats (4 bytes), that's 2 × 7 billion × 4 bytes = 56 GB of optimizer state, on top of the weights themselves.
 
+      Suppose a run crashes and you restart from saved weights only. The optimizer wakes up with $m = v = 0$ and $t = 1$, the schedule restarts its warmup, and the momentum that was carrying the weights along the valley floor is gone. Training usually recovers, but the loss curve jumps, and the run is no longer the one you were measuring. A proper **checkpoint** saves the weights, the optimizer's buffers, the step count, and the schedule's position.
 
-    The first tracks signed direction. The second tracks scale even when signs change. Gradients +2 and −2
-    cancel in a simple average, but both squares are 4. Adam uses exponential averages rather than this two-item
-    average; the example shows why the two memories contain different information.
-
-
-    Starting the averages at zero initially pulls them toward zero. **Bias correction** compensates for that
-    initialization. It concerns these estimates, not the additive bias in a neuron.
-
-
-    A common Adam update divides the corrected first moment by the square root of the corrected second moment
-    plus a small stabilizer, then applies the learning rate. This gives different coordinates different effective
-    step sizes. The squared-gradient history is not a **Hessian**, a table of second derivatives, and it cannot
-    repair an unsuitable loss.'
-  bridges: []
-- id: momentum-and-adam.s4
-  title: Inspect the complete optimizer state
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.momentum-and-adam
-  markdown: 'Saving weights alone does not save an optimizer’s full state. Imagine pausing two runs at identical
-    weights. One restores its previous momentum or Adam buffers; the other resets them to zero. Their next
-    updates can differ even on the same batch.
-
-
-    When comparing or resuming runs, record the weights, optimizer buffers, step count, learning-rate schedule,
-    coefficients, stabilizer, and weight-decay convention. A schedule may depend on the step count, so resetting
-    it can also change the next update.
-
-
-    If loss grows, inspect the objective and update values before assuming adaptive scaling will fix it. Large
-    steps can diverge; bad labels or an incorrect loss remain problems for Adam too. The schedule lab isolates
-    one failure mode on an exact scalar loss, not the full behavior of a trained neural network.'
-  text_mode: 'Saving weights alone does not save an optimizer’s full state. Imagine pausing two runs at identical
-    weights. One restores its previous momentum or Adam buffers; the other resets them to zero. Their next
-    updates can differ even on the same batch.
-
-
-    When comparing or resuming runs, record the weights, optimizer buffers, step count, learning-rate schedule,
-    coefficients, stabilizer, and weight-decay convention. A schedule may depend on the step count, so resetting
-    it can also change the next update.
-
-
-    If loss grows, inspect the objective and update values before assuming adaptive scaling will fix it. Large
-    steps can diverge; bad labels or an incorrect loss remain problems for Adam too. The schedule lab isolates
-    one failure mode on an exact scalar loss, not the full behavior of a trained neural network.'
-  bridges: []
-- id: momentum-and-adam.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.momentum-and-adam
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A schedule changes the learning rate. Momentum remembers gradient direction, while Adam also tracks
-    gradient scale. Those stored values affect the next update and belong in a resumable training checkpoint.
-- id: momentum-and-adam.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.momentum-and-adam
-  markdown: A schedule changes the learning rate. Momentum remembers gradient direction, while Adam also tracks
-    gradient scale. Those stored values affect the next update and belong in a resumable training checkpoint.
-  text_mode: A schedule changes the learning rate. Momentum remembers gradient direction, while Adam also tracks
-    gradient scale. Those stored values affect the next update and belong in a resumable training checkpoint.
+      When a run with Adam diverges, don't expect the optimizer to rescue it. Adam rescales steps; it can't fix a peak learning rate that's too high for your warmup, a bug in the loss, or wrong labels. Check those as you would with plain SGD.
+    bridges: []
+  - id: momentum-and-adam.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.momentum-and-adam
+    markdown: Update a momentum buffer by hand, then reason about Adam's first step, a restarted checkpoint, a warmup schedule, and a zigzagging valley.
+    takeaway: |-
+      A schedule changes the learning rate. Momentum remembers gradient direction, while Adam also tracks gradient scale. Those stored values affect the next update and belong in a resumable training checkpoint.
+  - id: momentum-and-adam.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.momentum-and-adam
+    markdown: |-
+      A schedule changes the learning rate. Momentum remembers gradient direction, while Adam also tracks gradient scale. Those stored values affect the next update and belong in a resumable training checkpoint.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - momentum-and-adam.s1
-    - momentum-and-adam.s2
-    - momentum-and-adam.s3
-    - momentum-and-adam.s4
-    - momentum-and-adam.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - momentum-and-adam.s1
+        - momentum-and-adam.s2
+        - momentum-and-adam.s3
+        - momentum-and-adam.s4
+        - momentum-and-adam.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     momentum-and-adam.recap: momentum-and-adam.check
 assessment_families:
-- id: momentum-and-adam.base
-  objective_ref: objective.momentum-and-adam
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Momentum combines recent directions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: momentum-and-adam.s2
-  variants:
-  - id: momentum-and-adam.base.1
-    prompt: In v = 0.5v_previous + g, with v_previous = 4 and g = 3, what is v?
-    options:
-    - id: a
-      text: '5'
-    - id: b
-      text: '7'
-    - id: c
-      text: '3.5'
-    answer: a
-    feedback: Half of 4 plus 3 equals 5.
-  - id: momentum-and-adam.base.2
-    prompt: What second running quantity does Adam use in addition to a gradient average?
-    options:
-    - id: b
-      text: An exact Hessian inverse
-    - id: c
-      text: A list of validation labels
-    - id: a
-      text: An average of squared gradients
-    answer: a
-    feedback: The second moment estimate supports coordinate-wise scaling.
-- id: momentum-and-adam.transfer
-  objective_ref: objective.momentum-and-adam
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Inspect the complete optimizer state: trace the inputs, operation, and result before choosing.'
-  remediation_scene: momentum-and-adam.s4
-  variants:
-  - id: momentum-and-adam.transfer.1
-    prompt: A checkpoint restores weights but omits Adam moment buffers. Is the resumed optimizer state identical?
-    options:
-    - id: b
-      text: Yes; weights contain all optimizer history
-    - id: c
-      text: Only if the file names match
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Optimizer history is separate state from model parameters.
-  - id: momentum-and-adam.transfer.2
-    prompt: Adam diverges on a broken loss. Does adaptive scaling guarantee a fix?
-    options:
-    - id: c
-      text: Only after renaming the optimizer
-    - id: a
-      text: No; objective and numerical issues still require diagnosis
-    - id: b
-      text: Yes; Adam makes every loss correct
-    answer: a
-    feedback: An optimizer transforms gradients; it does not validate the objective.
+  - id: momentum-and-adam.base
+    objective_ref: objective.momentum-and-adam
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Multiply the old velocity by beta, then add the new gradient.
+    remediation_scene: momentum-and-adam.s2
+    variants:
+      - id: momentum-and-adam.base.1
+        retired: true
+        prompt: In v = 0.5v_previous + g, with v_previous = 4 and g = 3, what is v?
+        options:
+          - id: a
+            text: '5'
+          - id: b
+            text: '7'
+          - id: c
+            text: '3.5'
+        answer: a
+        feedback: Half of 4 plus 3 equals 5.
+      - id: momentum-and-adam.base.2
+        retired: true
+        prompt: What second running quantity does Adam use in addition to a gradient average?
+        options:
+          - id: b
+            text: An exact Hessian inverse
+          - id: c
+            text: A list of validation labels
+          - id: a
+            text: An average of squared gradients
+        answer: a
+        feedback: The second moment estimate supports coordinate-wise scaling.
+  - id: momentum-and-adam.transfer
+    objective_ref: objective.momentum-and-adam
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the optimizer remembers between steps, and what is lost if that memory is reset.
+    remediation_scene: momentum-and-adam.s4
+    variants:
+      - id: momentum-and-adam.transfer.1
+        retired: true
+        prompt: A checkpoint restores weights but omits Adam moment buffers. Is the resumed optimizer state identical?
+        options:
+          - id: b
+            text: Yes; weights contain all optimizer history
+          - id: c
+            text: Only if the file names match
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Optimizer history is separate state from model parameters.
+      - id: momentum-and-adam.transfer.2
+        retired: true
+        prompt: Adam diverges on a broken loss. Does adaptive scaling guarantee a fix?
+        options:
+          - id: c
+            text: Only after renaming the optimizer
+          - id: a
+            text: No; objective and numerical issues still require diagnosis
+          - id: b
+            text: Yes; Adam makes every loss correct
+        answer: a
+        feedback: An optimizer transforms gradients; it does not validate the objective.
+  - id: momentum-and-adam.base.v2
+    objective_ref: objective.momentum-and-adam
+    task: base
+    response_type: numeric
+    points: 1
+    absolute_tolerance: 0.001
+    hint: 'Two steps: first the new velocity, v = beta × old velocity + gradient; then the new weight, w − learning rate × v. Use the velocity, not the raw gradient, in the second step.'
+    remediation_scene: momentum-and-adam.s2
+    variants:
+      - id: momentum-and-adam.base.v2.1
+        prompt: Momentum uses v ← βv + g and w ← w − ηv. With β = 0.9, old velocity 2, gradient 1, learning rate 0.1, and weight 5, what is the new weight?
+        answer: 4.72
+        feedback: The velocity is 0.9 × 2 + 1 = 2.8, so the weight moves by 0.1 × 2.8 = 0.28 to 4.72. Using the raw gradient would give 4.9, ignoring the stored momentum.
+      - id: momentum-and-adam.base.v2.2
+        prompt: Momentum uses v ← βv + g and w ← w − ηv. With β = 0.5, old velocity 4, gradient 3, learning rate 0.1, and weight 1, what is the new weight?
+        answer: 0.5
+        feedback: The velocity is 0.5 × 4 + 3 = 5, so the weight moves by 0.1 × 5 = 0.5 to 0.5. Forgetting to shrink the old velocity (4 + 3 = 7) would give 0.3.
+      - id: momentum-and-adam.base.v2.3
+        prompt: Momentum uses v ← βv + g and w ← w − ηv. With β = 0.9, old velocity 3, gradient −2, learning rate 0.05, and weight 0, what is the new weight?
+        answer: -0.035
+        feedback: The velocity is 0.9 × 3 − 2 = 0.7, still positive, so the weight moves down by 0.05 × 0.7 = 0.035 to −0.035. The gradient flipped sign, but the stored momentum still wins this step.
+      - id: momentum-and-adam.base.v2.4
+        prompt: Momentum uses v ← βv + g and w ← w − ηv. With β = 0.8, old velocity −5, gradient −1, learning rate 0.2, and weight 2, what is the new weight?
+        answer: 3
+        feedback: The velocity is 0.8 × (−5) − 1 = −5, so the weight changes by −0.2 × (−5) = +1 to 3. Subtracting a negative velocity moves the weight up.
+  - id: momentum-and-adam.transfer.v2
+    objective_ref: objective.momentum-and-adam
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Momentum remembers direction, Adam also remembers typical gradient size for each weight, and a schedule sets the step multiplier over time. Ask which of these the situation involves.
+    remediation_scene: momentum-and-adam.s3
+    variants:
+      - id: momentum-and-adam.transfer.v2.1
+        prompt: A training run is restarted from a file holding only the weights. The loss jumps up for a few hundred steps, then recovers. What was most likely lost?
+        options:
+          - id: b
+            text: Part of the weights, which were rounded when the file was saved
+          - id: a
+            text: Adam's running averages, the step count, and the schedule position
+          - id: c
+            text: The training data order, which made the next batches much harder
+        answer: a
+        feedback: Restarting with m = v = 0 and step 1 resets bias correction and warmup, and throws away momentum, so early steps are poorly scaled. Saving weights doesn't round them enough to matter, and a new data order alone rarely causes a sustained jump.
+      - id: momentum-and-adam.transfer.v2.2
+        prompt: On Adam's first step, one weight's gradient is 0.01 and another's is 100. Using bias-corrected Adam, how do their step sizes compare?
+        options:
+          - id: c
+            text: The second step is 10,000 times larger, like the gradients
+          - id: b
+            text: The second step is 100 times larger, the square root of the ratio
+          - id: a
+            text: Both steps are about the learning rate in size
+        answer: a
+        feedback: On step 1, m̂ = g and √v̂ = |g|, so each step is η × g/|g|, about η for both. Adam divides out the gradient's scale; plain SGD would give the 10,000-fold difference.
+      - id: momentum-and-adam.transfer.v2.3
+        prompt: With plain gradient descent, the loss zigzags from one side of a narrow valley to the other while crawling along its floor. Lowering the learning rate stops the zigzag but makes the crawl even slower. What does momentum change?
+        options:
+          - id: b
+            text: It raises the learning rate for every weight by a fixed factor
+          - id: a
+            text: It cancels the side-to-side swings and builds speed along the floor
+          - id: c
+            text: It computes the exact curvature so each step lands at the bottom
+        answer: a
+        feedback: The velocity adds up recent gradients, so alternating side-to-side gradients cancel while the steady downhill component accumulates. A bigger learning rate everywhere would make the zigzag blow up, and momentum uses no curvature information.
+      - id: momentum-and-adam.transfer.v2.4
+        prompt: A transformer trained with Adam at peak rate 0.001 diverges within the first 50 steps, but trains well if the same peak is reached after 2,000 steps of warmup. What does that suggest?
+        options:
+          - id: c
+            text: The peak rate is too high for the final stage of training
+          - id: b
+            text: Adam can't be used with transformers unless its betas are changed
+          - id: a
+            text: The earliest steps need smaller rates while training is unsettled
+        answer: a
+        feedback: With warmup the same peak works, so the peak itself isn't the problem; the very first steps are fragile, with random weights, erratic gradients, and Adam averages built from few samples. Adam trains transformers routinely with its usual betas.
+      - id: momentum-and-adam.transfer.v2.5
+        prompt: A colleague says Adam's second average, v, is pointless because gradients of +3 and −3 average to zero. What is the best reply?
+        options:
+          - id: b
+            text: v averages squared gradients, so it sees size 9 either way
+          - id: a
+            text: v cancels to zero too, so Adam falls back to plain SGD here
+          - id: c
+            text: v tracks direction, while m tracks how often signs change
+        answer: b
+        feedback: v averages g², so +3 and −3 both contribute 9 and v measures typical gradient size. It's m, the plain average, that can cancel; that's why Adam keeps both.

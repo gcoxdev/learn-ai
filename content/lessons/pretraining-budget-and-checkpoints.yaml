@@ -1,207 +1,397 @@
 schema_version: 0.2-draft
 lesson:
   id: pretraining-budget-and-checkpoints
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Allocate compute and preserve useful checkpoints
   state: draft
-  summary: Budget the training work and choose checkpoints that preserve both recoverability and evidence about
-    learning.
+  summary: Six times parameters times tokens. One multiplication prices Kestrel's whole run in GPU-days, and Chinchilla says it should be twice as big. Here's why the team ignores that.
   slot: M16.7
   category: learning
   sources:
-  - title: Training Compute-Optimal Large Language Models
-    url: https://arxiv.org/abs/2203.15556
-  - title: The Llama 3 Herd of Models
-    url: https://arxiv.org/abs/2407.21783
+    - title: Hoffmann et al. — Training Compute-Optimal Large Language Models (Chinchilla, 2022)
+      url: https://arxiv.org/abs/2203.15556
+    - title: Kaplan et al. — Scaling Laws for Neural Language Models (2020)
+      url: https://arxiv.org/abs/2001.08361
+    - title: 'Touvron et al. — LLaMA: Open and Efficient Foundation Language Models (2023)'
+      url: https://arxiv.org/abs/2302.13971
+    - title: 'Chowdhery et al. — PaLM: Scaling Language Modeling with Pathways (2022), which defines model FLOPs utilization'
+      url: https://arxiv.org/abs/2204.02311
+    - title: Biderman et al. — Pythia, a suite for analyzing language-model training (2023)
+      url: https://arxiv.org/abs/2304.01373
+    - title: The Llama 3 Herd of Models (2024)
+      url: https://arxiv.org/abs/2407.21783
 objectives:
-- id: objective.pretraining-budget-and-checkpoints
-  version: 1-draft
-  statement: Pretraining budgets trade model size, token exposure, and runtime; scaling trends guide experiments
-    while checkpoint evaluation detects capability changes and failures.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - pretraining-budget-and-checkpoints.base
-  - pretraining-budget-and-checkpoints.transfer
-  prerequisites:
-  - anyOf:
-    - objective.base-model-design
-  - anyOf:
-    - objective.training-data-mixtures
-  - anyOf:
-    - objective.scaling-and-memorization
+  - id: objective.pretraining-budget-and-checkpoints
+    version: 2-draft
+    statement: Pretraining budgets trade model size, token exposure, and runtime; scaling trends guide experiments while checkpoint evaluation detects capability changes and failures.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - pretraining-budget-and-checkpoints.base.v2
+      - pretraining-budget-and-checkpoints.transfer.v2
+      - pretraining-budget-and-checkpoints.calculate
+      - pretraining-budget-and-checkpoints.checkpoint-size
+    prerequisites:
+      - anyOf:
+          - objective.base-model-design
+      - anyOf:
+          - objective.training-data-mixtures
+      - anyOf:
+          - objective.scaling-and-memorization
 scenes:
-- id: pretraining-budget-and-checkpoints.s1
-  title: Budget both calculations and machine time
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.pretraining-budget-and-checkpoints
-  markdown: 'A training budget needs model size, token count, sequence lengths, memory, hardware time, and
-    evaluation costs. A **FLOP** counts a floating-point arithmetic operation under a stated convention. Accelerator
-    hours count machine time. These are different units.
+  - id: pretraining-budget-and-checkpoints.s1
+    title: Price the run before you start it
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.pretraining-budget-and-checkpoints
+    markdown: |-
+      Before renting a single GPU, the Kestrel team wants to know: how long will 100 billion tokens take? One rule of thumb answers it. Training a model with $N$ parameters on $D$ tokens takes about
 
+      $$C \approx 6ND \ \text{FLOPs}$$
 
-    An accelerator may wait for data or communication instead of calculating. That lowers **utilization**,
-    the use of its available computing capacity. Architecture, context length, and recomputation also change
-    the work. Approximate operation counts help with planning, but doubling nominal computing capacity does
-    not guarantee half the runtime or cost.'
-  text_mode: 'A training budget needs model size, token count, sequence lengths, memory, hardware time, and
-    evaluation costs. A **FLOP** counts a floating-point arithmetic operation under a stated convention. Accelerator
-    hours count machine time. These are different units.
+      A **FLOP** is one floating-point operation, such as one multiply or one add. The 6 comes from counting per token: the forward pass does about 2 FLOPs per weight (a multiply and an add), and the backward pass about twice that. For Kestrel, $6 \times 1.011 \times 10^9 \times 10^{11} \approx 6.07 \times 10^{20}$ FLOPs.
 
+      Now turn FLOPs into time. An NVIDIA A100 peaks at about 312 trillion FLOPs per second on 16-bit (bf16) matrix math. Real training never reaches the peak, because GPUs wait on memory and on each other. The share of peak you actually get is the **model FLOPs utilization (MFU)**, a term from Google's PaLM paper (2022). The team assumes 40%.
 
-    An accelerator may wait for data or communication instead of calculating. That lowers **utilization**,
-    the use of its available computing capacity. Architecture, context length, and recomputation also change
-    the work. Approximate operation counts help with planning, but doubling nominal computing capacity does
-    not guarantee half the runtime or cost.'
-  bridges: []
-- id: pretraining-budget-and-checkpoints.s2
-  title: Use scaling as an empirical fit
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.pretraining-budget-and-checkpoints
-  markdown: Scaling laws summarize measured relationships among loss, size, data, and compute over tested ranges.
-    Under a fixed training budget, an excessively large model can leave too little compute for useful token
-    exposure. The preferred balance also changes when repeated inference cost matters.
-  text_mode: Scaling laws summarize measured relationships among loss, size, data, and compute over tested
-    ranges. Under a fixed training budget, an excessively large model can leave too little compute for useful
-    token exposure. The preferred balance also changes when repeated inference cost matters.
-  bridges: []
-- id: pretraining-budget-and-checkpoints.s3
-  title: Evaluate intermediate states
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.pretraining-budget-and-checkpoints
-  markdown: Save checkpoints and evaluate independent held-out loss plus selected capability and reliability
-    tasks. For example, falling average loss alongside worsening minority-language performance is a reason
-    to inspect data balance. Avoid repeatedly tuning against an untouched final test and then presenting it
-    as independent.
-  text_mode: Save checkpoints and evaluate independent held-out loss plus selected capability and reliability
-    tasks. For example, falling average loss alongside worsening minority-language performance is a reason
-    to inspect data balance. Avoid repeatedly tuning against an untouched final test and then presenting it
-    as independent.
-  bridges: []
-- id: pretraining-budget-and-checkpoints.s4
-  title: Make a checkpoint recoverable
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.pretraining-budget-and-checkpoints
-  markdown: 'Weights alone support some inference uses, but faithful training continuation may also need optimizer
-    state, scheduler position, random states, and data-loader progress. Record versions and integrity checks.
-    A checkpoint policy balances recovery time, storage cost, and the ability to study learning over time.
+      ```python run
+      N = 1_011_351_552    # Kestrel-1B parameters
+      D = 100e9            # training tokens
+      peak = 312e12        # A100 peak for bf16 matrix math, FLOP/s
+      mfu = 0.40           # model FLOPs utilization: share of peak actually achieved
+      gpus = 32
 
+      C = 6 * N * D
+      gpu_seconds = C / (peak * mfu)
+      print(f"training compute:  {C:.3g} FLOPs")
+      print(f"GPU-hours:         {gpu_seconds / 3600:,.0f}   (GPU-days: {gpu_seconds / 86400:.1f})")
+      print(f"wall clock:        {gpu_seconds / gpus / 3600:.1f} hours on {gpus} GPUs")
+      print(f"one step (2^20 tokens): {6 * N * 2**20 / (peak * mfu * gpus):.2f} s")
 
-    A **scheduler** chooses the learning rate over time. The **data loader** supplies batches and tracks which
-    material comes next. If you save every hour, a crash just before the next save can lose almost one hour
-    of computation. More frequent saves reduce that loss but cost storage and writing time. A useful recovery
-    drill loads a checkpoint and verifies the next intended step, not merely that the file exists.'
-  text_mode: 'Weights alone support some inference uses, but faithful training continuation may also need optimizer
-    state, scheduler position, random states, and data-loader progress. Record versions and integrity checks.
-    A checkpoint policy balances recovery time, storage cost, and the ability to study learning over time.
+      n_opt = (C / 120) ** 0.5          # Chinchilla rule D = 20N, so C = 6N(20N) = 120N^2
+      print(f"compute-optimal:   {n_opt / 1e9:.2f}B params on {20 * n_opt / 1e9:.0f}B tokens")
+      print(f"Kestrel's ratio:   {D / N:.0f} tokens per parameter")
+      ```
 
+      About 1,351 GPU-hours: 56 GPU-days, or 42 hours on 32 GPUs. That's where the 1.6 seconds per step in the lesson on the training step came from. Set `mfu = 0.25` to see what a slow data loader costs, or `D = 1e12` for a Llama-style run.
+    bridges: []
+  - id: pretraining-budget-and-checkpoints.s2
+    title: Chinchilla says bigger; Kestrel stays small on purpose
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-budget-and-checkpoints
+    markdown: |-
+      For a fixed compute budget $C$, you can train a big model on few tokens or a small model on many. Which gives the lowest loss? Hoffmann et al. (2022) trained over 400 models to find out, and concluded that parameters and tokens should grow together: roughly **20 tokens per parameter**. They tested it by training Chinchilla, 70B parameters on 1.4 trillion tokens, with about the same compute as DeepMind's Gopher, 280B parameters on 300 billion tokens. Chinchilla beat Gopher, and GPT-3 (175B on 300B tokens, under 2 tokens per parameter), on a wide range of tasks.
 
-    A **scheduler** chooses the learning rate over time. The **data loader** supplies batches and tracks which
-    material comes next. If you save every hour, a crash just before the next save can lose almost one hour
-    of computation. More frequent saves reduce that loss but cost storage and writing time. A useful recovery
-    drill loads a checkpoint and verifies the next intended step, not merely that the file exists.'
-  bridges: []
-- id: pretraining-budget-and-checkpoints.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.pretraining-budget-and-checkpoints
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Balance model size, training exposure, and actual runtime. Save checkpoints that let you recover
-    the run and check how capabilities change along the way.
-- id: pretraining-budget-and-checkpoints.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.pretraining-budget-and-checkpoints
-  markdown: Balance model size, training exposure, and actual runtime. Save checkpoints that let you recover
-    the run and check how capabilities change along the way.
-  text_mode: Balance model size, training exposure, and actual runtime. Save checkpoints that let you recover
-    the run and check how capabilities change along the way.
+      :::predict With Kestrel's budget of 6.07 × 10²⁰ FLOPs, what size would Chinchilla recommend?
+      Set $D = 20N$, so $C = 6N \times 20N = 120N^2$ and $N = \sqrt{C/120} \approx 2.25$ billion parameters, trained on about 45 billion tokens. The rule says Kestrel should be more than twice as big and read less than half as much.
+      :::
+
+      The team ignores it, deliberately. Chinchilla minimizes the cost of *training*. But a model is trained once and then run millions of times, and every one of those runs costs about $2N$ FLOPs per token. A 1B model is more than twice as cheap to serve as a 2.25B one. So they **over-train**: 99 tokens per parameter, paying a little extra training compute for a model that is cheap forever after. Llama (2023) made the same bet, training its 7B model on 1 trillion tokens (about 140 per parameter), and Llama 3's 8B model went to about 15 trillion.
+
+      :::mixup "Chinchilla proved models should be trained on 20 tokens per parameter."
+      It found the ratio that minimizes loss *for a fixed training budget*. If inference cost matters too, and for any widely used model it does, training a smaller model for longer is often the better deal.
+      :::
+    bridges: []
+  - id: pretraining-budget-and-checkpoints.s4
+    title: A checkpoint is much more than the weights
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-budget-and-checkpoints
+    markdown: |-
+      Across 95,000 steps, something will crash. A **checkpoint** is everything needed to resume exactly where training stopped:
+
+      | Item | Why it's needed | Kestrel size |
+      | --- | --- | ---: |
+      | Weights, 32-bit master copy | the model itself | 4 bytes × 1.01B = 4.0 GB |
+      | AdamW's $m$ and $v$ | the optimizer's running averages (optimization module) | 8 bytes × 1.01B = 8.1 GB |
+      | Step number | sets the learning rate on the schedule | a few bytes |
+      | Random-number states | the same data shuffles and other random draws | a few KB |
+      | Data-loader position | the next row, so no text is skipped or repeated | a few KB |
+
+      That's about 12 bytes per parameter: $12 \times 1{,}011{,}351{,}552 \approx 12.1$ GB. The file the team finally *releases* holds only 16-bit weights: $2 \times 1.01\text{B} \approx 2.0$ GB, a sixth of the size.
+
+      :::mixup "The released model file is a checkpoint we can resume from."
+      Resuming from weights alone restarts AdamW with $m = v = 0$ and may restart warmup at step 1, as the Adam lesson showed. The loss jumps, and the run is no longer the one you planned.
+      :::
+    bridges: []
+  - id: pretraining-budget-and-checkpoints.s5
+    title: Resume after a crash
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-budget-and-checkpoints
+    markdown: |-
+      Kestrel saves a checkpoint every 1,000 steps. At 1.59 seconds per step that's every 26.5 minutes. At step 47,800, one GPU fails and the whole job stops.
+
+      The team restarts from the step-47,000 checkpoint. They lose 800 steps: $800 \times 1.59 \approx 1{,}272$ seconds, or 21 minutes, on 32 GPUs, about 11.3 GPU-hours. Then they check that the resume really is exact: the loss at the first resumed steps should match the logged losses for steps 47,001 onward, and the learning rate should read $1.65 \times 10^{-4}$ a little later, at step 48,684, as planned.
+
+      :::predict Should they save every 250 steps instead?
+      A crash would then cost at most 250 steps, about 6.6 minutes, and on average about 10 minutes less than now. But each save writes 12 GB. If a save pauses training for one minute, the run makes about 380 saves instead of 95, adding almost 5 hours of pauses. That only pays off if the run would crash more than about 28 times. Teams pick the interval by comparing save cost with how often crashes happen.
+      :::
+    bridges: []
+  - id: pretraining-budget-and-checkpoints.s3
+    title: Old checkpoints are measurements too
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-budget-and-checkpoints
+    markdown: |-
+      Checkpoints aren't only for crashes. Each one is a snapshot of how learning is going. At every save, Kestrel computes held-out loss separately for each source in its mixture. At step 60,000 the average loss is still falling, but the code loss has stopped improving and has started to creep up. That points at one slice of the mixture, so the team checks whether a recent shard of code data is broken before touching anything else.
+
+      EleutherAI took this further with Pythia (2023): it released 154 checkpoints per model, one every 1,000 steps plus extra early ones, so researchers could study how abilities appear during training. Keep a few old checkpoints for as long as the storage allows; the question you'll want to ask them usually comes later.
+    bridges: []
+  - id: pretraining-budget-and-checkpoints.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.pretraining-budget-and-checkpoints
+    markdown: Training-compute and GPU-day estimates, checkpoint sizes in bytes, a model that will be served a billion times, and a resume that went wrong test whether you can budget a run and keep it recoverable.
+    takeaway: |-
+      Training costs about 6ND FLOPs; divide by peak speed × MFU for GPU time. Chinchilla's ~20 tokens per parameter minimizes training cost, but small models trained longer are cheaper to run. A resumable checkpoint holds weights, optimizer state, step, random states, and data position.
+  - id: pretraining-budget-and-checkpoints.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.pretraining-budget-and-checkpoints
+    markdown: |-
+      Balance model size, training exposure, and actual runtime. Save checkpoints that let you recover the run and check how capabilities change along the way.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - pretraining-budget-and-checkpoints.s1
-    - pretraining-budget-and-checkpoints.s2
-    - pretraining-budget-and-checkpoints.s3
-    - pretraining-budget-and-checkpoints.s4
-    - pretraining-budget-and-checkpoints.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - pretraining-budget-and-checkpoints.s1
+        - pretraining-budget-and-checkpoints.s2
+        - pretraining-budget-and-checkpoints.s4
+        - pretraining-budget-and-checkpoints.s5
+        - pretraining-budget-and-checkpoints.s3
+        - pretraining-budget-and-checkpoints.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     pretraining-budget-and-checkpoints.recap: pretraining-budget-and-checkpoints.check
 assessment_families:
-- id: pretraining-budget-and-checkpoints.base
-  objective_ref: objective.pretraining-budget-and-checkpoints
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Use scaling as an empirical fit: trace the inputs, operation, and result before choosing.'
-  remediation_scene: pretraining-budget-and-checkpoints.s2
-  variants:
-  - id: pretraining-budget-and-checkpoints.base.1
-    prompt: Do equal theoretical FLOPs guarantee equal training time?
-    options:
-    - id: a
-      text: No; utilization, communication, and hardware differ
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only for models with equal names
-    answer: a
-    feedback: Compute counts omit execution bottlenecks.
-  - id: pretraining-budget-and-checkpoints.base.2
-    prompt: Why can the largest possible model be a poor fixed-budget choice?
-    options:
-    - id: b
-      text: Large models cannot learn
-    - id: c
-      text: Token counts never matter
-    - id: a
-      text: It can leave too little budget for data exposure
-    answer: a
-    feedback: Size and training exposure share a finite compute budget.
-- id: pretraining-budget-and-checkpoints.transfer
-  objective_ref: objective.pretraining-budget-and-checkpoints
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Make a checkpoint recoverable: trace the inputs, operation, and result before choosing.'
-  remediation_scene: pretraining-budget-and-checkpoints.s4
-  variants:
-  - id: pretraining-budget-and-checkpoints.transfer.1
-    prompt: Average loss improves but one language regresses. What next?
-    options:
-    - id: b
-      text: Discard subgroup measurements automatically
-    - id: c
-      text: Declare all capabilities improved
-    - id: a
-      text: Inspect disaggregated results and the mixture
-    answer: a
-    feedback: An average can hide capability regressions.
-  - id: pretraining-budget-and-checkpoints.transfer.2
-    prompt: What may be needed beyond weights to resume the same training trajectory?
-    options:
-    - id: c
-      text: Only generated examples
-    - id: a
-      text: Optimizer, scheduler, random, and data-position state
-    - id: b
-      text: Only a new model title
-    answer: a
-    feedback: Training continuation depends on state beyond learned parameters.
+  - id: pretraining-budget-and-checkpoints.base
+    objective_ref: objective.pretraining-budget-and-checkpoints
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Use scaling as an empirical fit: trace the inputs, operation, and result before choosing.'
+    remediation_scene: pretraining-budget-and-checkpoints.s2
+    variants:
+      - id: pretraining-budget-and-checkpoints.base.1
+        prompt: Do equal theoretical FLOPs guarantee equal training time?
+        options:
+          - id: a
+            text: No; utilization, communication, and hardware differ
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only for models with equal names
+        answer: a
+        feedback: Compute counts omit execution bottlenecks.
+        retired: true
+      - id: pretraining-budget-and-checkpoints.base.2
+        prompt: Why can the largest possible model be a poor fixed-budget choice?
+        options:
+          - id: b
+            text: Large models cannot learn
+          - id: c
+            text: Token counts never matter
+          - id: a
+            text: It can leave too little budget for data exposure
+        answer: a
+        feedback: Size and training exposure share a finite compute budget.
+        retired: true
+  - id: pretraining-budget-and-checkpoints.transfer
+    objective_ref: objective.pretraining-budget-and-checkpoints
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Make a checkpoint recoverable: trace the inputs, operation, and result before choosing.'
+    remediation_scene: pretraining-budget-and-checkpoints.s4
+    variants:
+      - id: pretraining-budget-and-checkpoints.transfer.1
+        prompt: Average loss improves but one language regresses. What next?
+        options:
+          - id: b
+            text: Discard subgroup measurements automatically
+          - id: c
+            text: Declare all capabilities improved
+          - id: a
+            text: Inspect disaggregated results and the mixture
+        answer: a
+        feedback: An average can hide capability regressions.
+        retired: true
+      - id: pretraining-budget-and-checkpoints.transfer.2
+        prompt: What may be needed beyond weights to resume the same training trajectory?
+        options:
+          - id: c
+            text: Only generated examples
+          - id: a
+            text: Optimizer, scheduler, random, and data-position state
+          - id: b
+            text: Only a new model title
+        answer: a
+        feedback: Training continuation depends on state beyond learned parameters.
+        retired: true
+  - id: pretraining-budget-and-checkpoints.base.v2
+    objective_ref: objective.pretraining-budget-and-checkpoints
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Training compute is about 6 × parameters × tokens. Time is compute ÷ (peak speed × MFU). Chinchilla's ~20 tokens per parameter minimizes training cost only.
+    remediation_scene: pretraining-budget-and-checkpoints.s1
+    variants:
+      - id: pretraining-budget-and-checkpoints.base.v2.1
+        prompt: Two teams train the same model on the same tokens with identical GPUs. Team A reaches 45% MFU and team B reaches 30%. How do their training times compare?
+        options:
+          - id: b
+            text: They're equal, because both runs need the same number of FLOPs
+          - id: a
+            text: B takes 1.5 times as long, since its GPUs do useful work less of the time
+          - id: c
+            text: B finishes sooner, since its GPUs are under less strain
+        answer: a
+        feedback: Equal FLOPs at 30% instead of 45% utilization means 45/30 = 1.5 times the time. The FLOP count is the same, but time is FLOPs divided by the speed actually achieved.
+      - id: pretraining-budget-and-checkpoints.base.v2.2
+        prompt: Where does the 6 in C ≈ 6ND come from?
+        options:
+          - id: c
+            text: Six layers of a standard transformer, each using N FLOPs per token
+          - id: b
+            text: Six bytes of memory stored for each parameter during training
+          - id: a
+            text: About 2N FLOPs per token going forward and 4N going backward
+        answer: a
+        feedback: The forward pass does a multiply and an add per weight (2N per token), and the backward pass does about twice that. It has nothing to do with layer count or bytes of memory.
+      - id: pretraining-budget-and-checkpoints.base.v2.3
+        prompt: Chinchilla (70B parameters, 1.4T tokens) used about the same compute as Gopher (280B, 300B tokens) and did better. What did this show?
+        options:
+          - id: a
+            text: For a fixed budget, Gopher was too big and trained on too few tokens
+          - id: b
+            text: Smaller models are better than larger ones at every budget
+          - id: c
+            text: Training on more tokens matters more than how much compute is used
+        answer: a
+        feedback: The comparison held compute fixed and moved it from parameters to tokens. It doesn't say small models win at any budget, and compute was held equal rather than traded away.
+      - id: pretraining-budget-and-checkpoints.base.v2.4
+        prompt: A team resumes a crashed run from the released 16-bit weights file. Its loss jumps and takes thousands of steps to recover. What was most likely missing?
+        options:
+          - id: b
+            text: A higher-precision copy of the tokenizer used during training
+          - id: a
+            text: The optimizer state and the step number for the learning-rate schedule
+          - id: c
+            text: A copy of the evaluation set used at the last saved checkpoint
+        answer: a
+        feedback: Without AdamW's m and v, the optimizer restarts cold, and without the step number the schedule may restart warmup. The tokenizer and evaluation set don't affect the training trajectory.
+  - id: pretraining-budget-and-checkpoints.transfer.v2
+    objective_ref: objective.pretraining-budget-and-checkpoints
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the team is really paying for (training once, serving many times, or losing work after a crash) and choose what makes that cheaper.
+    remediation_scene: pretraining-budget-and-checkpoints.s2
+    variants:
+      - id: pretraining-budget-and-checkpoints.transfer.v2.1
+        prompt: A company will serve its model to millions of users for two years. Chinchilla's rule suggests 3B parameters for its training budget. What might a team reasonably do instead?
+        options:
+          - id: c
+            text: Train a 6B model on fewer tokens, since bigger models are better
+          - id: a
+            text: Train a smaller model on more tokens, since it costs less to serve
+          - id: b
+            text: Train the 3B model, since any other choice gives a worse model
+        answer: a
+        feedback: Every generated token costs about 2N FLOPs, so a smaller model trained longer saves money for the model's whole life, as Llama did. A 6B model would cost more both to serve and, for the same loss, to train.
+      - id: pretraining-budget-and-checkpoints.transfer.v2.2
+        prompt: A long run saves every 5,000 steps, and each save takes 2 minutes. Crashes happen about once a week and each loses up to 5,000 steps. What should the team compare to set the interval?
+        options:
+          - id: a
+            text: Time lost to saving against expected time lost to crashes
+          - id: b
+            text: The size of each checkpoint against the size of the weights
+          - id: c
+            text: The number of checkpoints against the number of evaluations
+        answer: a
+        feedback: Frequent saves shrink the work a crash destroys but add saving time. Balance the two. File sizes and evaluation counts don't decide the trade-off by themselves.
+      - id: pretraining-budget-and-checkpoints.transfer.v2.3
+        prompt: At a checkpoint, average held-out loss is still falling, but loss on the multilingual portion has risen for three checkpoints in a row. What should the team do first?
+        options:
+          - id: b
+            text: Continue training, since the average is the number that counts
+          - id: c
+            text: Roll back to the first checkpoint, since the run must be broken
+          - id: a
+            text: Inspect the multilingual data and its share of the mixture
+        answer: a
+        feedback: An average can hide one source getting worse. Look at that source's recent data and weight first. Rolling back throws away useful progress before the cause is known.
+      - id: pretraining-budget-and-checkpoints.transfer.v2.4
+        prompt: After resuming from a checkpoint, the team notices the model is reading text it already read just before the crash. Which item was missing from the checkpoint?
+        options:
+          - id: c
+            text: The random-number state used for dropout
+          - id: b
+            text: The optimizer's running averages m and v
+          - id: a
+            text: The data loader's position in the stream
+        answer: a
+        feedback: The data-loader position records which rows come next. Without it, the loader restarts from an earlier point and repeats text. Missing optimizer or random state causes other symptoms, not repeated data.
+  - id: pretraining-budget-and-checkpoints.calculate
+    objective_ref: objective.pretraining-budget-and-checkpoints
+    task: base
+    response_type: numeric
+    points: 1
+    hint: C = 6 × N × D. For time, divide C by (peak FLOP/s × MFU) to get GPU-seconds, then by 86,400 for GPU-days. Give the answer in the units the question asks for.
+    remediation_scene: pretraining-budget-and-checkpoints.s1
+    absolute_tolerance: 0.1
+    variants:
+      - id: pretraining-budget-and-checkpoints.calculate.1
+        prompt: A 1-billion-parameter model is trained on 20 billion tokens. Using C ≈ 6ND, how much training compute is that, in units of 10²⁰ FLOPs?
+        answer: 1.2
+        feedback: 6 × 10⁹ × 2 × 10¹⁰ = 1.2 × 10²⁰ FLOPs.
+      - id: pretraining-budget-and-checkpoints.calculate.2
+        prompt: A run needs 1.2 × 10²⁰ FLOPs on A100s (312 × 10¹² FLOP/s peak) at 40% MFU. How many GPU-days is that?
+        answer: 11.1
+        feedback: Effective speed is 312 × 10¹² × 0.4 = 1.248 × 10¹⁴ FLOP/s. 1.2 × 10²⁰ ÷ 1.248 × 10¹⁴ ≈ 961,538 GPU-seconds, and ÷ 86,400 ≈ 11.1 GPU-days.
+      - id: pretraining-budget-and-checkpoints.calculate.3
+        prompt: Chinchilla had 70 billion parameters and trained on 1.4 trillion tokens. Using C ≈ 6ND, what was its training compute, in units of 10²³ FLOPs?
+        answer: 5.88
+        feedback: 6 × 7 × 10¹⁰ × 1.4 × 10¹² = 5.88 × 10²³ FLOPs.
+      - id: pretraining-budget-and-checkpoints.calculate.4
+        prompt: A 7-billion-parameter model trains on 1 trillion tokens using GPUs with 312 × 10¹² FLOP/s peak at 50% MFU. How many thousand GPU-days does it need?
+        answer: 3.12
+        feedback: C = 6 × 7 × 10⁹ × 10¹² = 4.2 × 10²². Effective speed is 1.56 × 10¹⁴ FLOP/s, giving 2.69 × 10⁸ GPU-seconds, or about 3,116 GPU-days, which is 3.12 thousand.
+  - id: pretraining-budget-and-checkpoints.checkpoint-size
+    objective_ref: objective.pretraining-budget-and-checkpoints
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Multiply parameters by bytes per parameter. Full AdamW training state is 4 bytes of 32-bit weights plus 8 bytes for m and v, so 12 bytes; 16-bit release weights are 2 bytes. 1 GB = 10⁹ bytes.
+    remediation_scene: pretraining-budget-and-checkpoints.s4
+    absolute_tolerance: 0.1
+    variants:
+      - id: pretraining-budget-and-checkpoints.checkpoint-size.1
+        prompt: A 7-billion-parameter model is trained with AdamW. Its resumable checkpoint holds 32-bit weights plus 32-bit m and v. About how many GB is that?
+        answer: 84
+        feedback: 12 bytes × 7 × 10⁹ = 84 × 10⁹ bytes = 84 GB.
+      - id: pretraining-budget-and-checkpoints.checkpoint-size.2
+        prompt: Kestrel's release file stores its 1,011,351,552 weights in 16-bit format. How many GB is it?
+        answer: 2.02
+        feedback: 2 bytes × 1,011,351,552 ≈ 2.02 × 10⁹ bytes = 2.02 GB.
+      - id: pretraining-budget-and-checkpoints.checkpoint-size.3
+        prompt: A 350-million-parameter model's resumable AdamW checkpoint holds 32-bit weights, m, and v. How many GB is it?
+        answer: 4.2
+        feedback: 12 bytes × 3.5 × 10⁸ = 4.2 × 10⁹ bytes = 4.2 GB.
+      - id: pretraining-budget-and-checkpoints.checkpoint-size.4
+        prompt: A 13-billion-parameter model is released as 16-bit weights only. How many GB is the file?
+        answer: 26
+        feedback: 2 bytes × 13 × 10⁹ = 26 GB. Its full training checkpoint would be six times larger, about 156 GB.

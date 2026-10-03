@@ -4,221 +4,457 @@ lesson:
   version: 0.3.0-draft
   title: Follow a token through dispatch, experts, and combination
   state: draft
-  summary: Follow one token as the router selects experts, the system sends work to them, and their outputs
-    are mixed.
+  summary: Six tokens, four experts, twelve assignments. Sort the work by expert, run each expert once, and get every result back to the right token.
   slot: M18.3
   category: learning
   sources:
-  - title: Sparsely-Gated Mixture-of-Experts
-    url: https://arxiv.org/abs/1701.06538
-  - title: Switch Transformers
-    url: https://arxiv.org/abs/2101.03961
+    - title: "Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer (Shazeer et al., 2017)"
+      url: https://arxiv.org/abs/1701.06538
+    - title: "Switch Transformers (Fedus, Zoph & Shazeer, 2021)"
+      url: https://arxiv.org/abs/2101.03961
+    - title: "MegaBlocks: Efficient Sparse Training with Mixture-of-Experts (Gale et al., 2022)"
+      url: https://arxiv.org/abs/2211.15841
 objectives:
-- id: objective.expert-dispatch-and-combine
-  version: 1-draft
-  statement: Dispatch groups token representations by selected expert, executes each expert, and combines returned
-    outputs in the original token order using routing weights.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - expert-dispatch-and-combine.base
-  - expert-dispatch-and-combine.transfer
-  prerequisites:
-  - anyOf:
-    - objective.routers-and-top-k
-  - anyOf:
-    - objective.tensor-shape-tracing
+  - id: objective.expert-dispatch-and-combine
+    version: 2-draft
+    statement: Dispatch groups token representations by selected expert, executes each expert, and combines returned outputs in the original token order using routing weights.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - expert-dispatch-and-combine.base.v2
+      - expert-dispatch-and-combine.transfer.v2
+      - expert-dispatch-and-combine.calculate
+    prerequisites:
+      - anyOf:
+          - objective.routers-and-top-k
+      - anyOf:
+          - objective.tensor-shape-tracing
 scenes:
-- id: expert-dispatch-and-combine.s1
-  title: Keep an address on every assignment
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.expert-dispatch-and-combine
-  markdown: '**Dispatch** sends each token assignment to the place that runs its selected expert. A record
-    might say “token A, expert 3, weight 0.25.” Keep the original token position, expert ID, and combination
-    weight with the representation.
+  - id: expert-dispatch-and-combine.s1
+    title: Six tokens, twelve assignments
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.expert-dispatch-and-combine
+    markdown: |-
+      The last lesson routed one token. Real layers route thousands at once. Take a small batch: six tokens, four experts, top-2 routing. The router's choices look like this:
 
+      | Token | 0 | 1 | 2 | 3 | 4 | 5 |
+      | --- | --- | --- | --- | --- | --- | --- |
+      | Chosen experts | E1, E2 | E1, E2 | E1, E2 | E3, E4 | E1, E4 | E2, E3 |
 
-    Top-two routing creates two assignments per token before any capacity policy is applied. Grouping them
-    by expert makes computation more efficient, but the outputs must return to the right original tokens. Without
-    those identities, grouping could mix up A’s and B’s results.'
-  text_mode: '**Dispatch** sends each token assignment to the place that runs its selected expert. A record
-    might say “token A, expert 3, weight 0.25.” Keep the original token position, expert ID, and combination
-    weight with the representation.
+      That's 6 × 2 = 12 **assignments**, each a (token, expert, gate weight) triple. You could run them one at a time: twelve small vector-times-matrix products. GPUs are far faster at a few big matrix multiplications than at many tiny ones, so MoE layers turn the work around. They sort the assignments by expert, and each expert processes all its tokens in one batch.
 
+      **Dispatch** is that step: gathering each expert's token vectors into one batch (and, on multiple GPUs, sending them to the device that holds the expert). **Combine** is the return trip: scaling each expert's outputs by their gates and adding them back into the right token's row.
 
-    Top-two routing creates two assignments per token before any capacity policy is applied. Grouping them
-    by expert makes computation more efficient, but the outputs must return to the right original tokens. Without
-    those identities, grouping could mix up A’s and B’s results.'
-  bridges: []
-- id: expert-dispatch-and-combine.s2
-  title: Execute grouped expert batches
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.expert-dispatch-and-combine
-  markdown: 'Consider tokens A and B: A selects experts one and three; B selects expert three and four. Expert
-    three processes a batch containing both representations. Each expert applies its learned network independently
-    to assigned vectors. Assignment order can change for efficiency without changing the intended token identities.'
-  text_mode: 'Consider tokens A and B: A selects experts one and three; B selects expert three and four. Expert
-    three processes a batch containing both representations. Each expert applies its learned network independently
-    to assigned vectors. Assignment order can change for efficiency without changing the intended token identities.'
-  bridges: []
-- id: expert-dispatch-and-combine.s3
-  title: Combine a concrete result
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.expert-dispatch-and-combine
-  markdown: For a scalar toy output, A’s selected experts return 2 and 6 with weights 0.75 and 0.25. The combined
-    expert output is 0.75×2 + 0.25×6 = 3. In a real layer the outputs are vectors with compatible widths; the
-    weighted sum is computed coordinate by coordinate.
-  text_mode: For a scalar toy output, A’s selected experts return 2 and 6 with weights 0.75 and 0.25. The combined
-    expert output is 0.75×2 + 0.25×6 = 3. In a real layer the outputs are vectors with compatible widths; the
-    weighted sum is computed coordinate by coordinate.
-  bridges: []
-- id: expert-dispatch-and-combine.s4
-  title: Restore the surrounding layer
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.expert-dispatch-and-combine
-  markdown: 'The combined vector returns to the shared residual pathway in the order defined by the architecture.
-    If an assignment was dropped or rerouted, the policy must specify its effect on weights and output. Dispatch
-    is a tensor movement and bookkeeping problem as well as a mathematical mixture.
+      The one rule that makes this work: every assignment carries its **home address**, the index of the token it came from. Sorting scrambles the order; the address puts it back.
+    diagram:
+      caption: Dispatch sorts assignments by expert; combine adds the weighted results back to each token's row.
+      description: Six token vectors go to the router, which picks two experts and two gate weights per token. Dispatch groups the twelve assignments by expert, giving Expert 1 a batch of 4 rows, Expert 2 a batch of 4 rows, Expert 3 a batch of 2 rows, and Expert 4 a batch of 2 rows. Each expert's outputs go to combine, which multiplies them by their gates and adds them to their home token rows, producing a 6-row output that joins the residual stream.
+      nodes:
+        - id: tokens
+          label: 6 token vectors
+          note: shape [6, d]
+          col: 0
+          row: 1
+        - id: router
+          label: Router
+          note: 2 experts + 2 gates per token
+          col: 1
+          row: 1
+          tone: accent
+        - id: dispatch
+          label: Dispatch
+          note: sort 12 assignments by expert
+          col: 2
+          row: 1
+          tone: warn
+        - id: e1
+          label: Expert 1
+          note: batch [4, d]
+          col: 3
+          row: 0
+          tone: data
+        - id: e2
+          label: Expert 2
+          note: batch [4, d]
+          col: 3
+          row: 1
+          tone: data
+        - id: e3
+          label: Expert 3
+          note: batch [2, d]
+          col: 3
+          row: 2
+          tone: data
+        - id: e4
+          label: Expert 4
+          note: batch [2, d]
+          col: 3
+          row: 3
+          tone: data
+        - id: combine
+          label: Combine
+          note: gate × output, add to home row
+          col: 4
+          row: 1
+          tone: warn
+        - id: out
+          label: Output [6, d]
+          note: joins the residual stream
+          col: 5
+          row: 1
+      edges:
+        - from: tokens
+          to: router
+        - from: router
+          to: dispatch
+        - from: dispatch
+          to: e1
+        - from: dispatch
+          to: e2
+        - from: dispatch
+          to: e3
+        - from: dispatch
+          to: e4
+        - from: e1
+          to: combine
+        - from: e2
+          to: combine
+        - from: e3
+          to: combine
+        - from: e4
+          to: combine
+        - from: combine
+          to: out
+    bridges: []
+  - id: expert-dispatch-and-combine.s2
+    title: Follow the shapes
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.expert-dispatch-and-combine
+    markdown: |-
+      Here are the tensors a real implementation passes along, with $T$ tokens of width $d$, $N$ experts, and top-$k$:
 
+      | Step | Tensor | Shape | In our batch |
+      | --- | --- | --- | --- |
+      | Token vectors | $X$ | $[T, d]$ | $[6, 3]$ |
+      | Router logits | $X W_r$ | $[T, N]$ | $[6, 4]$ |
+      | Chosen experts and gates | `top`, `gates` | $[T, k]$ | $[6, 2]$ |
+      | Flattened assignments | token index, expert id, gate | $[T k]$ | 12 of each |
+      | Expert $e$'s batch | rows of $X$ | $[n_e, d]$ | $[4, 3]$ for E1 |
+      | Layer output | $Y$ | $[T, d]$ | $[6, 3]$ |
 
-    **Combination** gathers the outputs belonging to one original token and applies that token''s weights.
-    The residual route may then add the resulting vector to the token''s incoming representation under the
-    block''s formula. Combining outputs is not majority voting over whole chat answers; it is numerical work
-    inside a layer.'
-  text_mode: 'The combined vector returns to the shared residual pathway in the order defined by the architecture.
-    If an assignment was dropped or rerouted, the policy must specify its effect on weights and output. Dispatch
-    is a tensor movement and bookkeeping problem as well as a mathematical mixture.
+      The batch sizes $n_e$ always add up to $T k$: here $4 + 4 + 2 + 2 = 12$. They are rarely equal, which is the whole subject of the capacity lesson.
 
+      The code builds exactly this batch, runs each expert once on its group, and combines. Then it checks the answer against the slow token-by-token loop.
 
-    **Combination** gathers the outputs belonging to one original token and applies that token''s weights.
-    The residual route may then add the resulting vector to the token''s incoming representation under the
-    block''s formula. Combining outputs is not majority voting over whole chat answers; it is numerical work
-    inside a layer.'
-  bridges: []
-- id: expert-dispatch-and-combine.extension-routing-lab
-  title: Follow dispatch, execution, and combination
-  type: simulation
-  depth: mechanics
-  objective_refs:
-  - objective.expert-dispatch-and-combine
-  markdown: The toy below starts with four routing probabilities. Select top 2 to retain 0.55 and 0.25; their
-    sum is 0.80. Renormalizing gives weights 0.6875 and 0.3125. The selected expert output vectors are constructed
-    examples, [2,0] and [0,4], so the combined output is [1.375,1.25]. Change how many experts are selected
-    and trace which contributions enter the sum. A real dispatcher groups token work by expert before execution;
-    this small display exposes the arithmetic, not a distributed implementation. Some architectures use different
-    score normalization conventions.
-  text_mode: The toy below starts with four routing probabilities. Select top 2 to retain 0.55 and 0.25; their
-    sum is 0.80. Renormalizing gives weights 0.6875 and 0.3125. The selected expert output vectors are constructed
-    examples, [2,0] and [0,4], so the combined output is [1.375,1.25]. Change how many experts are selected
-    and trace which contributions enter the sum. A real dispatcher groups token work by expert before execution;
-    this small display exposes the arithmetic, not a distributed implementation. Some architectures use different
-    score normalization conventions.
-  bridges:
-  - vectors
-  - arithmetic
-  simulation: moe
-- id: expert-dispatch-and-combine.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.expert-dispatch-and-combine
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Routing chooses the computation; dispatch sends the work; combination mixes the selected outputs.
-    Count each step when reasoning about a sparse model.
-- id: expert-dispatch-and-combine.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.expert-dispatch-and-combine
-  markdown: Dispatch groups token representations by selected expert, executes each expert, and combines returned
-    outputs in the original token order using routing weights.
-  text_mode: Dispatch groups token representations by selected expert, executes each expert, and combines returned
-    outputs in the original token order using routing weights.
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(1)
+      T, d, N, k = 6, 3, 4, 2                         # tokens, width, experts, top-k
+      X = rng.normal(size=(T, d))                     # one row per token
+      W_r = rng.normal(size=(d, N))                   # router
+      experts = rng.normal(size=(N, d, d))            # each expert maps d -> d
+
+      logits = X @ W_r                                # [T, N]
+      top = np.argsort(-logits, axis=1)[:, :k]        # [T, k] chosen expert ids
+      kept = np.take_along_axis(logits, top, axis=1)
+      gates = np.exp(kept) / np.exp(kept).sum(axis=1, keepdims=True)  # [T, k]
+
+      tok = np.repeat(np.arange(T), k)                # home token of each assignment
+      exp_id, gate = top.ravel(), gates.ravel()       # T*k = 12 assignments
+      Y = np.zeros((T, d))
+      for e in range(N):
+          rows = np.where(exp_id == e)[0]             # dispatch: this expert's rows
+          batch = X[tok[rows]]                        # [n_e, d]
+          out = batch @ experts[e]                    # one matrix multiply per expert
+          np.add.at(Y, tok[rows], gate[rows, None] * out)  # combine: add back home
+          print(f"E{e+1}: tokens {tok[rows].tolist()}  batch shape {batch.shape}")
+
+      slow = np.array([sum(g * (X[t] @ experts[e]) for e, g in zip(top[t], gates[t]))
+                       for t in range(T)])            # token-by-token reference
+      print("output shape:", Y.shape, " matches token loop:", np.allclose(Y, slow))
+      ```
+
+      :::predict Set k = 1 and rerun. How many rows will the four expert batches hold in total?
+      Six: each token now makes one assignment, so the batch sizes add up to $T k = 6 \times 1$. Each token's output is then its one expert's result times its gate. Try it, and try `T = 60` to see how uneven the batches get.
+      :::
+    bridges: []
+  - id: expert-dispatch-and-combine.s3
+    title: Combine one token by hand
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.expert-dispatch-and-combine
+    markdown: |-
+      Zoom in on token 4, which went to experts 1 and 4. Suppose its gates are 0.75 and 0.25, and (to keep the numbers small) each expert returns a single number: expert 1 gives 2 and expert 4 gives 6. Combine adds both contributions into row 4:
+
+      $$y_4 = 0.75 \times 2 + 0.25 \times 6 = 1.5 + 1.5 = 3$$
+
+      With real vectors, the same sum happens coordinate by coordinate, exactly as in the routers lesson. In the code, `np.add.at(Y, tok[rows], ...)` does it: it adds each output into the row named by its home address. PyTorch calls the same operation `index_add_` or scatter-add.
+
+      :::mixup "Sorting tokens by expert scrambles the sentence, so the output comes out in a different order."
+      The sort is temporary. Each output travels with its token index, and combine writes it back to that row. The layer's output has the same shape and order as its input, $[T, d]$, so the next attention layer never knows a sort happened.
+      :::
+    bridges: []
+  - id: expert-dispatch-and-combine.s4
+    title: Rejoin the residual stream
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.expert-dispatch-and-combine
+    markdown: |-
+      After combine, the MoE output is added to the residual stream, just as a dense feed-forward output would be. For a token vector $h$:
+
+      $$h_{\text{next}} = h + \sum_{i \in \mathcal{T}} g_i\, E_i(\text{norm}(h))$$
+
+      Two consequences are worth knowing now. First, if an assignment never runs (the capacity lesson shows how a full expert can refuse it), its term is simply missing from the sum. The token still carries $h$ forward, so it isn't lost, just less processed. Second, because each expert treats every row independently, a batch can freely mix tokens from different sentences and different users. Only attention needs to know which tokens belong together.
+
+      Production systems avoid the Python loop. Libraries such as MegaBlocks (Gale et al., 2022) run all the uneven expert batches as one block-sparse matrix multiplication, so no expert has to pad its batch to a fixed size.
+    bridges: []
+  - id: expert-dispatch-and-combine.extension-routing-lab
+    title: Follow dispatch, execution, and combination
+    type: simulation
+    depth: mechanics
+    objective_refs:
+      - objective.expert-dispatch-and-combine
+    markdown: |-
+      This is the one-token view of what the code did for six. The token's probabilities are 0.55, 0.25, 0.15, and 0.05. At top-2, it's dispatched to experts 1 and 2 with gates 0.6875 and 0.3125, and combine returns $[1.375, 1.25]$ to its row. Switch to top-3 and one more assignment appears: in a real batch, that token would join a third expert's group, and the batch sizes would add up to $3T$ instead of $2T$.
+    bridges:
+      - vectors
+      - arithmetic
+    simulation: moe
+  - id: expert-dispatch-and-combine.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.expert-dispatch-and-combine
+    markdown: Count assignments and batch rows, combine a token by hand, and track down a batch whose results landed on the wrong tokens.
+    takeaway: |-
+      Dispatch sorts each token's assignments into per-expert batches, each expert runs once, and combine adds the gate-weighted outputs back to each token's own row.
+  - id: expert-dispatch-and-combine.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.expert-dispatch-and-combine
+    markdown: |-
+      Dispatch groups token representations by selected expert, executes each expert, and combines returned outputs in the original token order using routing weights.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - expert-dispatch-and-combine.s1
-    - expert-dispatch-and-combine.s2
-    - expert-dispatch-and-combine.s3
-    - expert-dispatch-and-combine.s4
-    - expert-dispatch-and-combine.extension-routing-lab
-    - expert-dispatch-and-combine.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - expert-dispatch-and-combine.s1
+        - expert-dispatch-and-combine.s2
+        - expert-dispatch-and-combine.s3
+        - expert-dispatch-and-combine.s4
+        - expert-dispatch-and-combine.extension-routing-lab
+        - expert-dispatch-and-combine.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     expert-dispatch-and-combine.recap: expert-dispatch-and-combine.check
 assessment_families:
-- id: expert-dispatch-and-combine.base
-  objective_ref: objective.expert-dispatch-and-combine
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Execute grouped expert batches: trace the inputs, operation, and result before choosing.'
-  remediation_scene: expert-dispatch-and-combine.s2
-  variants:
-  - id: expert-dispatch-and-combine.base.1
-    prompt: Why retain original token positions during dispatch?
-    options:
-    - id: a
-      text: To restore outputs to the right positions
-    - id: b
-      text: To replace the tokenizer
-    - id: c
-      text: To make every expert identical
-    answer: a
-    feedback: Expert grouping reorders assignments temporarily.
-  - id: expert-dispatch-and-combine.base.2
-    prompt: Outputs 2 and 6 weighted 0.75 and 0.25 combine to what?
-    options:
-    - id: b
-      text: '8'
-    - id: c
-      text: 4 regardless of weights
-    - id: a
-      text: '3'
-    answer: a
-    feedback: Multiply each output by its weight and add.
-- id: expert-dispatch-and-combine.transfer
-  objective_ref: objective.expert-dispatch-and-combine
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Restore the surrounding layer: trace the inputs, operation, and result before choosing.'
-  remediation_scene: expert-dispatch-and-combine.s4
-  variants:
-  - id: expert-dispatch-and-combine.transfer.1
-    prompt: Two tokens select the same expert. Can it batch them?
-    options:
-    - id: b
-      text: No, experts accept only one token ever
-    - id: c
-      text: Only by merging their meanings into one token
-    - id: a
-      text: Yes, while keeping their assignment identities
-    answer: a
-    feedback: Batching shares execution without losing the separate outputs.
-  - id: expert-dispatch-and-combine.transfer.2
-    prompt: One assignment is dropped. What must the implementation define?
-    options:
-    - id: c
-      text: That all original outputs are unchanged automatically
-    - id: a
-      text: How the missing contribution affects output and weighting
-    - id: b
-      text: Only a new lesson title
-    answer: a
-    feedback: Capacity handling changes the computation unless accounted for.
+  - id: expert-dispatch-and-combine.base
+    objective_ref: objective.expert-dispatch-and-combine
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Execute grouped expert batches: trace the inputs, operation, and result before choosing.'
+    remediation_scene: expert-dispatch-and-combine.s2
+    variants:
+      - id: expert-dispatch-and-combine.base.1
+        prompt: Why retain original token positions during dispatch?
+        options:
+          - id: a
+            text: To restore outputs to the right positions
+          - id: b
+            text: To replace the tokenizer
+          - id: c
+            text: To make every expert identical
+        answer: a
+        feedback: Expert grouping reorders assignments temporarily.
+        retired: true
+      - id: expert-dispatch-and-combine.base.2
+        prompt: Outputs 2 and 6 weighted 0.75 and 0.25 combine to what?
+        options:
+          - id: b
+            text: '8'
+          - id: c
+            text: 4 regardless of weights
+          - id: a
+            text: '3'
+        answer: a
+        feedback: Multiply each output by its weight and add.
+        retired: true
+  - id: expert-dispatch-and-combine.transfer
+    objective_ref: objective.expert-dispatch-and-combine
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Restore the surrounding layer: trace the inputs, operation, and result before choosing.'
+    remediation_scene: expert-dispatch-and-combine.s4
+    variants:
+      - id: expert-dispatch-and-combine.transfer.1
+        prompt: Two tokens select the same expert. Can it batch them?
+        options:
+          - id: b
+            text: No, experts accept only one token ever
+          - id: c
+            text: Only by merging their meanings into one token
+          - id: a
+            text: Yes, while keeping their assignment identities
+        answer: a
+        feedback: Batching shares execution without losing the separate outputs.
+        retired: true
+      - id: expert-dispatch-and-combine.transfer.2
+        prompt: One assignment is dropped. What must the implementation define?
+        options:
+          - id: c
+            text: That all original outputs are unchanged automatically
+          - id: a
+            text: How the missing contribution affects output and weighting
+          - id: b
+            text: Only a new lesson title
+        answer: a
+        feedback: Capacity handling changes the computation unless accounted for.
+        retired: true
+  - id: expert-dispatch-and-combine.base.v2
+    objective_ref: objective.expert-dispatch-and-combine
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Follow one assignment, a (token index, expert, gate) triple, from dispatch through the expert and back to its home row.
+    remediation_scene: expert-dispatch-and-combine.s2
+    variants:
+      - id: expert-dispatch-and-combine.base.v2.1
+        prompt: During dispatch, each assignment keeps the index of the token it came from. What is that index used for?
+        options:
+          - id: b
+            text: Letting the expert look up which word the token was
+          - id: a
+            text: Adding the expert's output back into the right token's row
+          - id: c
+            text: Letting the router recompute the gate weights afterward
+        answer: a
+        feedback: Sorting by expert scrambles the order, and combine uses the stored index to write each output back to its token. Experts only see vectors, not words, and the gates were already computed before dispatch.
+      - id: expert-dispatch-and-combine.base.v2.2
+        prompt: In one MoE layer, expert 3's input batch has shape [37, 4096]. What does the 37 count?
+        options:
+          - id: c
+            text: The number of tokens in the whole batch sent to the layer
+          - id: b
+            text: The number of experts chosen by token 37 in the batch
+          - id: a
+            text: The number of assignments routed to expert 3 in this batch
+        answer: a
+        feedback: Each expert's batch holds one row per assignment it received; 4,096 is the vector width. The whole batch has T tokens, split unevenly across experts, so any one expert usually gets far fewer.
+      - id: expert-dispatch-and-combine.base.v2.3
+        prompt: Why do MoE layers group assignments by expert instead of looping over tokens one at a time?
+        options:
+          - id: a
+            text: One big matrix multiply per expert uses the GPU far better
+          - id: c
+            text: Grouping lets each expert see the whole sentence's context
+          - id: b
+            text: Grouping is needed so that each token's gates add up to 1
+        answer: a
+        feedback: GPUs are built for large matrix multiplications, so one [n_e, d] batch per expert beats many tiny vector products. Experts still treat each row separately, with no sentence context, and the gates were normalized before dispatch.
+      - id: expert-dispatch-and-combine.base.v2.4
+        prompt: Token 4 was routed to experts 1 and 4 with gates g₁ and g₄. After combine, what does row 4 of the MoE output hold?
+        options:
+          - id: b
+            text: The average of every expert output computed in the batch
+          - id: a
+            text: g₁ times expert 1's output plus g₄ times expert 4's output
+          - id: c
+            text: The output of whichever of its two experts had the larger gate
+        answer: a
+        feedback: Combine adds each of the token's own weighted expert outputs into its row. Other tokens' results go to their own rows, and keeping only the larger gate would throw away the second expert's work.
+  - id: expert-dispatch-and-combine.transfer.v2
+    objective_ref: objective.expert-dispatch-and-combine
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Check the bookkeeping. Batch sizes must add up to T × k, each output must return to its stored token index, and each must be scaled by its own gate.
+    remediation_scene: expert-dispatch-and-combine.s3
+    variants:
+      - id: expert-dispatch-and-combine.transfer.v2.1
+        prompt: After a refactor, an MoE layer's outputs look shuffled; token 2 ends up with a result computed from token 5's vector. What is the most likely bug?
+        options:
+          - id: c
+            text: The router picked the wrong experts for tokens 2 and 5
+          - id: a
+            text: Combine wrote outputs by batch position, not stored token index
+          - id: b
+            text: The gate weights were not renormalized after top-k selection
+        answer: a
+        feedback: Within an expert's batch, row order differs from token order, so writing back by position swaps results between tokens. Wrong experts or unnormalized gates would change the values, but each token would still get a result computed from its own vector.
+      - id: expert-dispatch-and-combine.transfer.v2.2
+        prompt: A translation server batches tokens from three users' sentences into one MoE layer. Expert 2's batch contains tokens from all three sentences. Is anything wrong?
+        options:
+          - id: b
+            text: Yes, the expert would mix information between the users' sentences
+          - id: c
+            text: Yes, each sentence needs its own pass through the MoE layer
+          - id: a
+            text: No, the expert handles each row on its own and combine returns it
+        answer: a
+        feedback: An expert is a feed-forward network applied row by row, so rows from different sentences never interact inside it. Mixing information across tokens is attention's job, and attention keeps sentences apart with its mask.
+      - id: expert-dispatch-and-combine.transfer.v2.3
+        prompt: An engineer logs expert batch sizes of 5, 3, 2, and 1 for a batch of 6 tokens with top-2 routing over 4 experts. What does this tell you?
+        options:
+          - id: a
+            text: One assignment is missing, since the sizes should add up to 12
+          - id: b
+            text: The routing is fine, since expert batch sizes can be unequal
+          - id: c
+            text: One token must have been routed to three experts instead of two
+        answer: a
+        feedback: Six tokens × 2 = 12 assignments, but 5 + 3 + 2 + 1 = 11, so one was lost or refused. Unequal sizes are normal; a missing total is not. A token picking three experts would make the total 13, not 11.
+      - id: expert-dispatch-and-combine.transfer.v2.4
+        prompt: A new MoE implementation adds each token's two expert outputs back into its row but forgets to multiply by the gates. What happens to that token's output?
+        options:
+          - id: c
+            text: Nothing changes, because the two gates add up to 1 anyway
+          - id: b
+            text: The router picks different experts on the next forward pass
+          - id: a
+            text: It becomes a plain sum that ignores the router's preference
+        answer: a
+        feedback: Without gates, a token with gates 0.9 and 0.1 gets both outputs at full strength, roughly doubling the scale and ignoring the router. The gates summing to 1 is exactly why they must be applied, and selection is unaffected by combine.
+  - id: expert-dispatch-and-combine.calculate
+    objective_ref: objective.expert-dispatch-and-combine
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Every token makes k assignments, so the expert batches hold T × k rows in total. To combine, multiply each expert output by its gate and add.
+    remediation_scene: expert-dispatch-and-combine.s2
+    absolute_tolerance: 0.001
+    variants:
+      - id: expert-dispatch-and-combine.calculate.1
+        prompt: A batch of 512 tokens goes through an MoE layer with top-2 routing over 8 experts. How many rows do the 8 expert batches hold in total?
+        answer: 1024
+        feedback: Each of the 512 tokens makes 2 assignments, so 512 × 2 = 1,024 rows, however unevenly they spread over the 8 experts.
+      - id: expert-dispatch-and-combine.calculate.2
+        prompt: A token's two experts return the numbers 4 and −2, with gates 0.6 and 0.4. What value does combine write into the token's row?
+        answer: 1.6
+        feedback: 0.6 × 4 + 0.4 × (−2) = 2.4 − 0.8 = 1.6.
+      - id: expert-dispatch-and-combine.calculate.3
+        prompt: Six tokens use top-2 routing over 4 experts. Three of the expert batches hold 4, 3, and 3 rows. How many rows does the fourth batch hold?
+        answer: 2
+        feedback: The batches must hold 6 × 2 = 12 rows in total, and 12 − (4 + 3 + 3) = 2.
+      - id: expert-dispatch-and-combine.calculate.4
+        prompt: A batch of 4,096 tokens uses top-2 routing over 8 experts. If the router spread the work perfectly evenly, how many rows would each expert's batch hold?
+        answer: 1024
+        feedback: 4,096 × 2 = 8,192 assignments, divided among 8 experts, gives 1,024 rows each. Real batches are rarely this even.
+      - id: expert-dispatch-and-combine.calculate.5
+        prompt: A token's two experts return the numbers 10 and 2, with gates 0.3 and 0.7. What value does combine write into the token's row?
+        answer: 4.4
+        feedback: 0.3 × 10 + 0.7 × 2 = 3 + 1.4 = 4.4. The larger gate pulls the result toward 2.

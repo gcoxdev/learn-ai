@@ -4,222 +4,447 @@ lesson:
   version: 0.3.0-draft
   title: Understand how sparse routes learn and cross device boundaries
   state: draft
-  summary: Trace which selected calculations receive derivatives and which values must travel between expert
-    devices.
+  summary: A token's gradient reaches only the two experts it visited, plus the router through their gates. On eight GPUs, that token also crosses the network four times per layer. Count both.
   slot: M18.7
   category: learning
   sources:
-  - title: Sparsely-Gated Mixture-of-Experts
-    url: https://arxiv.org/abs/1701.06538
-  - title: Switch Transformers
-    url: https://arxiv.org/abs/2101.03961
-  - title: DeepSeek-V3 Technical Report
-    url: https://arxiv.org/abs/2412.19437
+    - title: "Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer (Shazeer et al., 2017)"
+      url: https://arxiv.org/abs/1701.06538
+    - title: "GShard (Lepikhin et al., 2020)"
+      url: https://arxiv.org/abs/2006.16668
+    - title: "Switch Transformers (Fedus, Zoph & Shazeer, 2021)"
+      url: https://arxiv.org/abs/2101.03961
+    - title: "DeepSeek-V3 Technical Report (DeepSeek-AI, 2024)"
+      url: https://arxiv.org/abs/2412.19437
 objectives:
-- id: objective.moe-gradients-and-communication
-  version: 1-draft
-  statement: Selected expert outputs and routing weights provide gradient paths, while discrete selection requires
-    a defined training treatment; expert-parallel execution exchanges activations and their backward gradients.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - moe-gradients-and-communication.base
-  - moe-gradients-and-communication.transfer
-  prerequisites:
-  - anyOf:
-    - objective.expert-dispatch-and-combine
-  - anyOf:
-    - objective.automatic-differentiation
-  - anyOf:
-    - objective.model-parallel-training
+  - id: objective.moe-gradients-and-communication
+    version: 2-draft
+    statement: Selected expert outputs and routing weights provide gradient paths, while discrete selection requires a defined training treatment; expert-parallel execution exchanges activations and their backward gradients.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - moe-gradients-and-communication.base.v2
+      - moe-gradients-and-communication.transfer.v2
+      - moe-gradients-and-communication.calculate
+    prerequisites:
+      - anyOf:
+          - objective.expert-dispatch-and-combine
+      - anyOf:
+          - objective.automatic-differentiation
+      - anyOf:
+          - objective.model-parallel-training
 scenes:
-- id: moe-gradients-and-communication.s1
-  title: Follow derivatives through the selected mixture
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.moe-gradients-and-communication
-  markdown: 'Let x be a token representation, E1(x) and E2(x) the selected expert outputs, and g1 and g2 their
-    combination weights. The layer forms y = g1 E1(x) + g2 E2(x). For a fixed selected set, the chain rule
-    carries loss derivatives through this weighted sum.
+  - id: moe-gradients-and-communication.s1
+    title: Follow the gradient through the gates
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.moe-gradients-and-communication
+    markdown: |-
+      Go back to the token from the routers lesson: logits [2.40, 1.61, 1.10, 0.00], top-2, gates $g_1 = 0.6875$ and $g_2 = 0.3125$. To keep the numbers small, let each expert output a single number: expert 1 gives 2 and expert 2 gives 6. The layer's output is
 
+      $$y = g_1 E_1 + g_2 E_2 = 0.6875 \times 2 + 0.3125 \times 6 = 3.25$$
 
-    Suppose the expert outputs are scalar values 2 and 6, and the incoming derivative dL/dy is 1. The derivatives
-    reaching the two expert outputs are g1 and g2. Treating the weights as independent inputs at this local
-    step gives derivatives 2 and 6 with respect to g1 and g2.
+      Suppose the loss rises one-for-one with $y$, so $\partial L / \partial y = 1$. Backpropagation, as in the automatic differentiation lesson, sends that signal down two kinds of path:
 
+      | Path | Gradient | Value |
+      | --- | --- | ---: |
+      | Into expert 1's output | $g_1$ | 0.6875 |
+      | Into expert 2's output | $g_2$ | 0.3125 |
+      | Into gate $g_1$ | $E_1$ | 2 |
+      | Into gate $g_2$ | $E_2$ | 6 |
 
-    The router that produced those weights has additional chain-rule steps. Backward computation also combines
-    the experts’ contributions to x. This trace describes the selected calculation; changing which experts
-    belong to the set is the separate issue on the next page.'
-  text_mode: 'Let x be a token representation, E1(x) and E2(x) the selected expert outputs, and g1 and g2 their
-    combination weights. The layer forms y = g1 E1(x) + g2 E2(x). For a fixed selected set, the chain rule
-    carries loss derivatives through this weighted sum.
+      Each expert's weights then learn in proportion to its gate. The gates pass their gradients on to the router's logits. For a softmax over the kept logits, the chain rule gives a neat result:
 
+      $$\frac{\partial L}{\partial \ell_i} = g_i\,(E_i - y) \quad\Rightarrow\quad 0.6875 \times (2 - 3.25) = -0.859, \qquad 0.3125 \times (6 - 3.25) = +0.859$$
 
-    Suppose the expert outputs are scalar values 2 and 6, and the incoming derivative dL/dy is 1. The derivatives
-    reaching the two expert outputs are g1 and g2. Treating the weights as independent inputs at this local
-    step gives derivatives 2 and 6 with respect to g1 and g2.
+      Gradient descent moves each logit against its gradient: $\ell_1$ goes up and $\ell_2$ goes down. The router shifts weight toward expert 1, whose smaller output lowers $y$, and so lowers the loss. The code checks the chain rule by nudging each logit.
 
+      ```python run
+      import numpy as np
 
-    The router that produced those weights has additional chain-rule steps. Backward computation also combines
-    the experts’ contributions to x. This trace describes the selected calculation; changing which experts
-    belong to the set is the separate issue on the next page.'
-  bridges: []
-- id: moe-gradients-and-communication.s2
-  title: Selection is a separate boundary
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.moe-gradients-and-communication
-  markdown: 'A hard top-k membership change is discrete. Ordinary differentiation through the selected values
-    does not provide a smooth derivative for every possible membership switch. Router normalization, noise,
-    auxiliary objectives, or alternative estimators affect training; do not claim all unselected experts receive
-    the same task gradient as selected ones.
+      logits = np.log([11.0, 5.0, 3.0, 1.0])  # 2.40, 1.61, 1.10, 0: the routers lesson
+      E = np.array([2.0, 6.0, -1.0, 3.0])             # each expert's (scalar) output
+      k = 2
 
+      def forward(l):
+          chosen = np.argsort(-l)[:k]
+          g = np.exp(l[chosen]) / np.exp(l[chosen]).sum()   # renormalized top-k gates
+          return g @ E[chosen], chosen, g
 
-    A **discrete** selection jumps between sets: with top-one scores 0.51 and 0.49, expert 1 is chosen; reversing
-    those scores chooses expert 2. Differentiating the output while the chosen set stays fixed does not describe
-    that jump. The precise router objective and implementation determine which gradient paths remain available.'
-  text_mode: 'A hard top-k membership change is discrete. Ordinary differentiation through the selected values
-    does not provide a smooth derivative for every possible membership switch. Router normalization, noise,
-    auxiliary objectives, or alternative estimators affect training; do not claim all unselected experts receive
-    the same task gradient as selected ones.
+      y, chosen, g = forward(logits)                  # take the loss to be L = y
+      dE = np.zeros(4); dE[chosen] = g                # dL/dE_i: the gate, if chosen
+      dl = np.zeros(4); dl[chosen] = g * (E[chosen] - y)   # dL/dlogit_i, by the chain rule
 
+      eps = 1e-6                                      # check dl by nudging each logit
+      num = [(forward(logits + eps * np.eye(4)[i])[0] - y) / eps for i in range(4)]
+      print("y =", round(y, 4), "  gates:", g.round(4))
+      print("dL/dE (expert outputs):", dE.round(4))
+      print("dL/dlogits, chain rule:", dl.round(4))
+      print("dL/dlogits, numerical: ", np.round(num, 4))
+      ```
 
-    A **discrete** selection jumps between sets: with top-one scores 0.51 and 0.49, expert 1 is chosen; reversing
-    those scores chooses expert 2. Differentiating the output while the chosen set stays fixed does not describe
-    that jump. The precise router objective and implementation determine which gradient paths remain available.'
-  bridges: []
-- id: moe-gradients-and-communication.s3
-  title: Send activations to expert owners
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.moe-gradients-and-communication
-  markdown: 'In expert parallelism, devices package token assignments for destination devices, exchange them,
-    run expert batches, and return outputs. An all-to-all pattern permits different data to move between many
-    device pairs. Backward execution exchanges corresponding gradients along the necessary routes.
+      Experts 3 and 4 get exactly zero, and so do their logits. Try `k = 3`: expert 3 joins in, and its gradient appears.
+    bridges: []
+  - id: moe-gradients-and-communication.s2
+    title: The choice itself has no slope
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.moe-gradients-and-communication
+    markdown: |-
+      Gradients can tune the gates *among the chosen experts*. They can't say "try expert 3 instead." Choosing the top $k$ is a jump: with top-1 scores 0.51 and 0.49, expert 1 wins; nudge them to 0.49 and 0.51 and the output leaps to a different expert's. A jump has no slope, and expert 3 never ran, so there's no output to compare it with.
 
+      :::mixup "Unchosen experts still learn a little from every token."
+      They get nothing from that token. An expert learns only from the tokens routed to it. That is why routing collapse is self-reinforcing: an expert that receives no tokens gets no gradient and never improves enough to win any.
+      :::
 
-    **All-to-all** differs from all-reduce: participants send different assigned data to one another rather
-    than everyone receiving the same combined sum. Preserve token identities on the return trip, and reverse
-    the necessary routes when gradients are sent backward.'
-  text_mode: 'In expert parallelism, devices package token assignments for destination devices, exchange them,
-    run expert batches, and return outputs. An all-to-all pattern permits different data to move between many
-    device pairs. Backward execution exchanges corresponding gradients along the necessary routes.
+      Real training gets signal around the jump in a few ways:
 
+      - **Gates that depend on every logit.** Switch Transformer uses $p_i$ from a softmax over *all* experts as its gate, without renormalizing. The softmax's shared denominator then carries gradient to every logit, including the unchosen ones.
+      - **Balance terms.** The Switch balance loss sends gradient to every expert's average probability $P_i$.
+      - **Noise.** Shazeer et al. (2017) added random noise to the logits during training, so near-ties sometimes flip and other experts get tried.
+    bridges: []
+  - id: moe-gradients-and-communication.s3
+    title: "All-to-all: every GPU sends to every GPU"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.moe-gradients-and-communication
+    markdown: |-
+      Big MoE models use **expert parallelism** (from the model parallelism lesson in module 17): each GPU holds a different subset of experts, and tokens travel to wherever their experts live. Picture 8 GPUs, each holding one of Mixtral's 8 experts and a slice of the batch.
 
-    **All-to-all** differs from all-reduce: participants send different assigned data to one another rather
-    than everyone receiving the same combined sum. Preserve token identities on the return trip, and reverse
-    the necessary routes when gradients are sent backward.'
-  bridges: []
-- id: moe-gradients-and-communication.s4
-  title: Co-design learning and execution
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.moe-gradients-and-communication
-  markdown: Routing balance, locality constraints, token count, and expert placement influence communication
-    volume and waiting. Overlap can hide part of the transfers but cannot remove all dependencies. Validate
-    distributed output and gradient agreement against a small reference before optimizing throughput.
-  text_mode: Routing balance, locality constraints, token count, and expert placement influence communication
-    volume and waiting. Overlap can hide part of the transfers but cannot remove all dependencies. Validate
-    distributed output and gradient agreement against a small reference before optimizing throughput.
-  bridges: []
-- id: moe-gradients-and-communication.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.moe-gradients-and-communication
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Trace the differentiable mixture separately from the discrete choice of experts. In distributed
-    execution, keep token identities intact as activations and gradients travel between devices.
-- id: moe-gradients-and-communication.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.moe-gradients-and-communication
-  markdown: Trace the differentiable mixture separately from the discrete choice of experts. In distributed
-    execution, keep token identities intact as activations and gradients travel between devices.
-  text_mode: Trace the differentiable mixture separately from the discrete choice of experts. In distributed
-    execution, keep token identities intact as activations and gradients travel between devices.
+      In each MoE layer, every GPU splits its assignments by destination and sends each slice to the GPU holding that expert. At the same moment, it receives tokens from every other GPU for its own expert. That pattern is called an **all-to-all**: each GPU sends a *different* piece of data to each of the others. It's not the all-reduce from the data parallelism lesson, where every GPU ends up with the same summed result.
+
+      Each MoE layer needs two all-to-alls going forward: **dispatch** sends token vectors out, and **combine** brings the expert outputs home. Backpropagation runs both in reverse, carrying gradients: four all-to-alls per layer per training step.
+    diagram:
+      caption: One MoE layer seen from GPU 0. Every GPU does the same thing at the same time.
+      description: GPU 0's tokens go to a dispatch all-to-all, which keeps assignments for expert 1 on GPU 0 and sends the others to GPU 1 (expert 2), GPUs 2 to 6 (experts 3 to 7), and GPU 7 (expert 8). Each expert processes its rows and returns the outputs through a combine all-to-all, which delivers them to GPU 0 for the weighted sum. Backpropagation repeats both exchanges in reverse.
+      nodes:
+        - id: tokens
+          label: GPU 0 tokens
+          note: its slice of the batch
+          col: 0
+          row: 1
+        - id: dispatch
+          label: Dispatch all-to-all
+          note: split by destination
+          col: 1
+          row: 1
+          tone: warn
+        - id: g0
+          label: GPU 0 · Expert 1
+          note: stays local
+          col: 2
+          row: 0
+          tone: data
+        - id: g1
+          label: GPU 1 · Expert 2
+          col: 2
+          row: 1
+          tone: data
+        - id: g2
+          label: GPUs 2–6 · Experts 3–7
+          col: 2
+          row: 2
+          tone: data
+        - id: g3
+          label: GPU 7 · Expert 8
+          col: 2
+          row: 3
+          tone: data
+        - id: combine
+          label: Combine all-to-all
+          note: outputs return home
+          col: 3
+          row: 1
+          tone: warn
+        - id: sum
+          label: GPU 0 weighted sum
+          note: then the residual add
+          col: 4
+          row: 1
+          tone: accent
+      edges:
+        - from: tokens
+          to: dispatch
+        - from: dispatch
+          to: g0
+        - from: dispatch
+          to: g1
+        - from: dispatch
+          to: g2
+        - from: dispatch
+          to: g3
+        - from: g0
+          to: combine
+        - from: g1
+          to: combine
+        - from: g2
+          to: combine
+        - from: g3
+          to: combine
+        - from: combine
+          to: sum
+    bridges: []
+  - id: moe-gradients-and-communication.s4
+    title: Count the bytes on the wire
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.moe-gradients-and-communication
+    markdown: |-
+      Each assignment sends one token vector: $d$ numbers at 2 bytes each in bfloat16. With $T$ tokens per GPU and top-$k$, one all-to-all packs $T \times k \times d \times 2$ bytes. For a Mixtral-sized layer with 8,192 tokens per GPU: $8{,}192 \times 2 \times 4{,}096 \times 2 \approx 134$ MB. If experts are spread evenly over 8 GPUs, 7/8 of that leaves the GPU.
+
+      ```python run
+      T, d, k, nbytes = 8192, 4096, 2, 2   # tokens per GPU, width, top-k, bytes (bf16)
+      G, layers = 8, 32                    # GPUs (one expert each), MoE layers
+
+      one_a2a = T * k * d * nbytes         # bytes one GPU packs for one all-to-all
+      remote = one_a2a * (G - 1) / G       # the part whose expert lives elsewhere
+      per_layer = 4 * remote               # dispatch + combine, forward + backward
+
+      print(f"one all-to-all:      {one_a2a / 1e6:7.1f} MB  ({remote / 1e6:.1f} MB leaves the GPU)")
+      print(f"per MoE layer, step: {per_layer / 1e6:7.1f} MB")
+      print(f"all {layers} layers:       {layers * per_layer / 1e9:7.1f} GB per GPU per step")
+      print(f"at 100 GB/s:         {layers * per_layer / 100e9:7.2f} s of pure transfer")
+      ```
+
+      About 15 GB per GPU per step. At an assumed 100 GB/s per GPU, that's 0.15 seconds of transfer each step, unless it overlaps with computation.
+
+      :::predict Switch to top-1 routing. What happens to the traffic?
+      It halves: each token now sends one copy instead of two, so every all-to-all carries 67 MB and a step moves about 7.5 GB. This is one of Switch Transformer's arguments for $k = 1$. Set `k = 1` and check.
+      :::
+
+      Real systems attack this cost directly. DeepSeek-V3 limits each token to experts on at most 4 of its machines (nodes), since traffic between machines is slower than traffic inside one. It also schedules computation so that it overlaps almost fully with communication. When you build or modify such a system, run the same small batch through a single-GPU reference and compare outputs and gradients: a mixed-up return address shows up at once.
+    bridges: []
+  - id: moe-gradients-and-communication.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.moe-gradients-and-communication
+    markdown: Compute gate and logit gradients by hand, count all-to-all bytes for new layer sizes, and debug a distributed MoE that disagrees with its reference.
+    takeaway: |-
+      A token's gradient reaches only its chosen experts, scaled by their gates, and reaches the router through those gates. Across GPUs, every MoE layer costs two all-to-alls forward and two backward.
+  - id: moe-gradients-and-communication.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.moe-gradients-and-communication
+    markdown: |-
+      Trace the differentiable mixture separately from the discrete choice of experts. In distributed execution, keep token identities intact as activations and gradients travel between devices.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - moe-gradients-and-communication.s1
-    - moe-gradients-and-communication.s2
-    - moe-gradients-and-communication.s3
-    - moe-gradients-and-communication.s4
-    - moe-gradients-and-communication.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - moe-gradients-and-communication.s1
+        - moe-gradients-and-communication.s2
+        - moe-gradients-and-communication.s3
+        - moe-gradients-and-communication.s4
+        - moe-gradients-and-communication.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     moe-gradients-and-communication.recap: moe-gradients-and-communication.check
 assessment_families:
-- id: moe-gradients-and-communication.base
-  objective_ref: objective.moe-gradients-and-communication
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Selection is a separate boundary: trace the inputs, operation, and result before choosing.'
-  remediation_scene: moe-gradients-and-communication.s2
-  variants:
-  - id: moe-gradients-and-communication.base.1
-    prompt: For a fixed selected set, gradients can reach what?
-    options:
-    - id: a
-      text: Selected expert parameters and differentiable combination weights
-    - id: b
-      text: Every unselected expert identically through an absent output
-    - id: c
-      text: Only token IDs
-    answer: a
-    feedback: The executed weighted computation defines local gradient paths.
-  - id: moe-gradients-and-communication.base.2
-    prompt: Is hard top-k membership globally smooth?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if k is two
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Selection boundaries are discrete.
-- id: moe-gradients-and-communication.transfer
-  objective_ref: objective.moe-gradients-and-communication
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Co-design learning and execution: trace the inputs, operation, and result before choosing.'
-  remediation_scene: moe-gradients-and-communication.s4
-  variants:
-  - id: moe-gradients-and-communication.transfer.1
-    prompt: What moves in expert-parallel dispatch?
-    options:
-    - id: b
-      text: The entire original corpus on every token
-    - id: c
-      text: Only scalar loss values
-    - id: a
-      text: Assigned token representations and later returned outputs
-    answer: a
-    feedback: Expert owners need the activations they process.
-  - id: moe-gradients-and-communication.transfer.2
-    prompt: Why compare distributed gradients to a small reference?
-    options:
-    - id: c
-      text: To remove the need for memory accounting
-    - id: a
-      text: To catch routing, ordering, and aggregation errors
-    - id: b
-      text: To prove all future benchmarks
-    answer: a
-    feedback: Execution optimizations must preserve the intended computation.
+  - id: moe-gradients-and-communication.base
+    objective_ref: objective.moe-gradients-and-communication
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Selection is a separate boundary: trace the inputs, operation, and result before choosing.'
+    remediation_scene: moe-gradients-and-communication.s2
+    variants:
+      - id: moe-gradients-and-communication.base.1
+        prompt: For a fixed selected set, gradients can reach what?
+        options:
+          - id: a
+            text: Selected expert parameters and differentiable combination weights
+          - id: b
+            text: Every unselected expert identically through an absent output
+          - id: c
+            text: Only token IDs
+        answer: a
+        feedback: The executed weighted computation defines local gradient paths.
+        retired: true
+      - id: moe-gradients-and-communication.base.2
+        prompt: Is hard top-k membership globally smooth?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if k is two
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Selection boundaries are discrete.
+        retired: true
+  - id: moe-gradients-and-communication.transfer
+    objective_ref: objective.moe-gradients-and-communication
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Co-design learning and execution: trace the inputs, operation, and result before choosing.'
+    remediation_scene: moe-gradients-and-communication.s4
+    variants:
+      - id: moe-gradients-and-communication.transfer.1
+        prompt: What moves in expert-parallel dispatch?
+        options:
+          - id: b
+            text: The entire original corpus on every token
+          - id: c
+            text: Only scalar loss values
+          - id: a
+            text: Assigned token representations and later returned outputs
+        answer: a
+        feedback: Expert owners need the activations they process.
+        retired: true
+      - id: moe-gradients-and-communication.transfer.2
+        prompt: Why compare distributed gradients to a small reference?
+        options:
+          - id: c
+            text: To remove the need for memory accounting
+          - id: a
+            text: To catch routing, ordering, and aggregation errors
+          - id: b
+            text: To prove all future benchmarks
+        answer: a
+        feedback: Execution optimizations must preserve the intended computation.
+        retired: true
+  - id: moe-gradients-and-communication.base.v2
+    objective_ref: objective.moe-gradients-and-communication
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: In y = g₁E₁ + g₂E₂, each expert's output gets its gate as gradient, and each gate gets its expert's output. Experts that never ran have no term in y at all.
+    remediation_scene: moe-gradients-and-communication.s1
+    variants:
+      - id: moe-gradients-and-communication.base.v2.1
+        prompt: A token is routed to experts 2 and 5 of 8, with renormalized top-2 gates. Which parameters receive gradient from this token's MoE output?
+        options:
+          - id: b
+            text: All 8 experts, each weighted by the router's probability for it
+          - id: a
+            text: Experts 2 and 5, plus the router through their two gates
+          - id: c
+            text: Experts 2 and 5 alone, since top-k selection blocks the router
+        answer: a
+        feedback: Only the experts that ran appear in y, and the gates are smooth functions of the router's logits, so the router learns through them. Unchosen experts contribute nothing for this token.
+      - id: moe-gradients-and-communication.base.v2.2
+        prompt: An MoE layer computes y = g₁E₁ + g₂E₂, and the gradient arriving at y is 1. What gradient reaches the gate g₁?
+        options:
+          - id: c
+            text: g₁ itself, the weight given to expert 1
+          - id: b
+            text: g₁ × E₁, the size of expert 1's contribution
+          - id: a
+            text: E₁, the output of expert 1
+        answer: a
+        feedback: y changes by E₁ for each unit change in g₁, so ∂y/∂g₁ = E₁. The gate g₁ is the gradient flowing into expert 1's output, the other direction of the same product.
+      - id: moe-gradients-and-communication.base.v2.3
+        prompt: Why can't ordinary backpropagation tell a router "you should have tried expert 3"?
+        options:
+          - id: a
+            text: Expert 3 never ran, and the top-k choice is a jump with no slope
+          - id: b
+            text: Expert 3's gate is negative, so its gradient is clipped to zero
+          - id: c
+            text: The router's logits are fixed after the first training step
+        answer: a
+        feedback: With no output from expert 3 there's nothing to compare, and switching the chosen set is a discontinuous jump. Gates come from a softmax or sigmoid, so they're never negative, and routers keep learning throughout training.
+      - id: moe-gradients-and-communication.base.v2.4
+        prompt: How does the all-to-all used in expert parallelism differ from the all-reduce used in data-parallel training?
+        options:
+          - id: b
+            text: All-to-all sums gradients across GPUs; all-reduce sends token vectors
+          - id: a
+            text: In all-to-all each GPU gets different data; all-reduce gives all a shared sum
+          - id: c
+            text: All-to-all runs once per training step; all-reduce runs once per layer
+        answer: a
+        feedback: In an all-to-all, each GPU sends a different slice to each of the others, such as the tokens bound for each expert. All-reduce combines contributions so that every GPU ends up with the same result. MoE layers need all-to-alls in every layer, forward and backward.
+  - id: moe-gradients-and-communication.transfer.v2
+    objective_ref: objective.moe-gradients-and-communication
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask which experts actually ran for the tokens involved, and count how many copies of each token vector cross the network per MoE layer.
+    remediation_scene: moe-gradients-and-communication.s4
+    variants:
+      - id: moe-gradients-and-communication.transfer.v2.1
+        prompt: In a Switch Transformer layer, the gate is pᵢ from a softmax over all experts, with no renormalization. A token goes to expert 3. Which router logits get gradient from it?
+        options:
+          - id: c
+            text: Expert 3's logit alone, since it's the one that ran
+          - id: a
+            text: Each expert's logit, through the softmax's shared denominator
+          - id: b
+            text: No logits, since the top-1 choice has no slope
+        answer: a
+        feedback: p₃ = e^ℓ₃ / Σ e^ℓⱼ depends on every logit through the denominator, so each gets some gradient. With renormalized top-k gates, unchosen logits would get none. The choice has no slope, but the gate value does.
+      - id: moe-gradients-and-communication.transfer.v2.2
+        prompt: A team profiles MoE training and finds all-to-all communication takes 40% of each step. They move from top-2 to top-1 routing, with no other changes. What happens to the all-to-all traffic?
+        options:
+          - id: b
+            text: It stays the same, since the token count is unchanged
+          - id: c
+            text: It drops to a quarter, since dispatch and combine both shrink
+          - id: a
+            text: It roughly halves, since each token is sent to one expert
+        answer: a
+        feedback: Traffic is proportional to T × k × d, so halving k halves every all-to-all. Dispatch and combine each halve; they don't compound into a quarter.
+      - id: moe-gradients-and-communication.transfer.v2.3
+        prompt: A new 8-GPU MoE implementation gives a training loss 5% different from a single-GPU reference on the same small batch. What should the team check first?
+        options:
+          - id: a
+            text: Whether combine returns each output to its original token position
+          - id: c
+            text: Whether the learning rate was scaled up for the larger GPU count
+          - id: b
+            text: Whether the balance loss weight α is high enough on the 8 GPUs
+        answer: a
+        feedback: On one batch the forward pass should match the reference almost exactly, so a 5% gap points to bookkeeping, most often a wrong return address after the all-to-all. Learning rate doesn't affect a single forward loss, and α is the same on both.
+      - id: moe-gradients-and-communication.transfer.v2.4
+        prompt: During training, the router sends no tokens to expert 6 for thousands of steps. What happens to expert 6's weights?
+        options:
+          - id: c
+            text: They learn from the average gradient of the other experts
+          - id: b
+            text: They are copied from the busiest expert to rebalance the load
+          - id: a
+            text: They stay essentially unchanged, since no gradient reaches them
+        answer: a
+        feedback: An expert learns only from tokens routed to it, so with none it gets no task gradient (apart from effects like weight decay). That's the collapse trap, which balance losses or bias adjustments exist to prevent.
+  - id: moe-gradients-and-communication.calculate
+    objective_ref: objective.moe-gradients-and-communication
+    task: base
+    response_type: numeric
+    points: 1
+    hint: For gates, use ∂L/∂gᵢ = Eᵢ and ∂L/∂ℓᵢ = gᵢ(Eᵢ − y) when ∂L/∂y = 1. For traffic, one all-to-all carries T × k × d × bytes per number.
+    remediation_scene: moe-gradients-and-communication.s1
+    absolute_tolerance: 0.05
+    variants:
+      - id: moe-gradients-and-communication.calculate.1
+        prompt: An MoE layer computes y = g₁E₁ + g₂E₂ with E₁ = 2 and E₂ = 6, and the gradient arriving at y is 1. What gradient reaches the gate g₂?
+        answer: 6
+        feedback: ∂y/∂g₂ = E₂ = 6. The gate's gradient is the output of the expert it scales.
+      - id: moe-gradients-and-communication.calculate.2
+        prompt: Renormalized top-2 gates are g₁ = 0.75 and g₂ = 0.25, with expert outputs E₁ = 2 and E₂ = 6, so y = 3. With ∂L/∂y = 1, what is the gradient on expert 1's logit, g₁(E₁ − y)?
+        answer: -0.75
+        feedback: 0.75 × (2 − 3) = −0.75. Gradient descent raises this logit, shifting weight toward expert 1, whose smaller output lowers y.
+      - id: moe-gradients-and-communication.calculate.3
+        prompt: Each GPU holds 4,096 tokens, routing is top-2, and token vectors have 4,096 numbers of 2 bytes each. How many megabytes (1 MB = 1,000,000 bytes) does one GPU pack for one dispatch all-to-all? Give one decimal place.
+        answer: 67.108864
+        feedback: 4,096 × 2 × 4,096 × 2 = 67,108,864 bytes ≈ 67.1 MB.
+      - id: moe-gradients-and-communication.calculate.4
+        prompt: Each GPU holds 4,096 tokens, routing is top-1, and token vectors have 2,048 numbers of 2 bytes each. How many megabytes (1 MB = 1,000,000 bytes) does one GPU pack for one dispatch all-to-all? Give one decimal place.
+        answer: 16.777216
+        feedback: 4,096 × 1 × 2,048 × 2 = 16,777,216 bytes ≈ 16.8 MB.
+      - id: moe-gradients-and-communication.calculate.5
+        prompt: One all-to-all in an MoE layer moves 67.1 MB per GPU. Counting dispatch and combine, forward and backward, how many megabytes does that layer move per GPU in one training step? Give one decimal place.
+        answer: 268.4
+        feedback: Four all-to-alls per layer per step, 4 × 67.1 = 268.4 MB. (If some experts are on the same GPU, a little of that stays local.)

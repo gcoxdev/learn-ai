@@ -1,214 +1,417 @@
 schema_version: 0.2-draft
 lesson:
   id: spike-timing-and-surrogate-gradients
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn with spike timing or an approximate backward signal
   state: draft
-  summary: Distinguish learning from spike timing from learning with an approximate gradient.
+  summary: Fire 10 ms early and a synapse grows; fire 10 ms late and it shrinks. Meet the brain's timing rule, then the trick that lets backpropagation train spiking networks anyway.
   slot: M37.5
   category: learning
   sources:
-  - title: Neuronal Dynamics
-    url: https://neuronaldynamics.epfl.ch/online/
-  - title: Surrogate Gradient Learning
-    url: https://arxiv.org/abs/1901.09948
+    - title: "Synaptic modifications in cultured hippocampal neurons: dependence on spike timing, synaptic strength, and postsynaptic cell type (Bi & Poo, 1998)"
+      url: https://doi.org/10.1523/JNEUROSCI.18-24-10464.1998
+    - title: "Surrogate Gradient Learning in Spiking Neural Networks (Neftci, Mostafa & Zenke, 2019)"
+      url: https://arxiv.org/abs/1901.09948
+    - title: "Neuronal Dynamics, chapter 19: synaptic plasticity and learning (Gerstner, Kistler, Naud & Paninski, 2014)"
+      url: https://neuronaldynamics.epfl.ch/online/
 objectives:
-- id: objective.spike-timing-and-surrogate-gradients
-  version: 1-draft
-  statement: STDP changes synapses using relative spike timing, while surrogate-gradient methods replace an
-    unhelpful spike derivative during training; these are distinct learning mechanisms with different biological
-    and optimization assumptions.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - spike-timing-and-surrogate-gradients.base
-  - spike-timing-and-surrogate-gradients.transfer
-  prerequisites:
-  - anyOf:
-    - objective.integrate-and-fire-neurons
-  - anyOf:
-    - objective.hebbian-and-local-learning
-  - anyOf:
-    - objective.automatic-differentiation
+  - id: objective.spike-timing-and-surrogate-gradients
+    version: 2-draft
+    statement: STDP changes synapses using relative spike timing, while surrogate-gradient methods replace an unhelpful spike derivative during training; these are distinct learning mechanisms with different biological and optimization assumptions.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - spike-timing-and-surrogate-gradients.base.v2
+      - spike-timing-and-surrogate-gradients.transfer.v2
+      - spike-timing-and-surrogate-gradients.calculate
+    prerequisites:
+      - anyOf:
+          - objective.integrate-and-fire-neurons
+      - anyOf:
+          - objective.hebbian-and-local-learning
+      - anyOf:
+          - objective.automatic-differentiation
 scenes:
-- id: spike-timing-and-surrogate-gradients.s1
-  title: Use relative timing as a local signal
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.spike-timing-and-surrogate-gradients
-  markdown: '**Spike-timing-dependent plasticity**, or **STDP**, changes a connection according to the relative
-    timing of input-side and receiving-side spikes. **Plasticity** means the connection can change.
+  - id: spike-timing-and-surrogate-gradients.s1
+    title: Ten milliseconds decide it
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.spike-timing-and-surrogate-gradients
+    markdown: |-
+      In 1998, Guo-qiang Bi and Mu-ming Poo stimulated pairs of connected rat neurons in a dish, over and over, varying one thing: the order of their spikes. When the sending neuron fired a few milliseconds *before* the receiving one, the connection grew stronger. When it fired a few milliseconds *after*, the connection grew weaker. Beyond a few tens of milliseconds either way, little changed. Henry Markram and colleagues had reported similar timing effects in 1997.
 
+      This is **spike-timing-dependent plasticity (STDP)**. (*Plasticity* just means a connection's strength can change.) It refines Hebb's idea from the first lesson of this module: "fire together" becomes "fire *just before*." A presynaptic spike that arrives just before the postsynaptic spike could have helped cause it, so the connection is rewarded.
 
-    In one common pair-based rule, an input spike shortly before a receiving-side spike strengthens the connection,
-    called **potentiation**. The reverse order weakens it, called **depression**. This basic rule needs spike
-    timings rather than a correct-answer label.
+      Write $\Delta t = t_\text{post} - t_\text{pre}$. The standard pair-based rule is
 
+      $$\Delta w = \begin{cases} +A_+\, e^{-\Delta t / \tau_+} & \Delta t > 0 \ \text{(pre before post: strengthen)} \\ -A_-\, e^{\,\Delta t / \tau_-} & \Delta t < 0 \ \text{(post before pre: weaken)} \end{cases}$$
 
-    The time window and sign depend on the model and biological conditions. The example illustrates one rule,
-    not a universal law of synaptic learning.'
-  text_mode: '**Spike-timing-dependent plasticity**, or **STDP**, changes a connection according to the relative
-    timing of input-side and receiving-side spikes. **Plasticity** means the connection can change.
+      Strengthening is called **potentiation** and weakening **depression**. $A_+$ and $A_-$ set the largest changes, and $\tau_+$ and $\tau_-$ set how fast the effect fades. With $A_+ = 0.010$, $A_- = 0.012$, and both $\tau$ = 20 ms:
 
+      | Pre spike | Post spike | $\Delta t$ | $\Delta w$ |
+      | ---: | ---: | ---: | ---: |
+      | 10 ms | 12 ms | +2 ms | $0.010\,e^{-0.1} = +0.00905$ |
+      | 10 ms | 20 ms | +10 ms | $0.010\,e^{-0.5} = +0.00607$ |
+      | 20 ms | 10 ms | −10 ms | $-0.012\,e^{-0.5} = -0.00728$ |
 
-    In one common pair-based rule, an input spike shortly before a receiving-side spike strengthens the connection,
-    called **potentiation**. The reverse order weakens it, called **depression**. This basic rule needs spike
-    timings rather than a correct-answer label.
+      Like Hebb's rule, STDP is **local**: it needs only the two spike times at the synapse, and no label or error.
+    bridges:
+      - hebbian-and-local-learning
+  - id: spike-timing-and-surrogate-gradients.s2
+    title: Run the timing window
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.spike-timing-and-surrogate-gradients
+    markdown: |-
+      The rule traces out the **STDP window**: plotted against $\Delta t$, it's two decaying curves back to back, a positive peak just right of zero and a negative trough just left of it, both fading within about 50 ms. The program prints it sideways as bars, then adds up every pair from two short spike trains:
 
+      ```python run
+      import math
 
-    The time window and sign depend on the model and biological conditions. The example illustrates one rule,
-    not a universal law of synaptic learning.'
-  bridges: []
-- id: spike-timing-and-surrogate-gradients.s2
-  title: Trace the timing convention
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.spike-timing-and-surrogate-gradients
-  markdown: Define delta t as post-spike time minus pre-spike time. A pre-spike at 10 ms and post-spike at
-    12 ms gives delta t = 2 ms. Under the stated causal-potentiation rule, the change is positive; reversing
-    the spike order moves to the other side of the window.
-  text_mode: Define delta t as post-spike time minus pre-spike time. A pre-spike at 10 ms and post-spike at
-    12 ms gives delta t = 2 ms. Under the stated causal-potentiation rule, the change is positive; reversing
-    the spike order moves to the other side of the window.
-  bridges:
-  - derivatives
-- id: spike-timing-and-surrogate-gradients.s3
-  title: Train through a discontinuous spike
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.spike-timing-and-surrogate-gradients
-  markdown: 'A hard threshold has a derivative that is zero almost everywhere and undefined at the threshold.
-    Surrogate-gradient training uses a convenient smooth backward approximation while often retaining discrete
-    spikes in the forward pass. This is an optimization choice, not the exact derivative of the original spike
-    function.
+      A_plus, A_minus = 0.010, 0.012       # largest strengthening and weakening
+      tau_plus, tau_minus = 20.0, 20.0     # how fast each side of the window fades (ms)
 
+      def stdp(dt):                        # dt = t_post - t_pre, in ms
+          if dt > 0:
+              return A_plus * math.exp(-dt / tau_plus)      # pre before post: strengthen
+          if dt < 0:
+              return -A_minus * math.exp(dt / tau_minus)    # post before pre: weaken
+          return 0.0
 
-    For a threshold at 1, voltages 0.8 and 0.9 both produce output zero, while 1.1 produces one. The exact
-    output stays flat between crossings, so an ordinary derivative there gives no useful small-change signal.
-    A surrogate backward rule supplies one near the threshold so a task error can guide training. It leaves
-    the forward spike rule discrete in this example.'
-  text_mode: 'A hard threshold has a derivative that is zero almost everywhere and undefined at the threshold.
-    Surrogate-gradient training uses a convenient smooth backward approximation while often retaining discrete
-    spikes in the forward pass. This is an optimization choice, not the exact derivative of the original spike
-    function.
+      print("dt (ms)      dw")
+      for dt in [-60, -40, -20, -10, -5, 5, 10, 20, 40, 60]:
+          dw = stdp(dt)
+          print(f"{dt:6d}   {dw:+.5f}  {('+' if dw > 0 else '-') * round(abs(dw) * 1500)}")
 
+      pre = [10, 50, 90]                   # presynaptic spike times (ms)
+      post = [15, 55, 85]                  # postsynaptic spike times (ms)
+      total = sum(stdp(t_post - t_pre) for t_pre in pre for t_post in post)
+      print("total change over all 9 pairs:", round(total, 5))
+      ```
 
-    For a threshold at 1, voltages 0.8 and 0.9 both produce output zero, while 1.1 produces one. The exact
-    output stays flat between crossings, so an ordinary derivative there gives no useful small-change signal.
-    A surrogate backward rule supplies one near the threshold so a task error can guide training. It leaves
-    the forward spike rule discrete in this example.'
-  bridges:
-  - derivatives
-- id: spike-timing-and-surrogate-gradients.s4
-  title: Compare what signals are available
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.spike-timing-and-surrogate-gradients
-  markdown: Local timing rules use nearby activity; surrogate backpropagation can use a global task loss across
-    time. Reward-modulated and hybrid methods add other signals. Evaluate task quality, stability, memory,
-    and hardware cost, and distinguish computational usefulness from biological plausibility.
-  text_mode: Local timing rules use nearby activity; surrogate backpropagation can use a global task loss across
-    time. Reward-modulated and hybrid methods add other signals. Evaluate task quality, stability, memory,
-    and hardware cost, and distinguish computational usefulness from biological plausibility.
-  bridges: []
-- id: spike-timing-and-surrogate-gradients.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.spike-timing-and-surrogate-gradients
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: STDP uses relative spike timing as a local learning signal. Surrogate-gradient training instead
-    supplies an approximate backward signal for a discrete spike calculation.
-- id: spike-timing-and-surrogate-gradients.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.spike-timing-and-surrogate-gradients
-  markdown: STDP uses relative spike timing as a local learning signal. Surrogate-gradient training instead
-    supplies an approximate backward signal for a discrete spike calculation.
-  text_mode: STDP uses relative spike timing as a local learning signal. Surrogate-gradient training instead
-    supplies an approximate backward signal for a discrete spike calculation.
+      Two pairs are pre-before-post by 5 ms and one is post-before-pre by 5 ms, and the far-apart pairs add small amounts. The net is +0.0048. Try `post = [5, 45, 85]`, putting every post spike 5 ms before its pre spike, and the total turns negative.
+
+      :::predict The two neurons fire at random, with no relation between their spike times. Does the connection drift up, down, or stay put?
+      Down. Random timing lands on both sides of the window equally often, so the net drift follows the window's total area: $A_+\tau_+ - A_-\tau_- = 0.010 \times 20 - 0.012 \times 20 = -0.04$ per unit of pairing. Models often make depression slightly stronger for exactly this reason: connections that don't help cause spikes slowly fade, while ones that do keep strengthening.
+      :::
+
+      :::mixup "Δt is positive when the post spike comes first, since that's the one we measure."
+      The standard convention is $\Delta t = t_\text{post} - t_\text{pre}$, so positive means pre came *first*, the causal order, which strengthens. Flip the convention and every sign in the rule flips with it. Check it before reusing anyone's parameters.
+      :::
+  - id: spike-timing-and-surrogate-gradients.s3
+    title: The spike that blocks the gradient
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.spike-timing-and-surrogate-gradients
+    markdown: |-
+      STDP learns correlations, not tasks. To train a spiking network to *recognize* something, you'd like backpropagation. But a spike is a step: the output is $S = 1$ if the voltage $V \ge \theta$, and $S = 0$ otherwise. Its derivative $dS/dV$ is 0 everywhere except exactly at the threshold, where it's undefined.
+
+      Take one neuron with a single input $x = 1$ and weight $w = 0.9$, so $V = 0.9$, with threshold $\theta = 1$. It should spike (target 1) but doesn't ($S = 0$). With loss $L = \tfrac12 (S - 1)^2 = 0.5$, the chain rule gives
+
+      $$\frac{dL}{dw} = \underbrace{(S - 1)}_{-1} \times \underbrace{\frac{dS}{dV}}_{0} \times \underbrace{x}_{1} = 0$$
+
+      Gradient descent sees zero and never moves $w$, even though raising it by 0.1 would fix everything.
+
+      A **surrogate gradient** keeps the real step in the forward pass but uses a smooth bump in place of $dS/dV$ during the backward pass. A common choice is the derivative of a "fast sigmoid", from Friedemann Zenke and Surya Ganguli's SuperSpike rule (2018):
+
+      $$\frac{dS}{dV} \approx \frac{1}{\big(1 + \beta\,|V - \theta|\big)^2}$$
+
+      With $\beta = 5$: at $V = 0.9$ the bump is $1 / 1.5^2 = 0.444$; at $V = 0.5$ it's $1 / 3.5^2 = 0.082$; at the threshold it peaks at 1. Now $dL/dw \approx (-1)(0.444)(1) = -0.444$. A learning rate of 0.5 raises $w$ to $0.9 + 0.222 = 1.122$, and the neuron fires.
+
+      :::predict A neuron's voltage is 0.2, far below the threshold of 1, and it should have spiked. Will the surrogate gradient move its weight much?
+      Only a little. The bump is $1 / (1 + 5 \times 0.8)^2 = 0.04$, about a tenth of its value at 0.9. Surrogate gradients push hardest on neurons that nearly fired, so a neuron that's silent for every input can stay stuck. Careful weight initialization keeps voltages near the threshold at the start of training.
+      :::
+  - id: spike-timing-and-surrogate-gradients.surrogate-run
+    title: Train a spiking neuron with a stand-in slope
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.spike-timing-and-surrogate-gradients
+    markdown: |-
+      Here's the same trick on a neuron with three inputs. Pattern A should make it spike; pattern B shouldn't. The forward pass always uses real spikes.
+
+      ```python run
+      import numpy as np
+
+      X = np.array([[1.0, 0.0, 1.0],       # pattern A
+                    [0.0, 1.0, 1.0]])      # pattern B
+      targets = [1, 0]                     # A should make a spike; B should not
+      theta, beta, lr = 1.0, 5.0, 0.5      # threshold, bump sharpness, learning rate
+      use_bump = True                      # False: use the true derivative of the step (zero)
+
+      def bump(v):                         # a smooth stand-in for the step's derivative
+          return 1 / (1 + beta * abs(v - theta)) ** 2
+
+      w = np.array([0.2, 0.5, 0.4])
+      for epoch in range(1, 31):
+          for x, target in zip(X, targets):
+              v = w @ x                    # voltage for this input
+              s = float(v >= theta)        # forward pass: a real, all-or-nothing spike
+              err = s - target             # dL/ds for L = (s - target)^2 / 2
+              dsdv = bump(v) if use_bump else 0.0
+              w = w - lr * err * dsdv * x  # chain rule: dL/dw = err * ds/dv * x
+          if epoch in (1, 5, 10, 30):
+              spikes = [int(w @ x >= theta) for x in X]
+              print(f"epoch {epoch:2d}: w = {np.round(w, 3)}, spikes for A and B = {spikes}")
+      ```
+
+      By epoch 10 the weights are (0.794, 0.151, 0.644): A spikes and B doesn't. Along the way, in epoch 2, raising the shared third weight pushed B over threshold too; that wrong spike sent the update the other way and cut B's own weight from 0.5 to 0.151. Set `use_bump = False` and the weights never move.
+
+      Real spiking networks add time: each neuron is an LIF neuron from the previous lesson, so the network is a recurrent network, and training uses backpropagation through time, exactly as in the lesson on carrying a state from one step to the next. The surrogate replaces $dS/dV$ at every step.
+
+      :::papers Neftci, Mostafa & Zenke (2019)
+      Their review frames a spiking network as a recurrent network whose state is the membrane voltages, with output $S[t] = \Theta(V[t] - \theta)$, where $\Theta$ is the step function. Training uses the ordinary gradient of a task loss, except that every $\Theta'$ is replaced by a smooth surrogate $\sigma'$, such as the fast-sigmoid bump above. The forward pass stays exactly spiking; only the backward pass is approximate.
+      :::
+  - id: spike-timing-and-surrogate-gradients.s4
+    title: Local timing or global error?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.spike-timing-and-surrogate-gradients
+    markdown: |-
+      The two methods solve different problems:
+
+      | | STDP | Surrogate gradients |
+      | --- | --- | --- |
+      | Learning signal | Spike times at one synapse | A task loss, sent backward through the network |
+      | Needs labels? | No | Yes, or another loss to minimize |
+      | Where it runs | Can run on the chip, during use | Usually on a GPU, before deployment |
+      | Learns | Correlations and timing patterns | A chosen task |
+
+      Surrogate-gradient training is one of the main ways accurate spiking networks are trained today, with libraries such as snnTorch. The trained weights are then copied onto neuromorphic hardware, which runs the forward pass with real spikes. STDP is the better fit when learning must continue on the device itself with no labels, for example a sensor that adapts to its own inputs. Researchers also combine the two, adding a reward signal to STDP to make a three-factor rule like the one in the Hebbian lesson.
+
+      Say you're building a spiking keyword detector for an always-on earbud. You'd train it with surrogate gradients on labeled audio, deploy it to low-power hardware, and, if it must adapt to one user's voice in the field, add a local rule on the device.
+  - id: spike-timing-and-surrogate-gradients.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.spike-timing-and-surrogate-gradients
+    markdown: STDP changes and surrogate slopes to compute, plus an adapting sensor, a stuck silent neuron, and a flipped sign convention, test whether you can pick and apply the right spiking learning rule.
+    takeaway: |-
+      STDP strengthens a synapse when the presynaptic spike comes just before the postsynaptic one and weakens it in the reverse order, using only local timing. Surrogate gradients keep real spikes going forward but use a smooth bump for the step's derivative, so backpropagation can train spiking networks on a task.
+  - id: spike-timing-and-surrogate-gradients.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.spike-timing-and-surrogate-gradients
+    markdown: |-
+      STDP uses relative spike timing as a local learning signal. Surrogate-gradient training instead supplies an approximate backward signal for a discrete spike calculation.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - spike-timing-and-surrogate-gradients.s1
-    - spike-timing-and-surrogate-gradients.s2
-    - spike-timing-and-surrogate-gradients.s3
-    - spike-timing-and-surrogate-gradients.s4
-    - spike-timing-and-surrogate-gradients.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - spike-timing-and-surrogate-gradients.s1
+        - spike-timing-and-surrogate-gradients.s2
+        - spike-timing-and-surrogate-gradients.s3
+        - spike-timing-and-surrogate-gradients.surrogate-run
+        - spike-timing-and-surrogate-gradients.s4
+        - spike-timing-and-surrogate-gradients.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     spike-timing-and-surrogate-gradients.recap: spike-timing-and-surrogate-gradients.check
 assessment_families:
-- id: spike-timing-and-surrogate-gradients.base
-  objective_ref: objective.spike-timing-and-surrogate-gradients
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace the timing convention: trace the inputs, operation, and result before choosing.'
-  remediation_scene: spike-timing-and-surrogate-gradients.s2
-  variants:
-  - id: spike-timing-and-surrogate-gradients.base.1
-    prompt: Pre at 10 ms, post at 12 ms gives post-minus-pre delta t what?
-    options:
-    - id: b
-      text: -2 ms
-    - id: c
-      text: 22 ms
-    - id: a
-      text: 2 ms
-    answer: a
-    feedback: Subtract the pre-spike time from the post-spike time.
-  - id: spike-timing-and-surrogate-gradients.base.2
-    prompt: Is the common STDP timing window universal across all synapses?
-    options:
-    - id: c
-      text: Only if spikes are binary
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Biological and model rules vary.
-- id: spike-timing-and-surrogate-gradients.transfer
-  objective_ref: objective.spike-timing-and-surrogate-gradients
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compare what signals are available: trace the inputs, operation, and result before choosing.'
-  remediation_scene: spike-timing-and-surrogate-gradients.s4
-  variants:
-  - id: spike-timing-and-surrogate-gradients.transfer.1
-    prompt: What does a surrogate gradient replace?
-    options:
-    - id: c
-      text: The dataset labels automatically
-    - id: a
-      text: The problematic backward derivative of the spike operation
-    - id: b
-      text: Every forward spike necessarily
-    answer: a
-    feedback: Training uses an approximate differentiable signal.
-  - id: spike-timing-and-surrogate-gradients.transfer.2
-    prompt: Does surrogate backpropagation use exactly the same learning information as a local pair-based
-      STDP rule?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if both update weights
-    answer: a
-    feedback: Global losses and local timing provide different signals.
+  - id: spike-timing-and-surrogate-gradients.base
+    objective_ref: objective.spike-timing-and-surrogate-gradients
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace the timing convention: trace the inputs, operation, and result before choosing.'
+    remediation_scene: spike-timing-and-surrogate-gradients.s2
+    variants:
+      - id: spike-timing-and-surrogate-gradients.base.1
+        prompt: Pre at 10 ms, post at 12 ms gives post-minus-pre delta t what?
+        options:
+          - id: b
+            text: -2 ms
+          - id: c
+            text: 22 ms
+          - id: a
+            text: 2 ms
+        answer: a
+        feedback: Subtract the pre-spike time from the post-spike time.
+        retired: true
+      - id: spike-timing-and-surrogate-gradients.base.2
+        prompt: Is the common STDP timing window universal across all synapses?
+        options:
+          - id: c
+            text: Only if spikes are binary
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Biological and model rules vary.
+        retired: true
+  - id: spike-timing-and-surrogate-gradients.transfer
+    objective_ref: objective.spike-timing-and-surrogate-gradients
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compare what signals are available: trace the inputs, operation, and result before choosing.'
+    remediation_scene: spike-timing-and-surrogate-gradients.s4
+    variants:
+      - id: spike-timing-and-surrogate-gradients.transfer.1
+        prompt: What does a surrogate gradient replace?
+        options:
+          - id: c
+            text: The dataset labels automatically
+          - id: a
+            text: The problematic backward derivative of the spike operation
+          - id: b
+            text: Every forward spike necessarily
+        answer: a
+        feedback: Training uses an approximate differentiable signal.
+        retired: true
+      - id: spike-timing-and-surrogate-gradients.transfer.2
+        prompt: Does surrogate backpropagation use exactly the same learning information as a local pair-based STDP rule?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if both update weights
+        answer: a
+        feedback: Global losses and local timing provide different signals.
+        retired: true
+  - id: spike-timing-and-surrogate-gradients.base.v2
+    objective_ref: objective.spike-timing-and-surrogate-gradients
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "For STDP, compute Δt = t_post − t_pre first: positive strengthens, negative weakens. For surrogate gradients, the forward pass keeps real spikes and only dS/dV in the backward pass is replaced."
+    remediation_scene: spike-timing-and-surrogate-gradients.s3
+    variants:
+      - id: spike-timing-and-surrogate-gradients.base.v2.1
+        prompt: A presynaptic neuron fires at 42 ms and the postsynaptic neuron fires at 35 ms. Under the standard pair-based STDP rule, what happens to their connection?
+        options:
+          - id: b
+            text: It strengthens, since the two spikes are only 7 ms apart
+          - id: a
+            text: It weakens, since Δt = 35 − 42 = −7 ms means post fired first
+          - id: c
+            text: It is unchanged, since STDP needs pre to fire before post
+        answer: a
+        feedback: Δt = t_post − t_pre = −7 ms, the anti-causal order, which gives depression of about A₋e^(−7/τ₋). Closeness alone doesn't decide the sign, and the rule does act on reversed pairs.
+      - id: spike-timing-and-surrogate-gradients.base.v2.2
+        prompt: Why does ordinary backpropagation fail to train a network of spiking neurons with hard thresholds?
+        options:
+          - id: c
+            text: Spikes are binary numbers, and gradients need real-valued inputs
+          - id: b
+            text: Spiking networks have no loss function to differentiate
+          - id: a
+            text: The step's derivative is zero almost everywhere, so gradients vanish
+        answer: a
+        feedback: dS/dV is 0 except at the threshold, so every chain-rule product through a spike is 0 and the weights never move. Binary values can still be used in a loss, and you can define a loss on a spiking network's output.
+      - id: spike-timing-and-surrogate-gradients.base.v2.3
+        prompt: During surrogate-gradient training, what does the network compute in the forward pass?
+        options:
+          - id: a
+            text: Real all-or-nothing spikes, exactly as it would after training
+          - id: b
+            text: Smooth sigmoid outputs, which are rounded into spikes afterward
+          - id: c
+            text: Voltages only, since spikes are generated during the backward pass
+        answer: a
+        feedback: Only the backward pass changes; the forward pass is a genuine spiking network, which is why the trained weights can run on spiking hardware. Replacing forward spikes with sigmoids would train a different network.
+      - id: spike-timing-and-surrogate-gradients.base.v2.4
+        prompt: Two synapses use the same STDP rule with A₊ = 0.010 and τ = 20 ms. One sees pre-before-post pairs 5 ms apart; the other sees pairs 30 ms apart. Which strengthens more per pair?
+        options:
+          - id: b
+            text: The 30 ms pairs, since longer gaps give the synapse more time
+          - id: a
+            text: The 5 ms pairs, since the change fades exponentially with the gap
+          - id: c
+            text: Both equally, since both pairs are in the causal order
+        answer: a
+        feedback: Δw = A₊e^(−Δt/τ₊) gives 0.0078 at 5 ms and 0.0022 at 30 ms. The order sets the sign, and the gap sets the size.
+  - id: spike-timing-and-surrogate-gradients.transfer.v2
+    objective_ref: objective.spike-timing-and-surrogate-gradients
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Ask what learning signal is available. With labels and a GPU before deployment, surrogate gradients fit; with only local spike times on the device, STDP fits. The surrogate bump is largest near threshold."
+    remediation_scene: spike-timing-and-surrogate-gradients.s4
+    variants:
+      - id: spike-timing-and-surrogate-gradients.transfer.v2.1
+        prompt: A spiking vibration sensor on a bridge must keep adapting to its own inputs for years, with no labels and no connection to a server. Which learning rule fits?
+        options:
+          - id: a
+            text: A local STDP-style rule that runs on the sensor chip
+          - id: b
+            text: Surrogate-gradient training on the sensor's own chip
+          - id: c
+            text: Surrogate-gradient training on a GPU once a year
+        answer: a
+        feedback: With no labels and no backward pass available, a local rule that needs only spike times is the practical choice. Surrogate gradients need a task loss, and yearly retraining can't adapt continuously.
+      - id: spike-timing-and-surrogate-gradients.transfer.v2.2
+        prompt: A team trains a spiking keyword detector with surrogate gradients. Many output neurons have voltages far below threshold for every input, and their weights barely change. What is the likely cause?
+        options:
+          - id: c
+            text: The loss is too small for these neurons to affect it
+          - id: a
+            text: The surrogate bump is tiny far from threshold, so their gradients are too
+          - id: b
+            text: The forward pass uses real spikes, which carry no gradient
+        answer: a
+        feedback: The bump 1/(1 + β|V − θ|)² falls off fast away from threshold, so silent neurons get almost no signal. Better initialization or a wider bump (smaller β) keeps voltages where the surrogate is useful.
+      - id: spike-timing-and-surrogate-gradients.transfer.v2.3
+        prompt: A lab's code defines Δt = t_pre − t_post, but copies STDP parameters from a paper that uses Δt = t_post − t_pre. What will happen to causal (pre-before-post) pairs?
+        options:
+          - id: b
+            text: They'll strengthen as intended, since the exponential is symmetric
+          - id: c
+            text: They'll be ignored, since Δt becomes zero for every pair
+          - id: a
+            text: They'll weaken instead of strengthen, since Δt's sign is flipped
+        answer: a
+        feedback: Swapping the definition flips the sign of Δt, so causal pairs land on the depression side of the window. Check the convention before reusing parameters.
+      - id: spike-timing-and-surrogate-gradients.transfer.v2.4
+        prompt: A startup trains a spiking gesture classifier on labeled data and wants to run it on a neuromorphic chip. Which workflow matches common practice?
+        options:
+          - id: a
+            text: Train with surrogate gradients on a GPU, then copy the weights to the chip
+          - id: b
+            text: Train with STDP on the chip, since gradients can't be used with spikes
+          - id: c
+            text: Train a standard network with sigmoids and deploy it on the chip as is
+        answer: a
+        feedback: Surrogate gradients train accurately on labeled data, and the resulting network uses real spikes, so it runs on spiking hardware. Gradients can be used with a surrogate, and a sigmoid network isn't a spiking one.
+  - id: spike-timing-and-surrogate-gradients.calculate
+    objective_ref: objective.spike-timing-and-surrogate-gradients
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Δt = t_post − t_pre. If positive, Δw = A₊e^(−Δt/τ₊); if negative, Δw = −A₋e^(Δt/τ₋). Surrogate bump: 1/(1 + β|V − θ|)²."
+    remediation_scene: spike-timing-and-surrogate-gradients.s1
+    absolute_tolerance: 0.01
+    variants:
+      - id: spike-timing-and-surrogate-gradients.calculate.1
+        prompt: With A₊ = 1.0 and τ₊ = 20 ms, a presynaptic spike at 20 ms is followed by a postsynaptic spike at 30 ms. What is Δw?
+        answer: 0.61
+        feedback: Δt = 30 − 20 = +10 ms, so Δw = 1.0 × e^(−0.5) ≈ 0.61.
+      - id: spike-timing-and-surrogate-gradients.calculate.2
+        prompt: With A₋ = 1.2 and τ₋ = 20 ms, a presynaptic spike at 30 ms comes after a postsynaptic spike at 20 ms. What is Δw?
+        answer: -0.73
+        feedback: Δt = 20 − 30 = −10 ms, so Δw = −1.2 × e^(−0.5) ≈ −0.73.
+      - id: spike-timing-and-surrogate-gradients.calculate.3
+        prompt: With A₊ = 1.0 and τ₊ = 20 ms, a presynaptic spike at 5 ms is followed by a postsynaptic spike at 20 ms. What is Δw?
+        answer: 0.47
+        feedback: Δt = +15 ms, so Δw = e^(−0.75) ≈ 0.47.
+      - id: spike-timing-and-surrogate-gradients.calculate.4
+        prompt: A surrogate gradient uses 1/(1 + β|V − θ|)² with β = 5 and θ = 1. What is its value at V = 0.8?
+        answer: 0.25
+        feedback: 5 × |0.8 − 1| = 1, so the bump is 1 / 2² = 0.25.
+      - id: spike-timing-and-surrogate-gradients.calculate.5
+        prompt: A neuron should have spiked but didn't, so dL/dS = −1. Its voltage is 0.9, the surrogate bump there is 0.444, and the input on one synapse is x = 2. What is the surrogate estimate of dL/dw for that synapse?
+        answer: -0.89
+        feedback: dL/dw ≈ (−1) × 0.444 × 2 ≈ −0.89. Gradient descent then raises the weight.

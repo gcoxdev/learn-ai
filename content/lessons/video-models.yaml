@@ -1,194 +1,426 @@
 schema_version: 0.2-draft
 lesson:
   id: video-models
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Model motion and persistence across frames
   state: draft
-  summary: See why making a convincing moving scene is harder than making one picture.
+  summary: Did the bus stop, or drive past? No single frame can say. See what it costs a model to watch time, and the trick that makes it about 8 to 28 times cheaper.
   slot: M23.6
   category: learning
   sources:
-  - title: Video Diffusion Models
-    url: https://arxiv.org/abs/2204.03458
-  - title: TimeSformer
-    url: https://arxiv.org/abs/2102.05095
+    - title: "Is Space-Time Attention All You Need for Video Understanding? (TimeSformer; Bertasius, Wang & Torresani, 2021)"
+      url: https://arxiv.org/abs/2102.05095
+    - title: "ViViT: A Video Vision Transformer (Arnab et al., 2021)"
+      url: https://arxiv.org/abs/2103.15691
+    - title: "Video Diffusion Models (Ho et al., 2022)"
+      url: https://arxiv.org/abs/2204.03458
+    - title: "The \"something something\" video database for learning and evaluating visual common sense (Goyal et al., 2017)"
+      url: https://arxiv.org/abs/1706.04261
+    - title: "Video generation models as world simulators (OpenAI Sora technical report, 2024)"
+      url: https://openai.com/index/video-generation-models-as-world-simulators/
 objectives:
-- id: objective.video-models
-  version: 1-draft
-  statement: Video models must represent spatial content and temporal relationships; understanding and generation
-    require evaluation of motion, identity, causality, and consistency beyond individual frame quality.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - video-models.base
-  - video-models.transfer
-  prerequisites:
-  - anyOf:
-    - objective.modality-tokenization
-  - anyOf:
-    - objective.depth-motion-3d
-  - anyOf:
-    - objective.latent-diffusion
+  - id: objective.video-models
+    version: 2-draft
+    statement: Video models must represent spatial content and temporal relationships; understanding and generation require evaluation of motion, identity, causality, and consistency beyond individual frame quality.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - video-models.base.v2
+      - video-models.transfer.v2
+      - video-models.calculate
+    prerequisites:
+      - anyOf:
+          - objective.modality-tokenization
+      - anyOf:
+          - objective.depth-motion-3d
+      - anyOf:
+          - objective.latent-diffusion
 scenes:
-- id: video-models.s1
-  title: Video adds a time axis
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.video-models
-  markdown: 'Frames contain spatial information, while their ordering describes motion and events. Frame sampling
-    can miss a brief action. A model may process frame features, spatiotemporal patches, recurrent state, or
-    combinations, each imposing a different information and compute budget.
+  - id: video-models.s1
+    title: Frames you skip are events you miss
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.video-models
+    markdown: |-
+      Amara waits at a bus stop, films ten seconds, and asks Lumen, "Did the bus stop, or drive past?" A single frame showing a bus beside the curb can't answer that. The answer lives in the *order* of frames: slowing, stopped, doors open.
 
+      The tokenization lesson showed why a model can't afford all 300 frames, so it samples, and sampling has a cost you can calculate. Say a cyclist darts across the gap in front of Amara in 0.3 seconds. At 1 frame per second, the samples are 1 second apart, and the event fits inside one gap. Whether any sample lands in it depends on luck:
 
-    A ten-second clip sampled at two frames per second supplies 20 frames. If each frame becomes 196 patch
-    vectors, that is 3,920 spatial patches before any compression or extra tokens. A half-second action might
-    appear in only one sampled frame, or be missed depending on timing. Spatiotemporal patches group nearby
-    image regions across time. Video diffusion can denoise a whole clip representation while a text prompt
-    guides its content; maintaining agreement between frames remains part of the learning problem.'
-  text_mode: 'Frames contain spatial information, while their ordering describes motion and events. Frame sampling
-    can miss a brief action. A model may process frame features, spatiotemporal patches, recurrent state, or
-    combinations, each imposing a different information and compute budget.
+      $$P(\text{at least one frame sees it}) = \min(1,\ \text{event length} \times \text{frames per second})$$
 
+      At 1 fps that's $0.3 \times 1 = 30\%$. At 2 fps, 60%. At 4 fps the samples are 0.25 seconds apart, shorter than the event, so it's always caught.
 
-    A ten-second clip sampled at two frames per second supplies 20 frames. If each frame becomes 196 patch
-    vectors, that is 3,920 spatial patches before any compression or extra tokens. A half-second action might
-    appear in only one sampled frame, or be missed depending on timing. Spatiotemporal patches group nearby
-    image regions across time. Video diffusion can denoise a whole clip representation while a text prompt
-    guides its content; maintaining agreement between frames remains part of the learning problem.'
-  bridges: []
-- id: video-models.s2
-  title: Preserve identity through motion
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.video-models
-  markdown: If a red ball passes behind a box, later frames should maintain its identity and plausible position.
-    A generator can produce attractive individual images while changing object count, geometry, or texture
-    across time. Temporal consistency is therefore a separate evaluation target.
-  text_mode: If a red ball passes behind a box, later frames should maintain its identity and plausible position.
-    A generator can produce attractive individual images while changing object count, geometry, or texture
-    across time. Temporal consistency is therefore a separate evaluation target.
-  bridges: []
-- id: video-models.s3
-  title: Distinguish camera motion from world motion
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.video-models
-  markdown: An apparent image shift may result from camera movement, object movement, or both. Depth, occlusion,
-    and viewpoint changes make prediction ambiguous. Learned video models can capture statistical regularities
-    without implementing an explicit physically valid three-dimensional simulator.
-  text_mode: An apparent image shift may result from camera movement, object movement, or both. Depth, occlusion,
-    and viewpoint changes make prediction ambiguous. Learned video models can capture statistical regularities
-    without implementing an explicit physically valid three-dimensional simulator.
-  bridges: []
-- id: video-models.s4
-  title: Evaluate sequences as sequences
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.video-models
-  markdown: Test event order, timing, object permanence, instruction adherence, and long-horizon behavior.
-    Include frame-level quality but also temporal measures and human examination under a stated rubric. Generated
-    video that looks realistic is not evidence that the depicted event actually occurred.
-  text_mode: Test event order, timing, object permanence, instruction adherence, and long-horizon behavior.
-    Include frame-level quality but also temporal measures and human examination under a stated rubric. Generated
-    video that looks realistic is not evidence that the depicted event actually occurred.
-  bridges: []
-- id: video-models.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.video-models
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A video needs more than good individual frames. Check whether objects, motion, timing, and event
-    order remain consistent across the sequence.
-- id: video-models.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.video-models
-  markdown: A video needs more than good individual frames. Check whether objects, motion, timing, and event
-    order remain consistent across the sequence.
-  text_mode: A video needs more than good individual frames. Check whether objects, motion, timing, and event
-    order remain consistent across the sequence.
+      ```python run
+      import random
+      random.seed(0)
+
+      def catch_rate(event_seconds, fps, trials=100_000):
+          gap = 1 / fps                              # seconds between sampled frames
+          hits = 0
+          for _ in range(trials):
+              start = random.uniform(0, gap)         # event begins somewhere between two samples
+              hits += (gap - start) < event_seconds  # does the next sample land inside it?
+          return hits / trials
+
+      event = 0.3                                    # seconds the cyclist is visible
+      for fps in [1, 2, 4]:
+          print(f"{fps} fps: catches a {event} s event in {catch_rate(event, fps):.1%} of clips")
+      ```
+
+      :::predict A car's brake lights flash for 0.5 seconds. What frame rate is the lowest that always catches the flash?
+      2 fps. The samples are then 0.5 seconds apart, the same as the flash, so one always lands inside. At 1 fps the chance is only 50%. Change `event = 0.3` to `event = 0.5` in the program to check.
+      :::
+
+      Many video-language models sample a fixed number of frames per clip, often somewhere around 8 to 32. For a 10-second clip, 8 frames is 0.8 fps; for a 2-minute clip, 8 frames is one every 15 seconds. Longer clips quietly get blinder.
+    bridges: []
+  - id: video-models.s5
+    title: "Attention over T × H × W, and how to split it"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.video-models
+    markdown: |-
+      Suppose Lumen keeps $T = 8$ frames at 224 pixels, patch 16: $14 \times 14 = 196$ patches per frame, so $N = 8 \times 196 = 1{,}568$ tokens. **Joint space-time attention** lets every token attend to every other, which costs $N^2 = 2{,}458{,}624$ scores per head per layer. Double the frames and the cost quadruples.
+
+      **Divided space-time attention**, from TimeSformer (Bertasius, Wang & Torresani, 2021), splits each attention step in two:
+
+      1. **Time.** Each patch attends only to the patch at the *same position* in the other frames: $T = 8$ scores.
+      2. **Space.** Each patch then attends only to the patches in its *own* frame: $H/P \times W/P = 196$ scores.
+
+      That's $N \times (196 + 8) = 319{,}872$ scores, 7.7 times fewer. Information still flows between any two tokens, just in two hops: across time at one spot, then across space within one frame. In TimeSformer's experiments the divided design was both cheaper and more accurate than joint attention, and ViViT (Arnab et al., 2021) explored similar factorized designs.
+
+      :::papers Divided space-time attention for token $(t, s)$
+      $$\text{time step: } (t, s) \text{ attends to } \{(t', s) : t' = 1 \ldots T\}\qquad \text{space step: } (t, s) \text{ attends to } \{(t, s') : s' = 1 \ldots S\}$$
+
+      Cost per layer per head: joint $= (TS)^2$; divided $= TS\,(T + S)$. With $T = 8$ and $S = 196$: $1{,}568^2 = 2{,}458{,}624$ versus $1{,}568 \times 204 = 319{,}872$.
+      :::
+
+      | Frames $T$ | Tokens $N$ | Joint $N^2$ | Divided $N(S+T)$ | Saving |
+      | ---: | ---: | ---: | ---: | ---: |
+      | 8 | 1,568 | 2,458,624 | 319,872 | 7.7× |
+      | 16 | 3,136 | 9,834,496 | 664,832 | 14.8× |
+      | 32 | 6,272 | 39,337,984 | 1,430,016 | 27.5× |
+
+      The saving grows with $T$, because joint attention grows with $T^2$ and divided with only about $T$.
+    diagram:
+      caption: One block of divided space-time attention.
+      description: Patch tokens from T frames first go through temporal attention, where each patch looks at the same position in the other frames. The result goes through spatial attention, where each patch looks at the other patches in its own frame. Then a feed-forward layer processes each token, and the output goes to the next block.
+      nodes:
+        - id: tokens
+          label: T × 196 patch tokens
+          note: 8 frames × 196 = 1,568
+          col: 0
+          row: 1
+          tone: data
+        - id: time
+          label: Time attention
+          note: same spot, other frames (8 each)
+          col: 1
+          row: 1
+          tone: accent
+        - id: space
+          label: Space attention
+          note: same frame, other spots (196 each)
+          col: 2
+          row: 1
+          tone: accent
+        - id: mlp
+          label: Feed-forward
+          note: per token
+          col: 3
+          row: 1
+        - id: next
+          label: Next block
+          col: 4
+          row: 1
+          tone: muted
+      edges:
+        - from: tokens
+          to: time
+        - from: time
+          to: space
+        - from: space
+          to: mlp
+        - from: mlp
+          to: next
+    bridges: []
+  - id: video-models.s2
+    title: The bus that went behind the truck
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.video-models
+    markdown: |-
+      Halfway through Amara's clip, a delivery truck drives between her and the bus for two seconds. When the truck clears, a bus is at the curb. Is it the *same* bus? A good video model should keep track of an object's identity while it is hidden, called **object permanence**, and notice if the number of buses changes.
+
+      This property, that objects, counts, and positions stay consistent from frame to frame, is **temporal consistency**. It's easy to test for and easy to fail. A model that judges each frame well can still lose track across frames.
+
+      :::mixup "If a model understands each frame, it understands the video."
+      Many action datasets can be solved largely from single frames: a swimming pool means "swimming". The Something-Something dataset (Goyal et al., 2017) was built to break that shortcut, with labels such as "pushing something from left to right" versus "from right to left", which only the order of frames can tell apart. A quick test for any video model: shuffle or reverse the frames. If the answer to "Did the bus stop or drive past?" doesn't change, the model isn't using time.
+      :::
+
+      Motion itself is ambiguous. Amara's phone moves as she holds it, so the whole scene shifts even when nothing in the world moves. A bus that seems to glide left may be parked while the camera pans right. Models separate the two from how the background moves, the optical-flow idea from the computer vision module: if everything shifts together, it's probably the camera.
+    bridges: []
+  - id: video-models.s3
+    title: Generating video runs the same problems in reverse
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.video-models
+    markdown: |-
+      Video generators face the same axis of time from the other side. Generate each frame separately with an image model and you get flicker: the bus changes color, the stop sign moves, a passenger gains an arm.
+
+      Video Diffusion Models (Ho et al., 2022) extended the image diffusion network from the generative models module to denoise a whole clip at once, with factorized space-time attention like TimeSformer's, so every frame is shaped with the others in view. OpenAI's Sora (February 2024) applied a diffusion transformer to **spacetime patches**, tubelet-like chunks of a compressed latent video, and could generate clips up to a minute long.
+
+      :::story "World simulators" that can't shatter glass
+      OpenAI titled its Sora report *Video generation models as world simulators*, arguing that scaling video generation is a promising path toward models of the physical world. The same report listed failures: glass that doesn't shatter correctly, and food that doesn't change when eaten (OpenAI's launch page showed a cookie with no bite mark after a bite). Realistic frames and consistent physics are separate achievements.
+      :::
+
+      For Lumen, which only watches video, the lesson from generation is a testing habit. Check the video-level questions directly: Is it the same bus before and after the truck? Did events happen in the stated order? Did the count of things stay the same? Frame-level quality can look perfect while all three fail.
+    bridges: []
+  - id: video-models.s4
+    title: A test plan for "Did the bus stop?"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.video-models
+    markdown: |-
+      Here is how Lumen's team turns this lesson into tests before shipping bus-stop answers:
+
+      | Test | What it catches | Example |
+      | --- | --- | --- |
+      | Reverse the clip | Ignoring frame order | "Stopped then left" should become "arrived then stopped" |
+      | Vary the sampling rate | Brief events missed between frames | Rerun at 1, 2, and 4 fps; answers about 0.3-second events should settle by 4 |
+      | Occlusion clips | Losing identity behind other objects | Truck passes in front; "same bus?" |
+      | Camera-motion clips | Confusing a pan with movement | Parked bus, panning phone: "Is the bus moving?" should be "no" |
+
+      Each row isolates one failure, so a drop points straight at a fix: more frames, a model that uses order, or training clips with occlusion and camera motion. The next lesson asks what happens when a model goes further and predicts what the next frames *will* show.
+    bridges: []
+  - id: video-models.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.video-models
+    markdown: Attention costs to compute by hand, plus a sports replay, a factory camera, and a generated ad, test whether you can budget video attention and test for time.
+    takeaway: |-
+      Sample fast enough to catch the events you care about, and split attention into time and space steps to afford the frames. Then test the video as a sequence: order, identity behind occlusions, and camera versus world motion.
+  - id: video-models.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.video-models
+    markdown: |-
+      A video needs more than good individual frames. Check whether objects, motion, timing, and event order remain consistent across the sequence.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - video-models.s1
-    - video-models.s2
-    - video-models.s3
-    - video-models.s4
-    - video-models.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - video-models.s1
+        - video-models.s5
+        - video-models.s2
+        - video-models.s3
+        - video-models.s4
+        - video-models.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     video-models.recap: video-models.check
 assessment_families:
-- id: video-models.base
-  objective_ref: objective.video-models
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Preserve identity through motion: trace the inputs, operation, and result before choosing.'
-  remediation_scene: video-models.s2
-  variants:
-  - id: video-models.base.1
-    prompt: Why can sparse frame sampling miss an action?
-    options:
-    - id: b
-      text: Every frame contains the complete past
-    - id: c
-      text: Sampling changes only file names
-    - id: a
-      text: The event may occur between sampled frames
-    answer: a
-    feedback: Temporal coverage limits observable evidence.
-  - id: video-models.base.2
-    prompt: Good individual frames with changing object identity reveal what?
-    options:
-    - id: c
-      text: Only an audio issue
-    - id: a
-      text: A temporal consistency failure
-    - id: b
-      text: Perfect video quality
-    answer: a
-    feedback: Sequence coherence adds constraints beyond frame appearance.
-- id: video-models.transfer
-  objective_ref: objective.video-models
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate sequences as sequences: trace the inputs, operation, and result before choosing.'
-  remediation_scene: video-models.s4
-  variants:
-  - id: video-models.transfer.1
-    prompt: Does realistic generated motion prove an explicit physical simulator exists inside the model?
-    options:
-    - id: c
-      text: Only for long clips
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Behavior alone does not identify the internal mechanism.
-  - id: video-models.transfer.2
-    prompt: What must video understanding evaluate beyond object labels?
-    options:
-    - id: a
-      text: Event order and temporal relationships
-    - id: b
-      text: Only image height
-    - id: c
-      text: Only caption punctuation
-    answer: a
-    feedback: Video tasks depend on changes and relationships over time.
+  - id: video-models.base
+    objective_ref: objective.video-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Preserve identity through motion: trace the inputs, operation, and result before choosing.'
+    remediation_scene: video-models.s2
+    variants:
+      - id: video-models.base.1
+        prompt: Why can sparse frame sampling miss an action?
+        options:
+          - id: b
+            text: Every frame contains the complete past
+          - id: c
+            text: Sampling changes only file names
+          - id: a
+            text: The event may occur between sampled frames
+        answer: a
+        feedback: Temporal coverage limits observable evidence.
+        retired: true
+      - id: video-models.base.2
+        prompt: Good individual frames with changing object identity reveal what?
+        options:
+          - id: c
+            text: Only an audio issue
+          - id: a
+            text: A temporal consistency failure
+          - id: b
+            text: Perfect video quality
+        answer: a
+        feedback: Sequence coherence adds constraints beyond frame appearance.
+        retired: true
+  - id: video-models.transfer
+    objective_ref: objective.video-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate sequences as sequences: trace the inputs, operation, and result before choosing.'
+    remediation_scene: video-models.s4
+    variants:
+      - id: video-models.transfer.1
+        prompt: Does realistic generated motion prove an explicit physical simulator exists inside the model?
+        options:
+          - id: c
+            text: Only for long clips
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Behavior alone does not identify the internal mechanism.
+        retired: true
+      - id: video-models.transfer.2
+        prompt: What must video understanding evaluate beyond object labels?
+        options:
+          - id: a
+            text: Event order and temporal relationships
+          - id: b
+            text: Only image height
+          - id: c
+            text: Only caption punctuation
+        answer: a
+        feedback: Video tasks depend on changes and relationships over time.
+        retired: true
+  - id: video-models.base.v2
+    objective_ref: objective.video-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: For sampling, compare the event's length with the gap between frames. For attention, count how many tokens each token looks at in each step.
+    remediation_scene: video-models.s5
+    variants:
+      - id: video-models.base.v2.1
+        prompt: A model samples 2 frames per second. An event lasts 0.2 seconds and starts at a random moment. What is the chance at least one sampled frame shows it?
+        options:
+          - id: b
+            text: 20%, the event's length as a share of one second
+          - id: a
+            text: 40%, the event's length times the frame rate
+          - id: c
+            text: 100%, since two frames each second cover every moment
+        answer: a
+        feedback: Frames are 0.5 seconds apart, and the event covers 0.2 of that gap, so 0.2 × 2 = 0.4. 20% would be the rate at 1 fps; only a gap shorter than the event guarantees a catch.
+      - id: video-models.base.v2.2
+        prompt: In divided space-time attention, which tokens does a patch attend to in the time step?
+        options:
+          - id: c
+            text: Every patch in every frame of the clip
+          - id: b
+            text: The other patches in its own frame
+          - id: a
+            text: The patch at the same position in the other frames
+        answer: a
+        feedback: The time step looks along one position through time; the space step then looks across its own frame. Attending to everything at once is joint attention, the expensive version.
+      - id: video-models.base.v2.3
+        prompt: A video transformer doubles its frames from 16 to 32, with 196 patches per frame. Roughly how does the joint attention cost change compared with the divided cost?
+        options:
+          - id: a
+            text: Joint cost roughly quadruples; divided cost roughly doubles
+          - id: b
+            text: Both roughly double, since the number of tokens doubles
+          - id: c
+            text: Both roughly quadruple, since attention is quadratic
+        answer: a
+        feedback: Joint cost is N², so doubling N quadruples it (9.8M to 39.3M). Divided cost is N(S + T), and with S = 196 fixed, it grows only a bit more than 2× (665K to 1.43M).
+      - id: video-models.base.v2.4
+        prompt: A team reverses every test clip, and its video model's answers to "Did the door open or close?" barely change. What does that show?
+        options:
+          - id: b
+            text: The model is robust, since it gives stable answers under changes
+          - id: a
+            text: The model isn't using frame order, so it can't tell opening from closing
+          - id: c
+            text: The clips are too short for any model to find the direction
+        answer: a
+        feedback: Opening and closing contain the same frames in opposite orders, so reversing them should flip the answer. Stability here means the model ignores time, like a single-frame shortcut.
+  - id: video-models.transfer.v2
+    objective_ref: objective.video-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Decide which property of time the task depends on (a brief event, the order of events, identity through occlusion, or camera versus object motion), then pick the test or fix that targets it.
+    remediation_scene: video-models.s4
+    variants:
+      - id: video-models.transfer.v2.1
+        prompt: A sports-replay tool samples 8 frames from each clip. It spots fouls well in 10-second clips but misses most in 2-minute clips. What is the most likely cause?
+        options:
+          - id: a
+            text: Eight frames spread over 2 minutes are 15 seconds apart, so brief fouls fall between them
+          - id: c
+            text: The long clips have more players, so each frame is too crowded to read
+          - id: b
+            text: The model's attention cost grows too large for the longer clips
+        answer: a
+        feedback: A fixed frame count means the gap grows with clip length, from 1.25 to 15 seconds here. The token count, and so the attention cost, stays the same at 8 frames; crowding doesn't explain a drop this large.
+      - id: video-models.transfer.v2.2
+        prompt: A factory camera model must flag a part that briefly disappears behind a robot arm and comes out damaged. Which test set targets this?
+        options:
+          - id: b
+            text: Single frames of damaged and undamaged parts, shuffled together
+          - id: a
+            text: Clips where a part is hidden and reappears, with and without damage
+          - id: c
+            text: Clips recorded at higher resolution to show finer surface detail
+        answer: a
+        feedback: The task depends on keeping the part's identity through occlusion and comparing before and after. Single frames drop the time element, and resolution doesn't test tracking.
+      - id: video-models.transfer.v2.3
+        prompt: A generated video ad looks sharp in every frame, but the product logo changes shape three times. Which property failed?
+        options:
+          - id: c
+            text: Frame quality, since each frame needs a sharper logo
+          - id: b
+            text: Sampling rate, since the logo changes between frames
+          - id: a
+            text: Temporal consistency, since the object should stay the same
+        answer: a
+        feedback: Each frame is fine on its own; the failure is across frames. Generators avoid this by denoising frames jointly with space-time attention rather than one at a time.
+      - id: video-models.transfer.v2.4
+        prompt: A drone video model reports that parked cars are "moving" whenever the drone turns. What should its test set add?
+        options:
+          - id: a
+            text: Clips of still scenes filmed with camera pans and turns
+          - id: b
+            text: Clips of moving cars filmed from a fixed tripod
+          - id: c
+            text: More frames per clip so small motions are visible
+        answer: a
+        feedback: The model confuses camera motion with object motion, so it needs cases where only the camera moves. Tripod clips only have object motion, and more frames would show the same confusion more often.
+  - id: video-models.calculate
+    objective_ref: objective.video-models
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Tokens N = frames × patches per frame. Joint attention costs N². Divided attention costs N × (patches per frame + frames).
+    remediation_scene: video-models.s5
+    absolute_tolerance: 0.5
+    variants:
+      - id: video-models.calculate.1
+        prompt: A clip has 4 frames with 196 patches each. How many attention scores does joint space-time attention compute per head per layer?
+        answer: 614656
+        feedback: N = 4 × 196 = 784 tokens, and 784² = 614,656.
+      - id: video-models.calculate.2
+        prompt: A clip has 8 frames with 196 patches each. How many scores does divided space-time attention compute per head per layer?
+        answer: 319872
+        feedback: N = 1,568, and each token scores 196 + 8 = 204 others, so 1,568 × 204 = 319,872.
+      - id: video-models.calculate.3
+        prompt: A clip has 16 frames at 224 pixels with patch 32 (7 × 7 = 49 patches per frame). How many scores does divided attention compute per head per layer?
+        answer: 50960
+        feedback: N = 16 × 49 = 784, and each token scores 49 + 16 = 65, so 784 × 65 = 50,960.
+      - id: video-models.calculate.4
+        prompt: A clip has 8 frames with 256 patches each. How many scores does divided attention compute per head per layer?
+        answer: 540672
+        feedback: N = 8 × 256 = 2,048, and each token scores 256 + 8 = 264, so 2,048 × 264 = 540,672.

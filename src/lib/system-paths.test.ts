@@ -146,7 +146,7 @@ it("preserves semantic headers and cells in authored worked tables", () => {
   const scene = c.lessons
     .find((l) => l.id === "algorithms-and-programs")!
     .scenes.find((s) => s.id.endsWith(".s3"))!;
-  expect(scene.html).toContain("<table>");
+  expect(scene.html).toMatch(/<table[ >]/);
   expect(scene.html).toContain("<th>Weight inspected</th>");
   expect(scene.html).toContain("<td>9</td>");
 });

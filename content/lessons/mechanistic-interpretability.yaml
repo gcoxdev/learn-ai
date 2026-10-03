@@ -1,195 +1,436 @@
 schema_version: 0.2-draft
 lesson:
   id: mechanistic-interpretability
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Test hypotheses about internal representations and computation
   state: draft
-  summary: Investigate which internal computations contribute to a model’s behavior.
+  summary: Researchers found a feature inside Claude that stood for the Golden Gate Bridge, then turned it up until the model claimed to be the bridge. Learn the tools that open a model up and test what's inside.
   slot: M28.7
   category: learning
   sources:
-  - title: Locating and Editing Factual Associations
-    url: https://arxiv.org/abs/2202.05262
-  - title: Towards Monosemanticity
-    url: https://transformer-circuits.pub/2023/monosemantic-features/index.html
-  - title: Towards Automated Circuit Discovery
-    url: https://arxiv.org/abs/2304.14997
+    - title: "Locating and Editing Factual Associations in GPT (Meng et al., 2022), which introduced ROME and causal tracing"
+      url: https://arxiv.org/abs/2202.05262
+    - title: "In-context Learning and Induction Heads (Olsson et al., 2022)"
+      url: https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html
+    - title: "Toy Models of Superposition (Elhage et al., 2022)"
+      url: https://transformer-circuits.pub/2022/toy_model/index.html
+    - title: "Towards Monosemanticity: Decomposing Language Models With Dictionary Learning (Bricken et al., 2023)"
+      url: https://transformer-circuits.pub/2023/monosemantic-features/index.html
+    - title: "Scaling Monosemanticity: Extracting Interpretable Features from Claude 3 Sonnet (Templeton et al., 2024)"
+      url: https://transformer-circuits.pub/2024/scaling-monosemanticity/index.html
+    - title: "Designing and Interpreting Probes with Control Tasks (Hewitt & Liang, 2019)"
+      url: https://arxiv.org/abs/1909.03368
+    - title: Towards Automated Circuit Discovery
+      url: https://arxiv.org/abs/2304.14997
 objectives:
-- id: objective.mechanistic-interpretability
-  version: 1-draft
-  statement: Probes, activation interventions, circuit analyses, and sparse autoencoders provide different
-    evidence about learned computation; distinguish decodability, causal influence, and complete mechanistic
-    explanation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - mechanistic-interpretability.base
-  - mechanistic-interpretability.transfer
-  prerequisites:
-  - anyOf:
-    - objective.attribution-and-counterfactual-explanations
-  - anyOf:
-    - objective.learned-representations
+  - id: objective.mechanistic-interpretability
+    version: 2-draft
+    statement: Probes, activation interventions, circuit analyses, and sparse autoencoders provide different evidence about learned computation; distinguish decodability, causal influence, and complete mechanistic explanation.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - mechanistic-interpretability.base.v2
+      - mechanistic-interpretability.transfer.v2
+      - mechanistic-interpretability.calculate
+    prerequisites:
+      - anyOf:
+          - objective.attribution-and-counterfactual-explanations
+      - anyOf:
+          - objective.learned-representations
 scenes:
-- id: mechanistic-interpretability.s1
-  title: Probe what information is decodable
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.mechanistic-interpretability
-  markdown: A probe predicts a property from internal activations. Success shows that the chosen probe can
-    extract information under the experiment’s conditions. It does not by itself prove the original model uses
-    that information for its output or that the property lives in one isolated neuron.
-  text_mode: A probe predicts a property from internal activations. Success shows that the chosen probe can
-    extract information under the experiment’s conditions. It does not by itself prove the original model uses
-    that information for its output or that the property lives in one isolated neuron.
-  bridges: []
-- id: mechanistic-interpretability.s2
-  title: Intervene on the computation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.mechanistic-interpretability
-  markdown: 'Ablation removes or changes activations; activation patching substitutes selected states between
-    controlled runs. If output changes, the intervention has evidence of causal influence within that setup.
-    Off-distribution interventions and broad collateral effects can complicate claims about the intended feature.
+  - id: mechanistic-interpretability.s1
+    title: Can you read "angry" off the activations?
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.mechanistic-interpretability
+    markdown: |-
+      Attribution says which inputs mattered. **Mechanistic interpretability** asks *how*: what the model computes inside, step by step. Kestrel's team tries it on an open-weights model they're considering, one whose internal activations they can read.
 
+      First question: does the model represent whether the customer is angry? They record the activation vector at layer 12 for 2,000 labeled chats and train a **probe**, a small linear classifier that predicts "angry or not" from those vectors. It is right 94% of the time on held-out chats.
 
-    Suppose a probe can read the word “red” from a hidden vector while the model answers a color question.
-    That establishes readable information. Replacing selected activations from a red-object run with activations
-    from a blue-object run is a patching experiment. If the answer changes to blue, the intervention affected
-    the answer in that setup. Check unrelated answers too: a patch that disrupts everything is weaker evidence
-    for a specific color mechanism.'
-  text_mode: 'Ablation removes or changes activations; activation patching substitutes selected states between
-    controlled runs. If output changes, the intervention has evidence of causal influence within that setup.
-    Off-distribution interventions and broad collateral effects can complicate claims about the intended feature.
+      As the lesson on learned representations showed, that proves the information can be *read* at layer 12, not that the model *uses* it. There's a second trap. A probe on the raw word embeddings at layer 0 scores 91%, because words like "ridiculous" give anger away. So layer 12 adds only 3 points. Always compare a probe with a simple baseline. Hewitt and Liang (2019) made this systematic with **control tasks**: train the same probe on made-up labels to see how much it can learn by itself.
+    bridges: []
+  - id: mechanistic-interpretability.s2
+    title: Swap in one activation, watch the answer
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mechanistic-interpretability
+    markdown: |-
+      To test *use*, change the inside and watch the output. **Activation patching** runs the model twice: a clean run on the real prompt, and a corrupted run where the key words are replaced or blurred with noise. Then it reruns the corrupted prompt with one internal activation copied in from the clean run. If the right answer comes back, that activation carries the information that matters.
 
+      Meng et al. (2022) called this **causal tracing** and used it on GPT-style models with prompts like "The Space Needle is in downtown", which should end with "Seattle". Restoring a single hidden state brought "Seattle" back mainly at middle-layer MLPs over the last word of the subject. They then edited those MLP weights directly to change the stored fact, a method called ROME.
 
-    Suppose a probe can read the word “red” from a hidden vector while the model answers a color question.
-    That establishes readable information. Replacing selected activations from a red-object run with activations
-    from a blue-object run is a patching experiment. If the answer changes to blue, the intervention affected
-    the answer in that setup. Check unrelated answers too: a patch that disrupts everything is weaker evidence
-    for a specific color mechanism.'
-  bridges: []
-- id: mechanistic-interpretability.s3
-  title: Represent features with sparse dictionaries
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.mechanistic-interpretability
-  markdown: Sparse autoencoders reconstruct activations using a larger set of sparsely active learned features.
-    This can help study superposition, where features share representation dimensions. Reconstruction error,
-    feature splitting, missing concepts, and interpretive ambiguity remain important limitations.
-  text_mode: Sparse autoencoders reconstruct activations using a larger set of sparsely active learned features.
-    This can help study superposition, where features share representation dimensions. Reconstruction error,
-    feature splitting, missing concepts, and interpretive ambiguity remain important limitations.
-  bridges: []
-- id: mechanistic-interpretability.s4
-  title: Build and challenge a circuit hypothesis
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.mechanistic-interpretability
-  markdown: Propose which components compute a behavior, test necessity and sufficiency under controlled examples,
-    and evaluate new cases and alternatives. A useful local circuit explanation is not automatically a complete
-    account of the model. Preserve interventions, metrics, and negative results so the hypothesis is reproducible.
-  text_mode: Propose which components compute a behavior, test necessity and sufficiency under controlled examples,
-    and evaluate new cases and alternatives. A useful local circuit explanation is not automatically a complete
-    account of the model. Preserve interventions, metrics, and negative results so the hypothesis is reproducible.
-  bridges: []
-- id: mechanistic-interpretability.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.mechanistic-interpretability
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Reading information from an activation differs from showing that the model uses it. Controlled
-    interventions test influence; broader circuit claims need further evidence.
-- id: mechanistic-interpretability.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.mechanistic-interpretability
-  markdown: Reading information from an activation differs from showing that the model uses it. Controlled
-    interventions test influence; broader circuit claims need further evidence.
-  text_mode: Reading information from an activation differs from showing that the model uses it. Controlled
-    interventions test influence; broader circuit claims need further evidence.
+      The toy network below has four hidden units. The corrupted prompt swaps the subject.
+
+      ```python run
+      import numpy as np
+
+      W1 = np.array([[2, 0, 0], [0, 1, 0], [0, 0, 1], [1, -1, 0.5]])  # 4 hidden units
+      w2 = np.array([1.5, -1, 0.5, 0.2])      # readout: logit for the right answer
+
+      def hidden(x):
+          return np.maximum(0, W1 @ x)         # ReLU layer
+
+      clean = np.array([1.0, 0.0, 1.0])        # prompt with the real subject
+      corrupt = np.array([0.0, 1.0, 1.0])      # same prompt, subject replaced
+      h_clean, h_corrupt = hidden(clean), hidden(corrupt)
+      y_clean, y_corrupt = w2 @ h_clean, w2 @ h_corrupt
+      print(f"clean logit {y_clean:.2f}   corrupted logit {y_corrupt:.2f}")
+
+      for unit in range(4):                    # patch one clean activation into the corrupted run
+          h = h_corrupt.copy()
+          h[unit] = h_clean[unit]
+          y = w2 @ h
+          restored = (y - y_corrupt) / (y_clean - y_corrupt)
+          print(f"patch unit {unit}: logit {y:5.2f}   restores {restored:5.0%} of the gap")
+      ```
+
+      The clean run gives a logit of 3.80 and the corrupted run −0.50, a gap of 4.30. Patching unit 0 lifts the logit to 2.50, restoring $(2.50 - (-0.50))/4.30 = 70\%$ of the gap. Unit 2 restores nothing: it sees only the part of the prompt that didn't change. Try setting `w2[0] = 0` and see which unit takes over.
+    diagram:
+      caption: Activation patching. Copy one activation from the clean run into the corrupted run and measure how much of the answer returns.
+      description: The clean prompt runs through the model, and its activation at one chosen site is saved. The corrupted prompt runs through the model too, but at that site the saved clean activation is patched in. The patched run's output is compared with the clean and corrupted outputs to give the fraction of the gap restored.
+      nodes:
+        - id: cleanp
+          label: Clean prompt
+          note: Space Needle is in downtown
+          col: 0
+          row: 0
+          tone: data
+        - id: cleanrun
+          label: Clean run
+          col: 1
+          row: 0
+        - id: site
+          label: Saved activation
+          note: one layer, one position
+          col: 2
+          row: 0
+          tone: accent
+        - id: corruptp
+          label: Corrupted prompt
+          note: subject blurred with noise
+          col: 0
+          row: 2
+          tone: warn
+        - id: patchrun
+          label: Patched run
+          col: 2
+          row: 2
+        - id: measure
+          label: Fraction of gap restored
+          note: (patched − corrupted) ÷ (clean − corrupted)
+          col: 3
+          row: 1
+          tone: accent
+      edges:
+        - from: cleanp
+          to: cleanrun
+        - from: cleanrun
+          to: site
+          label: save
+        - from: corruptp
+          to: patchrun
+        - from: site
+          to: patchrun
+          label: copy in
+        - from: patchrun
+          to: measure
+          label: output
+        - from: cleanrun
+          to: measure
+          label: clean score
+          dashed: true
+        - from: corruptp
+          to: measure
+          label: corrupted score
+          dashed: true
+  - id: mechanistic-interpretability.induction
+    title: A circuit that copies what came next
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mechanistic-interpretability
+    markdown: |-
+      A customer writes, "My order KX7-2291 hasn't arrived." The model's reply so far reads, "I've checked order KX7-".
+
+      :::predict What will the model write next, and where does it get it from?
+      Almost certainly "2291". No training data contained this customer's order number, so the model must copy it from earlier in the conversation.
+      :::
+
+      Olsson et al. (2022) traced this behavior to **induction heads**, a pair of attention heads that complete the pattern "A B … A → B":
+
+      1. A *previous-token head* at each position writes down which token came just before it. At "2291" it notes "the token before me was KX7-".
+      2. The induction head, at the second "KX7-", looks for positions whose previous token was also "KX7-", finds "2291", and copies it forward.
+
+      In small models, removing these heads largely removed this copying. Olsson et al. also found that induction heads form suddenly early in training, visible as a bump in the training loss, at the same point where the model gets much better at using earlier parts of its context.
+    bridges: []
+  - id: mechanistic-interpretability.s3
+    title: More concepts than neurons
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mechanistic-interpretability
+    markdown: |-
+      Why not just read the neurons? Because single neurons are often **polysemantic**. In a small transformer, Anthropic researchers (Bricken et al., 2023) found one neuron that fired on academic citations, English dialogue, HTTP requests, and Korean text. Elhage et al. (2022) showed why with toy models. When features are rare, a network can store more features than it has dimensions by giving each a direction that overlaps only slightly with the others. They called this **superposition**. One toy model packed 5 features into 2 dimensions, arranged like the corners of a pentagon.
+
+      :::mixup "Each neuron stands for one concept, so find the anger neuron."
+      Superposition means concepts are directions spread across many neurons, and neurons are shared among many concepts. Look for directions, not single units.
+      :::
+
+      A **sparse autoencoder (SAE)** tries to undo superposition. It learns a much larger set of directions, called features, and rewrites each activation vector as a combination of just a few of them:
+
+      $$f = \mathrm{ReLU}(W_{\text{enc}}\,x + b), \qquad \hat x = W_{\text{dec}}\,f, \qquad \mathcal{L} = \lVert x - \hat x \rVert^2 + \lambda \lVert f \rVert_1$$
+
+      The first term keeps the rewrite accurate. The second, weighted by $\lambda$, pushes most features to zero. In that same study, "Towards Monosemanticity," they applied this to a small one-layer transformer and found thousands of readable features, such as Arabic script, DNA sequences, and base64 text. "Scaling Monosemanticity" (Templeton et al., 2024) scaled it to Claude 3 Sonnet, with dictionaries of up to about 34 million features. One feature responded to the Golden Gate Bridge in text and images, and clamping it high made the model describe itself as the bridge. That test shows the feature was used, not just readable.
+    bridges: []
+  - id: mechanistic-interpretability.s4
+    title: From one finding to a circuit claim
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.mechanistic-interpretability
+    markdown: |-
+      Kestrel's team thinks they've found how the open model detects cancellation intent: an SAE feature that fires on "cancel," "leave," and "switch provider", read by two attention heads that raise the hand-off score. A **circuit** is this kind of claim: a specific set of components that together compute a behavior. They test it three ways:
+
+      | Test | Result | What it shows |
+      | --- | --- | --- |
+      | **Necessity**: remove the feature | Hand-offs for cancellation chats drop from 88% to 31% | The model relies on it |
+      | **Sufficiency**: turn it on in calm chats | Hand-off score rises in 70% of them | It can drive the behavior |
+      | **New cases**: 200 fresh chats in Spanish | Feature fires on "darme de baja" | It isn't just matching English words |
+
+      Removing the feature leaves 31% of hand-offs intact, so other paths exist too. The team writes the claim as "a major pathway," not "the mechanism." Methods such as automated circuit discovery (Conmy et al., 2023) search for these component sets systematically.
+    bridges: []
+  - id: mechanistic-interpretability.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.mechanistic-interpretability
+    markdown: Compute how much of an answer a patch restores, then judge probing, patching, and feature claims in a chess engine, a translation model, a code model, and a toxicity filter.
+    takeaway: |-
+      A probe shows information is readable; patching and ablation show it is used. Features live in superposition, so sparse autoencoders look for directions, and a circuit claim needs necessity, sufficiency, and new cases.
+  - id: mechanistic-interpretability.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.mechanistic-interpretability
+    markdown: |-
+      Reading information from an activation differs from showing that the model uses it. Controlled interventions test influence; broader circuit claims need further evidence.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - mechanistic-interpretability.s1
-    - mechanistic-interpretability.s2
-    - mechanistic-interpretability.s3
-    - mechanistic-interpretability.s4
-    - mechanistic-interpretability.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - mechanistic-interpretability.s1
+        - mechanistic-interpretability.s2
+        - mechanistic-interpretability.induction
+        - mechanistic-interpretability.s3
+        - mechanistic-interpretability.s4
+        - mechanistic-interpretability.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     mechanistic-interpretability.recap: mechanistic-interpretability.check
 assessment_families:
-- id: mechanistic-interpretability.base
-  objective_ref: objective.mechanistic-interpretability
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Intervene on the computation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: mechanistic-interpretability.s2
-  variants:
-  - id: mechanistic-interpretability.base.1
-    prompt: A probe decodes a property. What does that alone establish?
-    options:
-    - id: c
-      text: A complete model explanation
-    - id: a
-      text: Decodability under the probe setup
-    - id: b
-      text: That the model necessarily uses it causally
-    answer: a
-    feedback: Information availability and causal use differ.
-  - id: mechanistic-interpretability.base.2
-    prompt: What does activation patching change?
-    options:
-    - id: a
-      text: Selected internal states between controlled runs
-    - id: b
-      text: Only the source-code comments
-    - id: c
-      text: The original training corpus automatically
-    answer: a
-    feedback: It intervenes on intermediate computation.
-- id: mechanistic-interpretability.transfer
-  objective_ref: objective.mechanistic-interpretability
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Build and challenge a circuit hypothesis: trace the inputs, operation, and result before choosing.'
-  remediation_scene: mechanistic-interpretability.s4
-  variants:
-  - id: mechanistic-interpretability.transfer.1
-    prompt: What can sparse autoencoders help investigate?
-    options:
-    - id: a
-      text: Features distributed through shared activation dimensions
-    - id: b
-      text: Guaranteed unique human concepts for every neuron
-    - id: c
-      text: Every causal question without tests
-    answer: a
-    feedback: Sparse representations can expose candidate feature structure.
-  - id: mechanistic-interpretability.transfer.2
-    prompt: Why test a circuit hypothesis on new examples?
-    options:
-    - id: b
-      text: To assume all components are solved
-    - id: c
-      text: Only to increase output length
-    - id: a
-      text: To check whether it generalizes beyond the discovery cases
-    answer: a
-    feedback: Mechanistic claims need broader evidence and alternatives.
+  - id: mechanistic-interpretability.base
+    objective_ref: objective.mechanistic-interpretability
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Intervene on the computation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: mechanistic-interpretability.s2
+    variants:
+      - id: mechanistic-interpretability.base.1
+        prompt: A probe decodes a property. What does that alone establish?
+        options:
+          - id: c
+            text: A complete model explanation
+          - id: a
+            text: Decodability under the probe setup
+          - id: b
+            text: That the model necessarily uses it causally
+        answer: a
+        feedback: Information availability and causal use differ.
+        retired: true
+      - id: mechanistic-interpretability.base.2
+        prompt: What does activation patching change?
+        options:
+          - id: a
+            text: Selected internal states between controlled runs
+          - id: b
+            text: Only the source-code comments
+          - id: c
+            text: The original training corpus automatically
+        answer: a
+        feedback: It intervenes on intermediate computation.
+        retired: true
+  - id: mechanistic-interpretability.transfer
+    objective_ref: objective.mechanistic-interpretability
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Build and challenge a circuit hypothesis: trace the inputs, operation, and result before choosing.'
+    remediation_scene: mechanistic-interpretability.s4
+    variants:
+      - id: mechanistic-interpretability.transfer.1
+        prompt: What can sparse autoencoders help investigate?
+        options:
+          - id: a
+            text: Features distributed through shared activation dimensions
+          - id: b
+            text: Guaranteed unique human concepts for every neuron
+          - id: c
+            text: Every causal question without tests
+        answer: a
+        feedback: Sparse representations can expose candidate feature structure.
+        retired: true
+      - id: mechanistic-interpretability.transfer.2
+        prompt: Why test a circuit hypothesis on new examples?
+        options:
+          - id: b
+            text: To assume all components are solved
+          - id: c
+            text: Only to increase output length
+          - id: a
+            text: To check whether it generalizes beyond the discovery cases
+        answer: a
+        feedback: Mechanistic claims need broader evidence and alternatives.
+
+        retired: true
+  - id: mechanistic-interpretability.base.v2
+    objective_ref: objective.mechanistic-interpretability
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Separate "can it be read here?" (a probe) from "does the output depend on it?" (patching or ablation). Features are directions shared across many neurons.
+    remediation_scene: mechanistic-interpretability.s2
+    variants:
+      - id: mechanistic-interpretability.base.v2.1
+        prompt: A probe reads "customer is angry" from layer 12 with 94% accuracy. The same probe on the layer-0 word embeddings scores 91%. What does this suggest?
+        options:
+          - id: b
+            text: Layer 12 computes anger, since 94% is higher than 91%
+          - id: a
+            text: Most of the signal is in the words; layer 12 adds little
+          - id: c
+            text: The model uses anger to answer, since the probe is accurate
+        answer: a
+        feedback: Angry words already reveal the label at layer 0, so the 3-point rise is the real evidence about layer 12, and it is small. Probe accuracy never shows use; that takes an intervention.
+      - id: mechanistic-interpretability.base.v2.2
+        prompt: Copying one activation from a clean run into a corrupted run restores 70% of the gap in the correct answer's logit. What does this show?
+        options:
+          - id: a
+            text: That activation carries much of what the output depends on
+          - id: c
+            text: A probe could read the right answer from that activation
+          - id: b
+            text: The remaining 30% of the answer is stored in the weights
+        answer: a
+        feedback: Patching is an intervention, so a large restoration means the output depends on that activation. Readability is what a probe shows, and the other 30% is carried by other activations, not stored separately in weights.
+      - id: mechanistic-interpretability.base.v2.3
+        prompt: Why do single neurons in language models often respond to several unrelated things?
+        options:
+          - id: c
+            text: Training assigns several concepts to each neuron at random
+          - id: b
+            text: Each neuron tracks whichever concept it saw most recently
+          - id: a
+            text: Sparse features share dimensions through overlapping directions
+        answer: a
+        feedback: This is superposition. Because most features are rarely active, the network can store more of them than it has dimensions, with directions that overlap slightly, so any one neuron takes part in many. The pattern is learned, not random, and doesn't depend on recency.
+      - id: mechanistic-interpretability.base.v2.4
+        prompt: Which components complete the pattern "A B … A → B" in an induction circuit?
+        options:
+          - id: b
+            text: An MLP that memorized the pair A B from its training data
+          - id: a
+            text: A previous-token head feeding a head that copies what followed A
+          - id: c
+            text: One attention head that attends to the most frequent token
+        answer: a
+        feedback: The previous-token head marks each position with the token before it, so the induction head can find where A appeared and copy the B after it. This works for pairs never seen in training, which memorization can't do.
+  - id: mechanistic-interpretability.transfer.v2
+    objective_ref: objective.mechanistic-interpretability
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Ask which kind of evidence the setup gives: readable (probe), used (intervention), or a full account (necessity, sufficiency, and new cases). Then state no more than that."
+    remediation_scene: mechanistic-interpretability.s4
+    variants:
+      - id: mechanistic-interpretability.transfer.v2.1
+        prompt: A probe reads "my queen is under attack" from a layer of a chess-playing network. How can you test whether the network uses this?
+        options:
+          - id: a
+            text: Remove or patch that direction and see if the move choices change
+          - id: b
+            text: Train a larger probe and check whether its accuracy rises further
+          - id: c
+            text: Check that the probe also works on positions from other games
+        answer: a
+        feedback: Use is tested by changing the internal state and watching behavior. A bigger or more general probe still only shows the information is readable.
+      - id: mechanistic-interpretability.transfer.v2.2
+        prompt: In causal tracing on a translation model, restoring the hidden state at the last token of a person's name brings back the correct pronoun, while restoring states at the article does nothing. What is a reasonable claim?
+        options:
+          - id: c
+            text: The article plays no part in how this model translates
+          - id: b
+            text: The model's gender information is stored in that one state
+          - id: a
+            text: What the pronoun needs is carried at the name's last token here
+        answer: a
+        feedback: The experiment shows where the needed information flows for these prompts. It says nothing about every translation, and one state being sufficient to restore the answer doesn't mean nothing else holds related information.
+      - id: mechanistic-interpretability.transfer.v2.3
+        prompt: A sparse-autoencoder feature in a code model fires on SQL queries. Which test shows the model uses the feature, not just that it's readable?
+        options:
+          - id: b
+            text: Show that the feature fires on 1,000 more SQL queries
+          - id: a
+            text: Clamp it on in non-SQL prompts and look for SQL-like output
+          - id: c
+            text: Check that its top-activating examples are all SQL
+        answer: a
+        feedback: Turning the feature on and changing the output is an intervention, like clamping the Golden Gate Bridge feature. More activating examples only strengthen the description of what the feature responds to.
+      - id: mechanistic-interpretability.transfer.v2.4
+        prompt: Removing a proposed "insult" circuit lowers a toxicity filter's catch rate from 90% to 60%. How should the team state the finding?
+        options:
+          - id: a
+            text: As a major pathway, since other parts still catch 60%
+          - id: b
+            text: As the mechanism, since removing it changed the output
+          - id: c
+            text: As unimportant, since the filter still catches most cases
+        answer: a
+        feedback: A 30-point drop shows the circuit matters, and the remaining 60% shows other routes exist. Calling it the mechanism overstates the result, and calling it unimportant ignores a large effect.
+  - id: mechanistic-interpretability.calculate
+    objective_ref: objective.mechanistic-interpretability
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Fraction restored = (patched − corrupted) ÷ (clean − corrupted). Give it as a decimal."
+    remediation_scene: mechanistic-interpretability.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: mechanistic-interpretability.calculate.1
+        prompt: The correct answer's logit is 3.8 on the clean run and −0.5 on the corrupted run. Patching one activation gives 2.5. What fraction of the gap is restored?
+        answer: 0.7
+        feedback: (2.5 − (−0.5)) ÷ (3.8 − (−0.5)) = 3.0 ÷ 4.3 ≈ 0.70.
+      - id: mechanistic-interpretability.calculate.2
+        prompt: The correct answer's logit is 5 on the clean run and 1 on the corrupted run. Patching one activation gives 4. What fraction of the gap is restored?
+        answer: 0.75
+        feedback: (4 − 1) ÷ (5 − 1) = 3 ÷ 4 = 0.75.
+      - id: mechanistic-interpretability.calculate.3
+        prompt: The correct answer's logit is 2.0 on the clean run and 0.0 on the corrupted run. Patching one activation gives 0.5. What fraction of the gap is restored?
+        answer: 0.25
+        feedback: (0.5 − 0) ÷ (2.0 − 0) = 0.25. This activation plays a small part.
+      - id: mechanistic-interpretability.calculate.4
+        prompt: The correct answer's logit is 6 on the clean run and −2 on the corrupted run. Patching one activation gives 2. What fraction of the gap is restored?
+        answer: 0.5
+        feedback: (2 − (−2)) ÷ (6 − (−2)) = 4 ÷ 8 = 0.5. Watch the signs; the gap is 8, not 4.
+      - id: mechanistic-interpretability.calculate.5
+        prompt: The correct answer's logit is 1.2 on the clean run and 0.2 on the corrupted run. Patching one activation gives 1.1. What fraction of the gap is restored?
+        answer: 0.9
+        feedback: (1.1 − 0.2) ÷ (1.2 − 0.2) = 0.9 ÷ 1.0 = 0.9. Nearly all of the answer comes back from this one site.

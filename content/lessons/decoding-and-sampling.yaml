@@ -1,369 +1,649 @@
 schema_version: 0.2-draft
 lesson:
   id: decoding-and-sampling
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Turn logits into a controlled generation procedure
   state: draft
-  summary: Keep the model fixed and change how one next token is chosen. Predict the result, then test it in
-    a small probability playground.
+  summary: A bot stuck repeating itself, JSON that won't parse, and a bug that won't reproduce with the same seed. All three are fixed after the model, where scores become tokens.
   slot: M27.3
   category: learning
   sources:
-  - title: Holtzman et al. — The Curious Case of Neural Text Degeneration
-    url: https://arxiv.org/abs/1904.09751
+    - title: The Curious Case of Neural Text Degeneration (Holtzman et al., 2019)
+      url: https://arxiv.org/abs/1904.09751
+    - title: "CTRL: A Conditional Transformer Language Model for Controllable Generation (Keskar et al., 2019), penalized sampling"
+      url: https://arxiv.org/abs/1909.05858
+    - title: Efficient Guided Generation for Large Language Models (Willard & Louf, 2023), the Outlines method
+      url: https://arxiv.org/abs/2307.09702
+    - title: Hugging Face Transformers documentation, generation strategies
+      url: https://huggingface.co/docs/transformers/generation_strategies
+    - title: Defeating Nondeterminism in LLM Inference (Horace He and Thinking Machines Lab, 2025)
+      url: https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/
   archetype: mechanism
 objectives:
-- id: objective.decoding-and-sampling
-  version: 2-draft
-  statement: Distinguish scores, normalized probabilities, top-k filtering, temperature, and sampled draws
-    while tracing one selection.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - decoding-and-sampling.base.v2
-  - decoding-and-sampling.transfer.v2
-  prerequisites:
-  - anyOf:
-    - objective.next-token
-  - anyOf:
-    - objective.softmax-attention
+  - id: objective.decoding-and-sampling
+    version: 3-draft
+    statement: Explain how serving-time decoding controls (repetition penalties, logit bias, stop sequences, constraint masks, beam search, and seeded sampling) change which tokens are chosen without changing the model, and why the same seed can still give different outputs.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - decoding-and-sampling.base.v3
+      - decoding-and-sampling.transfer.v3
+      - decoding-and-sampling.penalty
+    prerequisites:
+      - anyOf:
+          - objective.next-token
+      - anyOf:
+          - objective.softmax-attention
 scenes:
-- id: decoding-and-sampling.s1
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.decoding-and-sampling
-  title: The model gives scores; something must choose
-  markdown: A language model produces one numerical **score**, often called a logit, for each candidate next
-    token. A **decoding** procedure turns those scores into an output sequence. **Greedy decoding** chooses
-    the highest-scoring candidate at each step. **Sampling** draws a candidate according to a probability distribution.
-    Two systems can use identical model weights and still produce different text because these procedures differ.
-    Keep the learned scores separate from the rule used to choose an output.
-  text_mode: A language model produces one numerical **score**, often called a logit, for each candidate next
-    token. A **decoding** procedure turns those scores into an output sequence. **Greedy decoding** chooses
-    the highest-scoring candidate at each step. **Sampling** draws a candidate according to a probability distribution.
-    Two systems can use identical model weights and still produce different text because these procedures differ.
-    Keep the learned scores separate from the rule used to choose an output.
-  bridges: []
-- id: decoding-and-sampling.s2
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.decoding-and-sampling
-  title: Give scores a probability meaning
-  markdown: '**Softmax** converts scores to nonnegative probabilities that sum to one: exponentiate the scores,
-    then divide each result by the sum. For scores [2,1,0], the probabilities are approximately [0.665,0.245,0.090].
-    Implementations commonly subtract the largest score before exponentiation for numerical stability; the
-    ratios stay the same. Scores themselves are not percentages. A model score of two does not mean a 200%
-    chance or twice the probability of a score of one.'
-  text_mode: '**Softmax** converts scores to nonnegative probabilities that sum to one: exponentiate the scores,
-    then divide each result by the sum. For scores [2,1,0], the probabilities are approximately [0.665,0.245,0.090].
-    Implementations commonly subtract the largest score before exponentiation for numerical stability; the
-    ratios stay the same. Scores themselves are not percentages. A model score of two does not mean a 200%
-    chance or twice the probability of a score of one.'
-  bridges:
-  - softmax-attention
-  - powers-logs
-- id: decoding-and-sampling.s3
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.decoding-and-sampling
-  title: Temperature changes the spread
-  markdown: For positive **temperature** T, divide scores by T before softmax. T below one usually concentrates
-    probability on higher scores; T above one flattens the distribution. At T=0.5, our scores become [4,2,0],
-    producing approximately [0.867,0.117,0.016]. The candidate ranking stays the same for positive T, but the
-    chances change. “Temperature zero” often names a greedy mode in an interface; it is not literal division
-    by zero in this formula.
-  text_mode: For positive **temperature** T, divide scores by T before softmax. T below one usually concentrates
-    probability on higher scores; T above one flattens the distribution. At T=0.5, our scores become [4,2,0],
-    producing approximately [0.867,0.117,0.016]. The candidate ranking stays the same for positive T, but the
-    chances change. “Temperature zero” often names a greedy mode in an interface; it is not literal division
-    by zero in this formula.
-  bridges: []
-- id: decoding-and-sampling.s4
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.decoding-and-sampling
-  title: Choose which candidates remain eligible
-  markdown: '**Top-k** keeps the k highest-scoring candidates and excludes the rest, then normalizes the retained
-    probabilities. From [0.6,0.3,0.1], top-two gives [2/3,1/3,0]. **Top-p**, or nucleus sampling, instead keeps
-    a smallest high-probability prefix whose cumulative mass reaches the chosen threshold under a specified
-    convention. For this distribution and threshold 0.8, the first two total 0.9. These controls can interact;
-    report the order and settings instead of assuming every sampler is identical.'
-  text_mode: '**Top-k** keeps the k highest-scoring candidates and excludes the rest, then normalizes the retained
-    probabilities. From [0.6,0.3,0.1], top-two gives [2/3,1/3,0]. **Top-p**, or nucleus sampling, instead keeps
-    a smallest high-probability prefix whose cumulative mass reaches the chosen threshold under a specified
-    convention. For this distribution and threshold 0.8, the first two total 0.9. These controls can interact;
-    report the order and settings instead of assuming every sampler is identical.'
-  bridges: []
-- id: decoding-and-sampling.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.decoding-and-sampling
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Scores become chances; a decoding rule turns chances into a choice. Changing the choice rule does
-    not retrain the model or guarantee truth.
-- id: decoding-and-sampling.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.decoding-and-sampling
-  markdown: Decoding transforms model scores into token choices using temperature, candidate restrictions,
-    search, and stopping rules; these choices change output behavior without necessarily changing weights.
-  text_mode: Decoding transforms model scores into token choices using temperature, candidate restrictions,
-    search, and stopping rules; these choices change output behavior without necessarily changing weights.
-- id: decoding-and-sampling.s5
-  type: simulation
-  depth: mechanics
-  objective_refs:
-  - objective.decoding-and-sampling
-  title: Try a probability steering wheel
-  markdown: 'Before touching a control, predict what will change. First move the draw while keeping scores,
-    temperature, and top-k fixed: the probabilities stay fixed, while the selected candidate may change if
-    the draw crosses an interval boundary. Then hold the draw still and change temperature: the intervals move.
-    Top-k=1 leaves the highest-scoring candidate with probability one. The playground uses invented scores
-    and repeatable draw positions so the mechanism stays visible. It does not run a trained model. The hundred-draw
-    table is a deterministic comparison, not independent random sampling.'
-  text_mode: 'Before touching a control, predict what will change. First move the draw while keeping scores,
-    temperature, and top-k fixed: the probabilities stay fixed, while the selected candidate may change if
-    the draw crosses an interval boundary. Then hold the draw still and change temperature: the intervals move.
-    Top-k=1 leaves the highest-scoring candidate with probability one. The playground uses invented scores
-    and repeatable draw positions so the mechanism stays visible. It does not run a trained model. The hundred-draw
-    table is a deterministic comparison, not independent random sampling.'
-  bridges:
-  - probability
-  simulation: sampling
-- id: decoding-and-sampling.s6
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.decoding-and-sampling
-  title: One sampled token is not the whole answer
-  markdown: Imagine probability intervals [0,0.6), [0.6,0.9), and [0.9,1). A draw of 0.75 chooses the second
-    candidate. Append that token, then compute a new distribution from the longer context for the next step.
-    A random seed can help reproduce draws under matching conditions, but runtime differences may still affect
-    results. Sampling is useful for diverse outputs; it does not verify facts. Evaluate generated sequences
-    for the intended task instead of treating randomness as either knowledge or a guaranteed mistake.
-  text_mode: Imagine probability intervals [0,0.6), [0.6,0.9), and [0.9,1). A draw of 0.75 chooses the second
-    candidate. Append that token, then compute a new distribution from the longer context for the next step.
-    A random seed can help reproduce draws under matching conditions, but runtime differences may still affect
-    results. Sampling is useful for diverse outputs; it does not verify facts. Evaluate generated sequences
-    for the intended task instead of treating randomness as either knowledge or a guaranteed mistake.
-  bridges: []
-- id: decoding-and-sampling.s7
-  type: question
-  depth: mechanics
-  objective_refs:
-  - objective.decoding-and-sampling
-  title: Move the draw, keep the chances
-  markdown: With probabilities [0.6,0.3,0.1] in candidate order A,B,C, which candidate does draw 0.85 select?
-  text_mode: With probabilities [0.6,0.3,0.1] in candidate order A,B,C, which candidate does draw 0.85 select?
-  bridges: []
-  question:
-    response_type: single_choice
-    options:
-    - id: a
-      text: B
-    - id: b
-      text: A
-    - id: c
-      text: C
-    answer: a
-    reveal_markdown: A occupies [0,0.6), B occupies [0.6,0.9), and C occupies [0.9,1). The draw 0.85 lies in
-      B’s interval.
-    hint: Trace the example using the rule from the preceding pages.
-    id: decoding-and-sampling.practice.v2.7
+  - id: decoding-and-sampling.s1
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.decoding-and-sampling
+    title: Three bug reports, zero new weights
+    markdown: |-
+      Fern's support team files three bug reports in one week:
+
+      1. Asked for watering tips, Fern wrote "Water deeply. Water deeply. Water deeply." until it hit the length limit.
+      2. The order-lookup feature expects a reply like `{"order_id": "F-20931"}`, and about one reply in fifty isn't valid JSON.
+      3. QA saved a bad answer together with its random seed, reran it with the same seed, and got a different answer.
+
+      None needs retraining. Each is fixed where logits become a token. Recall the core of that step from the next-token prediction lesson: the model gives a **logit** (a raw score) for every vocabulary token, softmax turns logits into probabilities, **temperature** below 1 sharpens them, and **top-k** or **top-p** trims the tail before a random draw picks one. A serving engine wraps more steps around that core, usually in this order.
+    diagram:
+      caption: What a serving engine does between the model's logits and the next token.
+      description: The model produces a logit for every vocabulary token. Penalties and logit bias add to or subtract from chosen logits. A constraint mask sets tokens that would break the required format to minus infinity. Temperature and top-k or top-p reshape and trim what remains. A seeded random draw picks one token. A stop check either ends the reply or appends the token and sends the longer context back to the model.
+      nodes:
+        - id: model
+          label: Model
+          note: one logit per token
+          col: 0
+          row: 0
+          tone: accent
+        - id: adjust
+          label: Penalties + bias
+          note: add or subtract
+          col: 1
+          row: 0
+        - id: mask
+          label: Constraint mask
+          note: −∞ for invalid tokens
+          col: 2
+          row: 0
+          tone: warn
+        - id: shape
+          label: Temperature, top-k/p
+          note: reshape and trim
+          col: 2
+          row: 1
+        - id: draw
+          label: Seeded draw
+          note: pick one token
+          col: 1
+          row: 1
+          tone: data
+        - id: stop
+          label: Stop check
+          note: stop string, end token, limit
+          col: 0
+          row: 1
+        - id: reply
+          label: Finished reply
+          col: 0
+          row: 2
+          tone: muted
+      edges:
+        - from: model
+          to: adjust
+        - from: adjust
+          to: mask
+        - from: mask
+          to: shape
+        - from: shape
+          to: draw
+        - from: draw
+          to: stop
+        - from: stop
+          to: model
+          label: append, continue
+        - from: stop
+          to: reply
+          label: stop
+    bridges: []
+  - id: decoding-and-sampling.s5
+    type: simulation
+    depth: mechanics
+    objective_refs:
+      - objective.decoding-and-sampling
+    title: Intervals and a draw
+    markdown: |-
+      Watch the **draw**: sampling picks a random number from 0 up to 1 and finds which candidate's interval contains it. The playground gives candidates A, B, and C the invented scores 2, 1, and 0. At temperature 1 their probabilities are 0.665, 0.245, and 0.090, so A owns 0 up to 0.665, B owns 0.665 up to 0.910, and C owns the rest. A draw of 0.75 lands in B.
+
+      Move the draw across 0.665 and the choice jumps from A to B while the chances stay put. Then hold the draw at 0.75 and set the temperature to 0.5: A's share grows to 0.867 and swallows the draw. Penalties, bias, and masks below all move the intervals; a seed fixes the draw.
+    bridges:
+      - probability
+    simulation: sampling
+  - id: decoding-and-sampling.s2
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decoding-and-sampling
+    title: Make repeats cost something
+    markdown: |-
+      Bug 1 is a loop: after "Water deeply. Water deeply.", the logit for "Water" is 3.0, ahead of "Check" at 2.6. Penalties lower the logits of tokens already in the output. For a token that has appeared $c$ times:
+
+      | Penalty | Rule | Where it's from |
+      | --- | --- | --- |
+      | Repetition, $\theta$ | If $c > 0$: divide a positive logit by $\theta$, multiply a negative one by $\theta$ | CTRL (Keskar et al., 2019) suggested $\theta \approx 1.2$; the negative case is Hugging Face's |
+      | Frequency, $\alpha_f$ | Subtract $\alpha_f \times c$ | OpenAI-style APIs |
+      | Presence, $\alpha_p$ | Subtract $\alpha_p$ once if $c > 0$ | OpenAI-style APIs |
+
+      With $\theta = 1.2$, "Water" drops to $3.0 / 1.2 = 2.5$, and "Check" now leads.
+
+      ```python run
+      import numpy as np
+
+      words  = ["Water", "Check", "Let", "Your"]
+      logits = np.array([3.0, 2.6, 1.8, 1.0])   # scores after "Water deeply. Water deeply."
+      counts = np.array([2, 0, 0, 0])           # times each word already appears in the reply
+
+      def softmax(z):
+          e = np.exp(z - z.max())
+          return e / e.sum()
+
+      def repetition(z, theta):                 # CTRL / Hugging Face style
+          seen = counts > 0
+          return np.where(seen & (z > 0), z / theta, np.where(seen, z * theta, z))
+
+      def freq_presence(z, freq, pres):         # OpenAI-style penalties
+          return z - freq * counts - pres * (counts > 0)
+
+      for name, z in [("no penalty", logits),
+                      ("repetition 1.2", repetition(logits, 1.2)),
+                      ("frequency 0.3", freq_presence(logits, 0.3, 0.0)),
+                      ("presence 0.6", freq_presence(logits, 0.0, 0.6))]:
+          p = softmax(z)
+          print(f"{name:15} Water logit {z[0]:.2f}  probs:",
+                "  ".join(f"{w} {q:.2f}" for w, q in zip(words, p)))
+      ```
+
+      Each penalty cuts "Water" from 0.47 to 0.35 or less. Try `counts = [5, 0, 0, 0]`: only the frequency penalty keeps growing.
+
+      :::mixup "A stronger penalty always gives better text."
+      Penalties can't tell a loop from a repeat the reply needs. A strong frequency penalty pushes a model to stop using the customer's plant name, and in JSON or code it punishes the quotes, braces, and variable names that must repeat.
+      :::
+    bridges:
+      - softmax-attention
+      - powers-logs
+  - id: decoding-and-sampling.s3
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decoding-and-sampling
+    title: Ban a token, or stop at a string
+    markdown: |-
+      **Logit bias** adds a fixed number to the logits of chosen token IDs. OpenAI's API, for example, accepts −100 to 100, and −100 effectively bans a token. Fernly biases a competitor's name by −100. But bias works on token IDs, not words: " Leafy", "Leafy", and "LEAFY" tokenize differently, and a long name may span several tokens, so list every variant and test the result.
+
+      A **stop sequence** is a string that ends the reply, such as `\nCustomer:`, which Fern would otherwise use to start writing the customer's next line. The server checks the decoded text after each token, because a stop string can straddle two tokens. While streaming, it holds back any tail that might begin a stop string, such as `\nCust`, until it knows.
+
+      Every reply also gets a **finish reason**: "stop" for an end-of-turn token or a stop string, "length" for hitting the maximum reply length.
+
+      :::predict Fern's maximum reply length is 300 tokens. A reply ends at token 300 in the middle of a sentence. What should the log say, and what should Fern do?
+      The finish reason is "length", so the reply was cut off, not finished. Fern shouldn't present it as complete. It can offer "continue" or retry with a higher limit, and the team should check whether 300 is too low.
+      :::
+    bridges: []
+  - id: decoding-and-sampling.s4
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decoding-and-sampling
+    title: Valid JSON, one token at a time
+    markdown: |-
+      Bug 2: a prompt that says "reply in JSON" is a request, and one time in fifty the model opens with "Sorry". **Constrained decoding** makes the format a rule. Before each draw, the server checks every candidate token: would appending it still leave a valid start of something the grammar accepts? Every token that fails gets a logit of $-\infty$: probability exactly 0.
+
+      ```python run
+      import numpy as np
+
+      TEMPLATE = '{"order_id": "F-#####"}'      # '#' stands for any digit
+
+      def fits(text):                           # could text still grow into a valid reply?
+          return len(text) <= len(TEMPLATE) and all(
+              t == c or (t == "#" and c.isdigit()) for t, c in zip(TEMPLATE, text))
+
+      vocab  = ['Sorry', '{"order_id": "F-', '209', '31', '4', '"}', 'F-']
+      logits = np.array([2.3, 2.0, 0.5, 0.4, 0.3, 0.1, 0.2])   # same scores each step, for simplicity
+
+      print("unconstrained first pick:", vocab[int(np.argmax(logits))])
+      text = ""
+      while text != TEMPLATE.replace("#", "0") and len(text) < len(TEMPLATE):
+          ok = np.array([fits(text + tok) for tok in vocab])
+          masked = np.where(ok, logits, -np.inf)            # ban every token that breaks the format
+          p = np.exp(masked - masked.max()); p /= p.sum()
+          pick = int(np.argmax(p))                          # greedy, to keep the demo repeatable
+          print(f"allowed {[t for t, k in zip(vocab, ok) if k]} -> {vocab[pick]!r} (p = {p[pick]:.2f})")
+          text += vocab[pick]
+      print("reply:", text)
+      ```
+
+      Unconstrained, the favorite first token is "Sorry". Masked, only the opening piece is allowed. After "209", another "209" is banned (six digits would break the template), so "31" completes the number. Change `'31'` to `'3'` and watch the mask force a different path.
+
+      Checking all 128,256 tokens at every step is slow. The Outlines method (Willard & Louf, 2023) compiles a regular expression or JSON schema into a finite-state machine once and precomputes the allowed tokens for each state, so each step is a lookup. Servers such as vLLM and llama.cpp offer such constraints. A mask fixes the format, not the facts: F-20931 can still be the wrong order, so validate the content too.
+    bridges: []
+  - id: decoding-and-sampling.beam
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decoding-and-sampling
+    title: Why chat servers rarely use beams
+    markdown: |-
+      The sequence-to-sequence lesson taught **beam search**: keep the $B$ partial replies with the highest total log-probability, extend each, and keep the best $B$ again. It's still standard in machine translation and speech recognition, where outputs are short and there's roughly one right answer.
+
+      Chat servers mostly sample instead:
+
+      - **Quality.** For open-ended text, the likeliest sequences tend to be bland and repetitive.
+      - **Memory.** Four beams need four sets of KV cache for the tokens they generate. For Fern's 300-token replies at 128 KiB per token, that's 150 MiB instead of 37.5 MiB per request.
+      - **Streaming.** The leading beam can change at any step, so nothing is safe to show until the search settles.
+
+      For Fern's order lookup, greedy decoding under the JSON mask gives short, repeatable output.
+    bridges: []
+  - id: decoding-and-sampling.s6
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decoding-and-sampling
+    title: Same seed, different answer
+    markdown: |-
+      Bug 3. A **seed** fixes the sequence of random draws, so identical probabilities give identical tokens. The catch is *identical*. Floating-point addition isn't associative: $(a + b) + c$ can differ from $a + (b + c)$ in the last bits, and GPU kernels sum in different orders depending on the hardware and the batch size (how many other requests share the step). So Fern's logits in production and in QA's rerun can differ slightly.
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(0)
+      x = rng.standard_normal(4096).astype(np.float32)   # one row of products inside a matmul
+
+      one_pass = np.float32(0)
+      for v in x:                                      # add left to right
+          one_pass += v
+      chunked = x.reshape(64, 64).sum(axis=1).sum()    # add in 64 chunks, then combine
+
+      print(f"left to right: {one_pass:.7f}")
+      print(f"in chunks:     {chunked:.7f}")
+      print("identical?", one_pass == chunked)
+
+      # A tiny change near an interval boundary flips the sampled token
+      draw = 0.5999
+      for p_a in [0.6000, 0.5998]:
+          print(f"P(A) = {p_a:.4f}, draw {draw}: picks", "A" if draw < p_a else "B")
+      ```
+
+      The two sums differ by about 0.00003. Usually that changes nothing, but a draw within a hair of an interval boundary flips the token, and the rest of the reply follows a new context. Greedy decoding flips the same way when two logits nearly tie.
+
+      So to reproduce a reply, log the token IDs it actually generated, not just the seed. In 2025, Horace He and colleagues at Thinking Machines Lab traced most run-to-run differences in LLM servers to this batch-size dependence and wrote batch-invariant kernels that avoid it, at some cost in speed.
+    bridges: []
+  - id: decoding-and-sampling.s7
+    type: question
+    depth: mechanics
+    objective_refs:
+      - objective.decoding-and-sampling
+    title: Move the draw, keep the chances
+    markdown: With probabilities [0.6,0.3,0.1] in candidate order A,B,C, which candidate does draw 0.85 select?
+    bridges: []
+    question:
+      response_type: single_choice
+      options:
+        - id: a
+          text: B
+        - id: b
+          text: A
+        - id: c
+          text: C
+      answer: a
+      reveal_markdown: |-
+        A occupies [0, 0.6), B occupies [0.6, 0.9), and C occupies [0.9, 1). The draw 0.85 lies in B's interval. Had A's probability been 0.86 instead, the same draw would have picked A: the intervals move, the draw doesn't.
+      hint: Lay the probabilities end to end on a line from 0 to 1. A covers 0 up to 0.6, and B covers the next 0.3.
+      id: decoding-and-sampling.practice.v2.7
+  - id: decoding-and-sampling.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.decoding-and-sampling
+    markdown: Penalized logits to compute, plus a translation service, a banned word that slips through, a code tool, and a flickering stop string, test whether you can pick the right control after the model.
+    takeaway: |-
+      Penalties and bias edit the scores, masks ban tokens outright, stop sequences end the reply, and a seeded draw picks the token. None of them changes the model, and tiny numerical differences can still flip a draw.
+  - id: decoding-and-sampling.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.decoding-and-sampling
+    markdown: |-
+      Decoding transforms model scores into token choices using temperature, candidate restrictions, search, and stopping rules; these choices change output behavior without necessarily changing weights.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - decoding-and-sampling.s1
-    - decoding-and-sampling.s2
-    - decoding-and-sampling.s3
-    - decoding-and-sampling.s4
-    - decoding-and-sampling.s5
-    - decoding-and-sampling.s6
-    - decoding-and-sampling.s7
-    - decoding-and-sampling.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - decoding-and-sampling.s1
+        - decoding-and-sampling.s5
+        - decoding-and-sampling.s2
+        - decoding-and-sampling.s3
+        - decoding-and-sampling.s4
+        - decoding-and-sampling.beam
+        - decoding-and-sampling.s6
+        - decoding-and-sampling.s7
+        - decoding-and-sampling.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     decoding-and-sampling.recap: decoding-and-sampling.check
 assessment_families:
-- id: decoding-and-sampling.base
-  objective_ref: objective.decoding-and-sampling
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Restrict candidates explicitly: trace the inputs, operation, and result before choosing.'
-  remediation_scene: decoding-and-sampling.s2
-  variants:
-  - id: decoding-and-sampling.base.1
-    prompt: What does lower positive temperature generally do before sampling?
-    options:
-    - id: b
-      text: Updates model weights
-    - id: c
-      text: Always increases diversity
-    - id: a
-      text: Concentrates probability on higher logits
-    answer: a
-    feedback: Scaling logits changes relative probability concentration.
-    retired: true
-  - id: decoding-and-sampling.base.2
-    prompt: How does top-p differ from top-k?
-    options:
-    - id: c
-      text: It removes the need for normalization
-    - id: a
-      text: It chooses candidates by cumulative probability mass rather than a fixed count
-    - id: b
-      text: It always keeps exactly p tokens
-    answer: a
-    feedback: The retained count can vary with the distribution.
-    retired: true
-- id: decoding-and-sampling.transfer
-  objective_ref: objective.decoding-and-sampling
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Stop for a defined reason: trace the inputs, operation, and result before choosing.'
-  remediation_scene: decoding-and-sampling.s4
-  variants:
-  - id: decoding-and-sampling.transfer.1
-    prompt: Does grammar-constrained JSON guarantee factual correctness?
-    options:
-    - id: c
-      text: Only if keys are sorted
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Syntax constraints do not validate content.
-    retired: true
-  - id: decoding-and-sampling.transfer.2
-    prompt: Why record the stopping reason?
-    options:
-    - id: a
-      text: A budget-truncated result differs from a completed response
-    - id: b
-      text: It changes the training corpus automatically
-    - id: c
-      text: It guarantees no error
-    answer: a
-    feedback: Completion semantics depend on why generation ended.
-    retired: true
-- id: decoding-and-sampling.base.v2
-  objective_ref: objective.decoding-and-sampling
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: decoding-and-sampling.s3
-  variants:
-  - prompt: At fixed model scores, temperature, and top-k, what changes when only the random draw changes?
-    answer: a
-    options:
-    - id: a
-      text: The sampled candidate, while probabilities stay fixed
-    - id: b
-      text: The trained model parameters
-    - id: c
-      text: The original next-token scores
-    feedback: The draw selects within a fixed distribution.
-    id: decoding-and-sampling.base.v2.1
-  - prompt: For positive temperature, what happens when [2,1,0] is divided by 0.5 before softmax?
-    answer: a
-    options:
-    - id: b
-      text: The candidate ranking reverses
-    - id: a
-      text: The top candidate receives a larger share
-    - id: c
-      text: All candidates receive equal probability
-    feedback: Dividing by a smaller positive temperature increases score gaps before softmax.
-    id: decoding-and-sampling.base.v2.2
-  - prompt: Top-k=1 retains a uniquely highest-scoring candidate. What distribution remains?
-    answer: a
-    options:
-    - id: c
-      text: Equal probability across the old vocabulary
-    - id: a
-      text: Probability one on that candidate
-    - id: b
-      text: The original full distribution
-    feedback: After excluding every other candidate and normalizing, the retained candidate has all the mass.
-    id: decoding-and-sampling.base.v2.3
-  - prompt: What distinguishes a logit from a probability?
-    answer: a
-    options:
-    - id: b
-      text: A logit is a token ID; a probability is the character count
-    - id: c
-      text: They are interchangeable percentages
-    - id: a
-      text: A logit is an unnormalized score; a probability belongs to a normalized distribution
-    feedback: Softmax gives scores their normalized probability interpretation.
-    id: decoding-and-sampling.base.v2.4
-- id: decoding-and-sampling.transfer.v2
-  objective_ref: objective.decoding-and-sampling
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: Work through the example one step at a time before answering.
-  remediation_scene: decoding-and-sampling.s3
-  variants:
-  - prompt: Probabilities are [0.5,0.3,0.2] for A,B,C. Draw 0.65 selects which candidate?
-    answer: a
-    options:
-    - id: a
-      text: B
-    - id: c
-      text: C
-    - id: b
-      text: A
-    feedback: B occupies the interval from 0.5 up to 0.8.
-    id: decoding-and-sampling.transfer.v2.1
-  - prompt: Probabilities [0.6,0.3,0.1] are filtered to top-two. What is A’s new probability?
-    answer: a
-    options:
-    - id: c
-      text: '0.9'
-    - id: a
-      text: 2/3
-    - id: b
-      text: '0.6'
-    feedback: The retained total is 0.9; normalize A as 0.6/0.9=2/3.
-    id: decoding-and-sampling.transfer.v2.2
-  - prompt: A greedy answer contains an incorrect claim. What does greediness establish?
-    answer: a
-    options:
-    - id: b
-      text: Verification that each claim matches external evidence
-    - id: c
-      text: A guarantee that the whole sequence is globally most probable
-    - id: a
-      text: Highest-scoring local choices under the stated rule
-    feedback: Greedy selection is a decoding rule, not a truth test or general global sequence optimizer.
-    id: decoding-and-sampling.transfer.v2.3
-  - prompt: Top-p uses [0.5,0.3,0.2] and keeps a smallest descending prefix reaching mass 0.7. Which candidates
-      remain?
-    answer: a
-    options:
-    - id: a
-      text: A and B
-    - id: c
-      text: B and C
-    - id: b
-      text: A alone
-    feedback: A alone has mass 0.5; adding B reaches 0.8, which meets the threshold.
-    id: decoding-and-sampling.transfer.v2.4
+  - id: decoding-and-sampling.base
+    objective_ref: objective.decoding-and-sampling
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Restrict candidates explicitly: trace the inputs, operation, and result before choosing.'
+    remediation_scene: decoding-and-sampling.s2
+    variants:
+      - id: decoding-and-sampling.base.1
+        prompt: What does lower positive temperature generally do before sampling?
+        options:
+          - id: b
+            text: Updates model weights
+          - id: c
+            text: Always increases diversity
+          - id: a
+            text: Concentrates probability on higher logits
+        answer: a
+        feedback: Scaling logits changes relative probability concentration.
+        retired: true
+      - id: decoding-and-sampling.base.2
+        prompt: How does top-p differ from top-k?
+        options:
+          - id: c
+            text: It removes the need for normalization
+          - id: a
+            text: It chooses candidates by cumulative probability mass rather than a fixed count
+          - id: b
+            text: It always keeps exactly p tokens
+        answer: a
+        feedback: The retained count can vary with the distribution.
+        retired: true
+  - id: decoding-and-sampling.transfer
+    objective_ref: objective.decoding-and-sampling
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Stop for a defined reason: trace the inputs, operation, and result before choosing.'
+    remediation_scene: decoding-and-sampling.s4
+    variants:
+      - id: decoding-and-sampling.transfer.1
+        prompt: Does grammar-constrained JSON guarantee factual correctness?
+        options:
+          - id: c
+            text: Only if keys are sorted
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Syntax constraints do not validate content.
+        retired: true
+      - id: decoding-and-sampling.transfer.2
+        prompt: Why record the stopping reason?
+        options:
+          - id: a
+            text: A budget-truncated result differs from a completed response
+          - id: b
+            text: It changes the training corpus automatically
+          - id: c
+            text: It guarantees no error
+        answer: a
+        feedback: Completion semantics depend on why generation ended.
+        retired: true
+  - id: decoding-and-sampling.base.v2
+    objective_ref: objective.decoding-and-sampling
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: decoding-and-sampling.s3
+    variants:
+      - prompt: At fixed model scores, temperature, and top-k, what changes when only the random draw changes?
+        answer: a
+        options:
+          - id: a
+            text: The sampled candidate, while probabilities stay fixed
+          - id: b
+            text: The trained model parameters
+          - id: c
+            text: The original next-token scores
+        feedback: The draw selects within a fixed distribution.
+        id: decoding-and-sampling.base.v2.1
+        retired: true
+      - prompt: For positive temperature, what happens when [2,1,0] is divided by 0.5 before softmax?
+        answer: a
+        options:
+          - id: b
+            text: The candidate ranking reverses
+          - id: a
+            text: The top candidate receives a larger share
+          - id: c
+            text: All candidates receive equal probability
+        feedback: Dividing by a smaller positive temperature increases score gaps before softmax.
+        id: decoding-and-sampling.base.v2.2
+        retired: true
+      - prompt: Top-k=1 retains a uniquely highest-scoring candidate. What distribution remains?
+        answer: a
+        options:
+          - id: c
+            text: Equal probability across the old vocabulary
+          - id: a
+            text: Probability one on that candidate
+          - id: b
+            text: The original full distribution
+        feedback: After excluding every other candidate and normalizing, the retained candidate has all the mass.
+        id: decoding-and-sampling.base.v2.3
+        retired: true
+      - prompt: What distinguishes a logit from a probability?
+        answer: a
+        options:
+          - id: b
+            text: A logit is a token ID; a probability is the character count
+          - id: c
+            text: They are interchangeable percentages
+          - id: a
+            text: A logit is an unnormalized score; a probability belongs to a normalized distribution
+        feedback: Softmax gives scores their normalized probability interpretation.
+        id: decoding-and-sampling.base.v2.4
+        retired: true
+  - id: decoding-and-sampling.transfer.v2
+    objective_ref: objective.decoding-and-sampling
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Work through the example one step at a time before answering.
+    remediation_scene: decoding-and-sampling.s3
+    variants:
+      - prompt: Probabilities are [0.5,0.3,0.2] for A,B,C. Draw 0.65 selects which candidate?
+        answer: a
+        options:
+          - id: a
+            text: B
+          - id: c
+            text: C
+          - id: b
+            text: A
+        feedback: B occupies the interval from 0.5 up to 0.8.
+        id: decoding-and-sampling.transfer.v2.1
+        retired: true
+      - prompt: Probabilities [0.6,0.3,0.1] are filtered to top-two. What is A’s new probability?
+        answer: a
+        options:
+          - id: c
+            text: '0.9'
+          - id: a
+            text: 2/3
+          - id: b
+            text: '0.6'
+        feedback: The retained total is 0.9; normalize A as 0.6/0.9=2/3.
+        id: decoding-and-sampling.transfer.v2.2
+        retired: true
+      - prompt: A greedy answer contains an incorrect claim. What does greediness establish?
+        answer: a
+        options:
+          - id: b
+            text: Verification that each claim matches external evidence
+          - id: c
+            text: A guarantee that the whole sequence is globally most probable
+          - id: a
+            text: Highest-scoring local choices under the stated rule
+        feedback: Greedy selection is a decoding rule, not a truth test or general global sequence optimizer.
+        id: decoding-and-sampling.transfer.v2.3
+        retired: true
+      - prompt: Top-p uses [0.5,0.3,0.2] and keeps a smallest descending prefix reaching mass 0.7. Which candidates remain?
+        answer: a
+        options:
+          - id: a
+            text: A and B
+          - id: c
+            text: B and C
+          - id: b
+            text: A alone
+        feedback: A alone has mass 0.5; adding B reaches 0.8, which meets the threshold.
+        id: decoding-and-sampling.transfer.v2.4
+        retired: true
+  - id: decoding-and-sampling.base.v3
+    objective_ref: objective.decoding-and-sampling
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Place each control in the pipeline. Penalties and bias edit scores, a mask bans tokens, the draw picks one, and the stop check ends the reply.
+    remediation_scene: decoding-and-sampling.s1
+    variants:
+      - id: decoding-and-sampling.base.v3.1
+        prompt: After "Water deeply. Water deeply.", the model's top logit is for "Water" again. Which setting lowers that token's score because of what the reply already contains?
+        options:
+          - id: b
+            text: A lower temperature, which sharpens the distribution
+          - id: c
+            text: A top-k of 1, which keeps just the single best token
+          - id: a
+            text: A repetition or frequency penalty on tokens already used
+        answer: a
+        feedback: Penalties look at the output so far and lower the scores of tokens that already appear. A lower temperature or top-k of 1 does the opposite here, because "Water" is already the top token and would win even more often.
+      - id: decoding-and-sampling.base.v3.2
+        prompt: How does a JSON-schema constraint stop a model from writing "Sorry" where an opening brace is required?
+        options:
+          - id: a
+            text: It gives every token that would break the format a logit of −∞
+          - id: b
+            text: It samples freely, then retries until the whole reply parses
+          - id: c
+            text: It adds the schema to the system prompt so the model knows it
+        answer: a
+        feedback: Constrained decoding masks invalid tokens before each draw, so their probability is exactly 0. Retrying and prompting are real alternatives, but neither makes invalid output impossible.
+      - id: decoding-and-sampling.base.v3.3
+        prompt: QA reruns a sampled reply with the same seed while 30 other requests share the batch instead of 2. The reply matches for 40 tokens, then differs. What most likely happened?
+        options:
+          - id: c
+            text: Tokens from the other requests leaked into this request's context
+          - id: b
+            text: The seed makes different draws when more requests share a batch
+          - id: a
+            text: Tiny logit differences flipped a draw that landed near a boundary
+        answer: a
+        feedback: A different batch size can change the order in which kernels add numbers, so the logits differ in the last bits. The seed's draws are the same, but one draw close to an interval edge picked a different token, and the context diverged from there. Requests in a batch don't see each other's tokens.
+      - id: decoding-and-sampling.base.v3.4
+        prompt: A reply's log shows the finish reason "length" instead of "stop". What does that tell you?
+        options:
+          - id: b
+            text: The model produced its end-of-turn token and finished normally
+          - id: a
+            text: The reply hit the maximum length and may be cut off mid-thought
+          - id: c
+            text: The decoded text matched one of the configured stop strings
+        answer: a
+        feedback: '"Length" means the server stopped because of the token limit, not because the reply was done. An end-of-turn token or a stop string both give "stop".'
+  - id: decoding-and-sampling.transfer.v3
+    objective_ref: objective.decoding-and-sampling
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name the failure first (a loop, a banned word, a broken format, a flickering stop, or a need for one best answer), then pick the control that acts on it.
+    remediation_scene: decoding-and-sampling.s3
+    variants:
+      - id: decoding-and-sampling.transfer.v3.1
+        prompt: A shop translates short product titles and returns one best translation, without streaming. Which decoding choice fits?
+        options:
+          - id: a
+            text: Beam search, which looks for a likely whole sequence
+          - id: b
+            text: Sampling at temperature 1.2, for more varied wording
+          - id: c
+            text: A frequency penalty of 1.5, to avoid repeated words
+        answer: a
+        feedback: Short outputs with roughly one right answer are where beam search still shines, and without streaming its unsettled lead doesn't matter. Higher temperature adds variety the shop doesn't want, and a strong penalty would distort titles that legitimately repeat words.
+      - id: decoding-and-sampling.transfer.v3.2
+        prompt: A children's story app bans a word by giving its token ID a logit bias of −100. The word still appears, capitalized, at the start of sentences. Why?
+        options:
+          - id: c
+            text: The bias is applied after the draw, too late to stop the word
+          - id: a
+            text: The capitalized form is a different token ID with no bias on it
+          - id: b
+            text: Logit bias works only when the temperature is set below 1
+        answer: a
+        feedback: Bias acts on token IDs, and "Dragon" and " dragon" are different IDs. List every variant the tokenizer produces. Bias is added before softmax at any temperature.
+      - id: decoding-and-sampling.transfer.v3.3
+        prompt: A code-completion tool adds a frequency penalty of 1.0 to stop loops. Now its Python often renames variables halfway through a function. What went wrong?
+        options:
+          - id: b
+            text: The penalty raised the temperature and added randomness to each token
+          - id: c
+            text: The penalty removed the end token, so functions run on too long
+          - id: a
+            text: The penalty also punished names that correct code has to repeat
+        answer: a
+        feedback: A frequency penalty grows with every use of a token, so a variable name used five times gets pushed down hard. The penalty changes scores, not the temperature, and it doesn't remove the end token.
+      - id: decoding-and-sampling.transfer.v3.4
+        prompt: 'A chat product streams replies and uses the stop sequence "\nUser:". Customers sometimes see "\nUs" flash at the end of a reply and vanish. What should the server change?'
+        options:
+          - id: a
+            text: Hold back any text that could begin a stop string until it's resolved
+          - id: b
+            text: Match stop sequences on token IDs rather than on decoded text
+          - id: c
+            text: Drop the stop sequence and rely on the maximum reply length
+        answer: a
+        feedback: The server streamed the start of the stop string before it knew the rest would follow. Buffering a possible prefix fixes that. Matching on IDs would miss stop strings that straddle tokens, and relying on the length limit would let the model write the user's lines.
+  - id: decoding-and-sampling.penalty
+    objective_ref: objective.decoding-and-sampling
+    task: base
+    response_type: numeric
+    points: 1
+    hint: 'Repetition penalty θ: divide a positive logit by θ, multiply a negative one by θ. Frequency and presence: subtract α_f × count, and α_p once if the token has appeared.'
+    remediation_scene: decoding-and-sampling.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: decoding-and-sampling.penalty.1
+        prompt: A token already in the reply has logit 3.0. With a repetition penalty of θ = 1.2, what is its new logit?
+        answer: 2.5
+        feedback: The logit is positive, so divide by θ. 3.0 ÷ 1.2 = 2.5.
+      - id: decoding-and-sampling.penalty.2
+        prompt: A token already in the reply has logit −2.0. With a repetition penalty of θ = 1.25, what is its new logit?
+        answer: -2.5
+        feedback: For a negative logit, multiply by θ so the score still goes down. −2.0 × 1.25 = −2.5. Dividing would have raised it to −1.6.
+      - id: decoding-and-sampling.penalty.3
+        prompt: A token has appeared 3 times in the reply and has logit 4.0. With a frequency penalty of 0.4 and a presence penalty of 0.5, what is its new logit?
+        answer: 2.3
+        feedback: Frequency subtracts 0.4 × 3 = 1.2 and presence subtracts 0.5 once, so 4.0 − 1.2 − 0.5 = 2.3.
+      - id: decoding-and-sampling.penalty.4
+        prompt: A token has appeared twice in the reply and has logit 3.0. With a frequency penalty of 0.3 and no presence penalty, what is its new logit?
+        answer: 2.4
+        feedback: 3.0 − 0.3 × 2 = 2.4.
+      - id: decoding-and-sampling.penalty.5
+        prompt: A token has never appeared in the reply and has logit 1.8. With a repetition penalty of 1.2, a frequency penalty of 0.3, and a presence penalty of 0.6, what is its logit after penalties?
+        answer: 1.8
+        feedback: All three penalties apply only to tokens that already appear, so an unused token keeps its logit of 1.8. That's why "Check" rises relative to "Water" in the lesson.

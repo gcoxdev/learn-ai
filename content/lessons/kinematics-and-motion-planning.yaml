@@ -1,206 +1,445 @@
 schema_version: 0.2-draft
 lesson:
   id: kinematics-and-motion-planning
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Turn a desired pose into feasible movement
   state: draft
-  summary: Separate reaching a target pose from finding a feasible way to get there.
+  summary: Tidy's arm can reach the same mug with its elbow up or down, and can't reach one 0.8 m away at all. Work out both by hand, then grow a random tree around a shelf.
   slot: M30.4
   category: learning
   sources:
-  - title: Modern Robotics — authors’ textbook and resources
-    url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
-  - title: Planning Algorithms — author’s book
-    url: https://lavalle.pl/planning/
+    - title: Modern Robotics — authors’ textbook and resources
+      url: https://modernrobotics.northwestern.edu/nu-gm-book-resource/
+    - title: Planning Algorithms — author’s book (LaValle, 2006)
+      url: https://lavalle.pl/planning/
 objectives:
-- id: objective.kinematics-and-motion-planning
-  version: 1-draft
-  statement: Kinematics relates joint configurations to body poses, while motion planning searches collision-free
-    configurations or trajectories; reachability, dynamics, and uncertainty constrain executable plans.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - kinematics-and-motion-planning.base
-  - kinematics-and-motion-planning.transfer
-  prerequisites:
-  - anyOf:
-    - objective.robot-sensors-and-frames
-  - anyOf:
-    - objective.search-problems
-  - anyOf:
-    - objective.constraint-solving
+  - id: objective.kinematics-and-motion-planning
+    version: 2-draft
+    statement: Compute a two-link arm's gripper position from its joint angles and the joint angles for a target (both elbow solutions, or none), explain the Jacobian and configuration space, and choose between grid search and sampling-based planning.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - kinematics-and-motion-planning.base.v2
+      - kinematics-and-motion-planning.transfer.v2
+      - kinematics-and-motion-planning.fk
+      - kinematics-and-motion-planning.ik
+    prerequisites:
+      - anyOf:
+          - objective.robot-sensors-and-frames
+      - anyOf:
+          - objective.search-problems
+      - anyOf:
+          - objective.constraint-solving
 scenes:
-- id: kinematics-and-motion-planning.s1
-  title: Map joints to geometry
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.kinematics-and-motion-planning
-  markdown: 'The **end effector** is a robot’s working tip, such as a gripper. **Forward kinematics** computes
-    its pose from joint positions. Inverse kinematics seeks joint positions producing a desired pose. A target
-    can have multiple solutions or none, depending on geometry and joint limits. A valid pose solution is not
-    yet a safe path to reach it.
+  - id: kinematics-and-motion-planning.s1
+    title: Joint angles in, gripper position out
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.kinematics-and-motion-planning
+    markdown: |-
+      Seen from the side, Tidy's arm is two links: an upper arm $L_1 = 0.4$ m from the shoulder to the elbow, and a forearm $L_2 = 0.3$ m from the elbow to the gripper. The shoulder angle $\theta_1$ is measured from horizontal; the elbow angle $\theta_2$ is measured from the line of the upper arm.
 
+      **Forward kinematics** turns joint angles into the position of the **end effector**, the working tip (here, the gripper). Add the two links as arrows:
 
-    Take a toy arm with one one-meter link rotating in a plane. At angle zero it points right and ends at [1,
-    0]; at a quarter turn it ends at [0, 1]. These are forward-kinematics calculations. Asking for the angle
-    that reaches [0, 1] is inverse kinematics. A target at [2, 0] cannot be reached by this arm. The **configuration**
-    in this example is just one joint angle.'
-  text_mode: 'The **end effector** is a robot’s working tip, such as a gripper. **Forward kinematics** computes
-    its pose from joint positions. Inverse kinematics seeks joint positions producing a desired pose. A target
-    can have multiple solutions or none, depending on geometry and joint limits. A valid pose solution is not
-    yet a safe path to reach it.
+      $$x = L_1\cos\theta_1 + L_2\cos(\theta_1 + \theta_2), \qquad y = L_1\sin\theta_1 + L_2\sin(\theta_1 + \theta_2)$$
 
+      Take $\theta_1 = 30°$ and $\theta_2 = 60°$, so the forearm points at $30° + 60° = 90°$, straight up:
 
-    Take a toy arm with one one-meter link rotating in a plane. At angle zero it points right and ends at [1,
-    0]; at a quarter turn it ends at [0, 1]. These are forward-kinematics calculations. Asking for the angle
-    that reaches [0, 1] is inverse kinematics. A target at [2, 0] cannot be reached by this arm. The **configuration**
-    in this example is just one joint angle.'
-  bridges: []
-- id: kinematics-and-motion-planning.s2
-  title: Search configuration space
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.kinematics-and-motion-planning
-  markdown: 'A configuration describes the robot’s joint values. Obstacles and self-collisions exclude regions
-    of this space. Sampling-based planners such as probabilistic roadmaps or rapidly exploring random trees
-    can search high-dimensional spaces without enumerating every configuration, under specific completeness
-    and practical constraints.
+      | | Upper arm | Forearm | Gripper |
+      | --- | ---: | ---: | ---: |
+      | $x$ | $0.4 \cos 30° = 0.346$ | $0.3 \cos 90° = 0$ | 0.346 |
+      | $y$ | $0.4 \sin 30° = 0.2$ | $0.3 \sin 90° = 0.3$ | 0.5 |
 
+      The gripper is at $(0.346, 0.5)$ m from the shoulder, just where a mug sits on the shelf.
 
-    A probabilistic roadmap samples feasible configurations and connects nearby ones, creating reusable routes.
-    A rapidly exploring random tree grows connections outward from a starting configuration toward sampled
-    targets. Both still need a way to check whether proposed connections collide with obstacles.'
-  text_mode: 'A configuration describes the robot’s joint values. Obstacles and self-collisions exclude regions
-    of this space. Sampling-based planners such as probabilistic roadmaps or rapidly exploring random trees
-    can search high-dimensional spaces without enumerating every configuration, under specific completeness
-    and practical constraints.
+      :::predict Straighten the elbow (θ2 = 0°) and keep θ1 = 30°. Where is the gripper?
+      Both links now point at 30°, so the arm acts like one 0.7 m link: $(0.7\cos 30°,\; 0.7\sin 30°) = (0.606, 0.35)$. That's as far as the arm reaches in that direction.
+      :::
+    bridges: []
+  - id: kinematics-and-motion-planning.inverse
+    title: Two ways to reach, or none
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.kinematics-and-motion-planning
+    markdown: |-
+      The real question runs backwards. The camera found the mug at $(0.346, 0.5)$; which joint angles put the gripper there? That's **inverse kinematics (IK)**.
 
+      Start with the elbow. The distance from shoulder to target, $r$, depends only on how bent the elbow is. The law of cosines gives:
 
-    A probabilistic roadmap samples feasible configurations and connects nearby ones, creating reusable routes.
-    A rapidly exploring random tree grows connections outward from a starting configuration toward sampled
-    targets. Both still need a way to check whether proposed connections collide with obstacles.'
-  bridges: []
-- id: kinematics-and-motion-planning.s3
-  title: Add timing and dynamics
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.kinematics-and-motion-planning
-  markdown: A path specifies geometric progression; a trajectory adds timing. Velocity, acceleration, torque,
-    contact, and balance constraints can make a collision-free geometric path physically infeasible. Manipulation
-    also requires grasp and contact reasoning, not just placing a point at a coordinate.
-  text_mode: A path specifies geometric progression; a trajectory adds timing. Velocity, acceleration, torque,
-    contact, and balance constraints can make a collision-free geometric path physically infeasible. Manipulation
-    also requires grasp and contact reasoning, not just placing a point at a coordinate.
-  bridges: []
-- id: kinematics-and-motion-planning.s4
-  title: Execute with feedback and margins
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.kinematics-and-motion-planning
-  markdown: Perception and actuation are uncertain, so plans need appropriate margins, monitoring, and replanning.
-    Test in controlled environments and evaluate clearance, success, smoothness, and recovery. A simulated
-    path that avoids idealized obstacles does not establish safety around unmodeled people or objects.
-  text_mode: Perception and actuation are uncertain, so plans need appropriate margins, monitoring, and replanning.
-    Test in controlled environments and evaluate clearance, success, smoothness, and recovery. A simulated
-    path that avoids idealized obstacles does not establish safety around unmodeled people or objects.
-  bridges: []
-- id: kinematics-and-motion-planning.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.kinematics-and-motion-planning
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Kinematics tells you which poses a robot can reach. Planning finds a route, and dynamics and timing
-    determine whether the robot can execute it.
-- id: kinematics-and-motion-planning.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.kinematics-and-motion-planning
-  markdown: Kinematics tells you which poses a robot can reach. Planning finds a route, and dynamics and timing
-    determine whether the robot can execute it.
-  text_mode: Kinematics tells you which poses a robot can reach. Planning finds a route, and dynamics and timing
-    determine whether the robot can execute it.
+      $$\cos\theta_2 = \frac{x^2 + y^2 - L_1^2 - L_2^2}{2 L_1 L_2} = \frac{0.37 - 0.16 - 0.09}{0.24} = 0.5$$
+
+      Both $\theta_2 = +60°$ and $\theta_2 = -60°$ have cosine 0.5, so there are **two solutions**: elbow down ($\theta_1 = 30°$, $\theta_2 = 60°$) and elbow up ($\theta_1 = 80.57°$, $\theta_2 = -60°$). Both put the gripper exactly on the mug. A planner picks the one that keeps the elbow clear of the shelf.
+
+      Now try a mug at $(0.8, 0)$: $\cos\theta_2 = (0.64 - 0.25)/0.24 = 1.625$. No angle has a cosine above 1, so **no solution** exists. The arm reaches at most $L_1 + L_2 = 0.7$ m (and at least $0.4 - 0.3 = 0.1$ m). Tidy must drive closer first.
+
+      ```python run
+      import math
+
+      L1, L2 = 0.4, 0.3                       # Tidy's upper arm and forearm (m)
+
+      def fk(t1, t2):
+          """Joint angles (degrees) -> gripper position (m)."""
+          a, b = math.radians(t1), math.radians(t1 + t2)
+          return L1 * math.cos(a) + L2 * math.cos(b), L1 * math.sin(a) + L2 * math.sin(b)
+
+      def ik(x, y):
+          """Gripper position -> both joint-angle solutions, or None if unreachable."""
+          c2 = (x * x + y * y - L1**2 - L2**2) / (2 * L1 * L2)
+          if abs(c2) > 1:
+              return None                      # too far (or too close) for any elbow angle
+          sols = []
+          for t2 in (math.acos(c2), -math.acos(c2)):
+              t1 = math.atan2(y, x) - math.atan2(L2 * math.sin(t2), L1 + L2 * math.cos(t2))
+              sols.append((round(math.degrees(t1), 2), round(math.degrees(t2), 2)))
+          return sols
+
+      x, y = fk(30, 60)
+      print(f"FK(30°, 60°) = ({x:.4f}, {y:.4f})")
+      print("IK of that point:", ik(x, y))
+      print("IK of (0.8, 0):  ", ik(0.8, 0))
+      ```
+
+      Try `ik(0.7, 0)`: the two solutions merge into one, with the arm dead straight. Then try `ik(0.05, 0)`, too close to the shoulder.
+
+      :::mixup "Inverse kinematics is just forward kinematics run backwards, so there's always one answer."
+      Forward kinematics always has exactly one answer. The inverse can have two (as here), infinitely many (a 7-joint arm can swing its elbow while the gripper stays still), or none (out of reach). Joint limits then rule some out.
+      :::
+    bridges: []
+  - id: kinematics-and-motion-planning.jacobian
+    title: Small turns, small moves
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.kinematics-and-motion-planning
+    markdown: |-
+      To slide the gripper smoothly toward the mug, a controller needs to know how a *tiny* change in each joint moves the tip. Those rates form the **Jacobian** matrix $J$, with $\Delta p \approx J\,\Delta\theta$ (angles in radians):
+
+      $$J = \begin{bmatrix} -L_1 \sin\theta_1 - L_2 \sin(\theta_1{+}\theta_2) & -L_2 \sin(\theta_1{+}\theta_2) \\ L_1 \cos\theta_1 + L_2 \cos(\theta_1{+}\theta_2) & L_2 \cos(\theta_1{+}\theta_2) \end{bmatrix} = \begin{bmatrix} -0.5 & -0.3 \\ 0.346 & 0 \end{bmatrix}$$
+
+      at our pose (30°, 60°). Turn the elbow by 0.01 rad and the gripper moves $(-0.003, 0)$: 3 mm straight back, since the forearm points up. Turn the shoulder by 0.01 rad and it moves $(-0.005, 0.0035)$.
+
+      When the arm is fully stretched ($\theta_2 = 0$), both joints can only swing the tip sideways; nothing moves it further out. The Jacobian's determinant, $L_1 L_2 \sin\theta_2$, drops to zero: the matrix **loses rank**, because its two columns now point the same way. That's a **singularity**, and near one, small tip motions demand huge joint speeds. Controllers steer around them.
+    bridges: []
+  - id: kinematics-and-motion-planning.s2
+    title: Search the space of arm poses
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.kinematics-and-motion-planning
+    markdown: |-
+      To move the mug from one side of a shelf post to the other, Tidy must avoid hitting the post with *any* part of the arm. Checking that in the room is awkward. So planners work in **configuration space (C-space)**: one axis per joint. Each point $(\theta_1, \theta_2)$ is an entire arm pose, and the poses where some part of the arm would touch the post form a forbidden region. Planning becomes: find a line from the start point to the goal point that stays out of the forbidden regions.
+
+      With two joints, you could chop C-space into a 1° grid ($360 \times 360 \approx 130{,}000$ cells) and run the A\* search from module 5. A 7-joint arm at 1° has $360^7 \approx 7.8 \times 10^{17}$ cells. No grid search will finish.
+
+      **Sampling-based planners** skip the grid. The **rapidly exploring random tree (RRT)** (LaValle, 1998) grows a tree from the start: pick a random configuration, find the nearest tree node, step 10° toward the sample, and keep the step if it's collision-free. A tree node at the edge of a big unexplored gap is the nearest node to many possible samples, so it gets extended often and the tree spreads fast. Below, the shelf blocks $70° \le \theta_1 \le 110°$ for elbow angles from 0° to 120°:
+
+      ```python run
+      import numpy as np
+
+      rng = np.random.default_rng(4)
+      start, goal = np.array([20.0, 30.0]), np.array([160.0, 30.0])   # (θ1, θ2) in degrees
+      def blocked(q):            # configurations where the forearm would hit the shelf
+          return 70 <= q[0] <= 110 and 0 <= q[1] <= 120
+      def edge_free(a, b):       # check 20 points along the straight move from a to b
+          return not any(blocked(a + t * (b - a)) for t in np.linspace(0, 1, 20))
+
+      nodes, parent = [start], {0: None}
+      for i in range(5000):
+          sample = goal if rng.random() < 0.1 else rng.uniform(0, 180, 2)   # 10% of the time, aim at the goal
+          near = min(range(len(nodes)), key=lambda k: np.linalg.norm(nodes[k] - sample))
+          step = sample - nodes[near]
+          new = nodes[near] + step * min(1.0, 10.0 / np.linalg.norm(step))    # grow at most 10°
+          if edge_free(nodes[near], new):
+              nodes.append(new); parent[len(nodes) - 1] = near
+              if np.linalg.norm(new - goal) < 1e-9:
+                  break
+
+      path, k = [], len(nodes) - 1
+      while k is not None:
+          path.append(nodes[k]); k = parent[k]
+      path = path[::-1]
+      length = sum(np.linalg.norm(b - a) for a, b in zip(path, path[1:]))
+      print(f"tree size: {len(nodes)} nodes after {i + 1} samples")
+      print(f"path: {len(path)} waypoints, {length:.0f}° of joint motion")
+      print("highest θ2 on the path:", round(max(q[1] for q in path)), "degrees")
+      ```
+
+      The tree finds a way over the shelf (the elbow rises to 150°) after 141 samples. The path is wobbly: 339° of joint motion, where the best route over the corner is about 246°. Real planners shortcut the path afterward, or use RRT\* (Karaman & Frazzoli, 2011), which keeps rewiring the tree toward shorter paths. Change the seed and you'll get a different, equally valid path.
+    bridges: []
+  - id: kinematics-and-motion-planning.s3
+    title: A path isn't a schedule
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.kinematics-and-motion-planning
+    markdown: |-
+      The RRT returns a **path**: a sequence of poses. The motors need a **trajectory**: those poses with times attached, so every joint knows how fast to move at each instant. A full mug limits the answer: accelerate too hard and the coffee sloshes out. So the timing must respect speed, acceleration, and torque limits, even when the geometry is collision-free.
+    bridges: []
+  - id: kinematics-and-motion-planning.s4
+    title: Leave a margin, then watch
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.kinematics-and-motion-planning
+    markdown: |-
+      Tidy's map of the shelf is off by a centimeter or two, and its joints track the trajectory imperfectly. So its planner inflates every obstacle by a safety margin, say 3 cm, and the feedback controller from the control lesson follows the trajectory while the camera keeps watching. If someone moves the shelf post, Tidy stops and replans rather than finishing a plan made for yesterday's kitchen.
+    bridges: []
+  - id: kinematics-and-motion-planning.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.kinematics-and-motion-planning
+    markdown: Compute gripper positions and elbow angles by hand, then plan for a 7-joint arm, an excavator, and a forklift taking a tight corner.
+    takeaway: |-
+      Forward kinematics adds link arrows to find the gripper; inverse kinematics can give two answers or none. Planners search configuration space, and in many dimensions random trees beat grids.
+  - id: kinematics-and-motion-planning.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.kinematics-and-motion-planning
+    markdown: |-
+      Kinematics tells you which poses a robot can reach. Planning finds a route, and dynamics and timing determine whether the robot can execute it.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - kinematics-and-motion-planning.s1
-    - kinematics-and-motion-planning.s2
-    - kinematics-and-motion-planning.s3
-    - kinematics-and-motion-planning.s4
-    - kinematics-and-motion-planning.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - kinematics-and-motion-planning.s1
+        - kinematics-and-motion-planning.inverse
+        - kinematics-and-motion-planning.jacobian
+        - kinematics-and-motion-planning.s2
+        - kinematics-and-motion-planning.s3
+        - kinematics-and-motion-planning.s4
+        - kinematics-and-motion-planning.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     kinematics-and-motion-planning.recap: kinematics-and-motion-planning.check
 assessment_families:
-- id: kinematics-and-motion-planning.base
-  objective_ref: objective.kinematics-and-motion-planning
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Search configuration space: trace the inputs, operation, and result before choosing.'
-  remediation_scene: kinematics-and-motion-planning.s2
-  variants:
-  - id: kinematics-and-motion-planning.base.1
-    prompt: What does forward kinematics compute?
-    options:
-    - id: a
-      text: Pose from joint configuration
-    - id: b
-      text: Joint values from every target uniquely
-    - id: c
-      text: The training reward automatically
-    answer: a
-    feedback: It applies the robot’s geometric model.
-  - id: kinematics-and-motion-planning.base.2
-    prompt: Can inverse kinematics have multiple solutions or no solution?
-    options:
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only for text-based agents
-    - id: a
-      text: 'Yes'
-    answer: a
-    feedback: Geometry and constraints determine reachability.
-- id: kinematics-and-motion-planning.transfer
-  objective_ref: objective.kinematics-and-motion-planning
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Execute with feedback and margins: trace the inputs, operation, and result before choosing.'
-  remediation_scene: kinematics-and-motion-planning.s4
-  variants:
-  - id: kinematics-and-motion-planning.transfer.1
-    prompt: How does a trajectory add to a geometric path?
-    options:
-    - id: b
-      text: It removes every obstacle
-    - id: c
-      text: It guarantees stable contact
-    - id: a
-      text: It specifies timing
-    answer: a
-    feedback: Dynamics depend on how motion unfolds over time.
-  - id: kinematics-and-motion-planning.transfer.2
-    prompt: Does collision-free geometry alone prove executable motion?
-    options:
-    - id: c
-      text: Only if joints are numbered
-    - id: a
-      text: No; dynamic and actuator constraints also matter
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Physical feasibility requires more than geometric clearance.
+  - id: kinematics-and-motion-planning.base
+    objective_ref: objective.kinematics-and-motion-planning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Search configuration space: trace the inputs, operation, and result before choosing.'
+    remediation_scene: kinematics-and-motion-planning.s2
+    variants:
+      - id: kinematics-and-motion-planning.base.1
+        prompt: What does forward kinematics compute?
+        options:
+          - id: a
+            text: Pose from joint configuration
+          - id: b
+            text: Joint values from every target uniquely
+          - id: c
+            text: The training reward automatically
+        answer: a
+        feedback: It applies the robot’s geometric model.
+        retired: true
+      - id: kinematics-and-motion-planning.base.2
+        prompt: Can inverse kinematics have multiple solutions or no solution?
+        options:
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only for text-based agents
+          - id: a
+            text: 'Yes'
+        answer: a
+        feedback: Geometry and constraints determine reachability.
+        retired: true
+  - id: kinematics-and-motion-planning.transfer
+    objective_ref: objective.kinematics-and-motion-planning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Execute with feedback and margins: trace the inputs, operation, and result before choosing.'
+    remediation_scene: kinematics-and-motion-planning.s4
+    variants:
+      - id: kinematics-and-motion-planning.transfer.1
+        prompt: How does a trajectory add to a geometric path?
+        options:
+          - id: b
+            text: It removes every obstacle
+          - id: c
+            text: It guarantees stable contact
+          - id: a
+            text: It specifies timing
+        answer: a
+        feedback: Dynamics depend on how motion unfolds over time.
+        retired: true
+      - id: kinematics-and-motion-planning.transfer.2
+        prompt: Does collision-free geometry alone prove executable motion?
+        options:
+          - id: c
+            text: Only if joints are numbered
+          - id: a
+            text: No; dynamic and actuator constraints also matter
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Physical feasibility requires more than geometric clearance.
+        retired: true
+  - id: kinematics-and-motion-planning.base.v2
+    objective_ref: objective.kinematics-and-motion-planning
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Picture the two links as arrows from the shoulder. The elbow's bend sets how far the tip is from the shoulder; the shoulder angle sets the direction."
+    remediation_scene: kinematics-and-motion-planning.inverse
+    variants:
+      - id: kinematics-and-motion-planning.base.v2.1
+        prompt: For a two-link arm, IK gives θ2 = +60° and θ2 = −60° for the same target. What do the two answers represent?
+        options:
+          - id: b
+            text: One reaches the target and the other reaches its mirror image
+          - id: a
+            text: Elbow-down and elbow-up postures that both put the tip on the target
+          - id: c
+            text: An exact answer and a rounded approximation of that answer
+        answer: a
+        feedback: Both solutions put the gripper exactly on the target, with the elbow bent opposite ways (the shoulder angle changes to compensate). Checking with forward kinematics confirms both; neither is a mirror target or an approximation.
+      - id: kinematics-and-motion-planning.base.v2.2
+        prompt: An arm has links of 0.4 m and 0.3 m. A target sits 0.75 m from the shoulder. What should inverse kinematics report?
+        options:
+          - id: c
+            text: The elbow-up solution, since elbow-down would hit the table
+          - id: b
+            text: The straight-arm pose θ2 = 0°, since that is the closest it can get
+          - id: a
+            text: No solution, since the arm reaches at most 0.7 m
+        answer: a
+        feedback: The formula gives cos θ2 above 1, so no joint angles reach the target; the robot must move closer. The straight arm gets nearest, but it doesn't reach the target, and reporting it as a solution hides the failure.
+      - id: kinematics-and-motion-planning.base.v2.3
+        prompt: With the arm stretched fully straight (θ2 = 0°), why can't small joint motions move the gripper straight outward?
+        options:
+          - id: a
+            text: Both joints can only swing the tip sideways, so the Jacobian loses rank
+          - id: b
+            text: The motors reach their torque limits when the arm is fully extended
+          - id: c
+            text: Inverse kinematics has two solutions there, so the controller hesitates
+        answer: a
+        feedback: At full stretch both joints move the tip perpendicular to the arm, so the Jacobian's determinant L1·L2·sin θ2 is zero, a singularity. The two IK solutions actually merge into one there, and torque limits are a separate issue.
+      - id: kinematics-and-motion-planning.base.v2.4
+        prompt: Why do arm planners search configuration space rather than the room around the gripper?
+        options:
+          - id: b
+            text: Configuration space has fewer dimensions than the room around the arm
+          - id: c
+            text: Obstacles vanish in configuration space, so every path is collision-free
+          - id: a
+            text: Each point in it is a whole arm pose, so collisions of any link are covered
+        answer: a
+        feedback: A collision depends on the whole arm, not just the gripper. In C-space the entire arm is one point, and forbidden poses form regions to avoid. C-space often has more dimensions than the room (7 for a 7-joint arm), and obstacles become forbidden regions rather than vanishing.
+  - id: kinematics-and-motion-planning.transfer.v2
+    objective_ref: objective.kinematics-and-motion-planning
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Ask which layer the problem lives in: reachability (IK), finding a collision-free path (planning), or moving along it within limits (timing)."
+    remediation_scene: kinematics-and-motion-planning.s2
+    variants:
+      - id: kinematics-and-motion-planning.transfer.v2.1
+        prompt: A team wants to plan motions for a 7-joint arm with A* on a grid of 1° steps per joint. What is the main problem, and a standard alternative?
+        options:
+          - id: c
+            text: A* ignores obstacles; switch to a 10° grid so they show up clearly
+          - id: a
+            text: The grid has about 10¹⁸ cells; use a sampling-based planner such as RRT
+          - id: b
+            text: A* can't handle angles; convert every joint angle to x and y first
+        answer: a
+        feedback: 360⁷ ≈ 7.8 × 10¹⁷ cells is far too many to search. Sampling-based planners explore without building the grid. A 10° grid still has 36⁷ ≈ 7.8 × 10¹⁰ cells, and A* handles obstacles and angles fine.
+      - id: kinematics-and-motion-planning.transfer.v2.2
+        prompt: An RRT returns a valid but zigzagging path for a painting robot's arm. What is a sensible next step?
+        options:
+          - id: a
+            text: Shortcut and smooth the path, or plan with RRT* instead
+          - id: b
+            text: Rerun the same RRT with ten times as many samples
+          - id: c
+            text: Switch to forward kinematics, which gives straight paths
+        answer: a
+        feedback: Plain RRT stops at the first path it finds, so more samples don't make that path shorter. Shortcutting removes detours, and RRT* keeps rewiring toward shorter paths. Forward kinematics computes positions; it doesn't plan.
+      - id: kinematics-and-motion-planning.transfer.v2.3
+        prompt: A forklift's planned path clears every rack, but at its normal speed the forklift can't make one tight corner without tipping its load. What should change?
+        options:
+          - id: b
+            text: Inflate the racks' safety margins so the path swings wider
+          - id: c
+            text: Recompute the inverse kinematics of the forklift's mast
+          - id: a
+            text: Time the path with speed and acceleration limits, slowing for the corner
+        answer: a
+        feedback: The geometry is fine; the timing isn't. Turning a path into a trajectory with speed and acceleration limits slows the forklift at the corner. Wider margins may still leave a tight turn, and the mast's kinematics don't affect cornering.
+      - id: kinematics-and-motion-planning.transfer.v2.4
+        prompt: An excavator's controller reaches for a spot with the boom's elbow bent so that the arm hits the cab. The same bucket position is reachable another way. What should the controller do?
+        options:
+          - id: c
+            text: Report the spot as unreachable and ask the operator to move the tracks
+          - id: a
+            text: Use the other IK solution, reaching the spot with the elbow bent the other way
+          - id: b
+            text: Straighten the elbow fully, which keeps the arm furthest from the cab
+        answer: a
+        feedback: Two-link reaching usually has two IK solutions; if one collides, try the other. The spot is reachable, so moving the tracks is unnecessary, and a fully straight arm puts the bucket somewhere else entirely.
+  - id: kinematics-and-motion-planning.fk
+    objective_ref: objective.kinematics-and-motion-planning
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "x = L1 cos θ1 + L2 cos(θ1 + θ2) and y = L1 sin θ1 + L2 sin(θ1 + θ2). The forearm's direction is θ1 + θ2."
+    remediation_scene: kinematics-and-motion-planning.s1
+    absolute_tolerance: 0.01
+    variants:
+      - id: kinematics-and-motion-planning.fk.1
+        prompt: A two-link arm has L1 = 0.4 m and L2 = 0.3 m. With θ1 = 0° and θ2 = 90°, what is the gripper's y-coordinate, in meters?
+        answer: 0.3
+        feedback: "The upper arm points along x (y = 0), and the forearm points at 0° + 90° = 90°, straight up: y = 0 + 0.3 × sin 90° = 0.3 m."
+      - id: kinematics-and-motion-planning.fk.2
+        prompt: A two-link arm has L1 = 0.4 m and L2 = 0.3 m. With θ1 = 90° and θ2 = 0°, what is the gripper's y-coordinate, in meters?
+        answer: 0.7
+        feedback: "Both links point straight up, so y = 0.4 + 0.3 = 0.7 m."
+      - id: kinematics-and-motion-planning.fk.3
+        prompt: A two-link arm has L1 = 0.4 m and L2 = 0.3 m. With θ1 = 30° and θ2 = 0°, what is the gripper's x-coordinate, in meters?
+        answer: 0.606
+        feedback: "Both links point at 30°: x = 0.7 × cos 30° ≈ 0.7 × 0.866 = 0.606 m."
+      - id: kinematics-and-motion-planning.fk.4
+        prompt: A two-link arm has L1 = 0.5 m and L2 = 0.5 m. With θ1 = 60° and θ2 = −60°, what is the gripper's x-coordinate, in meters?
+        answer: 0.75
+        feedback: "Upper arm: 0.5 × cos 60° = 0.25. The forearm points at 60° − 60° = 0°: 0.5 × cos 0° = 0.5. Total x = 0.75 m."
+      - id: kinematics-and-motion-planning.fk.5
+        prompt: A two-link arm has L1 = 0.4 m and L2 = 0.4 m. With θ1 = 45° and θ2 = 45°, what is the gripper's x-coordinate, in meters?
+        answer: 0.283
+        feedback: "Upper arm: 0.4 × cos 45° ≈ 0.283. The forearm points at 90°, straight up, adding 0 to x. Total x ≈ 0.283 m."
+  - id: kinematics-and-motion-planning.ik
+    objective_ref: objective.kinematics-and-motion-planning
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Use cos θ2 = (x² + y² − L1² − L2²) / (2 L1 L2), then take the angle whose cosine that is. The elbow angle depends only on the distance to the target."
+    remediation_scene: kinematics-and-motion-planning.inverse
+    absolute_tolerance: 0.5
+    variants:
+      - id: kinematics-and-motion-planning.ik.1
+        prompt: A two-link arm has L1 = 0.4 m and L2 = 0.3 m. The target is (0.5, 0) m. What is the elbow angle θ2 of the elbow-down solution, in degrees (a positive number)?
+        answer: 90
+        feedback: "cos θ2 = (0.25 − 0.16 − 0.09) / 0.24 = 0, so θ2 = 90°. The 0.3-0.4-0.5 triangle has a right angle at the elbow."
+      - id: kinematics-and-motion-planning.ik.2
+        prompt: A two-link arm has L1 = 0.5 m and L2 = 0.5 m. The target is (0.5, 0) m. What is the elbow angle θ2 of the elbow-down solution, in degrees (a positive number)?
+        answer: 120
+        feedback: "cos θ2 = (0.25 − 0.25 − 0.25) / 0.5 = −0.5, so θ2 = 120°. The target is close, so the elbow folds sharply."
+      - id: kinematics-and-motion-planning.ik.3
+        prompt: A two-link arm has L1 = 0.4 m and L2 = 0.3 m. The target is (0.7, 0) m. What is the elbow angle θ2, in degrees?
+        answer: 0
+        feedback: "cos θ2 = (0.49 − 0.25) / 0.24 = 1, so θ2 = 0°: the arm is fully straight, at the edge of its reach, and the two solutions merge."
+      - id: kinematics-and-motion-planning.ik.4
+        prompt: A two-link arm has L1 = 0.4 m and L2 = 0.3 m. The target is (0.6, 0.1) m. What is the elbow angle θ2 of the elbow-down solution, in degrees (a positive number)?
+        answer: 60
+        feedback: "x² + y² = 0.36 + 0.01 = 0.37, so cos θ2 = (0.37 − 0.25) / 0.24 = 0.5 and θ2 = 60°. It matches the lesson's mug because the target is the same distance from the shoulder."

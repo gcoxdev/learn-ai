@@ -1,212 +1,383 @@
 schema_version: 0.2-draft
 lesson:
   id: flow-matching-and-solvers
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Learn a velocity field and integrate it into samples
   state: draft
-  summary: Learn directions for moving noise into structured samples, then turn those directions into a sequence
-    of numerical steps.
+  summary: What if every speck of noise simply travelled in a straight line to a picture? That idea trains today's fastest image generators. Take the steps yourself and watch the error shrink.
   slot: M22.8
   category: learning
   sources:
-  - title: Flow Matching for Generative Modeling
-    url: https://arxiv.org/abs/2210.02747
-  - title: Score-Based Generative Modeling through SDEs
-    url: https://arxiv.org/abs/2011.13456
+    - title: Flow Matching for Generative Modeling (Lipman et al., 2022)
+      url: https://arxiv.org/abs/2210.02747
+    - title: "Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow (Liu, Gong & Liu, 2022)"
+      url: https://arxiv.org/abs/2209.03003
+    - title: Denoising Diffusion Implicit Models (Song, Meng & Ermon, 2020)
+      url: https://arxiv.org/abs/2010.02502
+    - title: Progressive Distillation for Fast Sampling of Diffusion Models (Salimans & Ho, 2022)
+      url: https://arxiv.org/abs/2202.00512
+    - title: Consistency Models (Song et al., 2023)
+      url: https://arxiv.org/abs/2303.01469
+    - title: Scaling Rectified Flow Transformers for High-Resolution Image Synthesis (Stable Diffusion 3; Esser et al., 2024)
+      url: https://arxiv.org/abs/2403.03206
 objectives:
-- id: objective.flow-matching-and-solvers
-  version: 1-draft
-  statement: Flow matching learns a time-dependent transport field along chosen probability paths; numerical
-    solvers turn that field into samples, with step count, guidance, and evaluation defining the quality-cost
-    tradeoff.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - flow-matching-and-solvers.base
-  - flow-matching-and-solvers.transfer
-  prerequisites:
-  - anyOf:
-    - objective.denoising
-  - anyOf:
-    - objective.flows-and-energy-models
-  - anyOf:
-    - objective.dynamics-and-noise
+  - id: objective.flow-matching-and-solvers
+    version: 2-draft
+    statement: Flow matching learns a time-dependent transport field along chosen probability paths; numerical solvers turn that field into samples, with step count, guidance, and evaluation defining the quality-cost tradeoff.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - flow-matching-and-solvers.base.v2
+      - flow-matching-and-solvers.transfer.v2
+      - flow-matching-and-solvers.calculate
+    prerequisites:
+      - anyOf:
+          - objective.denoising
+      - anyOf:
+          - objective.flows-and-energy-models
+      - anyOf:
+          - objective.dynamics-and-noise
 scenes:
-- id: flow-matching-and-solvers.s1
-  title: Describe movement through sample space
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.flow-matching-and-solvers
-  markdown: Imagine noise points moving toward a data distribution as time runs from zero to one. A velocity
-    field gives a direction and speed at each state and time. Flow matching trains a model against target velocities
-    associated with a chosen probability path rather than requiring one universal corruption schedule.
-  text_mode: Imagine noise points moving toward a data distribution as time runs from zero to one. A velocity
-    field gives a direction and speed at each state and time. Flow matching trains a model against target velocities
-    associated with a chosen probability path rather than requiring one universal corruption schedule.
-  bridges: []
-- id: flow-matching-and-solvers.s2
-  title: Trace a simple path
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.flow-matching-and-solvers
-  markdown: 'For a paired noise point x0 and data point x1, a straight illustrative path is x_t = (1-t)x0 +
-    t x1, with constant pairwise velocity x1-x0. The learned field averages appropriate conditional targets
-    across training pairs. Real recipes can choose other paths and couplings.
+  - id: flow-matching-and-solvers.s1
+    title: Send the noise in straight lines
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.flow-matching-and-solvers
+    markdown: |-
+      Picture a cloud of noise specks at time $t = 0$ that must become a cloud of images at $t = 1$. DDPM moved them in a thousand small, jittery steps. Here's a simpler plan: pair each noise speck with an image and slide it along the straight line between them, at constant speed. That's the illustration in the denoising lesson, where each pixel slid from noise to picture.
 
+      To generate new images, you need something that works without knowing the destination: a **velocity field**, a rule $v(x, t)$ that says, for any point $x$ at any time $t$, which direction to move and how fast. Train a network to predict that velocity, then follow it from fresh noise. This is **flow matching** (Lipman and colleagues, 2022). **Rectified flow** (Liu, Gong & Liu, 2022) is the same straight-line recipe, developed independently the same year.
 
-    Take x0 = 2, x1 = 6 and t = 0.25. The intermediate point is 0.75 × 2 + 0.25 × 6 = 3; the pair''s velocity
-    is 6 − 2 = 4. A **coupling** is the rule pairing starting noise with data examples for the training construction.
-    At generation, the model predicts the velocity; it is not given the unknown final training sample to subtract.'
-  text_mode: 'For a paired noise point x0 and data point x1, a straight illustrative path is x_t = (1-t)x0
-    + t x1, with constant pairwise velocity x1-x0. The learned field averages appropriate conditional targets
-    across training pairs. Real recipes can choose other paths and couplings.
+      It's the continuous version of a normalizing flow: instead of stacking invertible layers, you follow a smooth motion, and following it backward returns you to the start. Stable Diffusion 3 (Esser and colleagues, 2024) was trained this way. It keeps the overall design from the latent diffusion lesson (an autoencoder, text encoders, and guidance) but swaps the U-Net for a transformer denoiser called MMDiT.
+    bridges: []
+  - id: flow-matching-and-solvers.s2
+    title: One training pair, one straight line
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.flow-matching-and-solvers
+    markdown: |-
+      Take a noise value $x_0 = 2$ and a data value $x_1 = 6$. The straight path between them is
 
+      $$x_t = (1 - t)\,x_0 + t\,x_1$$
 
-    Take x0 = 2, x1 = 6 and t = 0.25. The intermediate point is 0.75 × 2 + 0.25 × 6 = 3; the pair''s velocity
-    is 6 − 2 = 4. A **coupling** is the rule pairing starting noise with data examples for the training construction.
-    At generation, the model predicts the velocity; it is not given the unknown final training sample to subtract.'
-  bridges:
-  - dynamics-and-noise
-- id: flow-matching-and-solvers.s3
-  title: Integrate the learned field
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.flow-matching-and-solvers
-  markdown: 'An **ordinary differential equation**, or **ODE**, describes how a state changes continuously
-    over time. A numerical solver approximates that motion in finite steps using the learned velocity field.
+      At $t = 0.25$: $x_t = 0.75 \times 2 + 0.25 \times 6 = 3$. The speed along the line never changes: $\dfrac{dx_t}{dt} = x_1 - x_0 = 4$. So one training step is:
 
+      1. Pick a data example $x_1$, fresh noise $x_0$, and a random time $t$.
+      2. Compute the point $x_t$ on their line.
+      3. Train the network to output the line's velocity, $x_1 - x_0$, at that point and time.
 
-    The simplest example is an **Euler step**: add step_size × predicted_velocity to the current state. Starting
-    at x = 3, with velocity 4 and step size 0.1, gives the next state 3.4. The following step evaluates the
-    field at the new state and time.
+      :::papers The conditional flow-matching loss (Lipman et al., 2022; Liu et al., 2022)
+      $$\mathcal{L}(\theta) = \mathbb{E}_{t,\,x_0,\,x_1}\Big\|\, v_\theta\big((1-t)x_0 + t x_1,\; t\big) - (x_1 - x_0) \,\Big\|^2$$
 
+      For our pair, if $v_\theta(3, 0.25) = 3.5$, the loss is $(3.5 - 4)^2 = 0.25$. Compare the diffusion loss $\|\varepsilon - \hat\varepsilon\|^2$: both are plain squared error on a target you built from a known pair.
+      :::
 
-    Larger or fewer steps can save work but increase approximation error. Other solvers use extra evaluations
-    or adjust step sizes. Count network evaluations as well as steps: one solver step may call the network
-    several times. Errors in the learned field and changes from guidance also affect the result.'
-  text_mode: 'An **ordinary differential equation**, or **ODE**, describes how a state changes continuously
-    over time. A numerical solver approximates that motion in finite steps using the learned velocity field.
+      :::mixup "The trained network points each noise speck straight at one particular image."
+      Many lines cross any given point, each heading to a different image. Squared error makes the network learn their *average* velocity at that point. So a single sample follows a gently curving path, and the finished network can send fresh noise to new images, not copies of training pairs.
+      :::
+    bridges:
+      - dynamics-and-noise
+  - id: flow-matching-and-solvers.s3
+    title: Follow the field in Euler steps
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.flow-matching-and-solvers
+    markdown: |-
+      Generating means solving an **ordinary differential equation (ODE)**, a rule for how a state changes over time: $dx/dt = v_\theta(x, t)$, starting from noise at $t = 0$. A **solver** approximates the motion in finite steps. The simplest is the **Euler step**: with step size $h$,
 
+      $$x_{t+h} = x_t + h\, v_\theta(x_t, t)$$
 
-    The simplest example is an **Euler step**: add step_size × predicted_velocity to the current state. Starting
-    at x = 3, with velocity 4 and step size 0.1, gives the next state 3.4. The following step evaluates the
-    field at the new state and time.
+      At $x = 3$ with velocity 4 and $h = 0.1$, the next state is $3 + 0.1 \times 4 = 3.4$. Then you ask the network again at the new point and time.
 
+      Now a case where we know the exact answer. Let the data be the bell curve $\mathcal{N}(3, 0.5^2)$ and the noise $\mathcal{N}(0, 1)$. For this pair of bells the ideal learned field has a formula, and the exact flow sends noise 1.2 to $3 + 0.5 \times 1.2 = 3.6$. Take two Euler steps with $h = 0.5$:
 
-    Larger or fewer steps can save work but increase approximation error. Other solvers use extra evaluations
-    or adjust step sizes. Count network evaluations as well as steps: one solver step may call the network
-    several times. Errors in the learned field and changes from guidance also affect the result.'
-  bridges: []
-- id: flow-matching-and-solvers.s4
-  title: Compare generation mechanisms and outcomes
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.flow-matching-and-solvers
-  markdown: A feed-forward generator, an ODE solver, and an MCMC chain use different sampling procedures. MCMC
-    relies on a chain approaching its target distribution; an ODE method follows a learned transport. Compare
-    diversity, conditioning, artifacts, coverage, and runtime rather than judging only a few attractive samples.
-  text_mode: A feed-forward generator, an ODE solver, and an MCMC chain use different sampling procedures.
-    MCMC relies on a chain approaching its target distribution; an ODE method follows a learned transport.
-    Compare diversity, conditioning, artifacts, coverage, and runtime rather than judging only a few attractive
-    samples.
-  bridges: []
-- id: flow-matching-and-solvers.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.flow-matching-and-solvers
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Flow matching learns directions for moving noise toward data. A solver follows those directions
-    in numerical steps, trading computation against approximation error.
-- id: flow-matching-and-solvers.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.flow-matching-and-solvers
-  markdown: Flow matching learns directions for moving noise toward data. A solver follows those directions
-    in numerical steps, trading computation against approximation error.
-  text_mode: Flow matching learns directions for moving noise toward data. A solver follows those directions
-    in numerical steps, trading computation against approximation error.
+      | Step | $t$ | $x$ | Velocity $v(x, t)$ | New $x$ |
+      | --- | ---: | ---: | ---: | ---: |
+      | 1 | 0 | 1.2 | 1.8 | $1.2 + 0.5 \times 1.8 = 2.1$ |
+      | 2 | 0.5 | 2.1 | 2.28 | $2.1 + 0.5 \times 2.28 = 3.24$ |
+
+      Two steps land at 3.24, short of 3.6. The program repeats this with more steps:
+
+      ```python run
+      import numpy as np
+
+      m, s = 3.0, 0.5            # data: N(3, 0.5^2).  Noise: N(0, 1).
+
+      def velocity(x, t):
+          """The ideal learned velocity for straight noise-to-data paths.
+          It is the average of (x1 - x0) over all pairs whose path passes x at time t."""
+          var = (1 - t)**2 + (t * s)**2
+          return m + (t * s**2 - (1 - t)) / var * (x - t * m)
+
+      def euler(x0, n_steps):
+          x, h = x0, 1.0 / n_steps
+          for k in range(n_steps):
+              x = x + h * velocity(x, k * h)   # one Euler step: x += h * v(x, t)
+          return x
+
+      x0 = 1.2                   # one starting noise value
+      exact = m + s * x0         # where the true flow takes it: 3.6
+      for n in [1, 2, 4, 8, 16, 32]:
+          x1 = euler(x0, n)
+          print(f"{n:2d} steps: x1 = {x1:.4f}   error = {abs(x1 - exact):.4f}")
+      ```
+
+      :::predict The error roughly halves each time the steps double. Guess the error at 64 steps.
+      About half of 0.0272, and the program gives 0.0137 if you add 64 to the list. Euler's method is **first order**: error shrinks in proportion to the step size.
+      :::
+
+      Look at the 1-step result: exactly 3.0, the *mean* of the data. One big step follows the average direction all the way, landing on the average image, which for real pictures looks like a blur. That's why paths that bend need several steps.
+    bridges: []
+  - id: flow-matching-and-solvers.s4
+    title: Four ways to take fewer steps
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.flow-matching-and-solvers
+    markdown: |-
+      Every step costs one network pass (two with guidance), so the whole field works on cutting steps:
+
+      | Idea | What it does | Example |
+      | --- | --- | --- |
+      | Deterministic sampler | Reuse a trained diffusion model but follow an ODE, so larger steps work | **DDIM** (Song, Meng & Ermon, 2020): good images in tens of steps instead of 1,000 |
+      | Higher-order solver | Look at the slope twice per step and average, for much smaller error | Heun's method: 2 network passes per step |
+      | Straighter paths | Retrain on the model's own (noise, output) pairs so paths barely curve | Rectified flow's "reflow" |
+      | Distillation | Train a student to match several teacher steps in one | Progressive distillation (Salimans & Ho, 2022); consistency models (Song et al., 2023) |
+
+      Count network passes, not steps. Twenty Heun steps cost 40 passes, the same as 40 Euler steps, so compare solvers at equal passes.
+
+      These tricks sit on top of the same trained model or a copy of it, which changes how you debug. If samples come out blurry or smudged at 4 steps but sharp at 50, the network is fine: the solver is cutting corners on a curved path. If they're wrong at 50 steps too, look at the model or the prompt. Always check few-step results against a many-step run from the same seed before shipping.
+    bridges: []
+  - id: flow-matching-and-solvers.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.flow-matching-and-solvers
+    markdown: Path points, velocities, and Euler steps to compute, plus a video team counting passes, a blurry 1-step sampler, and a solver comparison, test whether you can train and run a flow.
+    takeaway: |-
+      Flow matching trains a network to predict x₁ − x₀ along straight lines x_t = (1 − t)x₀ + t·x₁. Sampling follows the learned field with a solver; fewer steps save time but add error, which better solvers, straighter paths, and distillation reduce.
+  - id: flow-matching-and-solvers.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.flow-matching-and-solvers
+    markdown: |-
+      Flow matching learns directions for moving noise toward data. A solver follows those directions in numerical steps, trading computation against approximation error.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - flow-matching-and-solvers.s1
-    - flow-matching-and-solvers.s2
-    - flow-matching-and-solvers.s3
-    - flow-matching-and-solvers.s4
-    - flow-matching-and-solvers.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - flow-matching-and-solvers.s1
+        - flow-matching-and-solvers.s2
+        - flow-matching-and-solvers.s3
+        - flow-matching-and-solvers.s4
+        - flow-matching-and-solvers.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     flow-matching-and-solvers.recap: flow-matching-and-solvers.check
 assessment_families:
-- id: flow-matching-and-solvers.base
-  objective_ref: objective.flow-matching-and-solvers
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a simple path: trace the inputs, operation, and result before choosing.'
-  remediation_scene: flow-matching-and-solvers.s2
-  variants:
-  - id: flow-matching-and-solvers.base.1
-    prompt: For x0 = 2 and x1 = 6, the straight-path pairwise velocity is what?
-    options:
-    - id: a
-      text: '4'
-    - id: b
-      text: '8'
-    - id: c
-      text: '2'
-    answer: a
-    feedback: The derivative of the linear interpolation is x1 minus x0.
-  - id: flow-matching-and-solvers.base.2
-    prompt: An Euler step of size 0.1 with velocity 3 changes the state by what?
-    options:
-    - id: b
-      text: '30'
-    - id: c
-      text: '3.1'
-    - id: a
-      text: '0.3'
-    answer: a
-    feedback: Multiply step size by velocity.
-- id: flow-matching-and-solvers.transfer
-  objective_ref: objective.flow-matching-and-solvers
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Compare generation mechanisms and outcomes: trace the inputs, operation, and result before choosing.'
-  remediation_scene: flow-matching-and-solvers.s4
-  variants:
-  - id: flow-matching-and-solvers.transfer.1
-    prompt: Do fewer solver steps guarantee equal sample quality?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only if the prompt is short
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Discretization and model errors interact with the solver.
-  - id: flow-matching-and-solvers.transfer.2
-    prompt: Are ODE transport and MCMC identical sampling mechanisms?
-    options:
-    - id: c
-      text: Only when both use noise
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: They construct samples through different mathematical procedures.
+  - id: flow-matching-and-solvers.base
+    objective_ref: objective.flow-matching-and-solvers
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a simple path: trace the inputs, operation, and result before choosing.'
+    remediation_scene: flow-matching-and-solvers.s2
+    variants:
+      - id: flow-matching-and-solvers.base.1
+        prompt: For x0 = 2 and x1 = 6, the straight-path pairwise velocity is what?
+        options:
+          - id: a
+            text: '4'
+          - id: b
+            text: '8'
+          - id: c
+            text: '2'
+        answer: a
+        feedback: The derivative of the linear interpolation is x1 minus x0.
+        retired: true
+      - id: flow-matching-and-solvers.base.2
+        prompt: An Euler step of size 0.1 with velocity 3 changes the state by what?
+        options:
+          - id: b
+            text: '30'
+          - id: c
+            text: '3.1'
+          - id: a
+            text: '0.3'
+        answer: a
+        feedback: Multiply step size by velocity.
+        retired: true
+  - id: flow-matching-and-solvers.transfer
+    objective_ref: objective.flow-matching-and-solvers
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Compare generation mechanisms and outcomes: trace the inputs, operation, and result before choosing.'
+    remediation_scene: flow-matching-and-solvers.s4
+    variants:
+      - id: flow-matching-and-solvers.transfer.1
+        prompt: Do fewer solver steps guarantee equal sample quality?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only if the prompt is short
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Discretization and model errors interact with the solver.
+        retired: true
+      - id: flow-matching-and-solvers.transfer.2
+        prompt: Are ODE transport and MCMC identical sampling mechanisms?
+        options:
+          - id: c
+            text: Only when both use noise
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: They construct samples through different mathematical procedures.
+        retired: true
+  - id: flow-matching-and-solvers.base.v2
+    objective_ref: objective.flow-matching-and-solvers
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Training uses a known pair: point (1 − t)x₀ + t·x₁, target x₁ − x₀. Sampling knows neither endpoint ahead: it asks the network for a velocity and steps x += h·v."
+    remediation_scene: flow-matching-and-solvers.s2
+    variants:
+      - id: flow-matching-and-solvers.base.v2.1
+        prompt: In flow-matching training, what target does the network learn to output at the point x_t?
+        options:
+          - id: b
+            text: The data example x₁ itself
+          - id: a
+            text: The line's velocity, x₁ − x₀
+          - id: c
+            text: The noise x₀ that was added
+        answer: a
+        feedback: The target is the straight line's constant velocity. Predicting x₁ or x₀ are related parameterizations, but plain flow matching regresses on x₁ − x₀.
+      - id: flow-matching-and-solvers.base.v2.2
+        prompt: At generation time, why can't the sampler just compute x₁ − x₀ itself?
+        options:
+          - id: c
+            text: It can, but the network's estimate is faster to compute
+          - id: b
+            text: Because x₀ is thrown away after the first step
+          - id: a
+            text: Because x₁, the image being made, isn't known yet
+        answer: a
+        feedback: During training the destination is a real example; at generation there's no destination until you arrive, so the network's learned average velocity has to stand in for it.
+      - id: flow-matching-and-solvers.base.v2.3
+        prompt: A 1-step Euler sampler from a trained flow model gives blurry, average-looking images. What explains this?
+        options:
+          - id: a
+            text: One step follows the average direction all the way, landing near the data mean
+          - id: b
+            text: The network was trained on too few images to predict any velocity well
+          - id: c
+            text: Euler steps add noise at each step, which blurs the result
+        answer: a
+        feedback: At t = 0 the learned velocity averages over every possible destination, so a single full step lands near their average, as in the lesson's 1-step result of 3.0. Euler steps in an ODE add no noise.
+      - id: flow-matching-and-solvers.base.v2.4
+        prompt: Doubling the number of Euler steps roughly halves the final error. What does that tell you about the method?
+        options:
+          - id: c
+            text: It is exact for straight paths, so the path must be straight
+          - id: a
+            text: It is first order, with error proportional to the step size
+          - id: b
+            text: It is second order, with error proportional to the step size squared
+        answer: a
+        feedback: Halving h halves the error, the signature of a first-order method. Second-order methods such as Heun's would cut it by about four; an exact method would show no error.
+  - id: flow-matching-and-solvers.transfer.v2
+    objective_ref: objective.flow-matching-and-solvers
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Count network passes, not steps, and ask whether a problem comes from the trained model or from the solver cutting corners on a curved path.
+    remediation_scene: flow-matching-and-solvers.s4
+    variants:
+      - id: flow-matching-and-solvers.transfer.v2.1
+        prompt: 'A team compares two samplers: 20 Heun steps (2 passes each) and 30 Euler steps. Which uses fewer network passes?'
+        options:
+          - id: b
+            text: Heun, since 20 steps is fewer than 30
+          - id: a
+            text: Euler, with 30 passes against Heun's 40
+          - id: c
+            text: Neither, since steps and passes are the same
+        answer: a
+        feedback: 20 × 2 = 40 passes for Heun against 30 for Euler. Comparing step counts hides the cost difference.
+      - id: flow-matching-and-solvers.transfer.v2.2
+        prompt: A video generator is sharp at 50 steps but smudged at 4 steps from the same seed. Where is the problem?
+        options:
+          - id: c
+            text: In the trained network, which needs more training data
+          - id: b
+            text: In the prompt, which is too vague for four steps
+          - id: a
+            text: In the solver, which takes corners too wide on curved paths
+        answer: a
+        feedback: The same network is sharp with small steps, so the field is fine; big steps overshoot the curves. Fixes are a better solver, straighter paths, or distillation.
+      - id: flow-matching-and-solvers.transfer.v2.3
+        prompt: A phone app needs images in one or two network passes. Which approach is designed for that?
+        options:
+          - id: a
+            text: Distill the model into a student that matches many steps in one
+          - id: b
+            text: Keep the model and run a single Euler step per image
+          - id: c
+            text: Switch to a higher-order solver with more passes per step
+        answer: a
+        feedback: Distillation (or consistency models) trains a student to jump most of the path at once. A plain single Euler step lands near the average, and higher-order solvers add passes.
+      - id: flow-matching-and-solvers.transfer.v2.4
+        prompt: A team retrains its flow model on the (noise, output) pairs the model itself produces. What should they expect?
+        options:
+          - id: b
+            text: Sharper detail at many steps, with paths as curved as before
+          - id: c
+            text: More varied samples, since the pairs are newly random
+          - id: a
+            text: Straighter paths, so fewer steps give good samples
+        answer: a
+        feedback: This is rectified flow's "reflow". The model's own pairs are already matched up along its non-crossing paths, so straight lines between them rarely cross, the averaged paths come out nearly straight, and big steps stay accurate. It targets speed, not variety.
+  - id: flow-matching-and-solvers.calculate
+    objective_ref: objective.flow-matching-and-solvers
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Path point: (1 − t)·x₀ + t·x₁. Velocity target: x₁ − x₀. Euler step: new x = x + h × v."
+    remediation_scene: flow-matching-and-solvers.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: flow-matching-and-solvers.calculate.1
+        prompt: 'Noise x₀ = −1, data x₁ = 3. What is the point x_t on their straight path at t = 0.5?'
+        answer: 1
+        feedback: 0.5 × (−1) + 0.5 × 3 = −0.5 + 1.5 = 1.
+      - id: flow-matching-and-solvers.calculate.2
+        prompt: 'Noise x₀ = 0.5, data x₁ = −1.5. What velocity target does the network learn for this pair?'
+        answer: -2
+        feedback: x₁ − x₀ = −1.5 − 0.5 = −2. The order matters; x₀ − x₁ would point from data back to noise.
+      - id: flow-matching-and-solvers.calculate.3
+        prompt: 'The state is x = 2.1 at t = 0.5, and the network predicts velocity 2.28. After one Euler step with h = 0.5, what is x?'
+        answer: 3.24
+        feedback: 2.1 + 0.5 × 2.28 = 2.1 + 1.14 = 3.24, the second step in the lesson's table.
+      - id: flow-matching-and-solvers.calculate.4
+        prompt: 'Start at x = 0 with h = 0.25. The network predicts velocity 2 at the first point and 1.2 at the second. What is x after two Euler steps?'
+        answer: 0.8
+        feedback: Step 1 gives 0 + 0.25 × 2 = 0.5. Step 2 gives 0.5 + 0.25 × 1.2 = 0.8.
+      - id: flow-matching-and-solvers.calculate.5
+        prompt: 'Noise x₀ = 4, data x₁ = 0. What is the point on their straight path at t = 0.75?'
+        answer: 1
+        feedback: 0.25 × 4 + 0.75 × 0 = 1. At t = 0.75 you're three quarters of the way to the data.

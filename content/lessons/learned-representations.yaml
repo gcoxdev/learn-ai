@@ -1,210 +1,363 @@
 schema_version: 0.2-draft
 lesson:
   id: learned-representations
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: What can a network’s hidden features tell us?
   state: draft
-  summary: Investigate what information a network stores internally and whether it actually uses that information.
+  summary: A wolf detector that was really a snow detector. Learn to read a network's hidden features, reuse them for new jobs, and test whether the network actually relies on them.
   slot: M11.8
   category: learning
   sources:
-  - title: Dive into Deep Learning — authors’ open textbook
-    url: https://d2l.ai/
+    - title: Dive into Deep Learning — authors’ open textbook
+      url: https://d2l.ai/
+    - title: "Ribeiro, Singh & Guestrin — \"Why Should I Trust You?\": Explaining the Predictions of Any Classifier (2016)"
+      url: https://arxiv.org/abs/1602.04938
+    - title: "Yosinski et al. — How transferable are features in deep neural networks? (2014)"
+      url: https://arxiv.org/abs/1411.1792
+    - title: "Belinkov — Probing Classifiers: Promises, Shortcomings, and Advances (2022)"
+      url: https://arxiv.org/abs/2102.12452
+    - title: "Carlini et al. — Extracting Training Data from Large Language Models (USENIX Security, 2021)"
+      url: https://arxiv.org/abs/2012.07805
 objectives:
-- id: objective.learned-representations
-  version: 1-draft
-  statement: Hidden representations can transfer across tasks and also encode shortcuts or memorized details;
-    probes and interventions provide different evidence about what the network uses.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - learned-representations.base
-  - learned-representations.transfer
-  prerequisites:
-  - anyOf:
-    - objective.neural-training-loop
-  - anyOf:
-    - objective.self-supervised-representations
+  - id: objective.learned-representations
+    version: 2-draft
+    statement: Hidden representations can transfer across tasks and also encode shortcuts or memorized details; probes and interventions provide different evidence about what the network uses.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - learned-representations.base.v2
+      - learned-representations.transfer.v2
+    prerequisites:
+      - anyOf:
+          - objective.neural-training-loop
+      - anyOf:
+          - objective.self-supervised-representations
 scenes:
-- id: learned-representations.s1
-  title: Look at the numbers between layers
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.learned-representations
-  markdown: 'A **hidden vector** is the list of values at an intermediate layer. In an image model, it may
-    carry information about both the object and its background. Training encourages useful predictions, but
-    does not label each coordinate with a human concept.
+  - id: learned-representations.s1
+    title: The wolf detector that saw snow
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.learned-representations
+    markdown: |-
+      In a 2016 paper on explaining predictions, researchers deliberately trained a classifier to tell huskies from wolves using photos in which every wolf stood in snow. It got most test photos right, but their explanation method showed what it was really looking at: the snow. A husky photographed in snow became a "wolf."
 
+      What a network has learned shows up in its hidden layers. The list of numbers a hidden layer produces for one input is the input's **representation**, and each number in it is a **feature**. Training shapes those features to make the loss small, and nothing forces them to match the concepts you had in mind. Some come out useful and general. Others are **shortcuts**, features that happen to track the label in the training data (snow for "wolf"), or **memorized** details of particular training examples.
 
-    Some information may be a **nuisance**: a difference irrelevant to the intended task, such as camera tint
-    when identifying a shape. Other features may reflect shortcuts or specific training examples. Even models
-    with similar predictions can organize their internal values differently.'
-  text_mode: 'A **hidden vector** is the list of values at an intermediate layer. In an image model, it may
-    carry information about both the object and its background. Training encourages useful predictions, but
-    does not label each coordinate with a human concept.
+      Start with a representation you know completely: the hidden layer of the staircase-light network, $h = [\text{ReLU}(s), \text{ReLU}(s - 1)]$ with $s = x_1 + x_2$.
 
+      | Switches | Hidden representation $h$ |
+      | --- | --- |
+      | (0, 0) | [0, 0] |
+      | (1, 0) | [1, 0] |
+      | (0, 1) | [1, 0] |
+      | (1, 1) | [2, 1] |
 
-    Some information may be a **nuisance**: a difference irrelevant to the intended task, such as camera tint
-    when identifying a shape. Other features may reflect shortcuts or specific training examples. Even models
-    with similar predictions can organize their internal values differently.'
-  bridges: []
-- id: learned-representations.s2
-  title: Reuse the features for another task
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.learned-representations
-  markdown: 'An **encoder** turns an input into a representation. A **head** is the final task-specific calculation
-    that turns that representation into an answer. To recognize flowers, we might keep a photo encoder’s weights
-    fixed and train a new head on its outputs.
+      This layer kept *how many* switches are up and threw away *which* ones: (1, 0) and (0, 1) look identical from here on. That's a perfect representation for XOR and a useless one for other questions, as the next scene shows.
+    bridges: []
+  - id: learned-representations.s2
+    title: Reuse the features for a new job
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.learned-representations
+    markdown: |-
+      Training a big network from scratch takes huge amounts of data. **Transfer learning** reuses one that's already trained. Split it in two: the **encoder**, the layers that turn an input into a representation, and the **head**, the final layer that turns the representation into an answer. Keep the encoder, throw away the head, and train a new head for your task.
 
+      Here's the most common version, with real sizes. A ResNet-50 trained on ImageNet has about 25 million parameters, and its last hidden layer gives 2,048 features per photo. To recognize 5 flower species from a few hundred photos, **freeze** the encoder (keep its weights fixed) and train only a new linear head: $2{,}048 \times 5 + 5 = 10{,}245$ parameters. Features learned from millions of photos (edges, textures, shapes) do most of the work.
 
-    This **freezing** preserves the encoder and can reduce training work. **Fine-tuning** instead allows some
-    or all of its weights to change for the new task. It may improve flower recognition while overwriting another
-    useful capability. Evaluate both what should improve and what should remain.'
-  text_mode: 'An **encoder** turns an input into a representation. A **head** is the final task-specific calculation
-    that turns that representation into an answer. To recognize flowers, we might keep a photo encoder’s weights
-    fixed and train a new head on its outputs.
+      Try it on the staircase network. The code freezes its hidden layer and trains only a new head, by least squares, for four different tasks:
 
+      ```python run
+      import numpy as np
 
-    This **freezing** preserves the encoder and can reduce training work. **Fine-tuning** instead allows some
-    or all of its weights to change for the new task. It may improve flower recognition while overwriting another
-    useful capability. Evaluate both what should improve and what should remain.'
-  bridges: []
-- id: learned-representations.s3
-  title: Probe versus intervene
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.learned-representations
-  markdown: 'A probe trains a predictor on hidden features to see whether information is decodable. Successful
-    decoding does not prove the original network used that information for its output. An intervention that
-    changes an activation and measures the resulting behavior asks a more causal question, but can introduce
-    unrealistic states.
+      X = np.array([[0, 0], [1, 0], [0, 1], [1, 1]], dtype=float)   # (bottom, top)
+      s = X.sum(axis=1)
+      H = np.column_stack([np.maximum(0, s), np.maximum(0, s - 1)])  # frozen hidden layer
+      F = np.column_stack([H, np.ones(4)])                            # features + a bias column
 
+      tasks = {"XOR": [0, 1, 1, 0], "AND": [0, 0, 0, 1], "OR": [0, 1, 1, 1],
+               "bottom switch up": [0, 1, 0, 1]}
+      for name, t in tasks.items():
+          head, *_ = np.linalg.lstsq(F, np.array(t, float), rcond=None)  # train only the head
+          print(f"{name:17s} head {head.round(2) + 0.0}  predictions {(F @ head).round(2) + 0.0}")
+      ```
 
-    Suppose a probe can recover whether the sky was blue from hidden features. The network might still base
-    its boat prediction on shape alone. To test use, alter the relevant internal signal or compare controlled
-    inputs and measure the output change. But an unrealistic internal edit can disrupt many features at once,
-    so it needs controls.'
-  text_mode: 'A probe trains a predictor on hidden features to see whether information is decodable. Successful
-    decoding does not prove the original network used that information for its output. An intervention that
-    changes an activation and measures the resulting behavior asks a more causal question, but can introduce
-    unrealistic states.
+      XOR, AND, and OR all work: the head weights $[1, -2]$ are the original network's. "Is the bottom switch up?" fails: it predicts 0.5 for both (1, 0) and (0, 1), because the frozen features can't tell (1, 0) from (0, 1). No head can recover information the encoder threw away.
 
+      For that task you'd **fine-tune**: let the encoder's weights change too. Fine-tuning adapts better but can overwrite what the network was good at before, so after fine-tuning, test the old tasks as well as the new one.
+    bridges: []
+  - id: learned-representations.s3
+    title: Readable isn't the same as used
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.learned-representations
+    markdown: |-
+      How do you find out what's inside a representation? Two experiments answer two different questions.
 
-    Suppose a probe can recover whether the sky was blue from hidden features. The network might still base
-    its boat prediction on shape alone. To test use, alter the relevant internal signal or compare controlled
-    inputs and measure the output change. But an unrealistic internal edit can disrupt many features at once,
-    so it needs controls.'
-  bridges: []
-- id: learned-representations.s4
-  title: Test claims with more than one lens
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.learned-representations
-  markdown: Use held-out transfer tasks, controlled counterexamples, memorization tests, and carefully designed
-    interventions. A colorful feature visualization or nearest-neighbor list can suggest hypotheses, not settle
-    them. State which layer, data, and intervention support the interpretation.
-  text_mode: Use held-out transfer tasks, controlled counterexamples, memorization tests, and carefully designed
-    interventions. A colorful feature visualization or nearest-neighbor list can suggest hypotheses, not settle
-    them. State which layer, data, and intervention support the interpretation.
-  bridges: []
-- id: learned-representations.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.learned-representations
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Hidden features may contain useful clues, shortcuts, or memorized details. A probe shows what can
-    be recovered from them; testing whether the model uses those clues requires a different experiment.
-- id: learned-representations.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.learned-representations
-  markdown: Hidden features may contain useful clues, shortcuts, or memorized details. A probe shows what can
-    be recovered from them; testing whether the model uses those clues requires a different experiment.
-  text_mode: Hidden features may contain useful clues, shortcuts, or memorized details. A probe shows what
-    can be recovered from them; testing whether the model uses those clues requires a different experiment.
+      A **probe** is a small model, usually linear, trained to predict some property from a layer's features. It asks: *can this information be read out here?* On the staircase layer, a probe for "how many switches are up?" is perfect, because $h_1$ is the count. A probe for "is the bottom switch up?" fails, as you just saw.
+
+      An **intervention** changes the features directly and watches the output. It asks: *does the network use this?* Take input (1, 1), where $h = [2, 1]$ and the output is $2 - 2 \times 1 = 0$.
+
+      :::predict Force h₂ to 0 and leave everything else alone. What does the network output now?
+      $2 - 2 \times 0 = 2$ instead of 0: the light that should be off is on, bright. The network clearly relies on $h_2$ to handle the both-on case. A probe could have told you $h_2$ "knows" both switches are up; only the intervention shows the output depends on it.
+      :::
+
+      The distinction matters in real models. Suppose a probe on a bird classifier's hidden layer detects "water in the background" with 95% accuracy. That shows the information is present. Now remove it: erase the water direction from the features, or swap in photos with the background replaced. If "duck" confidence drops from 0.90 to 0.40, the model was leaning on the background, a shortcut. If it stays at 0.90, the information was there but unused.
+
+      :::mixup "If a probe can read a property from a layer, the network uses that property."
+      Hidden layers carry plenty of information the output ignores, and a flexible probe can even learn the property itself. Decodable means present. Only an intervention, changing the feature and watching the output, tests use.
+      :::
+    bridges: []
+  - id: learned-representations.s4
+    title: Test a suspicious model three ways
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.learned-representations
+    markdown: |-
+      Suppose a chest X-ray model scores well at the hospital whose scans trained it but poorly at a second hospital. You suspect a shortcut: each hospital's scanner stamps a different text marker in the image's corner. Here's how the evidence adds up:
+
+      | Test | Result | What it tells you |
+      | --- | --- | --- |
+      | Probe the last hidden layer for "which hospital?" | 99% accurate | Hospital identity is present in the features |
+      | Blank out the corner markers and rerun | Accuracy at the training hospital falls sharply | The model uses the markers |
+      | Evaluate at a third, unseen hospital | Similar drop | The shortcut breaks on new data |
+
+      No single row settles it; together they make a strong case, and they point to a fix: crop or mask the markers during training and collect scans from more hospitals.
+
+      Memorization gets the same treatment. Researchers have shown that large language models such as GPT-2 can reproduce passages from their training data word for word, including personal details (Carlini et al., 2021). One simple test: prompt with the start of a training document and check whether the model completes it exactly.
+
+      Individual units often don't line up with single human concepts, either. One unit often responds to several unrelated things, so read features with probes and interventions, not by staring at one neuron.
+    bridges: []
+  - id: learned-representations.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.learned-representations
+    markdown: Read probes and interventions on a speech model and a bird classifier, count a frozen head's parameters, and diagnose fine-tuning, memorization, and shortcut failures.
+    takeaway: |-
+      Hidden features can hold general knowledge, shortcuts, or memorized details. A probe shows what can be read out of a layer; an intervention shows what the network actually uses. Freeze an encoder to reuse its features, but no new head can recover what it threw away.
+  - id: learned-representations.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.learned-representations
+    markdown: |-
+      Hidden features may contain useful clues, shortcuts, or memorized details. A probe shows what can be recovered from them; testing whether the model uses those clues requires a different experiment.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - learned-representations.s1
-    - learned-representations.s2
-    - learned-representations.s3
-    - learned-representations.s4
-    - learned-representations.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - learned-representations.s1
+        - learned-representations.s2
+        - learned-representations.s3
+        - learned-representations.s4
+        - learned-representations.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     learned-representations.recap: learned-representations.check
 assessment_families:
-- id: learned-representations.base
-  objective_ref: objective.learned-representations
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Reuse a representation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: learned-representations.s2
-  variants:
-  - id: learned-representations.base.1
-    prompt: Does one hidden coordinate necessarily correspond to one named human concept?
-    options:
-    - id: a
-      text: 'No'
-    - id: b
-      text: Yes; every coordinate has a fixed dictionary entry
-    - id: c
-      text: Only in a large network
-    answer: a
-    feedback: Representations can be distributed and dependent on parameterization.
-  - id: learned-representations.base.2
-    prompt: What does freezing an encoder do during adaptation?
-    options:
-    - id: b
-      text: Deletes its outputs
-    - id: c
-      text: Guarantees no domain mismatch
-    - id: a
-      text: Keeps its parameters fixed while other selected parts train
-    answer: a
-    feedback: Freezing preserves parameters but does not guarantee task suitability.
-- id: learned-representations.transfer
-  objective_ref: objective.learned-representations
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Test claims with more than one lens: trace the inputs, operation, and result before choosing.'
-  remediation_scene: learned-representations.s4
-  variants:
-  - id: learned-representations.transfer.1
-    prompt: A probe decodes a property from activations. What remains unproven?
-    options:
-    - id: b
-      text: That any information was decodable
-    - id: c
-      text: That the probe was trained
-    - id: a
-      text: That the original model used the property causally for its answer
-    answer: a
-    feedback: Decodability is not the same as causal use.
-  - id: learned-representations.transfer.2
-    prompt: Fine-tuning improves a new task but harms an old one. What should evaluation include?
-    options:
-    - id: c
-      text: A claim that old behavior never mattered
-    - id: a
-      text: Capability retention and the adaptation tradeoff
-    - id: b
-      text: Only the improved task
-    answer: a
-    feedback: Adaptation can alter shared representations and existing capabilities.
+  - id: learned-representations.base
+    objective_ref: objective.learned-representations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Reuse a representation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: learned-representations.s2
+    variants:
+      - id: learned-representations.base.1
+        prompt: Does one hidden coordinate necessarily correspond to one named human concept?
+        options:
+          - id: a
+            text: 'No'
+          - id: b
+            text: Yes; every coordinate has a fixed dictionary entry
+          - id: c
+            text: Only in a large network
+        answer: a
+        retired: true
+        feedback: Representations can be distributed and dependent on parameterization.
+      - id: learned-representations.base.2
+        prompt: What does freezing an encoder do during adaptation?
+        options:
+          - id: b
+            text: Deletes its outputs
+          - id: c
+            text: Guarantees no domain mismatch
+          - id: a
+            text: Keeps its parameters fixed while other selected parts train
+        answer: a
+        retired: true
+        feedback: Freezing preserves parameters but does not guarantee task suitability.
+  - id: learned-representations.transfer
+    objective_ref: objective.learned-representations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Test claims with more than one lens: trace the inputs, operation, and result before choosing.'
+    remediation_scene: learned-representations.s4
+    variants:
+      - id: learned-representations.transfer.1
+        prompt: A probe decodes a property from activations. What remains unproven?
+        options:
+          - id: b
+            text: That any information was decodable
+          - id: c
+            text: That the probe was trained
+          - id: a
+            text: That the original model used the property causally for its answer
+        answer: a
+        retired: true
+        feedback: Decodability is not the same as causal use.
+      - id: learned-representations.transfer.2
+        prompt: Fine-tuning improves a new task but harms an old one. What should evaluation include?
+        options:
+          - id: c
+            text: A claim that old behavior never mattered
+          - id: a
+            text: Capability retention and the adaptation tradeoff
+          - id: b
+            text: Only the improved task
+        answer: a
+        retired: true
+        feedback: Adaptation can alter shared representations and existing capabilities.
+  - id: learned-representations.base.v2
+    objective_ref: objective.learned-representations
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask what each experiment can show. A probe shows information can be read out of a layer; an intervention changes a feature and watches the output; a frozen encoder limits what any new head can use.
+    remediation_scene: learned-representations.s3
+    variants:
+      - id: learned-representations.base.v2.1
+        prompt: A linear probe trained on a speech model's hidden layer predicts the speaker's accent with 92% accuracy. What does this result show?
+        options:
+          - id: b
+            text: The model relies on accent to transcribe speech
+          - id: a
+            text: Accent information can be read out of that layer
+          - id: c
+            text: One neuron in that layer is dedicated to accent
+          - id: d
+            text: The model was originally trained to detect accent
+        answer: a
+        feedback: A probe measures what is decodable, so accent is present in the layer. Whether the transcription depends on it needs an intervention, and the information can be spread across many units rather than sitting in one neuron.
+      - id: learned-representations.base.v2.2
+        prompt: In a bird classifier, you erase the hidden direction that best predicts "water in the background." Its confidence in "duck" on duck photos falls from 0.90 to 0.40. What does this suggest?
+        options:
+          - id: c
+            text: The water probe was trained on the wrong layer
+          - id: d
+            text: Background information was absent from that layer
+          - id: a
+            text: The model leans on the background to decide "duck"
+          - id: b
+            text: The model can no longer see the shape of the duck
+        answer: a
+        feedback: This is an intervention, and removing the water signal changed the output a lot, so the model was using it, a likely shortcut. The information was clearly present (the probe found it), and nothing about the duck's shape was edited.
+      - id: learned-representations.base.v2.3
+        prompt: You freeze a pretrained encoder that outputs 2,048 features and train only a new linear head for 5 classes, with a bias per class. How many parameters does training change?
+        options:
+          - id: d
+            text: '10,240'
+          - id: b
+            text: '2,053'
+          - id: c
+            text: About 25 million
+          - id: a
+            text: '10,245'
+        answer: a
+        feedback: The head has 2,048 × 5 = 10,240 weights plus 5 biases, 10,245 in all. The frozen encoder's millions of weights don't change, and 10,240 forgets the biases.
+      - id: learned-representations.base.v2.4
+        prompt: With the staircase network's hidden layer frozen, a new head can learn XOR, AND, and OR but not "is the bottom switch up?" Why not?
+        options:
+          - id: b
+            text: That task needs a nonlinear head, and this head is linear
+          - id: a
+            text: The frozen features give (1, 0) and (0, 1) the same values
+          - id: c
+            text: The head has too few parameters to learn a fourth task
+          - id: d
+            text: Least squares cannot fit targets that are exactly 0 or 1
+        answer: a
+        feedback: Both inputs map to h = [1, 0], so no head of any kind can separate them; the information was discarded upstream. A nonlinear or bigger head would face the same identical inputs, and least squares fits 0/1 targets fine for the other three tasks.
+  - id: learned-representations.transfer.v2
+    objective_ref: objective.learned-representations
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name the kind of feature or failure first (general, shortcut, memorized, mixed, or overwritten), then choose the test or reuse plan that fits it.
+    remediation_scene: learned-representations.s4
+    variants:
+      - id: learned-representations.transfer.v2.1
+        prompt: A sentiment model is fine-tuned on product reviews. Accuracy there rises from 85% to 93%, but on movie reviews, where it was strong, it drops from 90% to 70%. What is the best explanation?
+        options:
+          - id: a
+            text: Fine-tuning overwrote features the movie task relied on
+          - id: b
+            text: The product reviews were mislabeled during fine-tuning
+          - id: c
+            text: The model memorized the movie reviews it saw earlier
+          - id: d
+            text: The learning rate was too low for the new review task
+        answer: a
+        feedback: Fine-tuning changes the shared encoder, which can erase what older tasks depended on, so always re-test old tasks after adapting. Mislabeled data or a low rate would hurt the new task, which actually improved.
+      - id: learned-representations.transfer.v2.2
+        prompt: A probe identifies which hospital each chest X-ray came from with 99% accuracy, using the diagnosis model's hidden features. What is the most useful next step?
+        options:
+          - id: b
+            text: Conclude the model diagnoses by hospital and discard it
+          - id: c
+            text: Conclude it's harmless, since the probe is a separate model
+          - id: a
+            text: Mask the site markers and test the model at a new hospital
+          - id: d
+            text: Retrain the probe on a deeper layer to raise its accuracy
+        answer: a
+        feedback: The probe shows hospital identity is present, not that the diagnosis uses it. Masking the markers (an intervention) and testing at an unseen hospital show whether predictions depend on it. Jumping to either conclusion skips that test.
+      - id: learned-representations.transfer.v2.3
+        prompt: A clinic has 300 labeled photos of a rare plant disease and a model pretrained on millions of everyday photos. Which plan is the sensible starting point?
+        options:
+          - id: c
+            text: Train a new network from random weights on the 300 photos
+          - id: a
+            text: Freeze the pretrained encoder and train a small new head
+          - id: b
+            text: Fine-tune every layer at a high rate on the 300 photos
+          - id: d
+            text: Use the pretrained model's everyday labels unchanged
+        answer: a
+        feedback: With little data, reuse general features and fit only a small head, which has few parameters to overfit. Training from scratch wastes the pretrained features, aggressive fine-tuning can wreck them, and the old labels don't include the disease.
+      - id: learned-representations.transfer.v2.4
+        prompt: A text model, given the start of one customer's support ticket, completes it with that customer's phone number word for word. What kind of learned feature is this?
+        options:
+          - id: d
+            text: A shortcut that happens to track the label
+          - id: b
+            text: A general feature that transfers well
+          - id: c
+            text: A nuisance feature such as a background
+          - id: a
+            text: A memorized detail of a training example
+        answer: a
+        feedback: Reproducing a specific training example exactly is memorization, and it's a privacy risk. A shortcut would be a feature correlated with a label, and a general feature would help on new inputs, not recite old ones.
+      - id: learned-representations.transfer.v2.5
+        prompt: A unit in a vision model fires for cat faces, car fronts, and printed text. A teammate says the network must be broken. What is the best reply?
+        options:
+          - id: b
+            text: Units should detect one concept each, so retrain the model
+          - id: a
+            text: Units often mix several features, which is normal in networks
+          - id: c
+            text: The unit is dead and should be pruned from the network
+          - id: d
+            text: It proves the model memorized its training images exactly
+        answer: a
+        feedback: Training doesn't give units one tidy concept each, and a single unit responding to several unrelated things is common. A dead unit never fires at all, and mixed responses say nothing about memorization.

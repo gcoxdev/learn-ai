@@ -1,193 +1,440 @@
 schema_version: 0.2-draft
 lesson:
   id: integrate-and-fire-neurons
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Follow voltage, leakage, threshold, and reset
   state: draft
-  summary: Watch input accumulate, leak away, cross a threshold, and reset.
+  summary: A leaky bucket that empties itself with a click every time it overflows. That's most of what a spiking neuron model does, and it explains why pressing harder makes a nerve fire faster, not louder.
   slot: M37.4
   category: learning
   sources:
-  - title: Neuronal Dynamics
-    url: https://neuronaldynamics.epfl.ch/online/
+    - title: "Neuronal Dynamics, chapter 1: the leaky integrate-and-fire model (Gerstner, Kistler, Naud & Paninski, 2014)"
+      url: https://neuronaldynamics.epfl.ch/online/
+    - title: "A quantitative description of membrane current and its application to conduction and excitation in nerve (Hodgkin & Huxley, 1952)"
+      url: https://doi.org/10.1113/jphysiol.1952.sp004764
 objectives:
-- id: objective.integrate-and-fire-neurons
-  version: 1-draft
-  statement: Leaky integrate-and-fire models accumulate input in a membrane state that decays, emits a spike
-    at a threshold, and resets; rate and timing codes use different properties of spike trains.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - integrate-and-fire-neurons.base
-  - integrate-and-fire-neurons.transfer
-  prerequisites:
-  - anyOf:
-    - objective.dynamics-and-noise
-  - anyOf:
-    - objective.neurons
+  - id: objective.integrate-and-fire-neurons
+    version: 2-draft
+    statement: Leaky integrate-and-fire models accumulate input in a membrane state that decays, emits a spike at a threshold, and resets; rate and timing codes use different properties of spike trains.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - integrate-and-fire-neurons.base.v2
+      - integrate-and-fire-neurons.transfer.v2
+      - integrate-and-fire-neurons.calculate
+    prerequisites:
+      - anyOf:
+          - objective.dynamics-and-noise
+      - anyOf:
+          - objective.neurons
 scenes:
-- id: integrate-and-fire-neurons.s1
-  title: Track a state over time
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.integrate-and-fire-neurons
-  markdown: 'A **leaky integrate-and-fire neuron** keeps an internal state called **membrane voltage**. Incoming
-    current changes this state, while leakage pulls it toward a resting value.
+  - id: integrate-and-fire-neurons.s1
+    title: A leaky bucket that clicks when full
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.integrate-and-fire-neurons
+    markdown: |-
+      Press your fingertip lightly on a table, then harder. The touch sensors in your skin don't send bigger signals when you press harder. They send the *same* signal, a brief voltage pulse called a **spike**, more often.
 
+      Picture a bucket with a small hole in the bottom. Water pours in, leaks out through the hole, and whenever the level reaches the rim, the bucket tips, clicks once, and starts again empty. Pour slowly and the leak keeps up, so it never clicks. Pour faster and it clicks faster.
 
-    When voltage reaches a **threshold**, the model emits a **spike**, a discrete signal event. A **reset rule**
-    specifies the voltage afterward. Some models also include a **refractory interval**, a period when another
-    spike is prevented or harder to produce.
+      That's the **leaky integrate-and-fire (LIF)** neuron. The water level is the **membrane voltage** $V$. Without input it leaks back to a **resting voltage**, $V_\text{rest} = -65$ mV. An input current $I$ charges it. When $V$ reaches a **threshold**, $V_\text{th} = -50$ mV, the model records a spike and **resets** $V$ to $-65$ mV:
 
+      $$\tau\,\frac{dV}{dt} = -(V - V_\text{rest}) + R\,I$$
 
-    The next example resets to zero and uses no extra refractory delay. These explicit rules define a simplified
-    dynamical model, not a detailed biological cell.'
-  text_mode: 'A **leaky integrate-and-fire neuron** keeps an internal state called **membrane voltage**. Incoming
-    current changes this state, while leakage pulls it toward a resting value.
+      The first term is the leak: the farther $V$ is above rest, the faster it falls back. The second is the input, where $R$ is the membrane's resistance. The **membrane time constant** $\tau$ (here 10 ms) sets how quickly everything happens. The shape of the spike itself isn't modeled at all; only its timing is.
 
+      Louis Lapicque proposed this kind of model in 1907. In 1952 Alan Hodgkin and Andrew Huxley described the actual ion currents that shape a spike, work that won a Nobel Prize in 1963. Their model is far costlier to simulate, which is why large simulations and neuromorphic chips mostly use LIF neurons.
+    diagram:
+      caption: One leaky integrate-and-fire neuron. The voltage charges up, leaks toward rest, and resets after every spike.
+      description: Input current flows into the membrane voltage. The membrane voltage leaks toward the resting voltage of −65 mV, on a dashed arrow. The voltage is compared with the −50 mV threshold. When it is reached, a spike goes out, and a reset step sends the voltage back to −65 mV and holds it there for a 2 ms refractory period before it can charge again.
+      nodes:
+        - id: input
+          label: Input current I
+          col: 0
+          row: 0
+          tone: data
+        - id: membrane
+          label: Membrane voltage V
+          note: τ = 10 ms
+          col: 1
+          row: 0
+          tone: accent
+        - id: rest
+          label: Resting voltage
+          note: −65 mV
+          col: 1
+          row: 2
+          tone: muted
+        - id: threshold
+          label: Threshold check
+          note: V ≥ −50 mV?
+          col: 3
+          row: 0
+        - id: spike
+          label: Spike out
+          col: 4
+          row: 0
+          tone: accent
+        - id: reset
+          label: Reset to −65 mV
+          note: then 2 ms refractory
+          col: 3
+          row: 2
+          tone: warn
+      edges:
+        - from: input
+          to: membrane
+          label: R·I charges it
+        - from: membrane
+          to: rest
+          label: leak
+          dashed: true
+        - from: membrane
+          to: threshold
+        - from: threshold
+          to: spike
+          label: yes
+        - from: threshold
+          to: reset
+          label: after the spike
+        - from: reset
+          to: membrane
+          label: start again
+          bend: 1
+    bridges:
+      - dynamics-and-noise
+  - id: integrate-and-fire-neurons.s2
+    title: When will it fire?
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.integrate-and-fire-neurons
+    markdown: |-
+      Take $R = 10$ MΩ and a steady input of $I = 2$ nA, so $RI = 20$ mV. Start at rest. With a time step of 1 ms, each Euler step (from the lesson on following a changing state) adds $\frac{\Delta t}{\tau}\big(-(V - V_\text{rest}) + RI\big)$:
 
-    When voltage reaches a **threshold**, the model emits a **spike**, a discrete signal event. A **reset rule**
-    specifies the voltage afterward. Some models also include a **refractory interval**, a period when another
-    spike is prevented or harder to produce.
+      | Time | Leak term $-(V + 65)$ | Change $0.1 \times (\text{leak} + 20)$ | New $V$ |
+      | ---: | ---: | ---: | ---: |
+      | 0 → 1 ms | 0 | +2.0 | −63.0 mV |
+      | 1 → 2 ms | −2.0 | +1.8 | −61.2 mV |
+      | 2 → 3 ms | −3.8 | +1.62 | −59.58 mV |
 
+      Each step adds less, because the leak grows as $V$ rises. Left alone, $V$ would level off at $V_\text{rest} + RI = -45$ mV. That's above the threshold, so the neuron will fire. For a constant input, the equation has an exact solution:
 
-    The next example resets to zero and uses no extra refractory delay. These explicit rules define a simplified
-    dynamical model, not a detailed biological cell.'
-  bridges: []
-- id: integrate-and-fire-neurons.s2
-  title: Trace a discrete toy update
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.integrate-and-fire-neurons
-  markdown: Use v_next = 0.5 v_previous + input, threshold one, and reset zero. Starting at zero with input
-    0.6 twice, voltages become 0.6 then 0.9, so no spike occurs. A third equal input gives 1.05 before reset,
-    producing a spike under the stated rule.
-  text_mode: Use v_next = 0.5 v_previous + input, threshold one, and reset zero. Starting at zero with input
-    0.6 twice, voltages become 0.6 then 0.9, so no spike occurs. A third equal input gives 1.05 before reset,
-    producing a spike under the stated rule.
-  bridges:
-  - dynamics-and-noise
-- id: integrate-and-fire-neurons.s3
-  title: Encode rate or precise timing
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.integrate-and-fire-neurons
-  markdown: A rate code uses spike counts over a window; a temporal code uses timing relationships such as
-    latency or coincidence. The same count can correspond to different spike patterns. Window length, noise,
-    and downstream dynamics determine which distinctions are usable.
-  text_mode: A rate code uses spike counts over a window; a temporal code uses timing relationships such as
-    latency or coincidence. The same count can correspond to different spike patterns. Window length, noise,
-    and downstream dynamics determine which distinctions are usable.
-  bridges: []
-- id: integrate-and-fire-neurons.s4
-  title: Simulate with explicit conventions
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.integrate-and-fire-neurons
-  markdown: Specify time step, integration method, threshold comparison, reset, and input units. Coarse numerical
-    steps can change spike timing. Compare model behavior with the intended equations or data, and distinguish
-    simulated spikes from claims about actual biological computation or hardware energy.
-  text_mode: Specify time step, integration method, threshold comparison, reset, and input units. Coarse numerical
-    steps can change spike timing. Compare model behavior with the intended equations or data, and distinguish
-    simulated spikes from claims about actual biological computation or hardware energy.
-  bridges: []
-- id: integrate-and-fire-neurons.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.integrate-and-fire-neurons
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: A leaky integrate-and-fire neuron accumulates input, leaks toward rest, spikes at a threshold,
-    and resets. The count and timing of spikes can carry different information.
-- id: integrate-and-fire-neurons.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.integrate-and-fire-neurons
-  markdown: A leaky integrate-and-fire neuron accumulates input, leaks toward rest, spikes at a threshold,
-    and resets. The count and timing of spikes can carry different information.
-  text_mode: A leaky integrate-and-fire neuron accumulates input, leaks toward rest, spikes at a threshold,
-    and resets. The count and timing of spikes can carry different information.
+      $$V(t) = V_\text{rest} + RI\,\big(1 - e^{-t/\tau}\big)$$
+
+      Set $V(t) = -50$: $15 = 20\,(1 - e^{-t/10})$, so $e^{-t/10} = 0.25$ and $t = 10 \ln 4 = 13.86$ ms. In general, with a gap of $\theta = V_\text{th} - V_\text{reset} = 15$ mV to climb,
+
+      $$T = \tau \ln\frac{RI}{RI - \theta}$$
+
+      After each spike the voltage resets and the same climb repeats, so the neuron fires every 13.86 ms, about 72 times a second.
+
+      :::predict What is the weakest current that ever makes this neuron fire?
+      $RI$ must exceed the 15 mV gap, or $V$ levels off below threshold and never fires. So $I > 15 / 10 = 1.5$ nA. That minimum is called the **rheobase**. At 1.4 nA the neuron sits silently at −51 mV forever, 1 mV short.
+      :::
+  - id: integrate-and-fire-neurons.fi-curve
+    title: Harder pressing, faster firing
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.integrate-and-fire-neurons
+    markdown: |-
+      Real neurons can't fire again instantly. For a millisecond or two after a spike, a **refractory period**, they won't respond. Add a 2 ms refractory period and the interval between spikes becomes $t_\text{ref} + T$: at 2 nA that's $2 + 13.86 = 15.86$ ms, or 63.0 spikes per second.
+
+      Plotting firing rate against input current gives the **f–I curve**. The program simulates one second for each current and compares with the formula:
+
+      ```python run
+      import math
+
+      tau, R = 10.0, 10.0                    # membrane time constant (ms), resistance (megaohms)
+      v_rest, v_th, v_reset = -65.0, -50.0, -65.0   # millivolts
+      t_ref, dt = 2.0, 0.1                   # refractory period and time step (ms)
+
+      def spikes_in_one_second(I):           # I in nanoamps, so R * I is in millivolts
+          v, t_last, count = v_rest, -1e9, 0
+          for step in range(int(1000 / dt)):
+              t = step * dt
+              if t - t_last < t_ref:          # refractory: hold at reset
+                  continue
+              v += dt / tau * (-(v - v_rest) + R * I)    # Euler step of the membrane equation
+              if v >= v_th:                   # threshold crossed: spike and reset
+                  count, v, t_last = count + 1, v_reset, t
+          return count
+
+      print(" I (nA)   simulated (Hz)   formula (Hz)")
+      for I in [1.0, 1.5, 1.6, 2.0, 3.0, 5.0, 10.0, 50.0]:
+          gap = v_th - v_reset
+          rate = 0 if R * I <= gap else 1000 / (t_ref + tau * math.log(R * I / (R * I - gap)))
+          print(f"{I:6.1f}   {spikes_in_one_second(I):10d}   {rate:12.1f}")
+      ```
+
+      Three regions show up. Below 1.5 nA: silence. Just above it: firing starts at a low rate and climbs steeply (33 Hz at 1.6 nA, 63 Hz at 2 nA). At large currents the climb flattens, because no interval can be shorter than the 2 ms refractory period, which caps the rate at 500 Hz. Set `t_ref = 0.0` and rerun: the high-current rates shoot up with no ceiling.
+
+      :::mixup "A stronger input makes the neuron send bigger spikes."
+      In this model every spike is the same event, and in real neurons spikes are nearly all-or-none too. Strength is carried by *how often* and *how soon* spikes come, not by their size.
+      :::
+  - id: integrate-and-fire-neurons.s3
+    title: Counting spikes or timing them
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.integrate-and-fire-neurons
+    markdown: |-
+      The f–I curve suggests one way to read a neuron: count spikes in a time window. That's a **rate code**. With a 100 ms window, 2 nA gives about 6 spikes and 5 nA about 18.
+
+      The same equation offers a faster reading. Starting from rest, the *first* spike comes at $T = \tau\ln\big(RI/(RI - \theta)\big)$: 27.7 ms at 1.6 nA, 13.9 ms at 2 nA, and 4.7 ms at 4 nA. Stronger inputs fire sooner. Reading the input from when the first spike arrives is a **latency code**, one kind of **timing code**. A single spike is enough, which matters when a decision has to happen fast.
+
+      :::predict Two neurons each fire 5 spikes in a 100 ms window. Must they be carrying the same message?
+      No. A rate code would read them as identical. But one might fire all 5 in the first 20 ms and the other spread them evenly. Any reader that uses timing, like the first-spike latency, or which spikes from different neurons arrive together, can tell them apart.
+      :::
+
+      Real sensory systems appear to use both kinds of code, and the next lesson's learning rule, STDP, depends entirely on spike timing.
+  - id: integrate-and-fire-neurons.s4
+    title: The time step can move a spike
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.integrate-and-fire-neurons
+    markdown: |-
+      The program above used a 0.1 ms step, and its rates matched the formula within a few hertz. Coarser steps save computation, which is tempting in a network of a million neurons. Try $\Delta t = 5$ ms at 2 nA, so $\Delta t / \tau = 0.5$:
+
+      - Step 1: $V = -65 + 0.5 \times 20 = -55$ mV.
+      - Step 2: $V = -55 + 0.5 \times (-10 + 20) = -50$ mV. Spike at 10 ms.
+
+      The exact spike time is 13.86 ms, so the coarse step fires almost 4 ms early, and the error repeats on every spike. For timing codes and for STDP, a 4 ms error changes the answer. Push further, to $\Delta t > 2\tau$, and each Euler step overshoots the level $V$ is heading for by more than it started away from it, so the simulation blows up.
+
+      So choose the step from the time constant. A safe habit: use at least ten steps per $\tau$, then halve the step and check that spike times barely move. That's the same check you'd use for any numerical solver, and it returns in the lesson on neural ODEs.
+
+      Module 34's lesson on neuromorphic applications covers the chips, such as Intel's Loihi, that run large networks of neurons like these, updating each one only when spikes arrive.
+  - id: integrate-and-fire-neurons.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.integrate-and-fire-neurons
+    markdown: Spike times, rheobases, and firing rates to compute, plus a pressure sensor, a fast-reacting robot, and a coarse simulation, test whether you can predict when an LIF neuron fires.
+    takeaway: |-
+      A leaky integrate-and-fire neuron charges toward rest plus RI, fires when it reaches threshold, and resets. The time to fire, τ ln(RI / (RI − θ)), sets both the firing rate and how soon the first spike arrives.
+  - id: integrate-and-fire-neurons.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.integrate-and-fire-neurons
+    markdown: |-
+      A leaky integrate-and-fire neuron accumulates input, leaks toward rest, spikes at a threshold, and resets. The count and timing of spikes can carry different information.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - integrate-and-fire-neurons.s1
-    - integrate-and-fire-neurons.s2
-    - integrate-and-fire-neurons.s3
-    - integrate-and-fire-neurons.s4
-    - integrate-and-fire-neurons.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - integrate-and-fire-neurons.s1
+        - integrate-and-fire-neurons.s2
+        - integrate-and-fire-neurons.fi-curve
+        - integrate-and-fire-neurons.s3
+        - integrate-and-fire-neurons.s4
+        - integrate-and-fire-neurons.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     integrate-and-fire-neurons.recap: integrate-and-fire-neurons.check
 assessment_families:
-- id: integrate-and-fire-neurons.base
-  objective_ref: objective.integrate-and-fire-neurons
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Trace a discrete toy update: trace the inputs, operation, and result before choosing.'
-  remediation_scene: integrate-and-fire-neurons.s2
-  variants:
-  - id: integrate-and-fire-neurons.base.1
-    prompt: After toy voltage 0.9 and input 0.6, what is the pre-reset next voltage?
-    options:
-    - id: c
-      text: '0.45'
-    - id: a
-      text: '1.05'
-    - id: b
-      text: '1.5'
-    answer: a
-    feedback: Compute 0.5×0.9 + 0.6.
-  - id: integrate-and-fire-neurons.base.2
-    prompt: What does leakage do in the simplified model?
-    options:
-    - id: a
-      text: Relaxes membrane state toward rest without sufficient input
-    - id: b
-      text: Guarantees voltage only increases
-    - id: c
-      text: Deletes the threshold
-    answer: a
-    feedback: Leakage provides decay dynamics.
-- id: integrate-and-fire-neurons.transfer
-  objective_ref: objective.integrate-and-fire-neurons
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Simulate with explicit conventions: trace the inputs, operation, and result before choosing.'
-  remediation_scene: integrate-and-fire-neurons.s4
-  variants:
-  - id: integrate-and-fire-neurons.transfer.1
-    prompt: Can equal spike counts have different temporal patterns?
-    options:
-    - id: a
-      text: 'Yes'
-    - id: b
-      text: 'No'
-    - id: c
-      text: Only if there is no time axis
-    answer: a
-    feedback: Rate and timing preserve different information.
-  - id: integrate-and-fire-neurons.transfer.2
-    prompt: Why specify numerical time step?
-    options:
-    - id: b
-      text: Only plot colors depend on it
-    - id: c
-      text: The model has no dynamics
-    - id: a
-      text: It can affect integration and spike timing
-    answer: a
-    feedback: Discretization changes the approximation to continuous evolution.
+  - id: integrate-and-fire-neurons.base
+    objective_ref: objective.integrate-and-fire-neurons
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Trace a discrete toy update: trace the inputs, operation, and result before choosing.'
+    remediation_scene: integrate-and-fire-neurons.s2
+    variants:
+      - id: integrate-and-fire-neurons.base.1
+        prompt: After toy voltage 0.9 and input 0.6, what is the pre-reset next voltage?
+        options:
+          - id: c
+            text: '0.45'
+          - id: a
+            text: '1.05'
+          - id: b
+            text: '1.5'
+        answer: a
+        feedback: Compute 0.5×0.9 + 0.6.
+        retired: true
+      - id: integrate-and-fire-neurons.base.2
+        prompt: What does leakage do in the simplified model?
+        options:
+          - id: a
+            text: Relaxes membrane state toward rest without sufficient input
+          - id: b
+            text: Guarantees voltage only increases
+          - id: c
+            text: Deletes the threshold
+        answer: a
+        feedback: Leakage provides decay dynamics.
+        retired: true
+  - id: integrate-and-fire-neurons.transfer
+    objective_ref: objective.integrate-and-fire-neurons
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Simulate with explicit conventions: trace the inputs, operation, and result before choosing.'
+    remediation_scene: integrate-and-fire-neurons.s4
+    variants:
+      - id: integrate-and-fire-neurons.transfer.1
+        prompt: Can equal spike counts have different temporal patterns?
+        options:
+          - id: a
+            text: 'Yes'
+          - id: b
+            text: 'No'
+          - id: c
+            text: Only if there is no time axis
+        answer: a
+        feedback: Rate and timing preserve different information.
+        retired: true
+      - id: integrate-and-fire-neurons.transfer.2
+        prompt: Why specify numerical time step?
+        options:
+          - id: b
+            text: Only plot colors depend on it
+          - id: c
+            text: The model has no dynamics
+          - id: a
+            text: It can affect integration and spike timing
+        answer: a
+        feedback: Discretization changes the approximation to continuous evolution.
+        retired: true
+  - id: integrate-and-fire-neurons.base.v2
+    objective_ref: objective.integrate-and-fire-neurons
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Compare RI with the gap θ = V_th − V_reset. If RI is smaller, the voltage levels off below threshold; if larger, the time to fire is τ ln(RI / (RI − θ)), plus any refractory period."
+    remediation_scene: integrate-and-fire-neurons.s2
+    variants:
+      - id: integrate-and-fire-neurons.base.v2.1
+        prompt: An LIF neuron has a 15 mV gap from rest to threshold and receives a steady input with RI = 12 mV. What does it do?
+        options:
+          - id: b
+            text: It fires slowly, since the input keeps adding charge every step
+          - id: a
+            text: It never fires, since its voltage levels off 3 mV below threshold
+          - id: c
+            text: It fires once and then stops, since the reset empties its charge
+        answer: a
+        feedback: The voltage approaches V_rest + RI, which is 12 mV above rest, short of the 15 mV needed. The leak grows until it cancels the input, so charge stops accumulating.
+      - id: integrate-and-fire-neurons.base.v2.2
+        prompt: Doubling an LIF neuron's input current from 2 nA to 4 nA takes its firing rate from 63 Hz to about 149 Hz. Why isn't the rate simply doubled?
+        options:
+          - id: a
+            text: The time to fire depends on the current through a logarithm, plus a fixed refractory period
+          - id: c
+            text: The larger input also makes each spike bigger, so fewer are needed
+          - id: b
+            text: The leak removes a fixed amount of charge per spike, whatever the input
+        answer: a
+        feedback: The interval is t_ref + τ ln(RI/(RI − θ)), which isn't proportional to 1/I, so the f–I curve bends. Spikes don't change size, and the leak depends on the voltage, not on a fixed amount per spike.
+      - id: integrate-and-fire-neurons.base.v2.3
+        prompt: An LIF neuron has a 2 ms refractory period. What happens to its firing rate as the input current grows very large?
+        options:
+          - id: c
+            text: It keeps rising in proportion to the current
+          - id: b
+            text: It falls, because the leak grows with the current
+          - id: a
+            text: It levels off below 500 spikes per second
+        answer: a
+        feedback: As the climb to threshold gets very short, the interval approaches the 2 ms refractory period, so the rate approaches 1/(2 ms) = 500 Hz. The leak depends on voltage, not on the input current.
+      - id: integrate-and-fire-neurons.base.v2.4
+        prompt: In τ dV/dt = −(V − V_rest) + RI, what does the −(V − V_rest) term do?
+        options:
+          - id: b
+            text: It resets the voltage to rest immediately after each spike
+          - id: a
+            text: It pulls the voltage back toward rest, harder the farther it is
+          - id: c
+            text: It sets the threshold that the voltage must reach to spike
+        answer: a
+        feedback: That's the leak. It is proportional to how far V is from rest, which is why each Euler step adds less as V rises. The reset and the threshold are separate rules outside the equation.
+  - id: integrate-and-fire-neurons.transfer.v2
+    objective_ref: objective.integrate-and-fire-neurons
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Decide what the reader of the spikes needs: a count over a window (rate code) or when spikes arrive (timing code). For simulations, compare the time step with τ."
+    remediation_scene: integrate-and-fire-neurons.s3
+    variants:
+      - id: integrate-and-fire-neurons.transfer.v2.1
+        prompt: A robot's collision sensor must trigger a stop within 10 ms of contact, and its LIF neurons fire at most about 60 times per second. Which reading of the spikes fits?
+        options:
+          - id: b
+            text: Count spikes over a 100 ms window and stop if the count is high
+          - id: a
+            text: Stop as soon as the first spike arrives, since strong contact fires it sooner
+          - id: c
+            text: Average the firing rate over the last second of sensor activity
+        answer: a
+        feedback: A latency code needs just one spike, and stronger input makes it arrive sooner. At 60 Hz, a 10 ms window holds less than one spike on average, so any count-based reading is too slow.
+      - id: integrate-and-fire-neurons.transfer.v2.2
+        prompt: Two neurons in a smell sensor each fire 8 spikes per 200 ms. One fires them all in the first 30 ms; the other spreads them evenly. A downstream reader says they carry identical information. What is it assuming?
+        options:
+          - id: a
+            text: That only the spike count in the window matters
+          - id: b
+            text: That spikes from both neurons have the same size
+          - id: c
+            text: That both neurons have the same threshold voltage
+        answer: a
+        feedback: That's a rate code, which throws away when spikes happen. A timing code would read the early burst differently. Spike size doesn't vary in these models, and thresholds don't enter the reader's decision.
+      - id: integrate-and-fire-neurons.transfer.v2.3
+        prompt: A student simulates LIF neurons with τ = 10 ms using a 5 ms time step to save time. Spike times come out several milliseconds early. What should she do?
+        options:
+          - id: c
+            text: Raise the threshold slightly to cancel out the early spikes
+          - id: a
+            text: Shrink the step to about 1 ms or less and check that spike times settle
+          - id: b
+            text: Add a refractory period so that spikes are spaced correctly
+        answer: a
+        feedback: The error comes from Euler's big steps, so the fix is a smaller step, confirmed by halving it until spike times stop moving. Tuning the threshold hides the error for one input and breaks others.
+      - id: integrate-and-fire-neurons.transfer.v2.4
+        prompt: A pressure sensor's neuron is silent for light touches and starts firing only above a certain pressure. In LIF terms, what sets that pressure?
+        options:
+          - id: b
+            text: The refractory period, which blocks weak inputs from firing
+          - id: c
+            text: The time constant τ, which decides how much charge the input adds
+          - id: a
+            text: The rheobase, where RI first exceeds the gap from reset to threshold
+        answer: a
+        feedback: Below the rheobase the voltage levels off under threshold, so there's no spike at all. τ changes how fast the voltage climbs, not where it levels off, and the refractory period only matters after a spike.
+  - id: integrate-and-fire-neurons.calculate
+    objective_ref: objective.integrate-and-fire-neurons
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Time to fire: T = τ ln(RI / (RI − θ)), where θ is the gap from reset to threshold. Rate = 1000 / (t_ref + T) spikes per second when times are in ms. One Euler step adds (Δt/τ)(−(V − V_rest) + RI)."
+    remediation_scene: integrate-and-fire-neurons.s2
+    absolute_tolerance: 0.1
+    variants:
+      - id: integrate-and-fire-neurons.calculate.1
+        prompt: An LIF neuron has τ = 10 ms, a 15 mV gap from reset to threshold, and a steady input with RI = 20 mV. How many milliseconds after reset does it fire?
+        answer: 13.86
+        feedback: T = 10 × ln(20 / 5) = 10 × ln 4 ≈ 13.86 ms.
+      - id: integrate-and-fire-neurons.calculate.2
+        prompt: An LIF neuron has τ = 20 ms, a 15 mV gap from reset to threshold, and RI = 25 mV. How many milliseconds after reset does it fire?
+        answer: 18.33
+        feedback: T = 20 × ln(25 / 10) = 20 × ln 2.5 ≈ 18.33 ms.
+      - id: integrate-and-fire-neurons.calculate.3
+        prompt: An LIF neuron takes 13.86 ms to climb from reset to threshold and has a 2 ms refractory period. What is its firing rate in spikes per second?
+        answer: 63.05
+        feedback: Each cycle lasts 2 + 13.86 = 15.86 ms, so the rate is 1000 / 15.86 ≈ 63.05 spikes per second.
+      - id: integrate-and-fire-neurons.calculate.4
+        prompt: An LIF neuron needs a 12 mV climb from rest to threshold, and its membrane resistance is R = 8 MΩ. What is its rheobase current, in nA?
+        answer: 1.5
+        feedback: It fires only if RI > 12 mV, so I > 12 / 8 = 1.5 nA.
+      - id: integrate-and-fire-neurons.calculate.5
+        prompt: "An LIF neuron sits at V = −63 mV with V_rest = −65 mV, RI = 20 mV, τ = 10 ms, and Δt = 1 ms. What is V after one Euler step, in mV?"
+        answer: -61.2
+        feedback: The change is 0.1 × (−2 + 20) = 1.8 mV, so V = −63 + 1.8 = −61.2 mV.

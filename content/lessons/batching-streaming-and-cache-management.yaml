@@ -1,196 +1,435 @@
 schema_version: 0.2-draft
 lesson:
   id: batching-streaming-and-cache-management
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Schedule many requests around shared hardware
   state: draft
-  summary: Serve several users while balancing waiting time and memory.
+  summary: One GPU, forty customers, replies of wildly different lengths. See how continuous batching and paged KV memory let one server hold six times as many conversations.
   slot: M27.4
   category: learning
   sources:
-  - title: PagedAttention and vLLM
-    url: https://arxiv.org/abs/2309.06180
-  - title: The Llama 3 Herd of Models
-    url: https://arxiv.org/abs/2407.21783
+    - title: "Orca: A Distributed Serving System for Transformer-Based Generative Models (Yu et al., OSDI 2022)"
+      url: https://www.usenix.org/conference/osdi22/presentation/yu
+    - title: Efficient Memory Management for Large Language Model Serving with PagedAttention (Kwon et al., SOSP 2023), the vLLM paper
+      url: https://arxiv.org/abs/2309.06180
+    - title: "SARATHI: Efficient LLM Inference by Piggybacking Decodes with Chunked Prefills (Agrawal et al., 2023)"
+      url: https://arxiv.org/abs/2308.16369
 objectives:
-- id: objective.batching-streaming-and-cache-management
-  version: 1-draft
-  statement: Serving schedulers batch work, stream outputs, and manage reusable cache state; throughput gains
-    must be evaluated alongside latency, fairness, memory fragmentation, and isolation.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - batching-streaming-and-cache-management.base
-  - batching-streaming-and-cache-management.transfer
-  prerequisites:
-  - anyOf:
-    - objective.cached-inference
-  - anyOf:
-    - objective.compute-and-bandwidth
-  - anyOf:
-    - objective.tool-contracts-and-state
+  - id: objective.batching-streaming-and-cache-management
+    version: 2-draft
+    statement: Serving schedulers batch work, stream outputs, and manage reusable cache state; throughput gains must be evaluated alongside latency, fairness, memory fragmentation, and isolation.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - batching-streaming-and-cache-management.base.v2
+      - batching-streaming-and-cache-management.transfer.v2
+      - batching-streaming-and-cache-management.blocks
+    prerequisites:
+      - anyOf:
+          - objective.cached-inference
+      - anyOf:
+          - objective.compute-and-bandwidth
+      - anyOf:
+          - objective.tool-contracts-and-state
 scenes:
-- id: batching-streaming-and-cache-management.s1
-  title: Batch compatible work
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.batching-streaming-and-cache-management
-  markdown: Static batching waits for a fixed group, while continuous batching can admit and retire requests
-    as generation progresses. Different prompt and output lengths create uneven work. Scheduling policies decide
-    which requests advance and how long others wait.
-  text_mode: Static batching waits for a fixed group, while continuous batching can admit and retire requests
-    as generation progresses. Different prompt and output lengths create uneven work. Scheduling policies decide
-    which requests advance and how long others wait.
-  bridges: []
-- id: batching-streaming-and-cache-management.s2
-  title: Separate streaming from faster computation
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.batching-streaming-and-cache-management
-  markdown: Streaming exposes partial output as it becomes available, improving perceived responsiveness. It
-    does not automatically reduce total model computation. Time to first token, gaps between tokens, and total
-    completion time can respond differently to batching and prefill scheduling.
-  text_mode: Streaming exposes partial output as it becomes available, improving perceived responsiveness.
-    It does not automatically reduce total model computation. Time to first token, gaps between tokens, and
-    total completion time can respond differently to batching and prefill scheduling.
-  bridges: []
-- id: batching-streaming-and-cache-management.s3
-  title: Reuse only compatible prefixes
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.batching-streaming-and-cache-management
-  markdown: A prefix cache can reuse computed states for an identical compatible prefix under the same model
-    and relevant settings. Version, token sequence, position handling, and access scope matter. A visually
-    similar prompt is not necessarily an identical token-state computation.
-  text_mode: A prefix cache can reuse computed states for an identical compatible prefix under the same model
-    and relevant settings. Version, token sequence, position handling, and access scope matter. A visually
-    similar prompt is not necessarily an identical token-state computation.
-  bridges: []
-- id: batching-streaming-and-cache-management.s4
-  title: Manage memory in blocks
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.batching-streaming-and-cache-management
-  markdown: 'Paged cache management allocates key/value storage in blocks and maps logical token positions
-    to physical storage, reducing some fragmentation and enabling flexible sharing. It does not remove the
-    bytes needed for retained states. Measure cache pressure, eviction, tail latency, and cross-request isolation
-    under realistic concurrency.
+  - id: batching-streaming-and-cache-management.s1
+    title: Forty customers, one GPU
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.batching-streaming-and-cache-management
+    markdown: |-
+      Monday, 9 a.m.: forty customers message Fern at once. Serving them one after another would be absurdly wasteful, for a reason the lesson on prefill and decode found. A decode step for one customer spends its 8 ms reading 16 GB of weights, and the tensor cores sit mostly idle. Feed 4 or 40 conversations through the same step and the weights are still read once. The step barely slows down, and the server makes 4 or 40 tokens instead of 1.
 
+      So servers **batch**: they run many requests' decode steps together. The simplest way is **static batching**. Take four requests, run them together until all four finish, then take the next four. The trouble is that replies vary wildly in length. If the four replies need 20, 50, 100, and 400 tokens, the batch runs for 400 steps, and three slots sit idle for most of them. New customers wait in the queue the whole time.
 
-    Imagine cache blocks hold four token positions. A five-token request needs two blocks, leaving three positions
-    unused in its last block. A new request can receive other available blocks instead of requiring a large
-    preallocated continuous region. That flexibility reduces some wasted allocation, but partially filled blocks
-    still waste space. Eviction means discarding cached computation to make room; using the prefix again may
-    then require recomputing it.'
-  text_mode: 'Paged cache management allocates key/value storage in blocks and maps logical token positions
-    to physical storage, reducing some fragmentation and enabling flexible sharing. It does not remove the
-    bytes needed for retained states. Measure cache pressure, eviction, tail latency, and cross-request isolation
-    under realistic concurrency.
+      **Continuous batching** decides who's in the batch at every step. When a reply finishes, its slot goes to the next waiting request right away. Yu and colleagues introduced this in the Orca serving system (2022), calling it *iteration-level scheduling*. The code below serves twelve queued requests both ways.
 
+      ```python run
+      import numpy as np
 
-    Imagine cache blocks hold four token positions. A five-token request needs two blocks, leaving three positions
-    unused in its last block. A new request can receive other available blocks instead of requiring a large
-    preallocated continuous region. That flexibility reduces some wasted allocation, but partially filled blocks
-    still waste space. Eviction means discarding cached computation to make room; using the prefix again may
-    then require recomputing it.'
-  bridges: []
-- id: batching-streaming-and-cache-management.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.batching-streaming-and-cache-management
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: Batching shares hardware work, streaming exposes partial output, and cache management handles retained
-    state. Check their effects on both throughput and each user’s waiting time.
-- id: batching-streaming-and-cache-management.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.batching-streaming-and-cache-management
-  markdown: Batching shares hardware work, streaming exposes partial output, and cache management handles retained
-    state. Check their effects on both throughput and each user’s waiting time.
-  text_mode: Batching shares hardware work, streaming exposes partial output, and cache management handles
-    retained state. Check their effects on both throughput and each user’s waiting time.
+      rng = np.random.default_rng(1)
+      lengths = rng.integers(20, 400, size=12)     # reply lengths (tokens) of 12 queued requests
+      SLOTS = 4                                    # requests the GPU runs side by side
+
+      # Static: take 4 at a time; the group runs until its longest reply ends.
+      t, static_done = 0, []
+      for i in range(0, len(lengths), SLOTS):
+          group = lengths[i:i + SLOTS]
+          static_done += [t + n for n in group]
+          t += group.max()
+      static_total = t
+
+      # Continuous: whenever a slot frees up, the next request takes it.
+      free_at = [0] * SLOTS
+      cont_done = []
+      for n in lengths:
+          s = int(np.argmin(free_at))              # earliest free slot
+          free_at[s] += n
+          cont_done.append(free_at[s])
+      cont_total = max(free_at)
+
+      for name, total, done in [("static", static_total, static_done),
+                                ("continuous", cont_total, cont_done)]:
+          busy = lengths.sum() / (SLOTS * total)
+          print(f"{name:10}: all done at step {total:4}, average finish {np.mean(done):6.1f}, slots busy {busy:.0%}")
+      ```
+
+      Static batching keeps the slots busy 61% of the time and finishes at step 1,111; continuous batching reaches 88% and finishes at step 770. Change the seed or `SLOTS` and compare again.
+    diagram:
+      caption: Continuous batching. The scheduler reshapes the batch before every decode step.
+      description: Waiting requests enter the scheduler, which admits them into the running batch when a slot and cache memory are free. The running batch goes through one decode step together. Each step streams one new token per request to its customer. Requests that are not done return to the running batch for the next step. Requests that hit a stop go to the finished list, which frees their slots and cache memory for the scheduler.
+      nodes:
+        - id: queue
+          label: Waiting requests
+          col: 0
+          row: 0
+          tone: data
+        - id: sched
+          label: Scheduler
+          note: runs before every step
+          col: 1
+          row: 0
+          tone: accent
+        - id: batch
+          label: Running batch
+          col: 2
+          row: 0
+        - id: step
+          label: One decode step
+          note: one token per request
+          col: 2
+          row: 1
+          tone: accent
+        - id: stream
+          label: Customers
+          note: tokens streamed out
+          col: 3
+          row: 1
+          tone: muted
+        - id: done
+          label: Finished requests
+          col: 1
+          row: 1
+      edges:
+        - from: queue
+          to: sched
+        - from: sched
+          to: batch
+          label: admit
+        - from: batch
+          to: step
+          bend: -1
+        - from: step
+          to: batch
+          label: not done
+          bend: -1
+        - from: step
+          to: stream
+        - from: step
+          to: done
+          label: stop
+        - from: done
+          to: sched
+          label: free slot + memory
+    bridges: []
+  - id: batching-streaming-and-cache-management.s2
+    title: Bigger batches, slower ticks
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.batching-streaming-and-cache-management
+    markdown: |-
+      Batching isn't quite free, because each request also reads its own KV cache at every step. Take 64 Fern conversations of 2,000 tokens each. Their caches total 64 × 250 MiB ≈ 16.8 GB, as much as the weights:
+
+      $$t_{\text{step}} \approx \frac{16 \text{ GB} + 16.8 \text{ GB}}{2 \text{ TB/s}} \approx 16.4 \text{ ms}$$
+
+      The server now makes 64 tokens every 16.4 ms, about 3,900 tokens per second, up from 125. Each customer sees one token per step, about 61 per second instead of 125. Batching trades a little speed per customer for a lot of total throughput, and the last lesson of this module turns that trade into a pricing decision.
+
+      **Streaming** sends each token to the customer as soon as its step finishes, so the gap between tokens on screen is the batch's step time. Two scheduler habits keep that gap smooth:
+
+      - **Chunked prefill.** A new customer's 2,000-token prompt takes about 0.2 s of prefill. Run in one piece, it freezes every other stream for that long. Splitting the prompt into chunks that share steps with ongoing decodes (the Sarathi paper, Agrawal et al., 2023) turns one long freeze into several short delays.
+      - **Cancel on disconnect.** When a customer closes the chat window mid-reply, stop the request at once. Otherwise the server keeps generating tokens nobody will read, holding a slot and its cache.
+
+      :::predict Streaming makes Fern's replies feel faster. Does it make the GPU finish them sooner?
+      No. The same tokens take the same steps either way, so the GPU's time to first token and total time don't change. Streaming changes when the customer *sees* each token: they start reading at the first token instead of waiting for the last.
+      :::
+    bridges: []
+  - id: batching-streaming-and-cache-management.s4
+    title: Page the cache like an operating system
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.batching-streaming-and-cache-management
+    markdown: |-
+      Continuous batching raises a memory question: how much KV cache to set aside for a request whose final length is unknown? Early servers reserved one contiguous region for the maximum context. For Fern that's 8,192 tokens × 128 KiB = 1 GiB per conversation. A typical conversation holds 1,300 tokens, so 84% of each reservation sits empty, and a 60 GiB pool fits only 60 conversations.
+
+      **PagedAttention**, from the vLLM paper (Kwon et al., 2023), borrows the idea of virtual-memory paging from operating systems. The cache is cut into fixed **blocks** of 16 tokens, 2 MiB each for Fern's model. A request gets a new block only when its last one fills up, and its **block table** records where each of its blocks sits in GPU memory, which needn't be side by side. The attention kernel follows the table.
+
+      ```python run
+      import math
+
+      KV_PER_TOKEN = 128 * 2**10        # Llama 3 8B: 128 KiB per token
+      POOL = 60 * 2**30                 # 60 GiB left for KV cache
+      MAX_CONTEXT = 8192
+      BLOCK = 16                        # tokens per block (vLLM's default)
+      used = 1300                       # tokens a typical Fern conversation actually holds
+
+      reserved = MAX_CONTEXT * KV_PER_TOKEN
+      blocks = math.ceil(used / BLOCK)
+      paged = blocks * BLOCK * KV_PER_TOKEN
+      print(f"reserve max: {reserved / 2**20:6.0f} MiB each, wasted {1 - used / MAX_CONTEXT:.0%},"
+            f" fits {POOL // reserved} conversations")
+      print(f"paged:       {paged / 2**20:6.1f} MiB each ({blocks} blocks), wasted {blocks * BLOCK - used} token slots,"
+            f" fits {POOL // paged} conversations")
+      ```
+
+      A 1,300-token conversation needs 82 blocks; only the last one is partly empty, wasting 12 token slots. The same pool now fits 374 conversations instead of 60. The vLLM authors measured that earlier systems used only about 20–38% of their KV memory for actual tokens, while vLLM wasted under 4%. Try `BLOCK = 256` to see why blocks are kept small.
+
+      :::mixup "Paging shrinks the KV cache."
+      Every token still needs its 128 KiB. Paging removes the *empty reservations* around the cache, not the cache itself. To shrink the bytes per token, you need fewer KV heads or lower-precision values.
+      :::
+    bridges: []
+  - id: batching-streaming-and-cache-management.s3
+    title: Share blocks, preempt when full
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.batching-streaming-and-cache-management
+    markdown: |-
+      Blocks make sharing easy. Fern's shared prefix, the start token plus the 605-token system prompt, is 606 tokens: 37 full blocks (592 tokens) plus 14 tokens in a 38th. With prefix caching, every conversation's block table points at the *same* 37 physical blocks, and each block keeps a count of how many requests use it. vLLM shares only full blocks, so each request computes those last 14 prefix tokens itself. Across 120 conversations, sharing saves 119 × 74 MiB, about 8.6 GiB. Share cached blocks only among requests that are allowed to see the same text, such as one customer's own conversation or a system prompt every customer receives.
+
+      Sometimes memory runs out anyway: every running conversation grows by one token per step, and eventually a request needs a block when none is free. The scheduler then **preempts** a request: it frees that request's blocks and puts it back in the queue. When the request resumes, the server either copies its saved blocks back from CPU memory (**swapping**) or rebuilds them with a fresh prefill (**recomputation**). Rebuilding a 1,300-token conversation takes about 0.07 s at the A100's peak.
+
+      Finished requests' prefix blocks can stay cached in case the same prefix returns. When space is needed, the least recently used ones are **evicted** first; a later request with that prefix simply pays for prefill again.
+    bridges: []
+  - id: batching-streaming-and-cache-management.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.batching-streaming-and-cache-management
+    markdown: Block counts to compute, plus a stalled queue, freezing streams, a shared cache across companies, and an oversized reservation, test whether you can schedule requests and their memory.
+    takeaway: |-
+      Continuous batching refills a finished request's slot at the next step, and paged KV memory allocates small blocks as tokens arrive. Together they keep the GPU busy with many more conversations, at a small cost in each customer's token speed.
+  - id: batching-streaming-and-cache-management.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.batching-streaming-and-cache-management
+    markdown: |-
+      Batching shares hardware work, streaming exposes partial output, and cache management handles retained state. Check their effects on both throughput and each user’s waiting time.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - batching-streaming-and-cache-management.s1
-    - batching-streaming-and-cache-management.s2
-    - batching-streaming-and-cache-management.s3
-    - batching-streaming-and-cache-management.s4
-    - batching-streaming-and-cache-management.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - batching-streaming-and-cache-management.s1
+        - batching-streaming-and-cache-management.s2
+        - batching-streaming-and-cache-management.s4
+        - batching-streaming-and-cache-management.s3
+        - batching-streaming-and-cache-management.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     batching-streaming-and-cache-management.recap: batching-streaming-and-cache-management.check
 assessment_families:
-- id: batching-streaming-and-cache-management.base
-  objective_ref: objective.batching-streaming-and-cache-management
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Separate streaming from faster computation: trace the inputs, operation, and result before choosing.'
-  remediation_scene: batching-streaming-and-cache-management.s2
-  variants:
-  - id: batching-streaming-and-cache-management.base.1
-    prompt: What can continuous batching do?
-    options:
-    - id: a
-      text: Admit and retire requests during ongoing generation
-    - id: b
-      text: Make every output length identical
-    - id: c
-      text: Eliminate every cache allocation
-    answer: a
-    feedback: The active batch changes over time.
-  - id: batching-streaming-and-cache-management.base.2
-    prompt: Does streaming necessarily reduce total model compute?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only for short outputs
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: It changes delivery timing, not automatically computation.
-- id: batching-streaming-and-cache-management.transfer
-  objective_ref: objective.batching-streaming-and-cache-management
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Manage memory in blocks: trace the inputs, operation, and result before choosing.'
-  remediation_scene: batching-streaming-and-cache-management.s4
-  variants:
-  - id: batching-streaming-and-cache-management.transfer.1
-    prompt: What must prefix-cache reuse establish?
-    options:
-    - id: b
-      text: Only similar visible wording
-    - id: c
-      text: Only the same user display name
-    - id: a
-      text: Compatible model state and identical relevant prefix computation
-    answer: a
-    feedback: Cached states depend on exact computational inputs.
-  - id: batching-streaming-and-cache-management.transfer.2
-    prompt: Does paged cache management eliminate all retained-state memory?
-    options:
-    - id: c
-      text: Only for attention models
-    - id: a
-      text: 'No'
-    - id: b
-      text: 'Yes'
-    answer: a
-    feedback: Paging organizes allocation rather than deleting required state.
+  - id: batching-streaming-and-cache-management.base
+    objective_ref: objective.batching-streaming-and-cache-management
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Separate streaming from faster computation: trace the inputs, operation, and result before choosing.'
+    remediation_scene: batching-streaming-and-cache-management.s2
+    variants:
+      - id: batching-streaming-and-cache-management.base.1
+        retired: true
+        prompt: What can continuous batching do?
+        options:
+          - id: a
+            text: Admit and retire requests during ongoing generation
+          - id: b
+            text: Make every output length identical
+          - id: c
+            text: Eliminate every cache allocation
+        answer: a
+        feedback: The active batch changes over time.
+      - id: batching-streaming-and-cache-management.base.2
+        retired: true
+        prompt: Does streaming necessarily reduce total model compute?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only for short outputs
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: It changes delivery timing, not automatically computation.
+  - id: batching-streaming-and-cache-management.transfer
+    objective_ref: objective.batching-streaming-and-cache-management
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Manage memory in blocks: trace the inputs, operation, and result before choosing.'
+    remediation_scene: batching-streaming-and-cache-management.s4
+    variants:
+      - id: batching-streaming-and-cache-management.transfer.1
+        retired: true
+        prompt: What must prefix-cache reuse establish?
+        options:
+          - id: b
+            text: Only similar visible wording
+          - id: c
+            text: Only the same user display name
+          - id: a
+            text: Compatible model state and identical relevant prefix computation
+        answer: a
+        feedback: Cached states depend on exact computational inputs.
+      - id: batching-streaming-and-cache-management.transfer.2
+        retired: true
+        prompt: Does paged cache management eliminate all retained-state memory?
+        options:
+          - id: c
+            text: Only for attention models
+          - id: a
+            text: 'No'
+          - id: b
+            text: 'Yes'
+        answer: a
+        feedback: Paging organizes allocation rather than deleting required state.
+  - id: batching-streaming-and-cache-management.base.v2
+    objective_ref: objective.batching-streaming-and-cache-management
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Think about what one decode step reads from memory, and what happens to a request's slot and cache blocks when it finishes or when memory runs out.
+    remediation_scene: batching-streaming-and-cache-management.s1
+    variants:
+      - id: batching-streaming-and-cache-management.base.v2.1
+        prompt: A static batch holds four replies that need 20, 50, 100, and 400 tokens. What does continuous batching change?
+        options:
+          - id: b
+            text: It pads the four replies to 400 tokens so they finish together
+          - id: a
+            text: A finished reply's slot goes to a waiting request at the next step
+          - id: c
+            text: It runs each request by itself, so short replies skip the wait
+        answer: a
+        feedback: Continuous batching reschedules at every step, so the slot freed at step 20 is refilled at step 21 instead of idling until step 400. Running requests alone would waste the shared weight reads that make batching worthwhile.
+      - id: batching-streaming-and-cache-management.base.v2.2
+        prompt: Why can a server add a fifth conversation to a decode batch with almost no extra time per step?
+        options:
+          - id: c
+            text: The new conversation's tokens are computed on the CPU instead
+          - id: b
+            text: The new conversation reuses the first conversation's KV cache
+          - id: a
+            text: The step is memory-bound, and one read of the weights serves every row
+        answer: a
+        feedback: At small batch sizes, reading the weights dominates each step, and every request in the batch uses that same read. Each conversation still needs its own cache and runs on the GPU.
+      - id: batching-streaming-and-cache-management.base.v2.3
+        prompt: In PagedAttention, what does a request's block table do?
+        options:
+          - id: a
+            text: Maps each of its logical token blocks to a physical spot in GPU memory
+          - id: b
+            text: Stores a compressed copy of the request's keys and values
+          - id: c
+            text: Records which of the request's tokens have been streamed so far
+        answer: a
+        feedback: Like a page table in an operating system, the block table lets a request's cache live in scattered blocks while attention reads them in order. It holds addresses, not the keys and values themselves.
+      - id: batching-streaming-and-cache-management.base.v2.4
+        prompt: A paged server runs out of free KV blocks while every running request still needs to grow. What does it do?
+        options:
+          - id: b
+            text: Drops the oldest tokens from every running conversation to make room
+          - id: a
+            text: Preempts a request, then swaps its blocks back or recomputes them later
+          - id: c
+            text: Halves the block size so that the same memory holds more tokens
+        answer: a
+        feedback: Preemption frees one request's blocks so the others can continue; that request resumes later by copying its blocks back from CPU memory or rerunning prefill. Dropping tokens would change conversations, and block size doesn't change bytes per token.
+  - id: batching-streaming-and-cache-management.transfer.v2
+    objective_ref: objective.batching-streaming-and-cache-management
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name what is being wasted (idle slots, reserved memory, or frozen streams) or what is being shared, then pick the scheduling change that targets it.
+    remediation_scene: batching-streaming-and-cache-management.s4
+    variants:
+      - id: batching-streaming-and-cache-management.transfer.v2.1
+        prompt: A summarization API runs 8 requests at a time and admits new ones only when all 8 finish. New requests often wait 30 s, though most running summaries ended long before. Which change targets this?
+        options:
+          - id: a
+            text: Admit a waiting request whenever any running one finishes
+          - id: b
+            text: Raise the static batch to 16 requests at a time
+          - id: c
+            text: Stream each summary's tokens as they are generated
+        answer: a
+        feedback: The queue is stuck behind the longest summary in each group. Continuous batching fills freed slots at once. A bigger static batch waits for an even longer maximum, and streaming only helps requests that are already running.
+      - id: batching-streaming-and-cache-management.transfer.v2.2
+        prompt: 'In a busy chat service, customers'' streams freeze for about half a second whenever someone with a very long prompt joins. What is the likely cause?'
+        options:
+          - id: c
+            text: The scheduler restarts the running requests from their first token
+          - id: a
+            text: The newcomer's prefill runs in one piece, delaying everyone's next step
+          - id: b
+            text: The newcomer's KV blocks get copied into the other requests' caches
+        answer: a
+        feedback: A long prefill occupies the GPU, so the running conversations get no decode step until it finishes. Chunked prefill splits it into pieces that share steps with the decodes. Nothing is restarted or copied between requests.
+      - id: batching-streaming-and-cache-management.transfer.v2.3
+        prompt: A hosting company serves one model to many business customers and turns on prefix caching. Which rule keeps it safe?
+        options:
+          - id: b
+            text: Share cached blocks freely, since stored keys and values aren't text
+          - id: c
+            text: Share cached blocks only when two prompts have similar wording
+          - id: a
+            text: Share cached blocks only between requests allowed to see that text
+        answer: a
+        feedback: A cache hit is decided by exact tokens, and a hit or miss can reveal that another customer sent the same prefix, so scope sharing to requests with access to that text. Similar wording never matches anyway.
+      - id: batching-streaming-and-cache-management.transfer.v2.4
+        prompt: A server reserves each request's full 1 GiB maximum context up front and fits only 60 conversations, though most use about 150 MiB. Which change raises concurrency most?
+        options:
+          - id: a
+            text: Allocate cache memory in small blocks as the tokens arrive
+          - id: b
+            text: Double the maximum context so fewer requests are cut off
+          - id: c
+            text: Send whole replies instead of streaming them token by token
+        answer: a
+        feedback: Most of each reservation is empty, so paging turns that empty space into room for more conversations, roughly six times as many here. A bigger maximum makes reservations worse, and streaming doesn't touch memory.
+  - id: batching-streaming-and-cache-management.blocks
+    objective_ref: objective.batching-streaming-and-cache-management
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Blocks needed = tokens ÷ tokens per block, rounded up. The pool holds (pool size ÷ block size) blocks, and whole requests fit when you divide and round down.
+    remediation_scene: batching-streaming-and-cache-management.s4
+    absolute_tolerance: 0.5
+    variants:
+      - id: batching-streaming-and-cache-management.blocks.1
+        prompt: A paged server uses blocks of 16 tokens. How many blocks does a 1,300-token conversation occupy?
+        answer: 82
+        feedback: 1,300 ÷ 16 = 81.25, and a partial block is still a whole block, so 82.
+      - id: batching-streaming-and-cache-management.blocks.2
+        prompt: With 16-token blocks, a request holds 1,000 tokens. How many token slots in its last block are empty?
+        answer: 8
+        feedback: 1,000 ÷ 16 = 62.5, so it uses 63 blocks holding 1,008 slots, and 1,008 − 1,000 = 8 are empty.
+      - id: batching-streaming-and-cache-management.blocks.3
+        prompt: Each 16-token block of a model's cache takes 2 MiB. How many blocks fit in a 60 GiB pool?
+        answer: 30720
+        feedback: 60 GiB is 61,440 MiB, and 61,440 ÷ 2 = 30,720 blocks.
+      - id: batching-streaming-and-cache-management.blocks.4
+        prompt: A pool holds 30,720 blocks, and every conversation needs 82 blocks. How many whole conversations fit at once?
+        answer: 374
+        feedback: 30,720 ÷ 82 ≈ 374.6, so 374 whole conversations fit.
+      - id: batching-streaming-and-cache-management.blocks.5
+        prompt: A model's cache takes 64 KiB per token, and blocks hold 16 tokens. How many MiB does a 500-token request occupy?
+        answer: 32
+        feedback: 500 ÷ 16 = 31.25, so 32 blocks. Each block is 16 × 64 KiB = 1 MiB, so 32 MiB.

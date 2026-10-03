@@ -1,196 +1,419 @@
 schema_version: 0.2-draft
 lesson:
   id: lexical-information-retrieval
-  version: 0.3.0-draft
+  version: 0.4.0-draft
   title: Find documents through an index of their words
   state: draft
-  summary: Build a search engine that starts with the words in documents.
+  summary: How does a search box find the right page among millions in a blink? Build a tiny search engine, score it with BM25, and watch where word matching breaks.
   slot: M26.1
   category: learning
   sources:
-  - title: Introduction to Information Retrieval — authors’ online edition
-    url: https://nlp.stanford.edu/IR-book/
+    - title: Introduction to Information Retrieval — authors’ online edition
+      url: https://nlp.stanford.edu/IR-book/
+    - title: "The Probabilistic Relevance Framework: BM25 and Beyond (Robertson & Zaragoza, 2009)"
+      url: https://doi.org/10.1561/1500000019
+    - title: "BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models (Thakur et al., 2021)"
+      url: https://arxiv.org/abs/2104.08663
 objectives:
-- id: objective.lexical-information-retrieval
-  version: 1-draft
-  statement: Lexical retrieval uses indexed terms and ranking functions to find candidate documents; token
-    normalization, document statistics, and query intent determine matching behavior.
-  depths:
-  - intuition
-  - mechanics
-  critical: true
-  evidence_families:
-  - lexical-information-retrieval.base
-  - lexical-information-retrieval.transfer
-  prerequisites:
-  - anyOf:
-    - objective.algorithms-and-programs
-  - anyOf:
-    - objective.language-structure
+  - id: objective.lexical-information-retrieval
+    version: 2-draft
+    statement: Lexical retrieval uses indexed terms and ranking functions to find candidate documents; token normalization, document statistics, and query intent determine matching behavior.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - lexical-information-retrieval.base.v2
+      - lexical-information-retrieval.transfer.v2
+      - lexical-information-retrieval.calc
+    prerequisites:
+      - anyOf:
+          - objective.algorithms-and-programs
+      - anyOf:
+          - objective.language-structure
 scenes:
-- id: lexical-information-retrieval.s1
-  title: Invert the document collection
-  type: explanation
-  depth: intuition
-  objective_refs:
-  - objective.lexical-information-retrieval
-  markdown: Instead of scanning every document for every query, an inverted index maps a term to a postings
-    list of documents or positions containing it. If cat appears in documents two and five, its postings include
-    those identifiers. Positional indexes can support phrase and proximity queries.
-  text_mode: Instead of scanning every document for every query, an inverted index maps a term to a postings
-    list of documents or positions containing it. If cat appears in documents two and five, its postings include
-    those identifiers. Positional indexes can support phrase and proximity queries.
-  bridges: []
-- id: lexical-information-retrieval.s2
-  title: Normalize with consequences
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.lexical-information-retrieval
-  markdown: Case folding, stemming, punctuation handling, and stop-word choices change which terms match. A
-    search for a product code may require exact characters, while ordinary language may benefit from normalization.
-    Use rules suited to the corpus rather than assuming one text pipeline fits every query.
-  text_mode: Case folding, stemming, punctuation handling, and stop-word choices change which terms match.
-    A search for a product code may require exact characters, while ordinary language may benefit from normalization.
-    Use rules suited to the corpus rather than assuming one text pipeline fits every query.
-  bridges: []
-- id: lexical-information-retrieval.s3
-  title: Rank beyond a binary match
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.lexical-information-retrieval
-  markdown: 'Words differ in how much they help identify a relevant document. In a collection of 100 pages,
-    “the” appearing on all 100 is less distinctive than “axolotl” appearing on two.
+  - id: lexical-information-retrieval.s1
+    title: Five documents and one customer question
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.lexical-information-retrieval
+    markdown: |-
+      Sprocket Bikes sells e-bikes online. Its help center holds five short policy documents, and a customer has just typed: *can I return an opened battery?* We'll follow this collection through the whole module, all the way to a cited answer.
 
+      | ID | Document |
+      | --- | --- |
+      | returns | Return unused items within 30 days for a full refund. Opened batteries cannot be returned. |
+      | battery | Charge the battery to 80 percent before storage. The battery warranty lasts two years. |
+      | shipping | Standard shipping takes 3 to 5 business days. Express shipping arrives the next business day. |
+      | refunds | Refunds go to your original payment method within 5 business days of the return arriving. |
+      | chargers | The KB-220 charger fits all 2024 models. Older models need the KB-110 charger. |
 
-    **Term frequency**, or TF, counts how often a term appears in a document. **Inverse document frequency**,
-    or IDF, gives greater weight to terms found in fewer documents. TF-IDF combines these ideas to score term
-    evidence.
+      With five documents you could reread everything for every question. With five million you can't. So a search engine reads once, ahead of time, and builds an **inverted index**: a table from each word to the documents that contain it. Each word's list is its **postings list**.
 
+      | Term | Postings (document: count) |
+      | --- | --- |
+      | return | returns: 1, refunds: 1 |
+      | opened | returns: 1 |
+      | battery | returns: 1, battery: 2 |
+      | business | shipping: 2, refunds: 1 |
 
-    **BM25** is another ranking formula. It accounts for document length and makes repeated occurrences contribute
-    progressively less. Repeating a word 20 times need not make a page twice as useful as repeating it 10 times.
-    These statistics help rank candidates, but the page still has to answer the question.'
-  text_mode: 'Words differ in how much they help identify a relevant document. In a collection of 100 pages,
-    “the” appearing on all 100 is less distinctive than “axolotl” appearing on two.
+      A query looks up its words, merges their postings, and scores only the documents that turn up; the other millions are never touched. Storing word positions too lets a phrase query like "business day" check that the words are adjacent. (The returns document is listed under "battery" because "batteries" was folded into "battery": a choice we look at next.)
+    bridges: []
+  - id: lexical-information-retrieval.s2
+    title: '"Batteries" isn''t "battery" until you say so'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.lexical-information-retrieval
+    markdown: |-
+      Before indexing, text is cut into **tokens** (here, words) and cleaned up by the same rules that later run on every query. This clean-up is **normalization**:
 
+      - **Case folding**: "Return" and "return" become one term.
+      - **Stemming**: chop endings so variants share an entry ("batteries" → "battery"). Martin Porter's 1980 stemmer is the classic for English.
+      - **Stop words**: some systems drop very common words like "the".
 
-    **Term frequency**, or TF, counts how often a term appears in a document. **Inverse document frequency**,
-    or IDF, gives greater weight to terms found in fewer documents. TF-IDF combines these ideas to score term
-    evidence.
+      :::predict The customer types "return battery". Which document ranks first with the "batteries" → "battery" fold, and which ranks first without it?
+      With the fold, the returns document matches both words and scores 1.72, ahead of the battery-care guide at 1.21. Without it, the returns document matches only "return" (0.86), and the care guide, with "battery" twice, wins at 1.92. The customer gets charging tips. (These are BM25 scores, which you'll compute later in this lesson.)
+      :::
 
+      Normalization can also merge things that must stay apart. Split "KB-220" at the hyphen and a search for it also matches "KB-110", since both contain "kb". Case folding makes "US shipping" match every "contact us" page. So real systems often index text twice: normalized for ordinary words, exact for codes and names.
+    bridges: []
+  - id: lexical-information-retrieval.s3
+    title: Rare words carry more evidence
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.lexical-information-retrieval
+    markdown: |-
+      Which query word tells you the most? "Opened" appears in one of our five documents, so a match on it narrows things sharply. "The" appears in four, so a match says almost nothing.
 
-    **BM25** is another ranking formula. It accounts for document length and makes repeated occurrences contribute
-    progressively less. Repeating a word 20 times need not make a page twice as useful as repeating it 10 times.
-    These statistics help rank candidates, but the page still has to answer the question.'
-  bridges: []
-- id: lexical-information-retrieval.s4
-  title: Evaluate relevance for the task
-  type: explanation
-  depth: mechanics
-  objective_refs:
-  - objective.lexical-information-retrieval
-  markdown: A lexical match can miss synonyms and retrieve documents that mention a term in the wrong sense.
-    Define relevance judgments, inspect query categories, and compare a simple baseline. Efficient indexing
-    answers where terms occur; ranking still needs evidence that the results satisfy the user’s information
-    need.
-  text_mode: A lexical match can miss synonyms and retrieve documents that mention a term in the wrong sense.
-    Define relevance judgments, inspect query categories, and compare a simple baseline. Efficient indexing
-    answers where terms occur; ranking still needs evidence that the results satisfy the user’s information
-    need.
-  bridges: []
-- id: lexical-information-retrieval.check
-  title: Review and check your understanding
-  type: assessment
-  depth: mechanics
-  objective_refs:
-  - objective.lexical-information-retrieval
-  markdown: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  text_mode: Try the questions below with a new example. You can revisit the lesson or use a hint for practice.
-  takeaway: An inverted index finds documents containing query terms. Ranking weighs that evidence, while normalization
-    rules determine which terms count as matches.
-- id: lexical-information-retrieval.recap
-  title: One idea to take with you
-  type: recap
-  depth: intuition
-  objective_refs:
-  - objective.lexical-information-retrieval
-  markdown: An inverted index finds documents containing query terms. Ranking weighs that evidence, while normalization
-    rules determine which terms count as matches.
-  text_mode: An inverted index finds documents containing query terms. Ranking weighs that evidence, while
-    normalization rules determine which terms count as matches.
+      **Term frequency** ($\text{tf}$) is how many times a word appears in one document. **Document frequency** ($\text{df}$) is how many documents contain it. In 1972 Karen Spärck Jones proposed weighting words by rarity, now written as the **inverse document frequency**:
+
+      $$\text{idf}(t) = \ln\frac{N}{\text{df}(t)}$$
+
+      where $N$ is the number of documents. A word's **TF-IDF** weight in a document is $\text{tf} \times \text{idf}$; a document's score sums these over the query's words.
+
+      | Term | df | idf = ln(5 / df) |
+      | --- | ---: | ---: |
+      | opened | 1 | 1.609 |
+      | return | 2 | 0.916 |
+      | battery | 2 | 0.916 |
+      | the | 4 | 0.223 |
+
+      The returns document scores 0.916 + 1.609 + 0.916 = 3.44 (return, opened, battery). The battery guide has "battery" twice: 2 × 0.916 = 1.83. Refunds matches only "return": 0.92. The right document wins.
+
+      :::predict A sneaky page repeats "battery" 20 times. Keeping idf at 0.916, what is its TF-IDF score for this query?
+      20 × 0.916 = 18.3, over five times the real returns policy. TF-IDF trusts repetition without limit, which BM25 fixes.
+      :::
+    bridges: []
+  - id: lexical-information-retrieval.bm25
+    title: "BM25: repeats pay less, long pages pay more"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.lexical-information-retrieval
+    markdown: |-
+      **BM25** ("Best Match 25") is the default ranking function in Lucene and Elasticsearch, so it sits behind much of the keyword search you use. Stephen Robertson and colleagues developed it in the 1990s for the Okapi system at City University, London. It changes TF-IDF in two ways.
+
+      **Repeats saturate.** Each extra mention adds less than the one before. For a document of average length, the term-frequency part is $\text{tf}\,(k_1+1)/(\text{tf}+k_1)$. The setting $k_1$ controls how fast repeats stop paying; the usual value is 1.2:
+
+      | tf | 1 | 2 | 20 | limit |
+      | --- | ---: | ---: | ---: | ---: |
+      | tf part | 1.00 | 1.38 | 2.08 | 2.2 |
+
+      Twenty mentions count about twice as much as one, not twenty times.
+
+      **Long documents are discounted.** One "battery" in a 2,000-word manual is weaker evidence than one in a two-sentence policy. The setting $b$ (usually 0.75) controls how much length matters: one mention in a document twice the average length scores $2.2 / (1 + 1.2 \times 1.75) = 0.71$ instead of 1.00.
+
+      :::papers The BM25 formula
+      $$\text{score}(q,d) = \sum_{t \in q} \text{idf}(t)\cdot\frac{\text{tf}(t,d)\,(k_1+1)}{\text{tf}(t,d) + k_1\left(1 - b + b\,\frac{|d|}{\text{avgdl}}\right)}$$
+
+      $|d|$ is the document's length in tokens; avgdl is the average. Lucene's idf is $\ln\!\left(1+\frac{N-n+0.5}{n+0.5}\right)$, with $n$ the document frequency. Our returns document has 15 tokens against avgdl = 14.4, so each match gets a tf part of 0.98. "Opened" ($n=1$, idf = ln 4 = 1.39) adds 1.36; "return" and "battery" ($n=2$, idf = ln 2.4 = 0.88) add 0.86 each. Total: 3.08.
+      :::
+
+      Here is the whole engine, index plus BM25:
+
+      ```python run
+      import math, re
+
+      docs = {
+          "returns":  "Return unused items within 30 days for a full refund. Opened batteries cannot be returned.",
+          "battery":  "Charge the battery to 80 percent before storage. The battery warranty lasts two years.",
+          "shipping": "Standard shipping takes 3 to 5 business days. Express shipping arrives the next business day.",
+          "refunds":  "Refunds go to your original payment method within 5 business days of the return arriving.",
+          "chargers": "The KB-220 charger fits all 2024 models. Older models need the KB-110 charger.",
+      }
+
+      def tokens(text):  # lowercase, split into words, fold "batteries" -> "battery"
+          words = re.findall(r"[a-z0-9-]+", text.lower())
+          return [w[:-3] + "y" if w.endswith("ies") else w for w in words]
+
+      index = {}  # inverted index: term -> {doc: count}
+      for name, text in docs.items():
+          for t in tokens(text):
+              postings = index.setdefault(t, {})
+              postings[name] = postings.get(name, 0) + 1
+      length = {d: len(tokens(text)) for d, text in docs.items()}
+      N, avgdl = len(docs), sum(length.values()) / len(docs)
+
+      def bm25(query, k1=1.2, b=0.75):
+          scores = {}
+          for term in tokens(query):
+              postings = index.get(term, {})
+              idf = math.log(1 + (N - len(postings) + 0.5) / (len(postings) + 0.5))
+              for d, tf in postings.items():
+                  scores[d] = scores.get(d, 0) + idf * tf * (k1 + 1) / (
+                      tf + k1 * (1 - b + b * length[d] / avgdl))
+          return sorted(scores.items(), key=lambda pair: -pair[1])
+
+      print("postings for 'battery':", index["battery"])
+      results = bm25("can I return an opened battery")
+      for doc, score in results:
+          print(f"{doc:9} {score:.2f}")
+      if not results:
+          print("no document shares a word with this query")
+      ```
+
+      You should see returns 3.08, battery 1.21, refunds 0.86. Now try the query "how long until I get my money back".
+    bridges: []
+  - id: lexical-information-retrieval.s4
+    title: Where word matching breaks
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.lexical-information-retrieval
+    markdown: |-
+      "How long until I get my money back?" shares no words with any document, so every BM25 score is zero, though the refunds document answers it exactly. This is **vocabulary mismatch**: people and documents say the same thing in different words. The reverse happens too: a question about a *charge* for returns (a fee) matches "Charge the battery."
+
+      Find these failures by testing. Mark which document answers each of a set of real questions (these marks are **relevance judgments**). The fraction whose right document lands in the top $k$ results is **recall@k**. If BM25 gets 14 of 20 into the top 3, recall@3 = 0.70. Then read the 6 misses. If most are paraphrases like "money back," you need search by meaning: the next lesson.
+
+      :::mixup "Keyword search is obsolete now that we have embeddings."
+      BM25 is still the baseline to beat. It needs no training, handles exact codes like "KB-220", and holds up on new topics: on the BEIR benchmark (Thakur et al., 2021) it beat many neural retrievers on collections they weren't trained for. Most production systems run both kinds of search side by side.
+      :::
+    bridges: []
+  - id: lexical-information-retrieval.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.lexical-information-retrieval
+    markdown: Part numbers, a recipe site, a band called The Who, and a few BM25 calculations test whether you can predict what keyword search will find.
+    takeaway: |-
+      An inverted index finds the documents that share a query's words, and BM25 ranks them by how rare each word is, how often it appears (with diminishing returns), and how long the document is. Normalization rules decide what counts as the same word.
+  - id: lexical-information-retrieval.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.lexical-information-retrieval
+    markdown: |-
+      An inverted index finds documents containing query terms. Ranking weighs that evidence, while normalization rules determine which terms count as matches.
 navigation:
   routes:
-  - id: route.core
-    scene_sequence:
-    - lexical-information-retrieval.s1
-    - lexical-information-retrieval.s2
-    - lexical-information-retrieval.s3
-    - lexical-information-retrieval.s4
-    - lexical-information-retrieval.check
-    gate_refs:
-    - gate.core
+    - id: route.core
+      scene_sequence:
+        - lexical-information-retrieval.s1
+        - lexical-information-retrieval.s2
+        - lexical-information-retrieval.s3
+        - lexical-information-retrieval.bm25
+        - lexical-information-retrieval.s4
+        - lexical-information-retrieval.check
+      gate_refs:
+        - gate.core
   scene_aliases:
     lexical-information-retrieval.recap: lexical-information-retrieval.check
 assessment_families:
-- id: lexical-information-retrieval.base
-  objective_ref: objective.lexical-information-retrieval
-  task: base
-  response_type: single_choice
-  points: 1
-  hint: 'Normalize with consequences: trace the inputs, operation, and result before choosing.'
-  remediation_scene: lexical-information-retrieval.s2
-  variants:
-  - id: lexical-information-retrieval.base.1
-    prompt: What does an inverted index map a term to?
-    options:
-    - id: c
-      text: Every possible generated answer
-    - id: a
-      text: Documents or positions containing it
-    - id: b
-      text: Only a model’s hidden layers
-    answer: a
-    feedback: Postings connect terms to corpus locations.
-  - id: lexical-information-retrieval.base.2
-    prompt: Why can a very common term be weak ranking evidence?
-    options:
-    - id: a
-      text: It distinguishes few documents from the rest
-    - id: b
-      text: It can never be searched
-    - id: c
-      text: It always proves relevance
-    answer: a
-    feedback: Corpus rarity affects discriminative value.
-- id: lexical-information-retrieval.transfer
-  objective_ref: objective.lexical-information-retrieval
-  task: transfer
-  response_type: single_choice
-  points: 1
-  hint: 'Evaluate relevance for the task: trace the inputs, operation, and result before choosing.'
-  remediation_scene: lexical-information-retrieval.s4
-  variants:
-  - id: lexical-information-retrieval.transfer.1
-    prompt: What can stemming accidentally harm?
-    options:
-    - id: a
-      text: Exact identifiers or distinctions that matter to the task
-    - id: b
-      text: Every possible search equally
-    - id: c
-      text: Only file compression
-    answer: a
-    feedback: Normalization can merge meaningful differences.
-  - id: lexical-information-retrieval.transfer.2
-    prompt: Does matching every query word guarantee relevance?
-    options:
-    - id: b
-      text: 'Yes'
-    - id: c
-      text: Only for long documents
-    - id: a
-      text: 'No'
-    answer: a
-    feedback: Words can appear in an irrelevant context.
+  - id: lexical-information-retrieval.base
+    objective_ref: objective.lexical-information-retrieval
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: 'Normalize with consequences: trace the inputs, operation, and result before choosing.'
+    remediation_scene: lexical-information-retrieval.s2
+    variants:
+      - id: lexical-information-retrieval.base.1
+        prompt: What does an inverted index map a term to?
+        options:
+          - id: c
+            text: Every possible generated answer
+          - id: a
+            text: Documents or positions containing it
+          - id: b
+            text: Only a model’s hidden layers
+        answer: a
+        feedback: Postings connect terms to corpus locations.
+        retired: true
+      - id: lexical-information-retrieval.base.2
+        prompt: Why can a very common term be weak ranking evidence?
+        options:
+          - id: a
+            text: It distinguishes few documents from the rest
+          - id: b
+            text: It can never be searched
+          - id: c
+            text: It always proves relevance
+        answer: a
+        feedback: Corpus rarity affects discriminative value.
+        retired: true
+  - id: lexical-information-retrieval.transfer
+    objective_ref: objective.lexical-information-retrieval
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: 'Evaluate relevance for the task: trace the inputs, operation, and result before choosing.'
+    remediation_scene: lexical-information-retrieval.s4
+    variants:
+      - id: lexical-information-retrieval.transfer.1
+        prompt: What can stemming accidentally harm?
+        options:
+          - id: a
+            text: Exact identifiers or distinctions that matter to the task
+          - id: b
+            text: Every possible search equally
+          - id: c
+            text: Only file compression
+        answer: a
+        feedback: Normalization can merge meaningful differences.
+        retired: true
+      - id: lexical-information-retrieval.transfer.2
+        prompt: Does matching every query word guarantee relevance?
+        options:
+          - id: b
+            text: 'Yes'
+          - id: c
+            text: Only for long documents
+          - id: a
+            text: 'No'
+        answer: a
+        feedback: Words can appear in an irrelevant context.
+        retired: true
+  - id: lexical-information-retrieval.base.v2
+    objective_ref: objective.lexical-information-retrieval
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "BM25 rewards three things: a rare word, a word that appears more often (with diminishing returns), and a match in a shorter-than-average document."
+    remediation_scene: lexical-information-retrieval.bm25
+    variants:
+      - id: lexical-information-retrieval.base.v2.1
+        prompt: In a 1,000-document help center, "refund" appears in 50 documents and "derailleur" in 2. A query contains both words. Why does BM25 give a match on "derailleur" more weight?
+        options:
+          - id: b
+            text: It appears more times inside each document that contains it
+          - id: c
+            text: It is a longer word, so more of its characters match the query
+          - id: a
+            text: Fewer documents contain it, so a match narrows the field more
+        answer: a
+        feedback: Weight comes from inverse document frequency, which rises as fewer documents contain the word. The count inside a document is term frequency, a separate factor, and word length plays no part.
+      - id: lexical-information-retrieval.base.v2.2
+        prompt: Pages A and B have the same length. Page A mentions "battery" 3 times; page B mentions it 30 times. With BM25 at k₁ = 1.2, how does B's score for that word compare with A's?
+        options:
+          - id: c
+            text: Exactly 10 times higher, since B has 10 times the mentions
+          - id: a
+            text: Somewhat higher, but far less than 10 times higher
+          - id: b
+            text: About the same, since BM25 counts whether a word appears at all
+        answer: a
+        feedback: BM25's term-frequency part saturates toward k₁ + 1 = 2.2, so A gets about 1.57 and B about 2.11. Ten-times scaling is how raw TF-IDF behaves; ignoring counts entirely is a plain yes/no match.
+      - id: lexical-information-retrieval.base.v2.3
+        prompt: Two documents each mention "warranty" exactly once. One is 50 words long, the other 2,000 words. With b = 0.75, which gets the higher BM25 score for "warranty"?
+        options:
+          - id: a
+            text: The 50-word document, because the mention is a larger share of it
+          - id: b
+            text: The 2,000-word document, because it has more text that could be relevant
+          - id: c
+            text: Neither, because both have a term frequency of 1
+        answer: a
+        feedback: With b above zero, BM25 divides by a length factor, so one mention in a short document counts for more. Equal term frequency gives equal scores only when b = 0, which turns length normalization off.
+      - id: lexical-information-retrieval.base.v2.4
+        prompt: A search engine indexes 3 million pages. For the query "chain lube", what work does the inverted index let it skip?
+        options:
+          - id: b
+            text: Reading the postings lists stored for "chain" and for "lube"
+          - id: a
+            text: Scoring the pages that contain neither "chain" nor "lube"
+          - id: c
+            text: Counting how often "chain" appears in the pages that contain it
+        answer: a
+        feedback: The index jumps straight to the pages listed under each query word, so pages with no shared word are never scored. Reading those postings and counting term frequencies is exactly the work it still does.
+  - id: lexical-information-retrieval.transfer.v2
+    objective_ref: objective.lexical-information-retrieval
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the normalized query and document actually contain, word by word. Is the problem a missing match, a false match, or a scoring choice?
+    remediation_scene: lexical-information-retrieval.s2
+    variants:
+      - id: lexical-information-retrieval.transfer.v2.1
+        prompt: An electronics shop's search splits text at hyphens. Searching for resistor "R-470" also returns pages for "R-220" and "R-100". What change targets this?
+        options:
+          - id: c
+            text: Raise k₁ so that repeated words count for more
+          - id: b
+            text: Add a synonym list that links related part names
+          - id: a
+            text: Index part numbers as exact, unsplit tokens too
+        answer: a
+        feedback: Splitting turned every part number into a shared "r" token plus a number, so unrelated parts match. An exact-token field keeps "R-470" whole. Raising k₁ only changes how repeats count, and a synonym list would link even more part names together.
+      - id: lexical-information-retrieval.transfer.v2.2
+        prompt: 'A recipe site''s keyword search returns nothing for "how do I make my dough rise", though a page titled "Proofing yeast for bread" answers it. What is the failure?'
+        options:
+          - id: a
+            text: The question and the page use different words for the same idea
+          - id: b
+            text: The page is too long, so length normalization hid it
+          - id: c
+            text: Common words like "how" and "my" were given too much weight
+        answer: a
+        feedback: This is vocabulary mismatch. The page shares no words with the query, so it gets no score at all; length and word weights only matter for pages that match something.
+      - id: lexical-information-retrieval.transfer.v2.3
+        prompt: A music site drops stop words such as "the" and "who" before indexing. Searching for tickets to the band The Who returns generic concert pages. What caused it?
+        options:
+          - id: b
+            text: Stemming turned "tickets" into "ticket" and lost the plural
+          - id: a
+            text: Stop-word removal deleted the words that make up the band's name
+          - id: c
+            text: IDF weighted the word "concert" more than it should have
+        answer: a
+        feedback: Both words of the band's name are stop words, so the query shrank to "tickets". Folding plurals is harmless here, and IDF can't weight words that were removed.
+      - id: lexical-information-retrieval.transfer.v2.4
+        prompt: A shipping help center lowercases everything. Searches for "US customs rules" rank pages saying "contact us" near the top. Which normalization step caused this?
+        options:
+          - id: a
+            text: Case folding, which merged the country code with the pronoun
+          - id: c
+            text: Stemming, which cut "customs" down to the word "custom"
+          - id: b
+            text: Length normalization, which boosted the short contact pages
+        answer: a
+        feedback: Lowercasing made "US" and "us" one term, so every "contact us" page matches. Stemming "customs" wouldn't create matches with contact pages, and length normalization only reorders pages that already match.
+  - id: lexical-information-retrieval.calc
+    objective_ref: objective.lexical-information-retrieval
+    task: base
+    response_type: numeric
+    points: 1
+    hint: For a document of average length, the length factor is 1, so a term contributes idf × tf(k₁ + 1) / (tf + k₁).
+    remediation_scene: lexical-information-retrieval.bm25
+    variants:
+      - id: lexical-information-retrieval.calc.1
+        prompt: A document has exactly average length. A query word appears in it 3 times, its idf is 2.0, and k₁ = 1.2. What does this word add to the BM25 score? Give two decimal places.
+        answer: 3.14
+        feedback: The tf part is 3 × 2.2 / (3 + 1.2) = 6.6 / 4.2 = 1.571. Multiply by idf 2.0 to get 3.14.
+      - id: lexical-information-retrieval.calc.2
+        prompt: A document has exactly average length. A query word appears in it 4 times, its idf is 1.5, and k₁ = 1.2. What does this word add to the BM25 score? Give two decimal places.
+        answer: 2.54
+        feedback: The tf part is 4 × 2.2 / (4 + 1.2) = 8.8 / 5.2 = 1.692. Multiply by idf 1.5 to get 2.54.
+      - id: lexical-information-retrieval.calc.3
+        prompt: A document has exactly average length. A query word appears in it twice, its idf is 3.0, and k₁ = 2.0. What does this word add to the BM25 score? Give two decimal places.
+        answer: 4.5
+        feedback: The tf part is 2 × 3.0 / (2 + 2.0) = 6 / 4 = 1.5. Multiply by idf 3.0 to get 4.50.
+      - id: lexical-information-retrieval.calc.4
+        prompt: A document has exactly average length. A query word appears in it 5 times, its idf is 1.0, and k₁ = 1.5. What does this word add to the BM25 score? Give two decimal places.
+        answer: 1.92
+        feedback: The tf part is 5 × 2.5 / (5 + 1.5) = 12.5 / 6.5 = 1.923. Multiply by idf 1.0 to get 1.92.
+    absolute_tolerance: 0.01
