@@ -1,6 +1,6 @@
 # Learn AI
 
-A private presentation-style AI school prototype with 335 lessons that have received an editorial reading pass. Choose a system, learn its foundations, and carry demonstrated understanding into another path.
+A private, presentation-style AI school that runs entirely in the browser. Pick a system you want to understand (a chatbot, an image generator, a robot, a recommender, and so on), learn the foundations it needs, and carry what you have shown you understand into the next path.
 
 ## Run locally
 
@@ -11,86 +11,58 @@ npm ci
 npm run dev
 ```
 
-Open the local address printed by Vite. No account, API key, model download, or paid service is required. JavaScript and a current browser are needed for the interactive classroom.
+Open the local address Vite prints. No account, API key, model download or paid service is needed. The runnable Python examples download Pyodide and NumPy from a CDN the first time a learner presses **Run**.
 
 ```bash
-npm run check
-npm test
-npm run build
+npm run check          # Svelte and TypeScript
+npm test               # unit and content tests
+npm run lessons        # lesson checker: errors, compatibility, prose lint
+npm run build          # static site in build/
 npx playwright install chromium --only-shell
-npm run test:e2e
+npm run test:e2e       # browser tests
 ```
 
-The production build writes a static site to `build/`. `npm run preview` serves that build locally. The current app assumes deployment at the domain root; a hosting provider has not been selected and nothing has been deployed.
+`npm run preview` serves the production build. The app assumes deployment at the domain root.
 
-## Current implementation
+## What the course contains
 
-- Fifteen guided draft routes: language, images, video, speech/audio, robotics, vision, agents, retrieval, prediction/anomalies, forecasting, recommendation, games/planning, scientific AI, multimodal systems, and edge/alternative computing. Each states a reference design or comparison outcome, required core, endpoint, optional extensions, and connected paths. Filters group systems by purpose; shared objective evidence carries across paths. See the generated [path coverage report](content/PATH_COVERAGE.md) for exact lesson counts and assignments.
-- Paths group the prerequisite sequence into chapters of six to eight lessons, open the next unfinished chapter, and offer a full-syllabus view. Chapter progress reflects compatible knowledge-check evidence. Release, rollback, monitoring, and human-review decisions are required in the language and agent routes.
-- A further 32 lessons have deeper worked instruction, short prediction challenges, memory cues, and eight fresh checks each. These cover data preparation, language/tokenization, neural calculations, transformer mechanisms, pretraining, adaptation, evaluation, operations, expert routing, and the language project. New calculations include hidden activations, branching gradients, head mixtures, masked target counts, and expert weights. This revision deepens existing lessons without adding paths or modules.
-- Twenty additional lessons now have expanded instruction and eight fresh checks apiece: all eight history lessons, all eight computing foundations, and algebra, matrices, derivatives, and the chain rule. Worked examples include representation errors, loop traces, feature loss, branching search, seeded sequences, parallel limits, and intermediate calculus steps. Each path introduces the computing foundations needed for its stated system before the system-specific sequence; the brief shared history survey links the overall story while the full history module offers a deeper sequence.
-- The opening module has eleven lessons: tasks, inputs/outputs, examples, models/products, and weights come before training and inference. Everyday snack and delivery examples introduce terms before compact notation. Six additional foundational lessons have expanded worked instruction. Definitions are also available within each scene; linked side lessons keep the learner’s place.
-- All 311 main lessons across 38 modules, plus 23 mathematics/programming bridges and the preserved A01 advanced MoE preview, have received an editorial reading pass: 335 authored assets with 337 scoped objectives. See [coverage](content/COVERAGE.md).
-- The curriculum spans history, symbolic reasoning, search, probability, classical learning, neural and alternative neural models, vision, language/audio, transformers, pretraining, distributed training, MoE, state-space models, post-training, reasoning, diffusion/flow models, multimodality, RL, agents, retrieval, serving, evaluation, interpretability, social/security questions, robotics, causality, hybrid methods, operations, and scientific AI.
-- Dated model studies connect Llama 3.1, Qwen3, DeepSeek-V3/R1, and Olmo 3 to their published lifecycle evidence. Additional comparisons cover image/audio/state-space systems and the limits of proprietary disclosures. These are historical mechanism anchors, not a live model ranking.
-- Mixture-of-experts, efficient sequence alternatives, and dated model comparisons are optional depth beyond the language path’s dense-transformer reference design. Named extensions describe what each branch adds; completing the reference path does not certify those branches.
-- Twelve synthesis projects include supplied toy data, worked calculations or reference fragments, no-code/manual options, and self/peer-review rubrics. New video, speech/audio, and robotics projects trace frame storage and timing, transcript errors and sample rates, and a multi-step sensing/control loop. Their quizzes require changed-example calculations and conceptual distinctions; they do not grade unseen artifacts.
-- A library with module, time, lesson-type, and evidence filters; 24-card pages; live header search suggestions; and filter-preserving return links.
-- Presentation and continuous reading modes, saved positions and bookmarks, math detours, spoken equation descriptions, and exact numerical tables. Side lessons show a clickable trail back to earlier lessons, restore the originating slide, and keep their return trail through browser Back, Forward, and refresh.
-- The takeaway, quiz, result, and return links share one closing page; there is no separate final-thought slide. Returns preserve the originating curriculum module, library/glossary filter, path, or progress page across reloads. Curriculum lessons offer the next available lesson; assessed paths recommend the next unmet dependency.
-- A pixel-encoding activity changes stored bits, row width, and color interpretation independently, with keyboard controls and a text explanation of the current state.
-- Partial independent-check progress, repeatable practice, direct test-out entry, and chapter momentum make evidence visible without weakening mastery rules. Chapter titles are unique within each path, and all 15 paths have distinct SVG illustrations.
-- Project lessons can export review worksheets containing authored context and learner-entered notes. Any lesson can export a correction note. These downloads are local, ungraded artifacts shared manually; they do not submit feedback or expose saved progress. `/about/` explains the classroom’s purpose and review model.
-- An introductory weight-and-input activity, interactive scalar gradient descent and attention experiments, a top-k expert routing example inside the M18 routing lesson, and clearly labeled illustrative token and denoising activities. The attention experiment exposes scores, scaling, masking, normalized weights, and the resulting value mixture. A sampling playground changes temperature, candidate filtering, and a chosen draw; exact calculations drive its probability table and interval result. Its 100 fixed comparison draws are explicitly distinguished from random trials.
-- Twenty-two interactive figure placements explain inputs/outputs, training versus inference, grouped data splits, neural forward passes, weight versus bias, derivatives, the chain rule, two-parameter training, tokenizer merges, model lifecycles, history, evidence comparisons, image noise, video consistency, audio frequency, and robot feedback. The opening slide of **Trace inputs through layers to a loss** adds a conventional circles-and-connections network: two inputs, two hidden layers, and one output. Reveal each layer, inspect a unit’s incoming contributions and bias, and change an input or weight to follow its effects. SVGs and numerical readouts share the same calculations. Figures save their settings, use keyboard/touch controls, and provide textual equivalents; audio plays only on request. Weight, attention, expert-routing, and scalar-descent activities also have richer diagrams. Prediction-first clustering, beam-search, cache-memory, and learning-rate activities add four more inspectable mechanisms. Bayes counting, a classification threshold, and a sliding shared filter add three more prediction-first activities. The course now has 37 interactive scene placements across 33 assets; most lessons still await visual review.
-- Objective-based personal-study mastery, fresh retakes, hints and answer feedback. Two varied unassisted checks are required per critical core objective. Viewing material, using hints, or repeating exposed variants cannot award mastery.
-- Shared objective evidence across paths. Compatible mastery stops prerequisite expansion without granting evidence for ancestors. Separately required foundations remain required; a mastered alternative is preferred.
-- **My progress → Start over → Reset all progress** clears the learning record for all paths in this browser after confirmation. The dialog offers a backup download first. Reset includes answers, mastery, hints/exposures, bookmarks, reading/activity positions, selected path, and study history. A saved reset boundary prevents older tabs or queued saves from restoring the cleared record; a confirmed backup import can still restore it.
-- IndexedDB persistence, synchronization of evidence and positions across tabs, and validated JSON backup import/export with a review step. Evidence records merge once, conflicting IDs are rejected, and newer positions are preserved. Manual backup export remains available on My progress; there are no automatic backup reminders.
-- Search, 146 vocabulary definitions linked to teaching lessons, and a complete browsable catalog of 38 modules / 311 main lessons. All catalog entries open draft lessons; side lessons and the advanced preview are also available in the library.
-
-Formal mathematics extension checks and the older A01 MoE preview remain uncredited practice; the eight M18 MoE lessons and 23 bridges have scoped knowledge checks. Historical lesson/scene IDs and question response contracts remain readable. Revised objectives use new evidence versions and retire earlier questions; old attempts remain historical records and do not silently satisfy the revised standard. Old recap positions resolve to the combined closing page. Reference reading and placement checks remain available throughout the library.
+- **337 lessons**: 313 main lessons across 38 modules, 23 mathematics and programming bridges, and one advanced preview. They are organized into **15 guided paths**: language, images, video, speech and audio, robotics, vision, agents, retrieval, prediction, forecasting, recommendation, games and planning, scientific AI, multimodal systems, and edge computing. Each path states its outcome, required core, and optional extensions; evidence of understanding carries across paths.
+- **Coverage.** Every lesson was rewritten in the September 2026 revision. Topics run from history and symbolic AI through search, probability, classical ML, neural networks, vision, sequences, language, transformers, pretraining, training infrastructure, mixture-of-experts, efficient architectures, post-training, reasoning, generative models, multimodality, reinforcement learning, agents, retrieval, serving, evaluation and interpretability, safety and society, robotics, causality, hybrid methods, applied systems, scientific AI, dated model case studies, projects, and alternative neural models.
+- **Teaching shape.** Lessons open with a concrete situation and carry one running example. Each one teaches with worked numbers, shows the formula as papers write it with every symbol mapped, and ends with a takeaway. The median lesson has about 980 teaching words, up from about 300 before the revision; none is under 400. Across the course there are:
+  - 363 runnable Python/NumPy examples, editable in the page
+  - 170 diagrams, each with a full text description
+  - 409 predict-then-reveal checks
+  - 329 "common mix-up" callouts
+  - short, sourced stories of the people and events behind the ideas
+- **Assessment.** There are 916 question families with 4,097 active variants, and every module includes numeric calculation families. Mastery needs one independent correct answer per family at the current objective version. Hints, viewed answers and repeated variants never count. Earlier variants are retired rather than deleted, so saved progress and backups stay valid.
+- **Daily review** brings back ideas you have already mastered, as practice, at spaced intervals of 1, 3, 7, 16, 35 and 90 days.
+- **Glossary.** 599 terms are linked to the lessons that teach them, and every scene has a "Need a word explained?" panel.
+- **Interactive figures.** About 40 interactive figures and simulations cover attention, sampling, gradient descent, tokenizers, networks, cache memory, denoising, video, audio and robot control, among others. All have keyboard controls and text equivalents.
+- **Library and progress.** The library has module, time, type and evidence filters. Learners can read in presentation or continuous mode, keep saved positions and bookmarks, and take side lessons that return to the exact slide. Progress lives in IndexedDB, syncs across tabs, and can be backed up and restored as JSON.
 
 ## Content and code
 
-[Teaching standards](content/AUTHORING.md) describe lesson shapes, vocabulary scaffolding, assessment revision, and source specificity. [Editorial signals](content/EDITORIAL_REVIEW.md) are regenerated during content builds and flag thin mechanism drafts, generic reading links, answer-shape patterns, and depth gaps within each path. These are review prompts, not learner-validation results. Non-project durations are calculated by the build; their source files no longer carry overridden time estimates.
+- `content/lessons/*.yaml`: the lessons. Each holds scenes, objectives, assessment families, sources and routes. [Teaching standards](content/AUTHORING.md) describe lesson shapes, the lesson markdown features, the lesson checker, and assessment revision rules.
+- `content/curriculum.yaml`: paths, extensions and the catalog. `content/glossary.yaml`: vocabulary.
+- `scripts/lesson-markdown.ts`: compiles lesson Markdown, covering KaTeX math, callouts, highlighted and runnable code, and tables, then sanitizes it.
+- `scripts/compile-lesson.ts` and `scripts/build-content.ts`: validate the YAML against the runtime contract, check references and dependency cycles, and generate `src/lib/generated/`.
+- `scripts/check-lessons.ts`: the per-lesson checker. It runs compatibility checks against `HEAD` (no deleted ids, no silently changed answers, version bumps when evidence changes) plus prose and question lint.
+- `scripts/content-audit.ts`: enforces complete slot coverage and regenerates the coverage reports.
+- `src/lib/engine.ts`: the planner, evidence rules and backup handling.
+- `src/lib/review.ts`: the daily review scheduler.
+- `src/lib/python-runtime.ts`: the in-browser Python worker.
+- `src/lib/components/`: the player, diagrams, code runner and interactive figures.
 
-`content/lessons/*.yaml` contains original draft explanations, sources, scenes, objective mappings, and assessment variants. `content/curriculum.yaml` declares path roots, reference scope, optional extensions, related paths, and the authored catalog.
+## Status and limits
 
-`scripts/build-content.ts` validates YAML and the runtime Zod contract, checks references and graph cycles, compiles sanitized Markdown, and generates the runtime curriculum and exact draft path closures in `src/lib/generated/`. Runtime generated files are ignored and rebuilt by the application/check/test commands. `scripts/content-audit.ts` additionally enforces complete slot coverage, unique assignments and question prompts, and combined closing-page ordering; it regenerates the tracked coverage report. `scripts/path-coverage.ts` also reports the required or optional route for every asset, including extension preparation. The gradient asset adapts the reviewed authoring specimen; the source contract is still a draft, and this adapter is not a claim to implement every proposed authoring feature.
+This is draft content and personal-study software. Every lesson has been rewritten. Each one was then checked by a separate reviewer that recomputed the numbers, ran the code, checked sources and repaired questions. That is still an editorial process, not independent expert review or learner testing. Before calling any lesson finished, it still needs:
 
-`src/lib/engine.ts` contains the planner, evidence rules, and backup validation/merge logic. `src/lib/simulations.ts` provides deterministic numerical mechanisms. `src/lib/learner.svelte.ts` scopes reactive learner state to each application layout, and `src/lib/storage.ts` performs transactional browser persistence. Reusable interaction components live in `src/lib/components/`.
+- subject-expert review
+- assessment calibration
+- learner pilots
+- a manual screen-reader pass
+- Firefox and Safari checks
 
-The original dependency map, plan, assessments, and review responses remain local in gitignored `internal/`, as requested. Building the app does not require those private files.
+A few lessons cite legal cases and regulations whose status changes over time, such as AI copyright suits and the EU AI Act's deepfake rules. Re-check those before publishing.
 
-## Boundaries and next work
-
-All 335 lessons were read individually in the September 20, 2026 editorial pass. Existing clear explanations were retained; weaker explanations gained local definitions, worked steps, concrete comparisons, or corrections. The [lesson review record](content/LESSON_REVIEW.md) lists every lesson and its findings. The fifteen routes and stable lesson/objective IDs are unchanged. See the generated [editorial signals](content/EDITORIAL_REVIEW.md) for current depth and assessment diagnostics rather than treating a word count as completion.
-
-A subsequent [prose and flow pass](content/PROSE_REVIEW.md) reread all 335 lessons, integrated definitions before technical explanations, removed repeated or misplaced material, simplified takeaways, and made closing instructions consistent between presentation and text modes. The record distinguishes targeted lesson revisions from shared closing-copy changes. Unigram tokenization now has its own scene instead of sharing an overloaded closing explanation. Existing scene IDs, learning objectives, assessment banks, and activity settings remain compatible; the review is an editorial pass, not a learner study.
-
-Draft is publication status. Leaving draft requires a clear scoped explanation, independently checked accuracy and sources, aligned assessments, usable accessible delivery, and learner trials; the full criteria are in [teaching standards](content/AUTHORING.md#when-a-lesson-leaves-draft) and `/about/#drafts`. This editorial pass does not claim that every assessment bank has been revalidated or that every topic has exhaustive depth. Later banks still include bare yes/no questions and limited fresh retakes. Those need systematic revision alongside independent review and beginner trials.
-
-Chatbots share the language/application routes. Autonomous driving has partial foundations across robotics, vision, and planning but still needs dedicated domain instruction. Audio/signal mathematics, spatial transformations, deeper control, music/sound generation, and video training/sampling traces are also priorities.
-
-This is draft content and personal-study software. Independent subject review, assessment calibration, learner pilots, a non-author editing trial, and manual screen-reader review remain open. Automated accessibility checks do not establish WCAG conformance. Only Chromium has been exercised so far; Firefox and Safari verification remains outstanding.
-
-All eleven M00 beginner lessons have six active variants per family after adding 44 fresh questions. Other revised banks, including the deeper 32-lesson set, have four per family; most later draft banks still have two. An exhausted bank stays exhausted for fresh-credit purposes; reading and worked examples remain available. Broader remediation banks, spaced retention checks, calibrated mastery thresholds, and reviewed capstones are future work. Current critical checks must all pass; the planned aggregate 80% policy has not yet been calibrated for a larger assessment mix.
-
-Browser evidence is editable by its owner and is not an authoritative school grade. There is no cloud account, server verification, cohort administration, certificate system, or automated tutor. Clearing site data can erase local progress. Export and retain backups; a download-start timestamp does not prove the file was kept. Only `prototype-1` backups are supported; cross-curriculum migrations are not implemented.
-
-The introductory weight/token/denoising illustrations do not run trained models. Their original transient controls and the sampling playground’s controls are not saved; gradient and attention experiments and all new `figure` activities are saved, along with reading state, return destinations, drafts, and committed formative reveals. The new image/noise, video, audio, and robotics visuals are bounded teaching examples, not trained model outputs. Sourced historical photographs, real generated-media comparisons, and broader visual coverage remain future work. A static production build is not an offline-installable PWA.
-
-Continue against the staged plan: independently review every draft and assessment, try the authoring contract with a non-author editor, deepen worked examples and mathematical treatments, expand bridge micro-lessons and assessment banks, and finish accessibility/learner trials. The initial draft fills the agreed catalog; it does not imply that every topic has exhaustive treatment or that the full planned school platform is implemented.
-
-The locally installed Svelte autofixer could not initialize because its documentation endpoint was unavailable. Remote source submission was previously blocked by automatic approval review. Validation uses local Svelte compiler/type checks, numerical and learning-rule tests, and local Chromium/axe checks instead.
-
-The verification suites cover learning rules, graph dependencies, numerical experiments, backups, combined closing-page navigation, saved return destinations, math detours, keyboard/mobile use, and selected axe WCAG A/AA rules. Independent review and the remaining browser/screen-reader matrix are still open.
-
-The revision adds compatibility checks for retired question banks and old recap positions, vocabulary detour/focus checks, structured calculation grading, and keyboard control of the introductory weight example. Verification results are recorded in the local implementation status; selected accessibility assertions do not cover the whole course.
-
-Current verification after the September 20 prose and flow review: all 213 logic/content tests and all 90 Chromium scenarios pass in complete runs. Svelte/TypeScript reports zero errors or warnings; the production build generates 335 lesson pages and 15 path pages. Checks cover library discovery, evidence, backups, combined endings, nested side lessons, interactive mechanisms, sharing, keyboard/mobile use, and reset behavior. Five selected revised scenes also passed phone-width overflow, presentation/continuous reading, and saved-position checks, including the new unigram-tokenization scene in its intended order. Two mobile pages received screenshot inspection. The structured comparison with commit `75ed194` preserves all 337 objective definitions and versions, all 1,928 active/retired assessment variants, and all 2,233 existing scene IDs. See the [prose review](content/PROSE_REVIEW.md) for exact scope and lesson findings.
-
-Earlier focused browser checks passed for the draft criteria and library link, Python indentation and execution, code-block keyboard scrolling, presentation/continuous reading, mobile overflow, selected axe rules, and a calculus detour returning to the originating robot-control slide after refresh. The original review snapshot records the 335 lessons before the fourteen revisions documented in the [follow-up review](content/REVIEW_FOLLOWUP.md); the prose review has a separate current snapshot. Compatibility checks do not establish educational validity, and selected accessibility assertions do not cover the whole course.
-
-Visual checks include independently checked derivatives, simultaneous weight/bias updates, calculation-to-diagram agreement, saved visual settings and calculus detours, grouped split repairs, tokenizer fitting, explicit audio playback/cleanup, and delayed robot observations. Phone-sized SVG labels were inspected and enlarged; the affected browser scenarios were rerun after that adjustment. The layered network adds checked hidden/output calculations, negative and zero weights, keyboard inspection, saved controls, and mobile scrolling/accessibility coverage. Side-lesson checks cover nested returns, Back/Forward, refresh, jumping to an ancestor, separate tabs, and invalidation after a progress reset.
+Browser progress belongs to the learner and is not an authoritative grade. There is no account, server, certificate or automated tutor. Clearing site data erases progress, so export backups.

@@ -46,6 +46,27 @@ Make practice playful through useful decisions: predict a change, move a control
 
 The eleven M00 beginner lessons now provide six active variants per family. Adding equivalent practice examples keeps objective versions and existing response contracts unchanged; changing the evidence standard still requires versioning. Do not treat six variants as enough for unlimited fresh retakes, and do not pad other banks with superficial rewordings to meet a quota.
 
+## Lesson markdown
+
+Scene `markdown` is ordinary Markdown with a few additions, compiled by `scripts/lesson-markdown.ts`.
+
+- **Math.** `$…$` inline and `$$…$$` on its own lines render with KaTeX. Write a literal dollar sign as `\$` (prices are common in worked examples).
+- **Callouts.** Open with `:::kind Title` on its own line and close with `:::`. Kinds: `predict` (the body stays hidden behind *Reveal the answer*; ask the question in the title), `mixup` (a common confusion and its fix), `story` (a short, accurate, sourced history or case), `papers` (the formula as the literature writes it, with every symbol mapped to the worked example), `try`, `key`, `deeper`, and `example`.
+- **Code.** A fence tagged `` ```python run `` becomes an editable block with a **Run** button. It executes in the learner's browser with Pyodide and NumPy, loaded only on first run, with a fresh namespace each time. Plain `` ```python `` is highlighted but not runnable. Every number the prose quotes from a runnable block must match what the block prints; if you suggest a change to try, run that too.
+- **Tables** use GitHub table syntax. Keep them small enough for a phone.
+- **Diagrams.** Add a scene-level `diagram:` with `caption`, `description` (a complete text version that names every connection), `nodes` (`id`, `label`, optional `note`, `col` 0–5, `row` 0–6, `tone` plain/accent/data/warn/muted) and `edges` (`from`, `to`, optional `label`, `dashed`, `bend`). The renderer wraps labels to two lines and notes to three; keep labels to a few words. Check that no arrow passes through a box.
+
+Refer to other lessons by title or topic ("the lesson on stable training", "module 6"), never by file id.
+
+## Checking lessons
+
+Run `node --import tsx scripts/check-lessons.ts <files>` after every edit, and `npm run lessons` (every lesson; add `-- --summary` for counts only) before committing. It reports:
+
+- **Errors** (must be zero): YAML or compile failures, route and reference problems, fewer than two active variants in a family, duplicate prompts, broken answer keys, and compatibility breaks against `HEAD`. Compatibility breaks include a deleted scene, objective or variant; a changed option id or answer; a changed figure kind; and retiring variants or changing evidence families without bumping the objective version.
+- **Warnings** (aim for zero): thin teaching text (under 350 words, or 300 for bridges), authoring or product language in learner-facing text, stacked disclaimers, a summary that copies the objective, a bold term used before it is defined, a correct option that is much the longest or the only non-absolute one, yes/no questions, feedback that just repeats the answer, and generic hints.
+
+`npm run lessons:normalize -- <files>` rewrites prose fields as literal blocks without changing compiled content. Recap scenes are kept only as aliases for old saved positions; learners never see them, so they are exempt from prose lint.
+
 ## Interactive figures
 
 Attach a figure to the existing scene that teaches its idea. Keep one main teaching question per figure; start with a useful example, invite a prediction, expose a meaningful control, and explain the result. Put detailed arithmetic behind an optional reveal when the diagram already communicates the first idea. Define the controls and symbols before expecting learners to interpret them. Mathematical derivations should link to the appropriate bridge through `bridge_refs` so a detour preserves the experiment.
