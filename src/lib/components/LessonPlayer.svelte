@@ -3,6 +3,8 @@
   import { page } from "$app/state";
   import { tick } from "svelte";
   import katex from "katex";
+  import Diagram from "./Diagram.svelte";
+  import { runnableCode } from "$lib/runnable-code";
   import { curriculum, getLesson } from "$lib/content";
   import { getLearner } from "$lib/learner.svelte";
   import { mastered, planPath } from "$lib/engine";
@@ -213,7 +215,7 @@
         ? "MATH SIDE LESSON"
         : lesson.category === "advanced"
           ? "ADVANCED PREVIEW"
-          : "DRAFT LESSON"}</span
+          : `${lesson.archetype.toUpperCase()} · ${lesson.minutes} MIN`}</span
     >
   </div>
   {#if detours.length}<nav
@@ -524,7 +526,10 @@
                 });
             }}
           />{/key}{/if}
-    {:else}<div class="prose">{@html scene.html}</div>{/if}
+    {:else}<div class="prose" use:runnableCode={scene.html}>
+        {@html scene.html}
+      </div>{/if}
+    {#if scene.diagram}<Diagram diagram={scene.diagram} />{/if}
     {#if scene.id === lesson.routes.core[0] && lesson.entryChecks.length}<details
         class="entry-check"
       >

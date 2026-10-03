@@ -128,7 +128,9 @@
             <div class="path-card-top">
               <span class={["topic-icon", recipe.color]}
                 ><Icon name={recipe.icon} size={21} /></span
-              ><span class="small-badge">GUIDED DRAFT COURSE</span>
+              ><span class="small-badge"
+                >≈ {Math.max(1, Math.round(plan.lessons.reduce((n, l) => n + l.minutes, 0) / 60))} HOURS</span
+              >
             </div>
             <h3>{recipe.title}</h3>
             <p>

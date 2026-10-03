@@ -23,7 +23,15 @@ export function auditContent(curriculum: Curriculum) {
       ).size !== lesson.questions.filter((q) => !q.retired).length
     )
       throw new Error(`Repeated assessment prompt: ${lesson.id}`);
-    if (lesson.scenes.some((s) => /\b(?:TODO|TBD|lorem ipsum)\b/i.test(s.html)))
+    if (
+      lesson.scenes.some((s) =>
+        /\b(?:TODO|TBD|lorem ipsum)\b/i.test(
+          s.html
+            .replace(/<pre\b[^]*?<\/pre>/g, "")
+            .replace(/<code\b[^]*?<\/code>/g, ""),
+        ),
+      )
+    )
       throw new Error(`Unfilled scene: ${lesson.id}`);
   }
   const expected = curriculum.catalog.flatMap((module) =>

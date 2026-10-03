@@ -41,6 +41,24 @@
       <p><a href="/library/#how-it-works">Read how learning works</a></p>
     </section>
 
+    <section aria-labelledby="practice">
+      <h2 id="practice">Learn by doing, then remember it.</h2>
+      <p>
+        Lessons ask you to predict before revealing an answer, flag the classic
+        mistakes, and show the real formulas from the research papers. Many
+        lessons include short Python programs you can run and edit right in the
+        page. Change a number, run it again, and see what happens.
+      </p>
+      <p>
+        <strong>Daily review</strong> brings each idea you've mastered back
+        after growing gaps (1, 3, 7, 16, and 35 days) as a quick practice
+        question. Recalling something just as you begin to forget it is one of
+        the best-tested ways to make learning last. Reviews are practice, so
+        they never change what you've demonstrated.
+      </p>
+      <p><a href="/review/">Open daily review</a></p>
+    </section>
+
     <section aria-labelledby="drafts">
       <h2 id="drafts">What does “draft” mean?</h2>
       <p>
@@ -123,6 +141,13 @@
         saved progress, quiz responses, or a progress backup. You control any
         sharing of the downloaded files. Following a source link takes you to
         that site's own service and privacy practices.
+      </p>
+      <p>
+        Runnable code uses Pyodide, a version of Python that runs inside your
+        browser. The first time you press Run, the page downloads the Python
+        runtime (about 10 MB) from the jsDelivr content network; programs that
+        import NumPy download it the same way. Your code and its output stay on
+        your device.
       </p>
       <p><a href="/progress/">Manage your learning record</a></p>
     </section>

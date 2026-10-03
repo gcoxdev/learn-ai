@@ -91,7 +91,7 @@
   </div>
   <div class="library-controls">
     <nav class="segmented" aria-label="Library views">
-      {#each [["lessons", "Draft lessons"], ["curriculum", "Full curriculum"], ["glossary", "Glossary"]] as tab (tab[0])}<a
+      {#each [["lessons", "Lessons"], ["curriculum", "Full curriculum"], ["glossary", "Glossary"]] as tab (tab[0])}<a
           class={["button ghost small", view === tab[0] && "active"]}
           href={libraryHref({
             ...filters,
@@ -205,7 +205,7 @@
                     <span class="small-badge"
                       >{learner.data.lastLesson === lesson.id
                         ? "LAST VISITED"
-                        : "DRAFT AVAILABLE"}</span
+                        : "OPEN"}</span
                     ></a
                   >{:else}<span>{title}</span>
                   <small class="muted">Unavailable</small>{/if}

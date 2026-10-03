@@ -14,6 +14,7 @@
   } from "$lib/lesson-detours";
   import { Learner, setLearner } from "$lib/learner.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import { reviewSchedule } from "$lib/review";
   import SearchSuggestions from "$lib/components/SearchSuggestions.svelte";
   let { children }: { children: Snippet } = $props();
   const learner = setLearner(new Learner());
@@ -26,6 +27,8 @@
         ? "Your learning path"
         : page.url.pathname.startsWith("/progress")
           ? "Your progress"
+          : page.url.pathname.startsWith("/review")
+            ? "Daily review"
           : page.url.pathname.startsWith("/library")
             ? "The library"
             : "Your learning journey",
@@ -34,9 +37,15 @@
     { name: "Explore paths", href: "/", icon: "home" },
     { name: "The curriculum", href: "/library/?view=curriculum", icon: "map" },
     { name: "My progress", href: "/progress/", icon: "chart" },
+    { name: "Daily review", href: "/review/", icon: "reset" },
     { name: "Lesson library", href: "/library/", icon: "book" },
     { name: "Glossary", href: "/library/?view=glossary", icon: "layers" },
   ];
+  const reviewDue = $derived(
+    learner.hydrated
+      ? reviewSchedule(curriculum, learner.data).due.length
+      : 0,
+  );
   function active(href: string) {
     return (
       href === page.url.pathname + (learner.hydrated ? page.url.search : "") ||
@@ -170,7 +179,10 @@
           aria-current={active(item.href) ? "page" : undefined}
           onclick={() => (menu = false)}
           ><Icon name={item.icon} /><span>{item.name}</span
-          >{#if active(item.href)}<i></i>{/if}</a
+          >{#if item.href === "/review/" && reviewDue}<b
+              class="nav-badge"
+              aria-label={`${reviewDue} due`}>{reviewDue}</b
+            >{:else if active(item.href)}<i></i>{/if}</a
         >{/each}
     </nav>
     <div class="sidebar-note">

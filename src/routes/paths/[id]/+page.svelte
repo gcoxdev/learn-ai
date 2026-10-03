@@ -131,7 +131,7 @@
       <div class="path-stat-row">
         <span
           ><strong>{demonstrated} of {full.required.length}</strong> core ideas demonstrated</span
-        ><span><strong>{full.lessons.length}</strong> draft lessons</span><span
+        ><span><strong>{full.lessons.length}</strong> lessons</span><span
           ><strong>{Math.round(minutes / 5) * 5}</strong> estimated minutes remaining</span
         >
       </div>

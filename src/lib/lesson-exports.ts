@@ -43,6 +43,9 @@ export function scenePlainText(html: string): string {
     larr: "←",
   };
   return html
+    .replace(/<!--math:([^]*?)-->[^]*?<!--\/math-->/g, (_m, tex: string) =>
+      decodeURIComponent(tex),
+    )
     .replace(/<!--[^]*?-->/g, "")
     .replace(
       /<(script|style|iframe|object|template)\b[^>]*>[^]*?<\/\1\s*>/gi,
@@ -110,6 +113,8 @@ function sceneContext(scene: Scene): string {
   }
   if (scene.equation) parts.push(literal(scene.equation.reading));
   if (scene.figure) parts.push(literal(scene.figure.caption));
+  if (scene.diagram)
+    parts.push(literal(`${scene.diagram.caption} ${scene.diagram.description}`));
   if (scene.note) parts.push(literal(scenePlainText(scene.note)));
   return parts.filter(Boolean).join("\n\n");
 }

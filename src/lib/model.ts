@@ -21,6 +21,59 @@ export const questionSchema = z.object({
   retired: z.boolean().optional(),
 });
 export type Question = z.infer<typeof questionSchema>;
+
+/** A static box-and-arrow teaching diagram laid out on a small grid. */
+export const diagramSchema = z
+  .object({
+    caption: z.string().min(12),
+    description: z.string().min(20),
+    nodes: z
+      .array(
+        z
+          .object({
+            id: z.string().regex(/^[a-z0-9-]+$/),
+            label: z.string().min(1).max(48),
+            note: z.string().max(60).optional(),
+            col: z.number().int().min(0).max(5),
+            row: z.number().int().min(0).max(6),
+            tone: z
+              .enum(["plain", "accent", "data", "warn", "muted"])
+              .default("plain"),
+          })
+          .strict(),
+      )
+      .min(2)
+      .max(16),
+    edges: z
+      .array(
+        z
+          .object({
+            from: z.string(),
+            to: z.string(),
+            label: z.string().max(36).optional(),
+            dashed: z.boolean().optional(),
+            bend: z.number().int().min(-3).max(3).optional(),
+          })
+          .strict(),
+      )
+      .max(24),
+  })
+  .strict()
+  .superRefine((d, ctx) => {
+    const ids = new Set(d.nodes.map((n) => n.id));
+    if (ids.size !== d.nodes.length)
+      ctx.addIssue({ code: "custom", message: "Duplicate diagram node id" });
+    const cells = new Set(d.nodes.map((n) => `${n.col},${n.row}`));
+    if (cells.size !== d.nodes.length)
+      ctx.addIssue({ code: "custom", message: "Two diagram nodes share a cell" });
+    for (const e of d.edges)
+      if (!ids.has(e.from) || !ids.has(e.to) || e.from === e.to)
+        ctx.addIssue({
+          code: "custom",
+          message: `Diagram edge ${e.from} → ${e.to} needs two different existing nodes`,
+        });
+  });
+export type Diagram = z.infer<typeof diagramSchema>;
 export type Responses = Record<string, string>;
 export const sceneSchema = z.object({
   id: z.string(),
@@ -73,6 +126,7 @@ export const sceneSchema = z.object({
     })
     .strict()
     .optional(),
+  diagram: diagramSchema.optional(),
   note: z.string().optional(),
 });
 export type Scene = z.infer<typeof sceneSchema>;
