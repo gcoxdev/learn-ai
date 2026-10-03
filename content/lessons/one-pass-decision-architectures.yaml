@@ -1,0 +1,407 @@
+schema_version: 0.2-draft
+lesson:
+  id: one-pass-decision-architectures
+  version: 0.4.0-draft
+  title: How a decision model scores every option in one pass
+  state: draft
+  summary: Tally's four routes need four probabilities and no prose. Three published designs get there in different ways, and a fourth keeps its design secret. Work the numbers for each and see where each one breaks.
+  slot: M38.3
+  category: learning
+  archetype: mechanism
+  sources:
+    - title: "Laya model card (Convai Innovations, Hugging Face)"
+      url: https://huggingface.co/convaiinnovations/laya
+    - title: "CLM-v0.1-8B model card (Hugging Face)"
+      url: https://huggingface.co/sekkit/CLM-v0.1-8B
+    - title: "Introducing System One models and Jev (TypeSafe AI blog, September 2026)"
+      url: https://typesafe.ai/blog/introducing-system-one-models-and-jev
+    - title: "Representation Learning with Contrastive Predictive Coding (van den Oord et al., 2018)"
+      url: https://arxiv.org/abs/1807.03748
+    - title: "Learning Transferable Visual Models From Natural Language Supervision (CLIP, Radford et al., 2021)"
+      url: https://arxiv.org/abs/2103.00020
+    - title: "Efficient Intent Detection with Dual Sentence Encoders (Casanueva et al., 2020), the Banking77 dataset"
+      url: https://arxiv.org/abs/2003.04807
+objectives:
+  - id: objective.one-pass-decision-architectures
+    version: 1-draft
+    statement: A decision model scores every option from one read of the state, turns the scores into probabilities with a softmax, and can get the scores from option slots in an encoder, from an LLM's logits restricted to allowed tokens, or from similarities between cached option embeddings and a state embedding. Fixed option budgets limit how many options an architecture handles well.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - one-pass-decision-architectures.base
+      - one-pass-decision-architectures.transfer
+      - one-pass-decision-architectures.calculate
+    prerequisites:
+      - anyOf:
+          - objective.typed-decision-questions
+      - anyOf:
+          - objective.attention
+scenes:
+  - id: one-pass-decision-architectures.s1
+    title: One recipe, four engines
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.one-pass-decision-architectures
+    markdown: |-
+      A customer writes that a brake cable snapped. Tally's route question has four options (we'll leave out "other" here to keep the numbers small). How can a model turn that sentence into four probabilities without writing a word?
+
+      Every system in this module follows the same recipe. It gives each option a **score**, a real number where higher means a better fit, then squeezes the scores into probabilities with **softmax**, the function from the lesson on how a language model takes its next step:
+
+      $$p_i = \frac{e^{z_i}}{\sum_j e^{z_j}}$$
+
+      With scores $z$ = (0.4, −0.2, 1.1, 2.3) for billing, bookings, repairs, and safety, the exponentials are 1.49, 0.82, 3.00, and 9.97, which sum to about 15.29. The probabilities are 0.098, 0.054, 0.196, and 0.652.
+
+      The systems differ only in where the scores come from. The next three scenes open up three designs that have been published, and the last one covers the design that hasn't.
+    diagram:
+      caption: Every design reads the message once, produces one score per option, and ends in a softmax. They differ in the middle.
+      description: The message and the option list go into one model pass. From that pass, three alternative ways of getting a score for each option branch off, which are reading option slots in an encoder (as Laya does), reading the logits of the allowed answer tokens (as Nimble does), and comparing the message to cached option embeddings (as CLM does). All three feed a softmax, which outputs a probability for each option and a confidence.
+      nodes:
+        - id: input
+          label: Message + option list
+          col: 0
+          row: 1
+          tone: data
+        - id: model
+          label: One model pass
+          note: no decoding
+          col: 1
+          row: 1
+          tone: accent
+        - id: a
+          label: Option-slot readout
+          note: Laya
+          col: 2
+          row: 0
+        - id: b
+          label: Allowed-token logits
+          note: Nimble
+          col: 2
+          row: 1
+        - id: c
+          label: Similarity to cached options
+          note: CLM
+          col: 2
+          row: 2
+        - id: soft
+          label: Softmax
+          col: 3
+          row: 1
+          tone: accent
+        - id: out
+          label: Probabilities
+          note: one per option
+          col: 4
+          row: 1
+      edges:
+        - from: input
+          to: model
+        - from: model
+          to: a
+        - from: model
+          to: b
+        - from: model
+          to: c
+        - from: a
+          to: soft
+        - from: b
+          to: soft
+        - from: c
+          to: soft
+        - from: soft
+          to: out
+  - id: one-pass-decision-architectures.s2
+    title: Give each option its own slot
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.one-pass-decision-architectures
+    markdown: |-
+      Laya, from Convai Innovations, is built on ModernBERT-large, an **encoder**: a model that reads a whole text in both directions at once, like BERT, instead of left to right. Its model card describes an input that holds the message and the options, where every option gets its own `[MASK]` placeholder, a blank slot the encoder fills in with a vector.
+
+      After the encoder runs once, a small scoring head, trained from scratch, reads the vector at each slot and produces one number per option. Those are the scores $z_i$, and a softmax over that question's options gives the probabilities. Laya has 421M parameters in total.
+
+      Because attention (the lesson on queries, keys, and values) lets every slot look at the message and at the other options, each score is judged in context. All four of Tally's routes are scored in the same pass.
+
+      The catch is the **option budget**. The card says the English checkpoint reads 512 tokens and gives 192 of them to options, while the typed-decisions and multilingual checkpoints read 1,024 and give 256. With 192, Tally's four routes get 48 tokens each, enough for a label and a description. That budget matters again two scenes from now.
+  - id: one-pass-decision-architectures.s3
+    title: Borrow a language model's scores
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.one-pass-decision-architectures
+    markdown: |-
+      Secondary coverage describes Nimble, from Bespoke Labs, as a LoRA fine-tune of Qwen3.5-9B. (LoRA trains a small add-on instead of every weight.) Instead of generating an answer, it reads the model's **logits**, the raw score for every token in the vocabulary at the next position, and keeps only the logits for the allowed answer tokens.
+
+      This is the masking you saw in the lesson on constrained decoding, used for scoring instead of for generating. Tally's route words might get logits like billing 3.1, bookings 1.0, repairs 2.2, safety 4.0. The model's top token overall is "Sorry" at 5.0, which a free-running model would start writing. (This works cleanly when each answer starts with its own token, such as a letter or a one-token word.) Keeping only the four route words and applying softmax gives billing 0.251, bookings 0.031, repairs 0.102, safety 0.617.
+
+      The "Sorry" mass is thrown away and the rest is renormalized. One prompt is read, one set of logits is looked at, and no token is ever written.
+
+      :::mixup "A one-pass model is cheaper because it reads less carefully."
+      Every design here reads the whole message. The saving comes from skipping generation. A chat model that writes 30 tokens takes about 30 decode steps after reading; a one-pass scorer takes none.
+      :::
+  - id: one-pass-decision-architectures.s4
+    title: Compare the message to cached options
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.one-pass-decision-architectures
+    markdown: |-
+      CLM (Contrastive-LM, from researchers at Stanford and NVIDIA) takes a third route. A frozen Qwen3-8B encoder feeds two small **projection heads**, one for states and one for candidate actions. They map both into one shared space. Training uses a bidirectional **InfoNCE** loss, the contrastive loss from the lessons on self-supervised learning and on CLIP, which pulls matching pairs together and pushes mismatches apart.
+
+      Scoring is a similarity. **Cosine similarity** is 1 when two vectors point the same way and 0 when they're at right angles. In a simplified form, with state vector $\mathbf{s}$, option vectors $\mathbf{a}_i$, and a **temperature** $T$ that sharpens or flattens the result, the probability is:
+
+      $$p_i = \frac{\exp(\cos(\mathbf{s},\mathbf{a}_i)/T)}{\sum_j \exp(\cos(\mathbf{s},\mathbf{a}_j)/T)}$$
+
+      Option vectors don't depend on the message, so they can be computed once and reused. This is **action caching**. Per message, only the state is embedded. The CLM model card reports about 13 times faster than Jev with roughly 1,000 candidates (a vendor claim as of October 2026).
+
+      Here are all three scorers on Tally's four routes. Run it, then change `T`.
+
+      ```python run
+      import numpy as np
+
+      def softmax(z):
+          e = np.exp(np.array(z, dtype=float) - np.max(z))
+          return e / e.sum()
+
+      def show(label, p):
+          print(f"{label:<14}", "  ".join(f"{o}={x:.3f}" for o, x in zip(options, p)))
+
+      options = ["billing", "bookings", "repairs", "safety"]
+
+      # (a) one score per option, read at that option's own slot
+      show("a) slots", softmax([0.4, -0.2, 1.1, 2.3]))
+
+      # (b) full-vocabulary logits; keep only the four allowed answer tokens
+      vocab = {"billing": 3.1, "bookings": 1.0, "repairs": 2.2, "safety": 4.0, "Sorry": 5.0}
+      print("b) free pick:", max(vocab, key=vocab.get))
+      show("b) restricted", softmax([vocab[o] for o in options]))
+
+      # (c) cosine similarity between the state and cached option vectors
+      state = np.array([0.2, 0.9, 0.4])
+      opt_vecs = np.array([[0.9, 0.1, 0.0], [0.1, 0.8, 0.2], [0.3, 0.3, 0.8], [0.0, 0.7, 0.7]])
+      cos = opt_vecs @ state / (np.linalg.norm(opt_vecs, axis=1) * np.linalg.norm(state))
+      show("c) cosines", cos)
+      for T in (1.0, 0.1, 0.05):
+          show(f"c) T={T}", softmax(cos / T))
+      ```
+
+      The cosines are 0.297, 0.982, 0.714, and 0.915. At T = 1 the probabilities are nearly flat (0.312 for the winner, bookings). At T = 0.1 bookings gets 0.634.
+
+      :::predict At T = 0.05, does bookings' probability go up or down, and does the ranking change?
+      It goes up, to 0.791 in the last line of the output. The ranking doesn't change, because dividing every score by the same T keeps their order. Lower temperature only sharpens the gaps. That's why temperature is a calibration knob and not an accuracy knob.
+      :::
+  - id: one-pass-decision-architectures.s5
+    title: A fourth design, and where one pass runs out of room
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.one-pass-decision-architectures
+    markdown: |-
+      TypeSafe AI's Jev is the fourth design, and its mechanism is not public. TypeSafe says only that it uses "a new architecture, a new sampler" and a parallel sampler. Jev's documentation does say what goes in and what comes out, so you can use it and test it without knowing what's inside.
+
+      **Decode steps saved.** Tally's JSON reply is about 30 tokens, so a chat model decodes 30 times in sequence. All the designs above that disclose how they work need zero decode steps after the read.
+
+      **High-cardinality limits.** A fixed option budget stretches thin when the list is long. Laya shares its option tokens across a question's options: 192 ÷ 4 = 48 each for four routes. Banking77, a public dataset of customer-bank intents (Casanueva et al., 2020), has 77 labels. At the default 256-token budget that is 256 ÷ 77 ≈ 3.3 tokens per label, which matches the card's own "about 3 to 4". The card reports Laya at 0.425 accuracy on 77 labels against Jev's 0.870 on 72 labels, both measured by Convai, so the comparison is rough. Laya's card itself says Jev is better suited to 50 or more options. TypeSafe also says its speedups shrink on high-cardinality choices.
+
+      So before picking a design, count the options. Four routes suit any of them. Seventy-seven labels, or 1,000 candidates, call for cached embeddings or a test of how the model behaves at that size.
+  - id: one-pass-decision-architectures.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.one-pass-decision-architectures
+    markdown: Tally, a hardware store, a bank, a newsroom, and a vendor with a secret design test whether you can tell the scoring designs apart, work a softmax, and spot when a design runs out of room.
+    takeaway: |-
+      A decision model gives each option a score, from option slots, restricted token logits, or cached embedding similarities, then applies softmax. One read replaces dozens of decode steps, and the option budget limits how many options a design handles well.
+  - id: one-pass-decision-architectures.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.one-pass-decision-architectures
+    markdown: |-
+      Score every option, softmax the scores, and count how many options you have before choosing a design.
+navigation:
+  routes:
+    - id: route.core
+      scene_sequence:
+        - one-pass-decision-architectures.s1
+        - one-pass-decision-architectures.s2
+        - one-pass-decision-architectures.s3
+        - one-pass-decision-architectures.s4
+        - one-pass-decision-architectures.s5
+        - one-pass-decision-architectures.check
+      gate_refs:
+        - gate.core
+  scene_aliases:
+    one-pass-decision-architectures.recap: one-pass-decision-architectures.check
+assessment_families:
+  - id: one-pass-decision-architectures.base
+    objective_ref: objective.one-pass-decision-architectures
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask where the score for each option comes from (a slot, a token's logit, or a similarity), then remember that softmax turns every set of scores into probabilities.
+    remediation_scene: one-pass-decision-architectures.s2
+    variants:
+      - id: one-pass-decision-architectures.base.1
+        prompt: In a Laya-style model, how does each of Tally's four routes get its probability?
+        options:
+          - id: b
+            text: The model writes out each route name and counts how often each one appears
+          - id: a
+            text: Each route has its own slot that is scored, then softmax runs across all four routes
+          - id: c
+            text: The message is compared with each route by counting the words they share
+        answer: a
+        feedback: One encoder pass fills a slot per option, a small head scores each slot, and softmax makes the scores into probabilities. Nothing is written, and the scoring is learned rather than word counting.
+      - id: one-pass-decision-architectures.base.2
+        prompt: An LLM's logits are billing 3.1, safety 4.0, and a non-route token "Sorry" 5.0. A scorer keeps only the route tokens. What does it do?
+        options:
+          - id: c
+            text: Picks "Sorry", since it has the highest logit overall
+          - id: b
+            text: Keeps the route logits and applies softmax over only those tokens
+          - id: a
+            text: Divides each route logit by 5.0, the highest logit overall
+        answer: b
+        feedback: Restricting means ignoring every token outside the allowed set and renormalizing over what remains. The "Sorry" mass is dropped, not added back. Dividing by the maximum isn't softmax.
+      - id: one-pass-decision-architectures.base.3
+        prompt: A CLM-style scorer lowers its temperature from 1.0 to 0.1. What happens to the probabilities?
+        options:
+          - id: a
+            text: The leader gets more of the probability, and the ranking stays the same
+          - id: c
+            text: The probabilities flatten, and the ranking stays the same
+          - id: b
+            text: The leader gets more probability, and a different option may now win
+        answer: a
+        feedback: Dividing every score by a smaller T widens the gaps between them, which sharpens the distribution. Since all scores are scaled together, their order is unchanged. Temperature adjusts confidence, not the winner.
+      - id: one-pass-decision-architectures.base.4
+        prompt: Why can a CLM-style model be faster when there are 1,000 candidate actions?
+        options:
+          - id: c
+            text: It skips reading the message and only looks at the candidates
+          - id: b
+            text: It generates a short label for each candidate, in parallel
+          - id: a
+            text: Candidate vectors are computed once and reused across messages
+        answer: a
+        feedback: Option vectors don't depend on the message, so they can be cached. Per message, only the state is embedded and compared. The model still reads the message, and it never generates labels.
+      - id: one-pass-decision-architectures.base.5
+        prompt: Tally's chat model writes a 30-token JSON reply. A one-pass scorer answers the same four questions. How many decode steps does the scorer need after reading?
+        options:
+          - id: b
+            text: Four, one for each question
+          - id: c
+            text: Thirty, the same as the chat model, but done in parallel
+          - id: a
+            text: None, because the scores are available once the message is read
+        answer: a
+        feedback: The scores come out of the reading pass, so there is nothing left to generate. The chat model's 30 steps happen one after another because each token depends on the last.
+      - id: one-pass-decision-architectures.base.6
+        prompt: A Laya-style model shares a fixed budget of 256 option tokens across a question's options. Compared with a question with four options, what happens on a question with 77 labels?
+        options:
+          - id: a
+            text: Each label gets only a few tokens, so descriptions shrink to almost nothing
+          - id: c
+            text: Each label gets more tokens, because there are more labels to share them
+          - id: b
+            text: The budget grows automatically to fit the number of labels
+        answer: a
+        feedback: The budget is fixed, so more options means fewer tokens per option, about 3.3 each for Banking77's 77 labels (256 ÷ 77). A bigger list doesn't expand the budget.
+  - id: one-pass-decision-architectures.transfer
+    objective_ref: objective.one-pass-decision-architectures
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name which design the scenario uses, then ask what its score depends on (the option's slot, the allowed tokens, or cached vectors) and what limits it.
+    remediation_scene: one-pass-decision-architectures.s5
+    variants:
+      - id: one-pass-decision-architectures.transfer.1
+        prompt: A team scores "A", "B", "C", and "D" using an LLM's logits at the answer position. The model's top token overall is "Let", as in "Let me think". What does restricting to the four letters do?
+        options:
+          - id: c
+            text: It picks "Let", since that token is the model's strongest preference
+          - id: a
+            text: It ignores "Let" and compares only the four letters' scores
+          - id: b
+            text: It stops the model from reading the question
+        answer: a
+        feedback: Restricting to the allowed tokens removes "Let" from consideration and renormalizes over the four letters. The model still reads everything before the answer position.
+      - id: one-pass-decision-architectures.transfer.2
+        prompt: A hardware store has 1,000 product categories that change twice a year, and each message must be matched to one. Which design handles this best?
+        options:
+          - id: b
+            text: An encoder with a slot for each category, sharing 256 option tokens
+          - id: a
+            text: Cached category embeddings compared with the message embedding
+          - id: c
+            text: A one-token logit read, with every category given a single answer token
+        answer: a
+        feedback: Category vectors computed once can be reused for every message, and similarity scales to long lists. A fixed 256-token budget gives about 0.26 tokens per category, and a thousand single-token answers aren't practical.
+      - id: one-pass-decision-architectures.transfer.3
+        prompt: A buyer asks how Jev scores its options, and TypeSafe hasn't said. What can the buyer reasonably say?
+        options:
+          - id: c
+            text: It has to be a masked encoder, because that's the usual design
+          - id: b
+            text: Its mechanism is unpublished, so judge it by testing on your own data
+          - id: a
+            text: It must restrict logits, since all decision models do the same
+        answer: b
+        feedback: TypeSafe publishes the interface but not the architecture, so any claim about the inside is a guess. The designs differ across systems, so one can't be assumed from another.
+      - id: one-pass-decision-architectures.transfer.4
+        prompt: A team lowers softmax temperature from 1.0 to 0.1 hoping to raise accuracy. What is the likely result?
+        options:
+          - id: a
+            text: Accuracy stays the same, but the probabilities become more extreme
+          - id: c
+            text: Accuracy rises, since the correct option now gets more probability
+          - id: b
+            text: Accuracy falls, since sharper probabilities lose information
+        answer: a
+        feedback: The same scores in the same order pick the same winner, so accuracy doesn't move. Sharpening only changes how extreme the probabilities look, which can make a model over-confident.
+      - id: one-pass-decision-architectures.transfer.5
+        prompt: A bank's question has 77 intents. A Laya-style encoder scores much worse than a competitor on it, though it did well on a 4-option question. What is the most likely reason?
+        options:
+          - id: b
+            text: The encoder cannot read bank-related messages at all
+          - id: c
+            text: Softmax only works when there are fewer than ten options
+          - id: a
+            text: The fixed option budget leaves each intent only a few tokens
+        answer: a
+        feedback: The system did fine with four options, so reading isn't the problem. A fixed budget shared by 77 labels leaves each one too little room, and softmax handles any number of scores.
+  - id: one-pass-decision-architectures.calculate
+    objective_ref: objective.one-pass-decision-architectures
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Probability of an option = e^(its score) ÷ the sum of e^(score) over the allowed options. Useful values: e^1 = 2.718, e^2 = 7.389, e^3 = 20.09, e^4 = 54.60."
+    remediation_scene: one-pass-decision-architectures.s2
+    absolute_tolerance: 0.01
+    variants:
+      - id: one-pass-decision-architectures.calculate.1
+        prompt: Two options have scores 2 and 0. After softmax, what probability does the first option get?
+        answer: 0.88
+        feedback: e^2 = 7.389 and e^0 = 1, so 7.389 ÷ 8.389 ≈ 0.88.
+      - id: one-pass-decision-architectures.calculate.2
+        prompt: Four options all have the score 1.5. After softmax, what probability does each get?
+        answer: 0.25
+        feedback: Equal scores give equal exponentials, so each option gets 1 of 4 equal shares, 0.25.
+      - id: one-pass-decision-architectures.calculate.3
+        prompt: Three options have scores 0.693, 0, and 0 (and ln 2 ≈ 0.693, so e^0.693 ≈ 2). After softmax, what probability does the first option get?
+        answer: 0.5
+        feedback: The exponentials are 2, 1, and 1, which sum to 4, so the first option gets 2 ÷ 4 = 0.5.
+      - id: one-pass-decision-architectures.calculate.4
+        prompt: A message has cosine similarity 0.9 with option A and 0.5 with option B, and the temperature is T = 0.1. After softmax over the two, what probability does A get?
+        answer: 0.98
+        feedback: Dividing by 0.1 turns the scores into 9 and 5. The gap is 4, so A gets 1 ÷ (1 + e^−4) = 1 ÷ 1.018 ≈ 0.98.
+      - id: one-pass-decision-architectures.calculate.5
+        prompt: An LLM's logits are 3 for "billing", 2 for "safety", and 6 for the unallowed token "Sorry". Keeping only the two route tokens, what probability does "billing" get?
+        answer: 0.73
+        feedback: The 6 is dropped. The exponentials are 20.09 and 7.389, so 20.09 ÷ 27.48 ≈ 0.73.

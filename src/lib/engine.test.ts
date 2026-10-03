@@ -129,7 +129,7 @@ describe("objective evidence", () => {
 describe("dependency planning", () => {
   it("orders every system path by its actual prerequisites", () => {
     const plans = curriculum.recipes.map((r) => planPath(curriculum, r, []));
-    expect(plans).toHaveLength(15);
+    expect(plans).toHaveLength(curriculum.recipes.length);
     for (const plan of plans)
       for (const id of plan.remaining) {
         const obj = curriculum.objectives.find((o) => o.id === id)!;

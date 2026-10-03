@@ -104,8 +104,9 @@ describe("lesson return context", () => {
     expect(nextLesson(curriculum, first, origins[0], emptyProgress())?.id).toBe(
       "inputs-and-outputs",
     );
+    const lastModule = curriculum.catalog.at(-1)!;
     const last = curriculum.lessons.find(
-      (l) => l.id === "comparing-alternative-neural-models",
+      (l) => l.slot === `${lastModule.id}.${lastModule.lessons.length}`,
     )!;
     expect(
       nextLesson(curriculum, last, origins[0], emptyProgress()),

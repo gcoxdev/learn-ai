@@ -346,6 +346,21 @@
         <circle class="paper outlined" cx="340" cy="105" r="7" />
         <circle class="paper outlined" cx="340" cy="139" r="7" />
         <path class="faint-line dashed" d="M74 104v35h103" />
+      {:else if type === "decision-models"}
+        <!-- Messages in, one scoring pass, typed options with probabilities out. -->
+        {#each [32, 70, 108] as y (y)}
+          <rect class="paper outlined" x="62" y={y} width="62" height="22" rx="5" />
+          <path class="paper-line" d={`M71 ${y + 8}h40M71 ${y + 15}h26`} />
+        {/each}
+        <path class="faint-line" d="M124 43c30 0 34 37 58 37M124 81h58M124 119c30 0 34-39 58-39" />
+        <rect class="soft-fill outlined" x="182" y="58" width="64" height="44" rx="10" />
+        <path class="strong-line" d="M198 80h32m-9-9 9 9-9 9" />
+        <path class="faint-line" d="M246 80c22 0 22-42 44-42M246 80h44M246 80c22 0 22 42 44 42" />
+        <rect class="leaf-fill" x="290" y="30" width="86" height="16" rx="4" />
+        <rect class="ochre-fill" x="290" y="72" width="26" height="16" rx="4" />
+        <rect class="faint-line" x="290" y="114" width="12" height="16" rx="4" />
+        <circle class="paper outlined" cx="392" cy="38" r="9" />
+        <path class="line" d="m387 38 3.5 3.5 6.5-7" />
       {:else if type === "science"}
         <circle class="soft-fill" cx="138" cy="81" r="54" />
         <path

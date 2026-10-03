@@ -1,0 +1,404 @@
+schema_version: 0.2-draft
+lesson:
+  id: calibrated-decision-training
+  version: 0.4.0-draft
+  title: "Train for honest probabilities: proper scoring rules and RLCD"
+  state: draft
+  summary: A model that says "90% sure" and is right 60% of the time is dangerous to route by. Learn the scoring rules that make honesty the best strategy, and how a published recipe trains on them.
+  slot: M38.4
+  category: learning
+  archetype: mechanism
+  sources:
+    - title: "Laya model card (Convai Innovations, Hugging Face)"
+      url: https://huggingface.co/convaiinnovations/laya
+    - title: "Introducing System One models and Jev (TypeSafe AI blog, September 2026)"
+      url: https://typesafe.ai/blog/introducing-system-one-models-and-jev
+    - title: "Strictly Proper Scoring Rules, Prediction, and Estimation (Gneiting and Raftery, 2007)"
+      url: https://doi.org/10.1198/016214506000001437
+    - title: "On Calibration of Modern Neural Networks (Guo et al., 2017)"
+      url: https://arxiv.org/abs/1706.04599
+    - title: "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models (Shao et al., 2024), which introduced GRPO"
+      url: https://arxiv.org/abs/2402.03300
+objectives:
+  - id: objective.calibrated-decision-training
+    version: 1-draft
+    statement: A strictly proper scoring rule (log, Brier, spherical, or the ranked probability score for ordered answers) is maximized in expectation by reporting your true belief, while accuracy and linear scores are not. Rewarding such a score, with a group-mean baseline, trains honest probabilities, and a fitted temperature can repair leftover over-confidence.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - calibrated-decision-training.base
+      - calibrated-decision-training.transfer
+      - calibrated-decision-training.calculate
+    prerequisites:
+      - anyOf:
+          - objective.one-pass-decision-architectures
+      - anyOf:
+          - objective.calibrated-decisions
+scenes:
+  - id: calibrated-decision-training.s1
+    title: '"Ninety percent sure" had better mean it'
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.calibrated-decision-training
+    markdown: |-
+      Tally routes by confidence: act on 0.9 or above, ask a person below that. One week the model says "refund, 0.9" on 100 messages, and a person checks them. Only 60 were refund requests.
+
+      The lesson on turning a probability into a justified action called this **over-confidence**, and measured it with a **reliability table** (what the model said against what happened) and **expected calibration error (ECE)**, the average gap between the two. Tally's 0.9 has a real meaning of 0.6, so every threshold it chose is wrong.
+
+      Laya's model card reports the same problem on its own model: it ships over-confident, with a mean ECE of 0.466 before a final repair step. This lesson shows how to train for honest probabilities, and how to fix the leftovers.
+  - id: calibrated-decision-training.s2
+    title: A score that pays you for telling the truth
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.calibrated-decision-training
+    markdown: |-
+      Imagine paying the model after each message, based on the probabilities it reported and what turned out true. A **scoring rule** is that payment formula. It is **proper** if the model earns the most, on average, by reporting its true belief, and **strictly proper** if no other report ties.
+
+      For reported probability $q_y$ on the true option $y$, three standard rules are:
+
+      - **Log score:** $\ln q_y$
+      - **Brier score:** $-\sum_i (q_i - \mathbb{1}[i=y])^2$, the squared gaps to the true answer (negated, so higher is better)
+      - **Spherical score:** $q_y / \sqrt{\sum_i q_i^2}$
+
+      Suppose the model believes there's a 70% chance a message is a refund request. Its expected score if it reports 0.7 or 0.99 on "refund":
+
+      | Rule | Report 0.70 | Report 0.99 | Best report |
+      | --- | ---: | ---: | ---: |
+      | Log | −0.611 | −1.389 | 0.70 |
+      | Brier | −0.420 | −0.588 | 0.70 |
+      | Spherical | 0.762 | 0.703 | 0.70 |
+      | Linear ($q_y$) | 0.580 | 0.696 | 0.99 |
+      | Accuracy of the top pick | 0.70 | 0.70 | no preference |
+
+      For the log score at 0.7: 0.7 × ln 0.7 + 0.3 × ln 0.3 = −0.250 − 0.361 = −0.611. Run the search over all reports:
+
+      ```python run
+      import numpy as np
+
+      belief = 0.7                     # true chance the message is a refund request
+      reports = np.linspace(0.01, 0.99, 99)
+
+      rules = {
+          "log":       lambda q, y: np.log(q if y else 1 - q),
+          "brier":     lambda q, y: -((q - y) ** 2 + ((1 - q) - (1 - y)) ** 2),
+          "spherical": lambda q, y: (q if y else 1 - q) / np.sqrt(q**2 + (1 - q) ** 2),
+          "linear":    lambda q, y: q if y else 1 - q,
+      }
+      for name, rule in rules.items():
+          expected = [belief * rule(q, 1) + (1 - belief) * rule(q, 0) for q in reports]
+          print(f"{name:<10} best report = {reports[int(np.argmax(expected))]:.2f}")
+      ```
+
+      The log, Brier, and spherical rules all peak at 0.70. The linear rule peaks at 0.99, so it rewards exaggeration. Change `belief` to 0.55 and see the three honest rules follow it while the linear one still jumps to 0.99.
+
+      :::mixup "Just reward the model when its top pick is right."
+      Accuracy gives the same reward for reporting 0.51 and 0.99 on a correct pick, so nothing pushes confidence toward the truth. A model trained that way can end up far over-confident.
+      :::
+  - id: calibrated-decision-training.s3
+    title: Near misses should cost less when answers are ordered
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.calibrated-decision-training
+    markdown: |-
+      Urgency runs 0 to 3, and the truth for one message is level 2. Put all the probability on level 3 (a near miss) or all on level 0 (a far miss). Brier charges both the same: 2.
+
+      The **ranked probability score (RPS)** compares *cumulative* probabilities, the running total up to each level, with what happened:
+
+      $$\text{RPS} = \sum_{k=1}^{K-1}\big(F_k - O_k\big)^2$$
+
+      Here $F_k$ is the forecast's running total up to level $k$, and $O_k$ is 0 until the true level and 1 from then on (for truth 2, $O$ = 0, 0, 1). Lower is better, and some authors divide by $K-1$.
+
+      - All on level 3: running totals (0, 0, 0), so RPS = 0 + 0 + 1 = **1**.
+      - All on level 0: running totals (1, 1, 1), so RPS = 1 + 1 + 0 = **2**.
+
+      A spread forecast of (0.1, 0.2, 0.5, 0.2) has running totals (0.1, 0.3, 0.8), so RPS = 0.01 + 0.09 + 0.04 = **0.14**. A forecast of (0.5, 0.3, 0.1, 0.1) scores 0.25 + 0.64 + 0.01 = **0.90**. Laya's reward adds RPS for ordinal questions, and this is the effect that buys: the far miss costs more.
+
+      :::predict A model puts 0.9 on level 1 and the other 0.1 on level 3 when the truth is level 2. Is its RPS closer to the near-miss 1 or the far-miss 2?
+      Running totals are (0.0, 0.9, 0.9) against (0, 0, 1), giving 0 + 0.81 + 0.01 = 0.82. Level 1 is one step from the truth, so the cost is below the full near-miss penalty of 1.
+      :::
+  - id: calibrated-decision-training.s4
+    title: Training with noise and a group baseline
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.calibrated-decision-training
+    markdown: |-
+      Laya's model card describes its training recipe as RLCD, reinforcement learning for calibrated decisions, which TypeSafe AI also uses as a name. It works in four steps:
+
+      1. The policy (the model being trained) reports a distribution through its logits.
+      2. **Exploration** adds zero-mean Gaussian noise to those logits, so the model tries slightly different reports.
+      3. The reward is a strictly proper scoring rule (log plus spherical, plus RPS for ordinal questions).
+      4. The update is REINFORCE, the basic policy-gradient method, with a **group-mean baseline**: samples are scored against the average of their group, as in the GRPO lesson.
+
+      Take one message whose true option has logit gap 0 against its rival, and four noise samples of +1.0, −0.5, +0.4, and −0.9. Each sample's gap gives the true option probability 0.731, 0.378, 0.599, 0.289. The log-score rewards are −0.313, −0.974, −0.513, −1.241, with mean −0.760, so the advantages are 0.447, −0.214, 0.247, −0.481.
+
+      ```python run
+      import numpy as np
+
+      gap = 0.0                                   # logit gap: true option minus the rival
+      noise = np.array([1.0, -0.5, 0.4, -0.9])    # four exploration samples (set by hand)
+      q_true = 1 / (1 + np.exp(-(gap + noise)))   # probability each sample gives the true option
+      reward = np.log(q_true)                     # log score, since the label is the true option
+      advantage = reward - reward.mean()          # group-mean baseline
+      print("probability:", q_true.round(3))
+      print("reward     :", reward.round(3))
+      print("advantage  :", advantage.round(3))
+      print("update direction:", round(float(np.mean(advantage * noise)), 3))
+      ```
+
+      The update direction is positive (0.271): samples with positive noise scored above their group, so the gap moves up toward the true label. A real model sees many messages whose labels disagree, and the proper reward is highest, on average, only when it reports each message's true rate.
+
+      :::papers The gradient behind RLCD
+      With $G$ samples of the noisy logits $\tilde z_i = z + \epsilon_i$, $\epsilon_i \sim \mathcal N(0,\sigma^2 I)$, and reward $r_i = S(\text{softmax}(\tilde z_i), y)$ for a proper score $S$:
+
+      $$\nabla_\theta J \approx \frac{1}{G}\sum_{i=1}^{G}\,(r_i-\bar r)\,\nabla_\theta \log \pi_\theta(\tilde z_i \mid x)$$
+
+      Here $G=4$, $\bar r=-0.760$, and for Gaussian noise $\nabla_z \log\pi = \epsilon_i/\sigma^2$, so, taking $\sigma = 1$, the update direction is the average of advantage times noise. TypeSafe hasn't published its own reward formula or architecture, so this is Laya's documented version. We use one logit gap as a simplification of the two logits.
+      :::
+  - id: calibrated-decision-training.s5
+    title: Repair what's left with one number
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.calibrated-decision-training
+    markdown: |-
+      Even after training, Laya's card reports over-confidence, and fixes it with **temperature refitting**: dividing the logits by one number $T$, chosen to fit held-out examples, as the calibrated decisions lesson showed. The card reports mean ECE falling from 0.466 to 0.081. It also reports Jev 1.13 at 0.246. Laya measured that on a competitor, and set it against its own post-refit 0.081, so treat it as one side's claim.
+
+      Dividing every logit by the same $T$ keeps their order, so the top pick and the accuracy don't change. Only the confidence does.
+
+      To see ECE by hand, take ten Tally messages, five at confidence 0.95 and five at 0.65. Three of the first five were right, and one of the second five.
+
+      ```python run
+      import numpy as np
+
+      conf = np.array([0.95, 0.95, 0.95, 0.95, 0.95, 0.65, 0.65, 0.65, 0.65, 0.65])
+      hit  = np.array([1,    1,    1,    0,    0,    1,    0,    0,    0,    0])
+
+      def ece(conf, hit, edges=(0.0, 0.5, 0.8, 1.01)):
+          total = 0.0
+          for lo, hi in zip(edges[:-1], edges[1:]):
+              m = (conf >= lo) & (conf < hi)
+              if m.any():
+                  gap = abs(hit[m].mean() - conf[m].mean())
+                  print(f"bin {lo:.1f}-{hi:.1f}: says {conf[m].mean():.2f}, right {hit[m].mean():.2f}")
+                  total += m.mean() * gap
+          return total
+
+      print("ECE =", round(ece(conf, hit), 3))
+      ```
+
+      The 0.65 bin says 0.65 but is right 0.20, a gap of 0.45. The 0.95 bin is right 0.60, a gap of 0.35. Each bin holds half the messages, so ECE = 0.5 × 0.45 + 0.5 × 0.35 = 0.40. Give the first five messages confidence 0.6 and the last five 0.2, the observed rates, and ECE falls to 0. Fit $T$ on one split of the data and report ECE on another, or the score will look better than the model really is.
+  - id: calibrated-decision-training.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.calibrated-decision-training
+    markdown: Tally, a hospital, a review site, a bank, and a vendor claim test whether you can pick a rule that rewards honesty, score an ordered forecast, follow a group-baseline update, and keep a recalibration honest.
+    takeaway: |-
+      A strictly proper scoring rule makes honest probabilities the best strategy, and accuracy and linear scores don't. Training on one with exploration noise and a group baseline, then refitting a temperature on held-out data, gives probabilities you can route by.
+  - id: calibrated-decision-training.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.calibrated-decision-training
+    markdown: |-
+      Pay the model with a strictly proper score and honesty is its best strategy. Then check the result on held-out data.
+navigation:
+  routes:
+    - id: route.core
+      scene_sequence:
+        - calibrated-decision-training.s1
+        - calibrated-decision-training.s2
+        - calibrated-decision-training.s3
+        - calibrated-decision-training.s4
+        - calibrated-decision-training.s5
+        - calibrated-decision-training.check
+      gate_refs:
+        - gate.core
+  scene_aliases:
+    calibrated-decision-training.recap: calibrated-decision-training.check
+assessment_families:
+  - id: calibrated-decision-training.base
+    objective_ref: objective.calibrated-decision-training
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask whether reporting your true belief gives the highest expected reward. If a different report scores higher, the rule is improper and rewards exaggeration.
+    remediation_scene: calibrated-decision-training.s2
+    variants:
+      - id: calibrated-decision-training.base.1
+        prompt: Tally trains a model with the reward "the probability it gave the true option" (a linear score). The model believes a message is a refund with probability 0.7. What will training push it to report?
+        options:
+          - id: c
+            text: 0.5, so it hedges between the two possible answers
+          - id: b
+            text: 0.7, since that matches its own belief about the message
+          - id: a
+            text: Near 1.0, since higher reports score more
+        answer: a
+        feedback: With a linear reward, the expected score is 0.7q + 0.3(1 − q), which rises all the way to q = 1. Proper rules such as log and Brier peak at the true belief instead.
+      - id: calibrated-decision-training.base.2
+        prompt: A team rewards a decision model with 1 point when its top option is correct and 0 otherwise. Why does that give poor probabilities?
+        options:
+          - id: b
+            text: It pays the same whether the model says 0.51 or 0.99 on a correct pick
+          - id: c
+            text: It cannot be computed when there are more than two options
+          - id: a
+            text: It punishes the model for ever reporting a probability below 0.5
+        answer: b
+        feedback: Accuracy looks only at which option is on top, so confidence is never rewarded or punished. A proper score also looks at how much probability the truth got.
+      - id: calibrated-decision-training.base.3
+        prompt: Why does the ranked probability score suit Tally's 0 to 3 urgency answer better than Brier does?
+        options:
+          - id: c
+            text: It gives its best score to the most confident forecasts
+          - id: a
+            text: It counts a one-level miss as smaller than a three-level miss
+          - id: b
+            text: It ignores the probabilities and scores the top level
+        answer: a
+        feedback: RPS compares running totals, so probability placed far from the truth costs more than probability placed nearby. Brier treats every wrong level alike.
+      - id: calibrated-decision-training.base.4
+        prompt: A group of four sampled reports scored -0.3, -1.0, -0.5, and -1.2, with a mean of -0.75. Which sample gets the largest positive advantage?
+        options:
+          - id: c
+            text: The one that scored -1.2, since it has the most room to improve
+          - id: b
+            text: The one that scored -1.0, since it is closest to the mean
+          - id: a
+            text: The one that scored -0.3, since it beat the group average the most
+        answer: a
+        feedback: The advantage is the reward minus the group mean, so the best-scoring sample gets +0.45 and the worst gets -0.45. The update moves toward noise that scored above the average.
+      - id: calibrated-decision-training.base.5
+        prompt: Tally refits a temperature T on held-out messages and divides all logits by it. What changes?
+        options:
+          - id: a
+            text: The confidence values change, while the top pick and accuracy stay the same
+          - id: b
+            text: Accuracy changes, because the winning option may now differ
+          - id: c
+            text: Nothing changes, because every logit is divided by the same number
+        answer: a
+        feedback: Dividing by one number keeps the logits in order, so the top pick is unchanged, but softmax gives different probabilities. That is exactly the effect a calibration repair wants.
+      - id: calibrated-decision-training.base.6
+        prompt: What does it mean for a scoring rule to be strictly proper?
+        options:
+          - id: c
+            text: It gives the maximum score whenever the top pick is correct
+          - id: b
+            text: It gives similar scores to any report close to the truth
+          - id: a
+            text: Reporting your true belief is the single best choice on average
+        answer: a
+        feedback: Strictly proper means the unique expected-score maximizer is the true belief. Rules that reward only the top pick, or that tie across many reports, don't push toward honesty.
+  - id: calibrated-decision-training.transfer
+    objective_ref: objective.calibrated-decision-training
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name the problem first (an improper reward, a missing order between answers, or a leaky evaluation), then pick the fix that targets it.
+    remediation_scene: calibrated-decision-training.s5
+    variants:
+      - id: calibrated-decision-training.transfer.1
+        prompt: A hospital trains its triage model with a reward of 1 for a correct top pick. Accuracy is good, but a "95% sure" label is right only 70% of the time. What change targets the problem?
+        options:
+          - id: b
+            text: Collect more correct picks so the model has more rewards to learn from
+          - id: a
+            text: Reward a strictly proper score such as log or Brier, then refit a temperature
+          - id: c
+            text: Lower the confidence threshold so more cases are handled automatically
+        answer: a
+        feedback: Accuracy rewards the winner and says nothing about confidence, so confidence drifts. A proper score pays for honest probabilities. Lowering the threshold only changes which wrong answers get through.
+      - id: calibrated-decision-training.transfer.2
+        prompt: A review site predicts a 1 to 5 star rating and scores forecasts with Brier. A forecast of 4 stars is penalized the same as a forecast of 1 star when the truth is 5. What is the best fix?
+        options:
+          - id: c
+            text: Switch to a linear score, which is simpler to compute and explain
+          - id: b
+            text: Treat each star level as its own separate yes/no question
+          - id: a
+            text: Switch to a ranked probability score (RPS)
+        answer: a
+        feedback: Ordered answers need a rule that sees distance, which RPS does through running totals. Brier counts all wrong levels the same, and a linear score would reward exaggeration on top.
+      - id: calibrated-decision-training.transfer.3
+        prompt: A bank's model has ECE 0.30. The team fits a temperature on its test set, measures ECE on that same set, and reports 0.03. What is the problem?
+        options:
+          - id: b
+            text: The temperature should have been fit before the model was trained
+          - id: a
+            text: The same data chose T and scored it, so the result looks too good
+          - id: c
+            text: A temperature cannot reduce the ECE of a trained model
+        answer: a
+        feedback: Choosing T on the test data fits it to that data, so the 0.03 flatters the model. Fit T on a validation split and report ECE on separate, untouched data.
+      - id: calibrated-decision-training.transfer.4
+        prompt: A vendor says, "We train with RLCD, so our probabilities are honest." What should a buyer do?
+        options:
+          - id: c
+            text: Accept it, since proper scoring rules guarantee honest probabilities
+          - id: a
+            text: Compute ECE and a reliability table on the buyer's own labeled data
+          - id: b
+            text: Ask for the vendor's reward formula and trust the model if it's proper
+        answer: a
+        feedback: A training recipe is a claim about method, not a measurement on your data. Laya says its own model shipped over-confident, and TypeSafe hasn't published its formula, so measure calibration yourself.
+      - id: calibrated-decision-training.transfer.5
+        prompt: Under the log score, why does reporting 0.99 on an option that is true only 90% of the time cost a model on average?
+        options:
+          - id: b
+            text: Log scores stop rewarding confidence once a report passes 0.9
+          - id: c
+            text: The log score subtracts a fixed penalty whenever q is above the true rate
+          - id: a
+            text: The 10% misses give ln(0.01) = −4.6 each, which outweighs the small gain on hits
+        answer: a
+        feedback: A confident miss is punished heavily by the log, so over-reporting loses more on the misses than it gains on the hits. The expected score peaks at the true rate, 0.9.
+      - id: calibrated-decision-training.transfer.6
+        prompt: In one training group, all eight sampled reports happen to receive the same reward. What does a group-mean baseline do with that group?
+        options:
+          - id: c
+            text: Pushes toward the sample with the largest noise
+          - id: b
+            text: Pushes toward the first sample, since the order is arbitrary
+          - id: a
+            text: Gives every sample an advantage of zero, so nothing is learned from it
+        answer: a
+        feedback: With identical rewards, each reward equals the group mean, so every advantage is zero. The group says nothing about which noise is better.
+  - id: calibrated-decision-training.calculate
+    objective_ref: objective.calibrated-decision-training
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Brier penalty = sum of squared gaps to the one-hot answer. RPS = sum of squared gaps between running totals and the 0-then-1 pattern, over the first K−1 levels. Log score = ln(probability on the true option)."
+    remediation_scene: calibrated-decision-training.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: calibrated-decision-training.calculate.1
+        prompt: A model reports probabilities (0.6, 0.3, 0.1) for three options, and the first option is true. What is the Brier penalty (sum of squared gaps to the true answer; lower is better)?
+        answer: 0.26
+        feedback: The gaps are 0.4, 0.3, and 0.1, and 0.16 + 0.09 + 0.01 = 0.26.
+      - id: calibrated-decision-training.calculate.2
+        prompt: A model reports (0.1, 0.7, 0.2) for three options, and the second option is true. What is the Brier penalty (sum of squared gaps to the true answer)?
+        answer: 0.14
+        feedback: The gaps are 0.1, 0.3, and 0.2, and 0.01 + 0.09 + 0.04 = 0.14.
+      - id: calibrated-decision-training.calculate.3
+        prompt: A model gives probability 0.8 to the true option. What is its log score, ln(0.8), to two decimals? (ln 0.8 ≈ −0.223.)
+        answer: -0.22
+        feedback: The log score is ln 0.8 ≈ −0.223, which rounds to −0.22.
+      - id: calibrated-decision-training.calculate.4
+        prompt: Urgency levels run 0 to 3, the true level is 2, and the model reports (0.1, 0.2, 0.5, 0.2). What is the ranked probability score (sum over the first three running totals)?
+        answer: 0.14
+        feedback: The running totals are 0.1, 0.3, 0.8, against 0, 0, 1. The squares are 0.01, 0.09, and 0.04, which sum to 0.14.
+      - id: calibrated-decision-training.calculate.5
+        prompt: Urgency levels run 0 to 3, the true level is 2, and the model reports (0.5, 0.3, 0.1, 0.1). What is the ranked probability score (sum over the first three running totals)?
+        answer: 0.9
+        feedback: The running totals are 0.5, 0.8, 0.9, against 0, 0, 1. The squares are 0.25, 0.64, and 0.01, which sum to 0.90.

@@ -1,0 +1,369 @@
+schema_version: 0.2-draft
+lesson:
+  id: typed-decision-questions
+  version: 0.4.0-draft
+  title: "Ask typed questions: choices, scores, and yes/no"
+  state: draft
+  summary: Tally's first list of routing options splits one worried customer across two near-identical labels, and no answer clears the bar. Learn to write options and thresholds that give usable answers.
+  slot: M38.2
+  category: learning
+  archetype: foundation
+  sources:
+    - title: TypeSafe AI documentation (primitives and patterns)
+      url: https://docs.typesafe.ai
+    - title: "Introducing System One models and Jev (TypeSafe AI blog, September 2026)"
+      url: https://typesafe.ai/blog/introducing-system-one-models-and-jev
+    - title: "Laya model card (Convai Innovations, Hugging Face)"
+      url: https://huggingface.co/convaiinnovations/laya
+objectives:
+  - id: objective.typed-decision-questions
+    version: 1-draft
+    statement: Decision questions come in three types (choice, score, and yes/no) whose options must be mutually exclusive, collectively exhaustive, and include an other or uncertain escape. Small atomic questions composed in code beat one giant question, and a probability is turned into an action with thresholds.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - typed-decision-questions.base
+      - typed-decision-questions.transfer
+      - typed-decision-questions.calculate
+    prerequisites:
+      - anyOf:
+          - objective.system-one-decisions
+scenes:
+  - id: typed-decision-questions.s1
+    title: Three kinds of question
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.typed-decision-questions
+    markdown: |-
+      Tally's four jobs from the last lesson aren't the same kind of question. TypeSafe AI's documentation names three **primitives**, the basic question types a decision model understands:
+
+      | Primitive | You supply | You get back | Tally example |
+      | --- | --- | --- | --- |
+      | **Choice** | A list of options | A probability for each option | Route: billing, bookings, repairs, safety, or other |
+      | **Score** | Ordered levels, each described | A probability for each level | Urgency: 0 whenever, 1 this week, 2 today, 3 right now |
+      | **Noul** | One yes/no statement | P(true), from 0 to 1 | Is the customer asking for money back? |
+
+      "Noul" is TypeSafe's name for the yes/no primitive. Its docs say a choice can have up to 255 options, and that many questions can ride in one call, each evaluated on its own.
+
+      Why separate score from choice? Because the levels have an order. Guessing urgency 2 when the truth is 3 is a near miss; guessing 0 is a disaster. A plain choice question treats every wrong answer as equally wrong, and a score question lets training and evaluation notice the difference. The next lessons use that.
+  - id: typed-decision-questions.s2
+    title: Options are a contract
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.typed-decision-questions
+    markdown: |-
+      Tally's first attempt at the route question lists six options: *billing, refunds, bookings, repairs, safety, bike problems.* A customer writes that a pedal fell off and they twisted an ankle. Is that repairs, safety, or bike problems? All three fit, so probability spreads across them and nothing stands out.
+
+      A good option list has three properties:
+
+      - **Mutually exclusive.** A message fits one option best. Refunds overlap billing, and "bike problems" overlaps repairs and safety.
+      - **Collectively exhaustive.** Some option always fits.
+      - **An escape.** Include *other / unclear*, so a message that fits nothing doesn't get forced onto the nearest label, and your code can see the doubt.
+
+      Give each option a one-line description. Jev's docs describe each score level this way, and clear wording helps whoever labels your test messages too. Tally's rewrite:
+
+      - *billing:* charges, deposits, and refunds for money already paid.
+      - *bookings:* reserving, changing, or cancelling a rental.
+      - *repairs:* a bike needs fixing and nobody is hurt.
+      - *safety:* an injury, a crash, or an immediate danger.
+      - *other / unclear:* anything else, or too vague to tell.
+
+      :::predict Tally splits "safety" into "accident" and "injury". The model is sure the message is safety-related, with 0.80 probability on the pair. What do the options show, and what happens at a 0.7 **threshold** (the lowest probability at which Tally's code acts without a person)?
+      Probability divides between near-twins, perhaps 0.45 and 0.35. Neither option reaches 0.7, so a message the model was sure about gets sent to a person. Merging them back into one safety option restores 0.80.
+      :::
+
+      :::mixup "More options mean more precise answers."
+      Extra options help only when they're different from each other. Overlapping options split the probability between them, so every answer looks less confident than it really is.
+      :::
+  - id: typed-decision-questions.s3
+    title: Ask small questions and combine them in code
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.typed-decision-questions
+    markdown: |-
+      Tally could ask one giant question whose options are every combination of answers: 5 routes × 4 urgency levels × 2 refund answers × 2 phishing answers = 80 options, each needing a description. Or it can ask four **atomic** questions, one idea each, with 5 + 4 + 2 + 2 = 13 probabilities in all.
+
+      Atomic questions win for three reasons. They're easier to write and check, since each option list is short. A mistake in one question doesn't contaminate the rest, and TypeSafe's docs note that questions in a call are evaluated in isolation. And the combining happens in your own code, where the rules are visible: *if route is safety and urgency is at least 2, page the on-call manager.* The docs' advice is to "keep code in control and give System One narrow, structured decisions."
+
+      :::predict Tally adds a language question (English, Spanish, or other). How many options would the giant question need, and how many probabilities do the atomic questions need?
+      The giant question grows to 80 × 3 = 240 options. The atomic version adds one three-option question, 13 + 3 = 16 probabilities. Each new fact multiplies a giant question but only adds to a set of small ones.
+      :::
+  - id: typed-decision-questions.s4
+    title: From probability to action
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.typed-decision-questions
+    markdown: |-
+      The docs summarize the division of labor in one line: the answer tells you *what*, and confidence tells you *whether to act*. Vendors don't all define confidence the same way, and TypeSafe hasn't published its formula, so Tally uses a simple one it can inspect: the probability of the top option.
+
+      | Route probabilities (top two shown) | Top | Gap to second |
+      | --- | ---: | ---: |
+      | safety 0.74, repairs 0.10 | 0.74 | 0.64 |
+      | safety 0.40, repairs 0.38 | 0.40 | 0.02 |
+
+      Both answers are "safety", but only the first deserves action.
+
+      A yes/no question needs two thresholds, not one. Suppose the model says P(refund) = 0.62. A single 0.5 line would call it "yes" and start a refund, which is costly if wrong. Tally uses a band instead: at 0.9 or above, start the refund flow; at 0.1 or below, say no; anything between goes to a person. At 0.62, a person looks at it. The gap column shows the same idea for choices: a 0.02 gap means the model can't separate its top two.
+
+      Laya's model card warns that its yes/no questions can follow the wording of their option labels instead of the state. So write neutral labels, and test a reworded version of each question on messages whose answers you know.
+  - id: typed-decision-questions.s5
+    title: A tiny schema checker and decider
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.typed-decision-questions
+    markdown: |-
+      Here are the two pieces of code every decision-model integration needs. `validate` checks that the answers fit your schema, and `decide` turns probabilities into a typed answer plus a yes/no on whether to act.
+
+      ```python run
+      SCHEMA = {"route": ("choice", ["billing", "bookings", "repairs", "safety", "other"]),
+                "urgency": ("score", [0, 1, 2, 3]),
+                "refund": ("noul", [True, False])}
+
+      def validate(answers):
+          problems = []
+          for name, (kind, options) in SCHEMA.items():
+              p = answers.get(name, [])
+              if len(p) != len(options):
+                  problems.append(f"{name}: expected {len(options)} probabilities")
+              elif abs(sum(p) - 1) > 1e-6:
+                  problems.append(f"{name}: probabilities sum to {sum(p):.2f}, not 1")
+          return problems
+
+      def decide(name, probs, act_at=None):
+          kind, options = SCHEMA[name]
+          if act_at is None:
+              act_at = 0.9 if kind == "noul" else 0.7   # yes/no needs the stricter band
+          top = max(range(len(probs)), key=lambda i: probs[i])
+          return {"question": name, "answer": options[top],
+                  "confidence": probs[top], "act": probs[top] >= act_at}
+
+      good = {"route": [0.05, 0.05, 0.10, 0.74, 0.06],
+              "urgency": [0.02, 0.10, 0.22, 0.66],
+              "refund": [0.62, 0.38]}
+      print("problems:", validate(good))
+      for name, probs in good.items():
+          print(decide(name, probs))
+
+      bad = {"route": [0.5, 0.5], "urgency": [0.25] * 4, "refund": [0.7, 0.2]}
+      print("problems:", validate(bad))
+      ```
+
+      The route clears the 0.7 bar (safety, 0.74), so Tally acts. Urgency (3, at 0.66) misses 0.7, and the refund (yes, at 0.62) misses its stricter 0.9 bar, so those two go to a person. A top probability of 0.9 or more on a yes/no question is the same as P(true) at 0.9 or above or at 0.1 or below. The bad payload fails twice: route has two probabilities for five options, and refund sums to 0.90.
+
+      Try `decide("urgency", good["urgency"], act_at=0.6)` and see the answer change. For a score question, you could also report the expected level instead of the top one: 0×0.02 + 1×0.10 + 2×0.22 + 3×0.66 = 2.52.
+  - id: typed-decision-questions.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.typed-decision-questions
+    markdown: Tally, an airline, a restaurant, a bank, and a clinic test whether you can pick the right question type, repair a muddled option list, and turn a probability into an action.
+    takeaway: |-
+      Use choice for one of several options, score for ordered levels, and noul for yes/no. Keep options distinct and exhaustive with an "other" escape, ask atomic questions and combine them in code, and act only when the probability clears a threshold.
+  - id: typed-decision-questions.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.typed-decision-questions
+    markdown: |-
+      Write short, distinct option lists with an escape, ask one idea per question, and let your own code turn probabilities into actions.
+navigation:
+  routes:
+    - id: route.core
+      scene_sequence:
+        - typed-decision-questions.s1
+        - typed-decision-questions.s2
+        - typed-decision-questions.s3
+        - typed-decision-questions.s4
+        - typed-decision-questions.s5
+        - typed-decision-questions.check
+      gate_refs:
+        - gate.core
+  scene_aliases:
+    typed-decision-questions.recap: typed-decision-questions.check
+assessment_families:
+  - id: typed-decision-questions.base
+    objective_ref: objective.typed-decision-questions
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Match the question to the answer's shape (one of a list, an ordered level, or yes/no), then check the options overlap nowhere and leave nothing out.
+    remediation_scene: typed-decision-questions.s1
+    variants:
+      - id: typed-decision-questions.base.1
+        prompt: Tally wants to rate urgency from 0 (whenever) to 3 (right now), with each level described. Which question type fits?
+        options:
+          - id: b
+            text: A choice, since it picks one answer from a list
+          - id: a
+            text: A score, since the levels have an order
+          - id: c
+            text: A noul, asked once for every level separately
+        answer: a
+        feedback: Urgency levels are ordered, so a score question lets a near miss count as nearer than a far one. A plain choice treats a wrong 2 and a wrong 0 alike. A noul answers a single yes/no.
+      - id: typed-decision-questions.base.2
+        prompt: Tally's route options include both "billing" and "refunds", and a refund-for-a-double-charge message gets 0.38 and 0.36 on the two. What is the underlying problem?
+        options:
+          - id: c
+            text: The model is poorly calibrated and needs retraining
+          - id: b
+            text: The options overlap, so probability splits between them
+          - id: a
+            text: The message is too short for any model to read
+        answer: b
+        feedback: When two options both fit, probability divides between them and no answer looks confident. Merge them, or write descriptions that separate the cases. Retraining wouldn't fix an ambiguous list.
+      - id: typed-decision-questions.base.3
+        prompt: Why add an "other / unclear" option to the route question?
+        options:
+          - id: a
+            text: A message that fits nothing isn't forced onto a wrong route
+          - id: c
+            text: It raises the probability of the best of the real options
+          - id: b
+            text: It makes every option list the same length
+        answer: a
+        feedback: Without an escape, the model has to put a message somewhere, and the wrong route can look confident. An "other" option gives the code a signal to ask a person. It doesn't raise the other options' probabilities.
+      - id: typed-decision-questions.base.4
+        prompt: Why does Tally ask four atomic questions instead of one question with 80 combined options?
+        options:
+          - id: c
+            text: Atomic questions have more options, which gives finer answers
+          - id: a
+            text: Each question is easier to check, and code combines the answers
+          - id: b
+            text: A single question can only be about one thing at a time
+        answer: a
+        feedback: Small option lists are easier to write and test, and mistakes stay inside one question. The combining rules live in visible code. A giant question can be asked, but it hides all of that.
+      - id: typed-decision-questions.base.5
+        prompt: Tally's model says P(refund) = 0.62. The rules are to start the refund flow at 0.9 or above and say no at 0.1 or below. What happens?
+        options:
+          - id: b
+            text: The refund starts, since 0.62 is above 0.5
+          - id: c
+            text: The message is marked "no refund", since 0.62 is below 0.9
+          - id: a
+            text: A person reviews it, since 0.62 sits in the middle band
+        answer: a
+        feedback: Between the two thresholds the model hasn't earned an automatic action in either direction. A single 0.5 line would act on a coin-flip-ish answer, and the "no" rule applies only at 0.1 or below.
+      - id: typed-decision-questions.base.6
+        prompt: A route answer comes back "repairs" with confidence 0.41, and Tally's threshold is 0.7. What should the code do?
+        options:
+          - id: c
+            text: Act on repairs, because it is still the most likely option
+          - id: b
+            text: Ask the model again until the confidence reaches 0.7
+          - id: a
+            text: Send the message to a person or a second check
+        answer: a
+        feedback: The answer says what the model prefers, and the confidence says whether to act. At 0.41 the model is unsure, and asking again returns the same score unless the input changes.
+  - id: typed-decision-questions.transfer
+    objective_ref: objective.typed-decision-questions
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Name the answer's shape first, then look for overlapping options, missing options, or combined questions, and fix that one problem.
+    remediation_scene: typed-decision-questions.s2
+    variants:
+      - id: typed-decision-questions.transfer.1
+        prompt: A restaurant wants to record how spicy each guest wants a dish, from mild through medium and hot to extra hot. Which question type fits?
+        options:
+          - id: b
+            text: A choice, since there are four named options to pick from
+          - id: c
+            text: A noul, since each guest either wants spicy or doesn't
+          - id: a
+            text: A score, since the heat levels form an ordered scale
+        answer: a
+        feedback: The levels run in order, so being off by one level is a smaller miss than being off by three, and a score question keeps that order. A noul would reduce four levels to a single yes/no.
+      - id: typed-decision-questions.transfer.2
+        prompt: An airline lists reasons for a complaint as "delay", "late flight", "cancellation", and "baggage". Which fix helps most?
+        options:
+          - id: a
+            text: Merge "delay" and "late flight" and add an "other" option
+          - id: b
+            text: Add "long delay" and "short delay" so there are more options
+          - id: c
+            text: Remove "baggage" so the list stays short
+        answer: a
+        feedback: Delay and late flight mean the same thing, so they split probability between them, and the list also has no place for complaints about food or staff. Adding more near-twins makes the split worse.
+      - id: typed-decision-questions.transfer.3
+        prompt: A bank wants six complaint categories plus three yes/no flags. A developer plans one question listing every combination. How many options is that, and what is the better design?
+        options:
+          - id: c
+            text: 9 options, which is fine as one question
+          - id: b
+            text: 48 options, so ask one question per idea and combine in code
+          - id: a
+            text: 54 options, so ask one question per idea and combine in code
+        answer: b
+        feedback: Six categories times three yes/no flags is 6 × 2 × 2 × 2 = 48 options. Four small questions need only 6 + 2 + 2 + 2 = 12 probabilities and are easier to check. Counting each flag as 3 gives 54, which is a miscount.
+      - id: typed-decision-questions.transfer.4
+        prompt: A bank blocks a card payment automatically only at fraud probability 0.95 or above, and clears it at 0.20 or below. A payment scores 0.55. What should happen?
+        options:
+          - id: c
+            text: Block it, since fraud is more likely than not
+          - id: a
+            text: Send it to an analyst, since it sits between the thresholds
+          - id: b
+            text: Clear it, since 0.55 is below the blocking threshold
+        answer: a
+        feedback: Neither automatic action is justified at 0.55, so a person decides. Blocking at "more likely than not" would freeze many good payments, and clearing it would let many bad ones through.
+      - id: typed-decision-questions.transfer.5
+        prompt: A support team writes refund options as "Yes, definitely", "Probably", and "No". What is the better design?
+        options:
+          - id: b
+            text: Keep the three options and treat "Probably" as a yes
+          - id: c
+            text: Add "Maybe", so the model has an option for every degree of doubt
+          - id: a
+            text: Ask a yes/no question and read the doubt from its probability
+        answer: a
+        feedback: A yes/no question already returns how sure the model is, as P(true). Putting degrees of doubt into the options overlaps them and makes the probabilities hard to read. More hedge words would add more overlap.
+      - id: typed-decision-questions.transfer.6
+        prompt: A team asks "Is this message safe to auto-reply?" and gets different answers when they reword it as "Is this message unsafe to auto-reply?" Accuracy on known examples falls. What is the best next step?
+        options:
+          - id: c
+            text: Keep the first wording and skip further tests, since it worked once
+          - id: b
+            text: Average the two wordings and assume the result is right
+          - id: a
+            text: Test each wording on labeled messages and keep the one that scores better
+        answer: a
+        feedback: Yes/no questions can follow the wording of their labels instead of the message, so compare wordings on messages with known answers. Averaging without testing hides the problem, and one good run isn't a test.
+  - id: typed-decision-questions.calculate
+    objective_ref: objective.typed-decision-questions
+    task: base
+    response_type: numeric
+    points: 1
+    hint: Multiply the option counts for the giant question, add them for the atomic questions (a yes/no counts as 2), then subtract.
+    remediation_scene: typed-decision-questions.s3
+    absolute_tolerance: 0.01
+    variants:
+      - id: typed-decision-questions.calculate.1
+        prompt: One giant question would combine 4 routes, 4 urgency levels, and two yes/no flags. Atomic questions ask each separately. How many fewer probabilities do the atomic questions need?
+        answer: 52
+        feedback: The giant question has 4 × 4 × 2 × 2 = 64 options. The atomic ones need 4 + 4 + 2 + 2 = 12. The difference is 52.
+      - id: typed-decision-questions.calculate.2
+        prompt: A desk combines 5 routes, 4 urgency levels, and one yes/no flag into a single question, or asks three atomic questions. How many fewer probabilities do the atomic questions need?
+        answer: 29
+        feedback: 5 × 4 × 2 = 40 combined options, against 5 + 4 + 2 = 11. The difference is 29.
+      - id: typed-decision-questions.calculate.3
+        prompt: A giant question would combine 3 routes, 3 urgency levels, and one yes/no flag. Atomic questions ask each separately. How many fewer probabilities do the atomic questions need?
+        answer: 10
+        feedback: 3 × 3 × 2 = 18 combined options, against 3 + 3 + 2 = 8. The difference is 10.
+      - id: typed-decision-questions.calculate.4
+        prompt: A giant question would combine 6 routes, 4 urgency levels, and one yes/no flag. Atomic questions ask each separately. How many fewer probabilities do the atomic questions need?
+        answer: 36
+        feedback: 6 × 4 × 2 = 48 combined options, against 6 + 4 + 2 = 12. The difference is 36.
+      - id: typed-decision-questions.calculate.5
+        prompt: A giant question would combine 4 routes, 4 urgency levels, and three yes/no flags. Atomic questions ask each separately. How many fewer probabilities do the atomic questions need?
+        answer: 114
+        feedback: 4 × 4 × 2 × 2 × 2 = 128 combined options, against 4 + 4 + 2 + 2 + 2 = 14. The difference is 114.

@@ -1,0 +1,416 @@
+schema_version: 0.2-draft
+lesson:
+  id: system-one-decisions
+  version: 0.4.0-draft
+  title: "Decisions, not strings: what a System One model is"
+  state: draft
+  summary: Tally's support desk gets 20,000 messages a day and needs four tiny answers from each. A chat model writes paragraphs to give them. A decision model reads once and returns probabilities instead.
+  slot: M38.1
+  category: learning
+  archetype: foundation
+  sources:
+    - title: "Introducing System One models and Jev (TypeSafe AI blog, September 2026)"
+      url: https://typesafe.ai/blog/introducing-system-one-models-and-jev
+    - title: TypeSafe AI documentation
+      url: https://docs.typesafe.ai
+    - title: "Laya model card (Convai Innovations, Hugging Face)"
+      url: https://huggingface.co/convaiinnovations/laya
+    - title: "CLM-v0.1-8B model card (Hugging Face)"
+      url: https://huggingface.co/sekkit/CLM-v0.1-8B
+    - title: "System One models and Jev: what they are and how they work (DataCamp, September 2026)"
+      url: https://www.datacamp.com/blog/system-one-models-jev
+    - title: "OpenAI DevDay 2026 recap (OpenAI, September 29, 2026)"
+      url: https://openai.com/index/devday-2026-recap/
+objectives:
+  - id: objective.system-one-decisions
+    version: 1-draft
+    statement: A System One decision model takes a state and a closed set of typed questions and returns a probability for every allowed answer in one pass, with no token-by-token decoding. Its output always fits the schema, but the chosen answer can still be wrong, and open-ended work needs a chat model.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - system-one-decisions.base
+      - system-one-decisions.transfer
+      - system-one-decisions.calculate
+    prerequisites:
+      - anyOf:
+          - objective.next-token
+scenes:
+  - id: system-one-decisions.s1
+    title: Four tiny answers, 20,000 times a day
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.system-one-decisions
+    markdown: |-
+      Tally is the support desk of a small bike-rental company. About 20,000 messages arrive every day, and each one needs the same four small answers:
+
+      - **Route:** billing, bookings, repairs, safety, or other?
+      - **Urgency:** 0 (whenever) up to 3 (right now).
+      - **Refund request?** yes or no.
+      - **Phishing?** yes or no.
+
+      Take this message: *"The brake cable on my rental snapped on the hill. I'm fine, but I want my deposit back."* A sensible desk answers: safety, urgency 3, refund yes, phishing no.
+
+      Today a frontier chat model does this job. It takes about 2 seconds per message and costs about \$0.004. (Those numbers are invented for this module; real figures depend on the model, the prompt, and the provider.) At 20,000 messages that's \$80 a day, nearly \$29,200 a year, and a human can't see a safety message until the model finishes typing a block of JSON just to say "safety".
+
+      The desk doesn't need the model to *write* anything. It needs to *choose* from lists it already knows.
+  - id: system-one-decisions.s2
+    title: Fast thinking, slow thinking, and where the seconds go
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.system-one-decisions
+    markdown: |-
+      In *Thinking, Fast and Slow* (2011), the psychologist Daniel Kahneman described two modes of thought. **System 1** is fast and automatic: you know a face is angry without working it out. **System 2** is slow and deliberate: you carry the 1 while multiplying 47 by 13.
+
+      A chat model behaves like System 2. As the lesson on how a language model takes its next step showed, it writes one token at a time, and each new token needs another pass through the whole model. Serving a model splits into two phases: **prefill** reads your whole prompt at once, and **decode** produces the reply one token after another (the lesson on prefill and decode covers both).
+
+      Say Tally's JSON answer is about 30 tokens (an invented figure). That's about 30 decode steps in a row, each waiting for the one before. The decode steps, not the reading, are where most of the 2 seconds and most of the bill go.
+
+      :::predict If a model could read Tally's message and the four answer lists, then pick from the lists right at the end of reading, how many decode steps would it need?
+      None. Reading (a prefill-style pass) already leaves the model with a score for each option. Picking the best one is arithmetic, not generation. That's the whole idea behind a **System One model**, the name TypeSafe AI uses for models that decide in one pass instead of writing an answer.
+      :::
+  - id: system-one-decisions.s3
+    title: State and options in, probabilities out
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.system-one-decisions
+    markdown: |-
+      A **decision model** takes two things. The **state** is text or JSON describing the situation (here, the customer's message). Alongside it come **typed questions**, each with a **closed answer set**: a list of allowed answers written down before the message arrives.
+
+      They're called "typed" because each question has a kind: pick one option, rate on an ordered scale, or answer yes/no (the next lesson covers all three). For every question, the model returns a probability for each allowed option, the best answer, and a **confidence**, a number saying how far to trust that best answer. For Tally's route question:
+
+      | Option | Probability |
+      | --- | ---: |
+      | billing | 0.05 |
+      | bookings | 0.05 |
+      | repairs | 0.10 |
+      | safety | 0.74 |
+      | other | 0.06 |
+
+      The probabilities sum to 1, so the model can say "probably safety, but repairs isn't impossible". A chat model's one-word answer hides that doubt.
+
+      You may wonder whether spam filters and other classifiers already did this. They did. What's new is that you write the question and its options at runtime in plain language, instead of collecting labeled data and training a fresh classifier for each question.
+    diagram:
+      caption: The decision model reads once and scores every allowed option. Nothing is generated.
+      description: The state, which is Tally's customer message, goes into the decision model, and so do the typed questions with their closed answer sets. The model makes one pass and outputs a probability for every option. The probabilities lead to an answer plus a confidence. That answer and confidence go to Tally's code, which reads the confidence and decides whether to act or ask a person.
+      nodes:
+        - id: state
+          label: State
+          note: the customer's message
+          col: 0
+          row: 0
+          tone: data
+        - id: questions
+          label: Typed questions
+          note: each with a closed answer set
+          col: 0
+          row: 1
+        - id: model
+          label: Decision model
+          note: one pass, no decoding
+          col: 2
+          row: 0
+          tone: accent
+        - id: out
+          label: Probabilities
+          note: one per allowed option
+          col: 3
+          row: 0
+        - id: conf
+          label: Answer + confidence
+          col: 3
+          row: 1
+        - id: code
+          label: Tally's code
+          note: acts, or asks a person
+          col: 4
+          row: 1
+          tone: warn
+      edges:
+        - from: state
+          to: model
+        - from: questions
+          to: model
+        - from: model
+          to: out
+        - from: out
+          to: conf
+        - from: conf
+          to: code
+          label: act or escalate
+  - id: system-one-decisions.s4
+    title: Tally's bill, worked out
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.system-one-decisions
+    markdown: |-
+      TypeSafe AI's Jev, a decision model announced in September 2026, is priced at \$0.042 per million input tokens, with output free, and TypeSafe reports 70 to 500 ms end to end. (These are the vendor's published claims as of October 2026.) Suppose each Tally message plus its question lists is 400 tokens (our invented figure).
+
+      - Cost per message: 400 ÷ 1,000,000 × \$0.042 = \$0.0000168.
+      - Per day: 20,000 × \$0.0000168 = \$0.336.
+      - Per year: about \$123, against about \$29,200 for the chat model.
+
+      | | Chat model (invented) | Decision model (vendor claim) |
+      | --- | ---: | ---: |
+      | Latency per message | about 2 s | 0.07 to 0.5 s |
+      | Cost per day (20,000 messages) | \$80 | \$0.34 |
+
+      Latency improves by 2 ÷ 0.5 = 4 times at the slow end and 2 ÷ 0.07 ≈ 29 times at the fast end.
+
+      :::predict Tally's volume doubles to 40,000 messages a day. What does each option cost per day?
+      The chat model: 40,000 × \$0.004 = \$160. The decision model: 40,000 × \$0.0000168 = \$0.672. Both costs grow in proportion to messages, so doubling volume doubles both bills.
+      :::
+  - id: system-one-decisions.s5
+    title: '"Can''t hallucinate" is not "can''t be wrong"'
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.system-one-decisions
+    markdown: |-
+      TypeSafe markets Jev as a model that can't hallucinate. Here's what that precisely means. The output always fits the schema: the model can't invent a fifth route called "money stuff" or return broken JSON. TypeSafe's own blog puts it this way: "Schema matching is guaranteed, thus we can confidently add 0% into the plots."
+
+      It does not mean the answer is right. If the brake-cable message came back as *bookings* with probability 0.9, that's a valid, confident, wrong answer. So you still measure accuracy on your own labeled messages, and the later lessons in this module show how to check whether the stated probabilities can be trusted.
+
+      :::mixup "A model that can't hallucinate gives correct answers."
+      A guaranteed format is not a guaranteed answer. A decision model can only pick from your list, so it can't invent an option. It can still pick the wrong one.
+      :::
+
+      **When not to use one.** Ask whether you can list every acceptable answer before the message arrives.
+
+      - *Yes:* routing, urgency, flags, choosing an agent's next action. Use a decision model.
+      - *No:* writing a reply, explaining why a message is urgent, or finding topics nobody has named yet. Use a chat model.
+
+      Many desks use both. The decision model routes the message and the chat model writes the apology for the brake-cable customer.
+  - id: system-one-decisions.s6
+    title: Who's building these, as of October 2026
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.system-one-decisions
+    markdown: |-
+      Five systems share the same interface (state and closed answer set in, probabilities out). They're weeks old, and nearly every number about them is a vendor claim, so treat this table as a map, not a ranking. The Nimble row comes from press coverage, not from Bespoke Labs' own post, and the Decisions API row from OpenAI's DevDay recap (links under Sources).
+
+      | System | Who | Access | How it scores options |
+      | --- | --- | --- | --- |
+      | Jev | TypeSafe AI | Hosted, early access | Not disclosed |
+      | Laya | Convai Innovations | Open weights (Apache 2.0) | Encoder with one slot per option |
+      | CLM | Researchers at Stanford and NVIDIA | Open weights (Apache 2.0) | Similarity between state and option embeddings |
+      | Nimble | Bespoke Labs | Open weights (Apache 2.0), per secondary reports | Reads the model's scores for allowed tokens |
+      | Decisions API | OpenAI, announced Sept 29, 2026 | Limited preview | Not announced |
+
+      The next lessons open up the first three mechanisms with numbers, then show how to train for honest probabilities and how to compare the systems fairly.
+  - id: system-one-decisions.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.system-one-decisions
+    markdown: Tally's desk, an insurance claims team, a newsroom, a hospital line, and a library test whether you can say what a decision model is good for, where its time goes, and what its guarantee covers.
+    takeaway: |-
+      A decision model reads a state and a closed list of options once and returns a probability for each, with no decoding, so it is fast and cheap for routing. Its answers always fit your list, but they can still be wrong.
+  - id: system-one-decisions.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.system-one-decisions
+    markdown: |-
+      If you can list every acceptable answer in advance, ask a decision model to score the list in one pass. Check its accuracy yourself; a valid format is not a correct answer.
+navigation:
+  routes:
+    - id: route.core
+      scene_sequence:
+        - system-one-decisions.s1
+        - system-one-decisions.s2
+        - system-one-decisions.s3
+        - system-one-decisions.s4
+        - system-one-decisions.s5
+        - system-one-decisions.s6
+        - system-one-decisions.check
+      gate_refs:
+        - gate.core
+  scene_aliases:
+    system-one-decisions.recap: system-one-decisions.check
+assessment_families:
+  - id: system-one-decisions.base
+    objective_ref: objective.system-one-decisions
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Ask what the job needs to produce. A fixed list of answers can be scored in one pass; free text must be generated one token at a time.
+    remediation_scene: system-one-decisions.s2
+    variants:
+      - id: system-one-decisions.base.1
+        prompt: Tally's chat model takes about 2 seconds to answer a message with a roughly 30-token JSON reply. Which part of that work is the main source of the delay?
+        options:
+          - id: c
+            text: Reading the customer's message, which has to happen one word at a time
+          - id: a
+            text: Writing the reply, since each token needs another pass through the model
+          - id: b
+            text: Looking up the routes, which the model keeps stored in a database
+        answer: a
+        feedback: Decoding produces tokens in sequence, and each step waits for the one before. Reading the prompt (prefill) happens in one parallel pass, and nothing is looked up in a database.
+      - id: system-one-decisions.base.2
+        prompt: Tally asks a decision model for a route. What does it return for that question?
+        options:
+          - id: b
+            text: One route name and a short sentence explaining why it was chosen
+          - id: a
+            text: A probability for each allowed route, plus the best route and a confidence
+          - id: c
+            text: A brand-new route name whenever none of the listed routes fits well
+        answer: a
+        feedback: A decision model scores the closed list it was given, so every option gets a probability. It doesn't write explanations, and it can't invent a new route name.
+      - id: system-one-decisions.base.3
+        prompt: A decision model returns "bookings, 0.9" for the brake-cable message that a person would send to safety. What does this show?
+        options:
+          - id: c
+            text: The model failed to follow Tally's schema, so the output is invalid
+          - id: b
+            text: The model made up a route that was not on Tally's list
+          - id: a
+            text: The output is valid, but the answer is wrong and confidently so
+        answer: a
+        feedback: 'Bookings is on the list, so the format is fine. A guaranteed schema says nothing about correctness, which is why Tally measures accuracy on labeled messages.'
+      - id: system-one-decisions.base.4
+        prompt: Which of these Tally jobs should stay with a chat model?
+        options:
+          - id: a
+            text: Writing an apology to the brake-cable customer
+          - id: b
+            text: Flagging whether a message looks like phishing or a scam
+          - id: c
+            text: Scoring how urgent a message is, from 0 to 3
+        answer: a
+        feedback: A personal reply is open-ended text, with no list of acceptable answers. Phishing flags and urgency scores both come from fixed answer sets, which a decision model scores in one pass.
+      - id: system-one-decisions.base.5
+        prompt: A decision model costs far less per message than a chat model on Tally's routing. What explains most of the saving?
+        options:
+          - id: b
+            text: It reads fewer words because it ignores the end of each message
+          - id: c
+            text: It uses simpler messages that customers wrote on purpose
+          - id: a
+            text: It pays for reading the input but not for generating an answer
+        answer: a
+        feedback: Decode steps are the main cost of a chat reply, and a decision model skips them. It still reads the whole message, and it doesn't need simpler input.
+      - id: system-one-decisions.base.6
+        prompt: Which setup can a decision model answer?
+        options:
+          - id: c
+            text: A message plus "work out what categories exist and why each fits"
+          - id: b
+            text: A message plus "write the best reply for this customer"
+          - id: a
+            text: A message plus four routes and four urgency levels written in advance
+        answer: a
+        feedback: A decision model needs the answer list before the message arrives, because it scores those options. Discovering categories or writing replies has no fixed list.
+  - id: system-one-decisions.transfer
+    objective_ref: objective.system-one-decisions
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: "Check two things: can every acceptable answer be listed in advance, and does anyone need an explanation or a written reply? Then pick the tool for each part."
+    remediation_scene: system-one-decisions.s5
+    variants:
+      - id: system-one-decisions.transfer.1
+        prompt: An insurance team must sort 2 million claims a month into auto, home, health, or other, and also email each customer a plain-language explanation. What is the best split?
+        options:
+          - id: b
+            text: A chat model for both, since it can already handle both jobs well enough
+          - id: a
+            text: A decision model for the sorting and a chat model for the emails
+          - id: c
+            text: A decision model for both, asking it to explain each claim it sorts
+        answer: a
+        feedback: Sorting uses a closed list and suits a one-pass scorer. The email is open-ended text, which needs generation. A decision model returns probabilities, not explanations.
+      - id: system-one-decisions.transfer.2
+        prompt: A newsroom wants to find the themes in 5,000 reader comments, but nobody has written a list of themes yet. Why is a decision model a poor fit?
+        options:
+          - id: c
+            text: Reader comments are too short for it to read
+          - id: b
+            text: Decision models cannot handle more than a few hundred inputs
+          - id: a
+            text: It scores a list of answers, and this job has no list yet
+        answer: a
+        feedback: A decision model needs the options in advance. Finding unknown themes means producing them, which is a job for a chat model, or for a decision model only after the themes are named.
+      - id: system-one-decisions.transfer.3
+        prompt: A pharmacy vendor says, "Our model can't hallucinate, so we skip accuracy testing on prescription routing." What is the flaw?
+        options:
+          - id: a
+            text: The guarantee covers the format, so correctness still needs testing
+          - id: b
+            text: The guarantee only applies to messages written in English
+          - id: c
+            text: Accuracy testing is only needed for models that write text
+        answer: a
+        feedback: A fixed schema means the model can't invent a ward or a malformed answer, not that it picks the right one. A wrong prescription route is still wrong, so test on labeled examples.
+      - id: system-one-decisions.transfer.4
+        prompt: A nurse line must route 100,000 messages a day to one of four departments, and each routing should be back in well under a second. Which approach fits best?
+        options:
+          - id: c
+            text: Ask a chat model for a one-word answer, which skips the decoding
+          - id: b
+            text: Write keyword rules and leave any message that matches nothing unrouted
+          - id: a
+            text: Score the four departments with a decision model and check its accuracy
+        answer: a
+        feedback: A closed list and a tight latency budget are the sweet spot for a one-pass scorer. Even a one-word chat reply still decodes at least one token, and keyword rules miss messages phrased in new ways.
+      - id: system-one-decisions.transfer.5
+        prompt: A vendor page says its decision model answers in 70 to 500 ms and calls this a "10x speedup." How should a buyer treat the claim?
+        options:
+          - id: b
+            text: As settled, since the vendor measured it on real workloads
+          - id: a
+            text: As a vendor claim to re-measure on the buyer's own messages
+          - id: c
+            text: As meaningless, since no decision model can be that fast
+        answer: a
+        feedback: Vendor-built evaluations may favor the vendor's own workloads, and TypeSafe itself says gains shrink on some tasks. Test your own data before relying on the number, but don't discard it either.
+      - id: system-one-decisions.transfer.6
+        prompt: A library already trains a classifier for each question it asks of patron emails, and every new question means collecting labels and retraining. What is new about a decision model?
+        options:
+          - id: c
+            text: It is the first kind of model that returns probabilities
+          - id: a
+            text: You can describe the question and options in text and try them at once
+          - id: b
+            text: It removes the need to measure accuracy on the library's emails
+        answer: a
+        feedback: Classic classifiers already return probabilities. The change is that the question and options are given at runtime in plain language, though the library should still test the new question on labeled emails.
+  - id: system-one-decisions.calculate
+    objective_ref: objective.system-one-decisions
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Cost for a decision model is tokens ÷ 1,000,000 × the price per million. For a chat reply, time is prefill plus one decode step per output token."
+    remediation_scene: system-one-decisions.s4
+    absolute_tolerance: 0.01
+    variants:
+      - id: system-one-decisions.calculate.1
+        prompt: A desk gets 30,000 messages a day, and a chat model costs 0.004 dollars per message. What does it cost per day, in dollars?
+        answer: 120
+        feedback: 30,000 × 0.004 = 120 dollars a day.
+      - id: system-one-decisions.calculate.2
+        prompt: Each message plus its questions is 500 tokens, a decision model charges 0.042 dollars per million input tokens (output free), and the desk sends 10,000 messages a day. What is the daily cost, in dollars?
+        answer: 0.21
+        feedback: 500 × 10,000 = 5,000,000 tokens, which is 5 million, and 5 × 0.042 = 0.21 dollars.
+      - id: system-one-decisions.calculate.3
+        prompt: A chat model reads a prompt in 0.3 seconds (prefill), then writes a 36-token answer at 25 ms per token. How many seconds does one answer take?
+        answer: 1.2
+        feedback: Decoding takes 36 × 0.025 = 0.9 seconds, and adding the 0.3 seconds of prefill gives 1.2 seconds.
+      - id: system-one-decisions.calculate.4
+        prompt: Each message plus its questions is 250 tokens, and a decision model charges 0.042 dollars per million input tokens. For 40,000 messages in a day, what is the cost, in dollars?
+        answer: 0.42
+        feedback: 250 × 40,000 = 10,000,000 tokens, which is 10 million, and 10 × 0.042 = 0.42 dollars.
+      - id: system-one-decisions.calculate.5
+        prompt: Tally's chat model takes 2 seconds per message, one message after another, and 20,000 messages arrive. How many hours of model time is that? (Answer to two decimals.)
+        answer: 11.11
+        feedback: 20,000 × 2 = 40,000 seconds, and 40,000 ÷ 3,600 ≈ 11.11 hours. Running requests in parallel changes the wall-clock time but not the work.

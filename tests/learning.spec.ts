@@ -608,7 +608,9 @@ test("the complete catalog exposes every lesson and opens a late case study", as
   page,
 }) => {
   await ready(page, "/library/?view=curriculum#M35");
-  await expect(page.locator(".curriculum-module")).toHaveCount(38);
+  await expect(page.locator(".curriculum-module")).toHaveCount(
+    data.catalog.length,
+  );
   await expect(page.locator(".curriculum-module li a")).toHaveCount(
     data.catalog.reduce((n, m) => n + m.lessons.length, 0),
   );
@@ -648,9 +650,14 @@ test("new project and final module drafts render and preserve the closing page o
         .analyze()
     ).violations,
   ).toEqual([]);
-  await ready(page, "/library/?view=curriculum#M37");
+  // The last lesson of the last catalog module has no next lesson.
+  const lastModule = (data as Curriculum).catalog.at(-1)!;
+  const lastLesson = (data as Curriculum).lessons.find(
+    (l) => l.slot === `${lastModule.id}.${lastModule.lessons.length}`,
+  )!;
+  await ready(page, `/library/?view=curriculum#${lastModule.id}`);
   await page
-    .locator('#M37 a[href*="/learn/comparing-alternative-neural-models/"]')
+    .locator(`#${lastModule.id} a[href*="/learn/${lastLesson.id}/"]`)
     .click();
   await page
     .getByRole("button", {
@@ -663,7 +670,7 @@ test("new project and final module drafts render and preserve the closing page o
   );
   await expect(
     ending.getByRole("link", { name: "Back to the curriculum" }),
-  ).toHaveAttribute("href", "/library/?view=curriculum#M37");
+  ).toHaveAttribute("href", `/library/?view=curriculum#${lastModule.id}`);
   await page.reload();
   await expect(page.locator("#lesson-stage h2")).toHaveText(
     "Review and check your understanding",

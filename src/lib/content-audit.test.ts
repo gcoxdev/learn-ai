@@ -5,10 +5,10 @@ import { auditContent } from "../../scripts/content-audit";
 describe("initial draft coverage", () => {
   it("fills every catalog slot and side lesson", () => {
     expect(auditContent(curriculum)).toEqual({
-      main: 313,
+      main: 320,
       bridges: 23,
       previews: 1,
-      total: 337,
+      total: 344,
     });
   });
   it("rejects a missing final-module lesson", () => {

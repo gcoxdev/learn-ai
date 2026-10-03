@@ -1,0 +1,446 @@
+schema_version: 0.2-draft
+lesson:
+  id: building-with-decision-models
+  version: 0.4.0-draft
+  title: "Build with decisions: confidence routing, fan-out, and cascades"
+  state: draft
+  summary: Tally gets 20,000 messages a day and a model that says how sure it is. Set a confidence gate, compare two thresholds in dollars, and send only the unsure cases to a slower, costlier model.
+  slot: M38.5
+  category: learning
+  archetype: mechanism
+  sources:
+    - title: Introducing System One models and Jev (TypeSafe AI, late September 2026)
+      url: https://typesafe.ai/blog/introducing-system-one-models-and-jev
+    - title: Jev documentation, patterns for keeping code in control (TypeSafe AI, read October 2026)
+      url: https://docs.typesafe.ai
+    - title: "FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance (Chen, Zaharia and Zou, 2023)"
+      url: https://arxiv.org/abs/2305.05176
+    - title: Selective Classification for Deep Neural Networks (Geifman and El-Yaniv, 2017)
+      url: https://arxiv.org/abs/1705.08500
+objectives:
+  - id: objective.building-with-decision-models
+    version: 1-draft
+    statement: A decision model's probabilities let code choose when to act. A confidence threshold trades automation rate against error rate, a cascade sends only uncertain cases to a costlier model, fan-out asks several small questions in one call, and drift monitoring keeps the thresholds honest.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - building-with-decision-models.base
+      - building-with-decision-models.transfer
+      - building-with-decision-models.calculate
+    prerequisites:
+      - anyOf:
+          - objective.calibrated-decision-training
+scenes:
+  - id: building-with-decision-models.s1
+    title: The model says what; its confidence says whether to act
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.building-with-decision-models
+    markdown: |-
+      At 8:02 a message reaches Tally: *"Brake lever snapped on my ride, I want my deposit back."* A decision model returns a probability for each route: billing 0.04, bookings 0.02, repairs 0.52, safety 0.42. Its top pick is repairs, with a **confidence** of 0.52, the probability it gives its own top choice.
+
+      Should the software send this to repairs by itself? Probably not. The model is nearly split between repairs and safety, and a wrong guess is expensive. TypeSafe's Jev documentation puts it in one line: the answer tells you *what*, and the confidence tells you *whether to act*.
+
+      That's **confidence-gated routing**. Code compares the confidence with a **threshold**, a number you choose. At or above it, the system acts on its own. Below it, the message goes to a person or to a stronger model. (Every Tally number in this lesson is invented.)
+
+      :::mixup "A confidence of 0.90 means the answer is 90% likely to be right."
+      That's true only if the model is calibrated, and only on messages like the ones it was checked on. If it says 0.90 on a hundred messages, about ninety should be right. Test that on your own labelled messages.
+      :::
+  - id: building-with-decision-models.s2
+    title: Choose the threshold with a table and a price list
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.building-with-decision-models
+    markdown: |-
+      Tally audits 20,000 messages and groups them by the model's confidence. These invented numbers have a calibrated model's shape: higher confidence, more often right.
+
+      | Confidence band | Messages per day | Model is right |
+      | --- | ---: | ---: |
+      | 0.95 to 1.00 | 10,400 | 98.5% |
+      | 0.90 to 0.95 | 3,600 | 93% |
+      | 0.70 to 0.90 | 3,800 | 78% |
+      | below 0.70 | 2,200 | 52% |
+
+      **Threshold 0.90.** The top two bands are automated: 14,000 messages, 70% of the day (the **automation rate**). Errors: 10,400 × 1.5% = 156 and 3,600 × 7% = 252, so 408 wrong out of 14,000, an **error rate on automated messages** of 2.9%. People read the other 6,000.
+
+      **Threshold 0.70.** Now 17,800 are automated (89%). The extra band adds 3,800 × 22% = 836 errors, so 1,244 of 17,800 are wrong: 7.0%. People read only 2,200.
+
+      Say a person costs \$0.50 per message and a wrong automated action costs \$5 (a refund, an apology, a lost customer). Both are invented.
+
+      :::predict Which threshold costs less per message?
+      Threshold 0.90. It costs 6,000 × \$0.50 + 408 × \$5 = \$5,040, or \$0.252 per message. Threshold 0.70 costs 2,200 × \$0.50 + 1,244 × \$5 = \$7,320, or \$0.366. The extra 3,800 automated messages save \$1,900 of review but add 836 errors, so they pay off only if a wrong action costs under \$1,900 ÷ 836, about \$2.27.
+      :::
+
+      ```python run
+      import numpy as np
+
+      # Tally, one day: 20,000 messages in four confidence bands (invented numbers)
+      low     = np.array([0.95, 0.90, 0.70, 0.00])    # band floors
+      count   = np.array([10400, 3600, 3800, 2200])   # messages per band
+      correct = np.array([0.985, 0.93, 0.78, 0.52])   # share the model gets right
+
+      def route(threshold):
+          auto = low >= threshold
+          n_auto = count[auto].sum()
+          errors = (count[auto] * (1 - correct[auto])).sum()
+          n_human = count.sum() - n_auto
+          cost = (count.sum() * 0.00002 + n_human * 0.50 + errors * 5.00) / count.sum()
+          print(f"threshold {threshold:.2f}: automated {n_auto / count.sum():.0%}, "
+                f"errors on automated {errors / n_auto:.1%}, "
+                f"to humans {n_human}, cost per message ${cost:.4f}")
+
+      route(0.90)
+      route(0.70)
+
+      # Cascade: decision model first, LLM on the messages under 0.90
+      frac_llm = count[low < 0.90].sum() / count.sum()
+      cost = 0.00002 + frac_llm * 0.004
+      latency = 0.3 + frac_llm * 2.0
+      print(f"cascade: {frac_llm:.0%} go to the LLM, blended cost ${cost:.5f}, "
+            f"mean latency {latency:.2f} s (LLM alone: $0.00400, 2.00 s)")
+      ```
+
+      Match the first two output lines to the hand work. Then change the error price `5.00` to `2.00`: threshold 0.70 becomes cheaper (\$0.1794 against \$0.1908).
+
+      :::papers Naming the two numbers
+      Selective classification (Geifman and El-Yaniv, 2017) names these numbers. For threshold $t$, the **coverage** is the share of messages with confidence $\ge t$, and the **selective risk** is the error rate among them. At $t = 0.90$: coverage 14,000 ÷ 20,000 = 0.70, selective risk 408 ÷ 14,000 = 0.029. Sweeping $t$ from 1 to 0 traces the whole trade-off curve.
+      :::
+    bridges: []
+  - id: building-with-decision-models.s3
+    title: Ask many small questions, then let code decide
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.building-with-decision-models
+    markdown: |-
+      Back to the snapped brake lever. **Fan-out** puts several small typed questions about the same message into one call. Jev's documentation says they're evaluated in parallel and in isolation, so one question can't sway another. Tally asks four:
+
+      | Question | Type | Answer |
+      | --- | --- | --- |
+      | Which route? | choice | repairs 0.52, safety 0.42 |
+      | How urgent (0 to 3)? | score | 0: 0.02, 1: 0.08, 2: 0.30, 3: 0.60 |
+      | Refund request? | noul (yes/no) | P(true) = 0.93 |
+      | Phishing? | noul | P(true) = 0.01 |
+
+      **Composite scoring** combines several answers into one number in code. Expected urgency is 0 × 0.02 + 1 × 0.08 + 2 × 0.30 + 3 × 0.60 = 2.48, and Tally's priority is that plus 3 × P(safety): 2.48 + 3 × 0.42 = 3.74. The rules are code too:
+
+      ```python run
+      import numpy as np
+
+      routes = ["billing", "bookings", "repairs", "safety"]
+      route_p = np.array([0.04, 0.02, 0.52, 0.42])        # choice: where does it go?
+      urgency_p = np.array([0.02, 0.08, 0.30, 0.60])      # score: urgency 0-3
+      refund_p, phishing_p = 0.93, 0.01                   # two noul answers
+
+      def decide(route_p, phishing_p, gate=0.90):
+          if phishing_p >= 0.50:
+              return "quarantine"
+          if route_p[3] >= 0.20:                            # a rule written by people, run by code
+              return "human, safety queue"
+          if route_p.max() >= gate:
+              return "auto-route to " + routes[route_p.argmax()]
+          return "human, general triage"
+
+      expected_urgency = (np.arange(4) * urgency_p).sum()
+      priority = expected_urgency + 3 * route_p[3]
+      print(f"expected urgency {expected_urgency:.2f}, priority {priority:.2f}")
+      print("decision:", decide(route_p, phishing_p))
+      print("tag refund:", refund_p >= 0.90)
+      print("calm repair message:", decide(np.array([0.01, 0.01, 0.97, 0.01]), 0.01))
+      ```
+
+      The safety rule fires on P(safety) = 0.42, even though repairs has the top probability. That's keeping **code in control**: the model supplies numbers, and people write the policy that reads them. A policy in code can be tested and changed with a one-line edit.
+
+      The same pattern makes a **guardrail**, a check on another system's output. Before an LLM's reply goes out, ask "Does this reply promise a refund?" and hold anything above 0.10 for review.
+    bridges: []
+  - id: building-with-decision-models.s4
+    title: Cheap first, costly only when unsure
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.building-with-decision-models
+    markdown: |-
+      Tally's LLM isn't free either: about 2 seconds and \$0.004 per message (invented). A **cascade** runs the cheap model on everything and calls the costly one only when the cheap one is unsure. FrugalGPT (Chen, Zaharia and Zou, 2023) studied this idea with a chain of language models.
+
+      Tally's version: the decision model costs about \$0.00002 per message (400 tokens at Jev's published \$0.042 per million input tokens is \$0.0000168, rounded up) and takes about 0.3 seconds, inside the 70 to 500 ms TypeSafe reports. Messages under 0.90 confidence go on to the LLM: 6,000 of 20,000, or 30%.
+
+      - **Blended cost:** \$0.00002 + 0.30 × \$0.004 = \$0.00122 per message, against \$0.004 for the LLM alone.
+      - **Mean latency:** 0.3 + 0.30 × 2.0 = 0.9 seconds, against 2.0.
+
+      :::predict A teammate says "every message now takes 0.9 seconds." What's wrong?
+      0.9 s is an average. 70% of messages finish in 0.3 s, but the other 30% wait for both models, about 2.3 s. The 95th percentile, which shows how slow the slowest messages are, is about 2.3 s here.
+      :::
+
+      Measure the LLM on exactly the hard cases it receives, and expect some to end at a person anyway.
+    diagram:
+      caption: Tally's cascade. Every message meets the cheap model first, and the gate decides how far it travels.
+      description: A message goes into the decision model. The decision model's answer goes to a confidence gate. If confidence is at or above 0.90, the message is routed automatically. If it is below 0.90, it goes to the LLM. If the LLM is still unsure, the message goes to a human, shown with a dashed arrow.
+      nodes:
+        - id: msg
+          label: New message
+          col: 0
+          row: 1
+        - id: dm
+          label: Decision model
+          note: about 0.3 s, $0.00002
+          col: 1
+          row: 1
+          tone: accent
+        - id: gate
+          label: Confidence gate
+          note: threshold 0.90
+          col: 2
+          row: 1
+          tone: warn
+        - id: auto
+          label: Route automatically
+          note: 70% of messages
+          col: 3
+          row: 0
+          tone: data
+        - id: llm
+          label: LLM
+          note: about 2 s, $0.004
+          col: 3
+          row: 2
+        - id: human
+          label: Human reviewer
+          col: 3
+          row: 3
+          tone: muted
+      edges:
+        - from: msg
+          to: dm
+        - from: dm
+          to: gate
+        - from: gate
+          to: auto
+          label: at or above 0.90
+        - from: gate
+          to: llm
+          label: below 0.90 (30%)
+        - from: llm
+          to: human
+          label: still unsure
+          dashed: true
+    bridges: []
+  - id: building-with-decision-models.s5
+    title: "Watch the gate: drift moves your numbers"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.building-with-decision-models
+    markdown: |-
+      In week one, 70% of Tally's messages clear the 0.90 gate. By week nine, after the shop starts renting e-scooters, only 52% do. Customers now write about things the model never saw, so its confidence may mean less than it did. Two cheap checks catch this, as in the lesson on production drift:
+
+      1. **Track the share above the gate** every day. A fall from 70% to 52% is a loud signal by itself.
+      2. **Audit a random sample.** A person labels 100 automated messages a day. Last month's error rate was 2.9%, so about 3 wrong is normal. Seven wrong is not: the sampling noise is about $\sqrt{0.029 \times 0.971 / 100} \approx 1.7$ points, and 7% sits 2.4 of those above 2.9%.
+
+      When the audit fails, **recalibrate**: refit the temperature on fresh labelled messages, then pick the threshold again from the new table.
+
+      :::try Rerun the table after drift
+      In the first program, set the band counts to `[7200, 3200, 5600, 4000]` and the "right" rates to `[0.95, 0.88, 0.70, 0.45]`. At threshold 0.90, automation falls to 52% and errors on automated messages rise from 2.9% to 7.2%. Which threshold would you choose now?
+      :::
+    bridges: []
+  - id: building-with-decision-models.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.building-with-decision-models
+    markdown: Tally's gate, a clinic, a bank cascade, a phishing filter and a drifting help desk test whether you can set a threshold, price a cascade and keep policy in code.
+    takeaway: |-
+      Let the model's answer say what and its confidence say whether to act, and pick the threshold from audited bands and real costs. Send only the unsure cases to the costlier model, keep policy in code, and recalibrate when the audit slips.
+  - id: building-with-decision-models.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.building-with-decision-models
+    markdown: |-
+      Act where the model is confident and escalate where it isn't. Choose the threshold from audited data and costs, and keep checking it.
+navigation:
+  routes:
+    - id: route.core
+      scene_sequence:
+        - building-with-decision-models.s1
+        - building-with-decision-models.s2
+        - building-with-decision-models.s3
+        - building-with-decision-models.s4
+        - building-with-decision-models.s5
+        - building-with-decision-models.check
+      gate_refs:
+        - gate.core
+  scene_aliases:
+    building-with-decision-models.recap: building-with-decision-models.check
+assessment_families:
+  - id: building-with-decision-models.base
+    objective_ref: objective.building-with-decision-models
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: Name the three numbers a gate trades off, the share automated, the error rate among those automated, and what a human review and a wrong action each cost. Then see which one a change moves.
+    remediation_scene: building-with-decision-models.s2
+    variants:
+      - id: building-with-decision-models.base.1
+        prompt: Tally's gate at 0.90 sends 6,000 of 20,000 messages to people. A manager proposes 0.70 to shrink that queue. What is the main trade?
+        options:
+          - id: b
+            text: Fewer messages are automated, but each one is more accurate
+          - id: a
+            text: More messages are automated, but more of them are wrong
+          - id: c
+            text: The same errors happen, but they happen faster
+        answer: a
+        feedback: Lowering the threshold lets less certain answers through, so automation rises and so does the error rate among automated messages. Fewer automated messages would come from raising it, and the extra messages are not error-free.
+      - id: building-with-decision-models.base.2
+        prompt: At a 0.90 gate, a message gets repairs 0.52, safety 0.42, billing 0.04 and bookings 0.02. What happens to it, with no other rules?
+        options:
+          - id: c
+            text: It goes to repairs with a warning flag attached
+          - id: b
+            text: It goes to repairs automatically, because that is the top pick
+          - id: a
+            text: It goes to a person, because 0.52 is below 0.90
+        answer: a
+        feedback: The gate compares the top confidence, 0.52, with the threshold. Being the top pick is not enough, and a gate has no half-way setting, so nothing is auto-routed with a flag.
+      - id: building-with-decision-models.base.3
+        prompt: Why does Tally's cascade send only the messages under 0.90 to the LLM?
+        options:
+          - id: a
+            text: It pays the LLM's cost only where the cheap model is unsure
+          - id: c
+            text: The cheap model's confidence can be trusted only below 0.90
+          - id: b
+            text: The LLM reads short messages faster than the decision model
+        answer: a
+        feedback: A cascade saves money because most messages never reach the costly model. Confidence is useful at every level, and the decision model is the faster one on every message.
+      - id: building-with-decision-models.base.4
+        prompt: Tally's rule "if P(safety) is 0.20 or more, go to the safety queue" sits in code, not in a fifth model question. What is the main reason?
+        options:
+          - id: b
+            text: Models cannot answer yes/no questions about routing
+          - id: c
+            text: A fifth question would make every call about ten times slower
+          - id: a
+            text: A rule in code can be read, tested and changed in one edit
+        answer: a
+        feedback: Keeping policy in code makes it visible and easy to adjust, while the model only supplies probabilities. A noul question is a normal primitive, and one more question in the same call costs little time.
+      - id: building-with-decision-models.base.5
+        prompt: Over two months, the share of messages above Tally's 0.90 gate falls from 70% to 52%. What is the best first step?
+        options:
+          - id: c
+            text: Treat it as fine, since fewer automated messages are safer
+          - id: a
+            text: Have people label a random sample of recent messages
+          - id: b
+            text: Lower the threshold until the share is back at 70%
+        answer: a
+        feedback: A fresh labelled sample shows whether accuracy and calibration moved. Lowering the threshold to restore the share would let uncertain answers through without checking, and a falling share may mean the model no longer understands the traffic.
+      - id: building-with-decision-models.base.6
+        prompt: A cascade's cheap model takes 0.3 s, the LLM 2 s, and 30% of messages escalate. A teammate says every message now takes 0.9 s. What is wrong with that?
+        options:
+          - id: b
+            text: Escalated messages take only 2 s, because the cheap call is cached
+          - id: c
+            text: The average should be 0.3 × 2 = 0.6 s
+          - id: a
+            text: 0.9 s is the average, and escalated messages wait about 2.3 s
+        answer: a
+        feedback: Escalated messages pay for both calls, 0.3 + 2.0 = 2.3 s, and the 70% that stay on the fast path take 0.3 s. Their average is 0.9 s, but the slowest messages are what users notice. Multiplying the two latencies has no meaning here.
+  - id: building-with-decision-models.transfer
+    objective_ref: objective.building-with-decision-models
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Ask what the number is measured on. A rate among automated messages, a blended cost and a drifting audit each have to be checked against labelled data, not assumed.
+    remediation_scene: building-with-decision-models.s4
+    variants:
+      - id: building-with-decision-models.transfer.1
+        prompt: A clinic's decision model sorts patient messages into book, reschedule, cancel or other, with a 0.95 gate. It automates 62%, and an audit finds 1% errors. Staff want 80% automated. What should they check first?
+        options:
+          - id: a
+            text: The audited error rate at the lower threshold
+          - id: c
+            text: Whether next month will bring more patient messages
+          - id: b
+            text: Whether the model's overall accuracy is above 90%
+        answer: a
+        feedback: Raising automation means lowering the threshold, and the cost is the error rate among the newly automated messages, which a labelled sample can show. Overall accuracy mixes in the messages people still handle, and message volume does not change the trade.
+      - id: building-with-decision-models.transfer.2
+        prompt: A bank runs every transaction note through a cheap model at $0.00002 and sends 20% on to an LLM at $0.004. Which expression gives its blended cost per note?
+        options:
+          - id: c
+            text: The average of the two prices, $0.00200
+          - id: a
+            text: $0.00002 + 0.20 × $0.004
+          - id: b
+            text: 0.80 × $0.00002 + 0.20 × $0.004
+        answer: a
+        feedback: Every note meets the cheap model, so its price is paid on all of them, and only the escalated 20% add the LLM's price. Dropping the cheap model's cost on escalated notes forgets that it ran first, and a plain average ignores the 20 to 80 split.
+      - id: building-with-decision-models.transfer.3
+        prompt: An email filter's phishing question returns P(true) = 0.30 on a message, and the company quarantines at 0.50. The message was phishing. What is the best lesson?
+        options:
+          - id: b
+            text: The 0.30 was wrong, since the message was phishing
+          - id: a
+            text: Check whether 0.50 suits the cost of a missed phish
+          - id: c
+            text: Phishing is too hard for a yes/no question
+        answer: a
+        feedback: A probability of 0.30 means such messages are phishing about three times in ten, so one hit does not make it wrong. The threshold should reflect how costly a miss is, and labelled data can show where to set it.
+      - id: building-with-decision-models.transfer.4
+        prompt: A support desk audits its automated tickets. Accuracy fell from 97% to 91% over three weeks, while the model's average confidence stayed near 0.96. What most likely happened?
+        options:
+          - id: c
+            text: The audit sample is too small to show anything at all
+          - id: b
+            text: Confidence cannot drift, since it comes from the same weights
+          - id: a
+            text: Calibration drifted, so refit the temperature and re-pick the threshold
+        answer: a
+        feedback: Confidence stayed high while accuracy dropped, so 0.96 no longer means what it did. Fresh labels let you refit the temperature and choose the threshold again. Confidence depends on the inputs, so it can drift, and the gap is large enough to act on.
+      - id: building-with-decision-models.transfer.5
+        prompt: A shop's fan-out call on one message returns refund P(true) = 0.93, phishing P(true) = 0.01 and route confidence 0.55. The gate is 0.90. Which action keeps code in control?
+        options:
+          - id: b
+            text: Auto-route it, because the refund probability is high
+          - id: a
+            text: Tag it as a refund and send the routing to a person
+          - id: c
+            text: Use the refund answer to pick the route instead
+        answer: a
+        feedback: Each question is judged by its own number. The refund tag is confident enough to use, while the route at 0.55 is under the gate. A confident answer to one question does not make another one trustworthy.
+  - id: building-with-decision-models.calculate
+    objective_ref: objective.building-with-decision-models
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Work in counts. Automation rate = automated ÷ total. Error rate = wrong ÷ automated. Cascade cost = the cheap price on every message + the escalated share × the costly price."
+    remediation_scene: building-with-decision-models.s2
+    absolute_tolerance: 0.00005
+    variants:
+      - id: building-with-decision-models.calculate.1
+        prompt: A gate sends 5,000 of 20,000 messages to people. What is the automation rate? Give a decimal.
+        answer: 0.75
+        feedback: 15,000 are automated, and 15,000 ÷ 20,000 = 0.75. Dividing the 5,000 by 20,000 would give the share sent to people instead.
+      - id: building-with-decision-models.calculate.2
+        prompt: A gate automates 14,000 messages a day, and the audited error rate among them is 2.5%. How many automated messages are wrong each day?
+        answer: 350
+        feedback: 14,000 × 0.025 = 350. The error rate applies to the automated messages only, not to all 20,000.
+      - id: building-with-decision-models.calculate.3
+        prompt: A cascade runs a decision model at $0.00002 per message on every message and sends 25% to an LLM at $0.004. What is the blended cost per message in dollars? Give a decimal.
+        answer: 0.00102
+        feedback: $0.00002 + 0.25 × $0.004 = $0.00002 + $0.001 = $0.00102. The cheap model's price is paid on all messages.
+      - id: building-with-decision-models.calculate.4
+        prompt: A cascade's cheap model takes 0.3 s, and 40% of messages go on to an LLM that takes 2 s. What is the mean latency per message in seconds?
+        answer: 1.1
+        feedback: Everyone pays 0.3 s, and 40% pay 2 s more, so 0.3 + 0.4 × 2 = 1.1 s.
+      - id: building-with-decision-models.calculate.5
+        prompt: Of 20,000 daily messages, 4,000 go to people at $0.50 each, and 300 automated answers are wrong at $5 each. Ignoring the model's own cost, what is the cost per message in dollars? Give a decimal.
+        answer: 0.175
+        feedback: People cost 4,000 × $0.50 = $2,000 and errors cost 300 × $5 = $1,500. That is $3,500 across 20,000 messages, or $0.175 each.

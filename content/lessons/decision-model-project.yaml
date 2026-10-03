@@ -1,0 +1,528 @@
+schema_version: 0.2-draft
+lesson:
+  id: decision-model-project
+  version: 0.4.0-draft
+  title: "Project: build a tiny decision model and route by confidence"
+  state: draft
+  summary: Train a small model on 60 invented Tally messages, fix its confidence, then choose the gate that decides which messages a machine may route alone. Report accuracy, ECE, automation and cost.
+  slot: M38.7
+  category: learning
+  archetype: project
+  minutes: 90
+  sources:
+    - title: Introducing System One models and Jev (TypeSafe AI, late September 2026)
+      url: https://typesafe.ai/blog/introducing-system-one-models-and-jev
+    - title: On Calibration of Modern Neural Networks (Guo et al., 2017)
+      url: https://arxiv.org/abs/1706.04599
+    - title: Selective Classification for Deep Neural Networks (Geifman and El-Yaniv, 2017)
+      url: https://arxiv.org/abs/1705.08500
+objectives:
+  - id: objective.decision-model-project
+    version: 1-draft
+    statement: Build and evaluate a small softmax decision model on labelled messages. Measure accuracy and ECE, fit a temperature on a validation split, choose a confidence threshold for a target error rate on automated messages, and report automation rate and cost from a test split used once.
+    depths:
+      - intuition
+      - mechanics
+    critical: true
+    evidence_families:
+      - decision-model-project.base
+      - decision-model-project.transfer
+      - decision-model-project.calculate
+    prerequisites:
+      - anyOf:
+          - objective.comparing-decision-models
+scenes:
+  - id: decision-model-project.s1
+    title: "Your brief: a Tally router you can defend"
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.decision-model-project
+    markdown: |-
+      Tally's manager has read about decision models and asks a fair question: *"If a machine routes our messages, how often will it be wrong, and how do we know?"* You'll build the smallest honest answer. A tiny model reads a message and returns a probability for each of four routes (billing, bookings, repairs, safety). Then you decide which messages it may route alone.
+
+      | Brief | |
+      | --- | --- |
+      | Goal | Train, calibrate, and gate a four-way router, then report what automation would cost and risk |
+      | Reader | Tally's manager, who will decide whether to switch it on |
+      | Data | 60 invented messages, 15 per route, with a fixed train, validation and test split |
+      | Time | About 90 minutes; the paper version takes about the same |
+
+      **Done looks like:**
+
+      - a bag-of-words softmax model with test accuracy and ECE;
+      - a temperature fitted on the validation split, with ECE before and after;
+      - a threshold chosen on validation to keep errors among automated messages at or under 5%;
+      - the automation rate, error rate and cost per message on the test split, reported once;
+      - one paragraph for the manager that says what the numbers do and don't support.
+
+      Everything here is invented and runs in a second or two. No real model or customer is involved.
+    bridges: []
+  - id: decision-model-project.data
+    title: Sixty invented messages and one fixed split
+    type: explanation
+    depth: intuition
+    objective_refs:
+      - objective.decision-model-project
+    markdown: |-
+      The messages are in the program in the next section: 15 for each route, written to share cue words the way real messages do ("refund," "booking," "chain," "fell"). Some are deliberately tricky.
+
+      | Message | Route | Why it's tricky |
+      | --- | --- | --- |
+      | Where is the refund you promised for my cancelled booking | billing | Mixes billing and booking words |
+      | I was charged for a booking and need to cancel it | bookings | Same, with the order reversed |
+      | The brakes squeak since this morning | repairs | "Brakes" also shows up in safety messages |
+      | The brakes failed and I crashed, I am hurt | safety | The words that make it urgent are shared |
+
+      The split is by position inside each route, so every route appears in every part:
+
+      | Split | Messages | Job |
+      | --- | ---: | --- |
+      | train | 24 (6 per route) | Fit the model's weights |
+      | validation | 16 (4 per route) | Fit the temperature and choose the threshold |
+      | test | 20 (5 per route) | Report the final numbers, once |
+
+      Treat the test split like a sealed envelope. Look at it once, at the end. If you peek and then adjust, its numbers can no longer tell the manager what to expect.
+    bridges: []
+  - id: decision-model-project.s2
+    title: "Milestones 1 and 2: count words, then score four routes"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decision-model-project
+    markdown: |-
+      **Milestone 1: features.** A **bag of words** turns each message into counts of the words it contains, ignoring order. The program drops a few filler words ("the," "my") and builds the vocabulary from the training messages only.
+
+      **Milestone 2: the model.** Each route gets a weight for every word. A message's score for a route is the sum of the weights of its words plus a bias. A softmax turns the four scores into probabilities, and gradient descent nudges the weights to make the right route more probable on the training messages. It's the softmax from earlier in the course, with word counts as the inputs.
+
+      ```python run
+      import re
+      import numpy as np
+
+      ROUTES = ["billing", "bookings", "repairs", "safety"]
+      DATA = {
+       "billing": [
+        "I was charged twice for my rental, please refund the extra payment",
+        "Please send an invoice for my last payment",
+        "The deposit was never refunded to my card",
+        "Why is there a late fee on my bill",
+        "My card was charged more than the quote, I want a refund",
+        "I paid the helmet fee twice and need a refund",
+        "The receipt shows the wrong total for my payment",
+        "I was charged for insurance I did not pick",
+        "Need a VAT invoice for my company payment",
+        "The refund for my unused day is not on my card",
+        "My payment failed but the money was charged",
+        "Promo code was not applied to my bill",
+        "Where is the refund you promised for my cancelled booking",
+        "The fee for the child seat on my booking is wrong",
+        "Charged twice, please refund my card"],
+       "bookings": [
+        "I need to move my rental booking to Sunday",
+        "Can I book two e-bikes for Saturday",
+        "Please cancel my reservation for next week",
+        "Is a tandem available to book on 14 June",
+        "I want to extend my rental booking by one day",
+        "How do I change the pickup time of my booking",
+        "Can I reserve a bike for a group of eight on Sunday",
+        "I booked a cargo bike but got no confirmation",
+        "Can I change my pickup to the station",
+        "Please add a child seat to my reservation",
+        "I need to cancel and rebook for a later date",
+        "What time is pickup for my booking tomorrow",
+        "I was charged for a booking and need to cancel it",
+        "Can I reserve a helmet with my booking",
+        "Is a bike available to book for a week in August"],
+       "repairs": [
+        "The chain keeps slipping and the gears skip",
+        "My tyre went flat after ten minutes",
+        "The bell is broken and the seat is loose",
+        "The battery on my e-bike will not charge",
+        "The gears skip and the chain is noisy",
+        "The front light stopped working",
+        "The pedal is loose and makes a noise",
+        "The motor makes a grinding noise on hills",
+        "The kickstand is bent and the bike falls over",
+        "The brakes squeak since this morning",
+        "The basket is broken and the seat is loose",
+        "The brakes are loose and squeak when I stop",
+        "The seat post will not stay up",
+        "My tyre is worn and the chain is rusty",
+        "The pedal is loose and I nearly fell"],
+       "safety": [
+        "The brakes failed and I crashed, I am hurt",
+        "I fell off because the wheel wobbled, I am hurt",
+        "Someone was injured when the handlebar snapped",
+        "The e-bike battery is smoking and smells hot",
+        "My child fell off because the child seat came loose",
+        "I crashed when the brake snapped and I need a doctor",
+        "The battery caught fire in the locker",
+        "The wheel fell off and I crashed downhill",
+        "I am hurt, the fork cracked and I fell",
+        "The brakes failed on a steep road and I nearly crashed",
+        "Sparks came from the motor and I got a shock",
+        "The helmet strap broke when I fell",
+        "The handlebar snapped and I need an ambulance",
+        "My daughter was injured when the pedal sheared off",
+        "The battery is smoking and hot, I left it charging"]}
+
+      split = {"train": range(0, 6), "val": range(6, 10), "test": range(10, 15)}
+      rows = {s: [(DATA[r][i], k) for k, r in enumerate(ROUTES) for i in idx] for s, idx in split.items()}
+      STOP = set("i my me the a an to of for is it in on at and or was were be with that this when after from but not did do can you your have has had we our".split())
+      def tok(t): return [w for w in re.findall(r"[a-z0-9']+", t.lower()) if w not in STOP]
+      words = sorted({w for t, _ in rows["train"] for w in tok(t)})
+      col = {w: j for j, w in enumerate(words)}
+
+      def encode(part):
+          X = np.zeros((len(rows[part]), len(words)))
+          for i, (t, _) in enumerate(rows[part]):
+              for w in tok(t):
+                  if w in col: X[i, col[w]] += 1
+          return X, np.array([k for _, k in rows[part]])
+
+      def softmax(z):
+          z = z - z.max(axis=1, keepdims=True)
+          e = np.exp(z)
+          return e / e.sum(axis=1, keepdims=True)
+
+      Xtr, ytr = encode("train"); Xva, yva = encode("val"); Xte, yte = encode("test")
+      W = np.zeros((len(words), 4)); b = np.zeros(4)
+      # Milestone 2: softmax regression trained by gradient descent on cross-entropy
+      for _ in range(1000):
+          P = softmax(Xtr @ W + b)
+          G = P - np.eye(4)[ytr]
+          W -= Xtr.T @ G / len(ytr)           # learning rate 1.0
+          b -= G.mean(axis=0)
+
+      def ece(P, y, bins=3):
+          conf, hit = P.max(axis=1), P.argmax(axis=1) == y
+          edges = np.linspace(0.25, 1.0, bins + 1)
+          out = 0.0
+          for lo, hi in zip(edges[:-1], edges[1:]):
+              m = (conf > lo) & (conf <= hi)
+              if m.any(): out += m.mean() * abs(conf[m].mean() - hit[m].mean())
+          return out
+
+      # Milestone 3: pick the temperature T that gives the validation messages the lowest log loss
+      def nll(T): return -np.log(softmax((Xva @ W + b) / T)[np.arange(len(yva)), yva]).mean()
+      T = min(np.arange(0.25, 3.01, 0.05), key=nll)
+
+      Pte, Pte_T = softmax(Xte @ W + b), softmax((Xte @ W + b) / T)
+      print(f"vocabulary {len(words)} words; train {len(ytr)}, val {len(yva)}, test {len(yte)}")
+      print(f"test accuracy {np.mean(Pte.argmax(1) == yte):.3f}")
+      print(f"temperature T = {T:.2f}  (val NLL {nll(1.0):.3f} -> {nll(T):.3f})")
+      print(f"test ECE before {ece(Pte, yte):.3f}, after {ece(Pte_T, yte):.3f}")
+
+      # Milestone 4: choose the lowest threshold whose automated messages meet the error target
+      Pva = softmax((Xva @ W + b) / T)
+
+      def auto_stats(P, y, t):                   # share automated, error rate among automated
+          auto = P.max(axis=1) >= t
+          return auto.mean(), (P.argmax(1)[auto] != y[auto]).mean() if auto.any() else 0.0
+
+      TARGET = 0.05                              # we accept at most 5% errors on automated messages
+      for t in np.arange(0.5, 0.96, 0.05):
+          a, e = auto_stats(Pva, yva, t)
+          print(f"val threshold {t:.2f}: automated {a:.0%}, error on automated {e:.1%}")
+      t = next(t for t in np.arange(0.5, 1.0, 0.05) if auto_stats(Pva, yva, t)[1] <= TARGET)
+      a, e = auto_stats(Pte_T, yte, t)
+      cost = (0.00001 + (1 - a) * 0.50 + a * e * 5.00)   # model + human review + cost of automated errors
+      print(f"chosen threshold {t:.2f} -> test: automated {a:.0%}, error on automated {e:.1%}, "
+            f"cost per message ${cost:.3f} (all-human: $0.500)")
+      ```
+
+      **What you should see:**
+
+      ```text
+      vocabulary 94 words; train 24, val 16, test 20
+      test accuracy 0.900
+      temperature T = 0.65  (val NLL 0.689 -> 0.642)
+      test ECE before 0.186, after 0.106
+      val threshold 0.50: automated 88%, error on automated 21.4%
+      val threshold 0.55: automated 88%, error on automated 21.4%
+      val threshold 0.60: automated 81%, error on automated 23.1%
+      val threshold 0.65: automated 69%, error on automated 18.2%
+      val threshold 0.70: automated 69%, error on automated 18.2%
+      val threshold 0.75: automated 50%, error on automated 0.0%
+      val threshold 0.80: automated 44%, error on automated 0.0%
+      val threshold 0.85: automated 38%, error on automated 0.0%
+      val threshold 0.90: automated 31%, error on automated 0.0%
+      val threshold 0.95: automated 31%, error on automated 0.0%
+      chosen threshold 0.75 -> test: automated 70%, error on automated 7.1%, cost per message $0.400 (all-human: $0.500)
+      ```
+
+      The first lines answer Milestone 2: 94 words in the vocabulary and 0.900 test accuracy, 18 of 20 right. ECE (expected calibration error), the average gap between confidence and accuracy, is computed here in three bands of confidence (0.25 to 0.50, 0.50 to 0.75, 0.75 to 1.00), weighting each band by its share of the messages. Before any fix it's 0.186.
+
+      Look at which messages are wrong before you move on. Bag-of-words is blind to order and context, so "refund for my cancelled booking" splits its probability between billing and bookings.
+    bridges: []
+  - id: decision-model-project.s3
+    title: "Milestones 3 and 4: fit the temperature, then choose the gate"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decision-model-project
+    markdown: |-
+      **Milestone 3: temperature.** Dividing the scores by a number $T$ before the softmax sharpens the probabilities when $T < 1$ and flattens them when $T > 1$. It never changes which route is on top, so accuracy stays at 0.900. The program tries $T$ from 0.25 to 3 and keeps the one that gives the validation messages the lowest log loss. It lands on **T = 0.65**, which sharpens. This model was *underconfident*, and test ECE falls from 0.186 to 0.106. (The lesson on training for honest probabilities noted that Laya ships overconfident, which calls for $T > 1$. Fitting finds whichever direction your model needs.)
+
+      **Milestone 4: the gate.** For each threshold, the program lists the share of validation messages automated and the error rate among them. The target is 5% or less on automated messages, so it picks the lowest threshold that meets it, 0.75. On validation, that automates 8 of 16 messages (50%) with 0 errors.
+
+      Then you open the sealed envelope. On the test split, the 0.75 gate automates 14 of 20 messages, which is 70%, and one of those 14 is wrong, an error rate of 7.1%. Cost per message, using the invented prices from the lesson on building with decision models, is 6 × \$0.50 ÷ 20 for the people plus 1 × \$5 ÷ 20 for the error, about \$0.400. Sending all 20 to people costs \$0.500.
+
+      :::predict Validation showed 0% errors at the 0.75 gate, but test shows 7.1%. Is something broken?
+      No. One wrong message out of 14 moves the rate by 7 points, and 0 errors out of 8 on validation is just as loose. The 5% target wasn't broken by the model, it was beyond what 16 messages can promise. Real projects use hundreds of labelled messages for exactly this reason. Report the counts (1 of 14), not only the percentage.
+      :::
+
+      :::mixup "Temperature scaling makes the model more accurate."
+      It changes the confidences and leaves every top pick alone. That's why the test accuracy line says 0.900 whether or not you apply $T$.
+      :::
+
+      :::try Move the target
+      Change `TARGET = 0.05` to `0.0` and then to `0.25`. How do the chosen threshold, the automation rate and the cost move? Which setting would you show the manager?
+      :::
+    bridges: []
+  - id: decision-model-project.mistakes
+    title: Six mistakes that make a router look better than it is
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decision-model-project
+    markdown: |-
+      | Mistake | How to spot it | Fix |
+      | --- | --- | --- |
+      | Choosing the threshold by looking at the test split | You tried several gates on test and kept the best | Choose on validation, then run test once |
+      | Fitting the temperature on training messages | $T$ comes out near 1 and ECE looks great on train | Fit it on messages the weights never saw |
+      | Reporting accuracy only | "90% accurate," yet the gate lets through 7% errors | Report the error rate among automated messages |
+      | Expecting temperature to change predictions | Accuracy before and after differs | It changes confidences only, so recheck your code if accuracy moved |
+      | Trusting a gate tuned on a handful of messages | "0 errors" among 8 automated messages | State the counts, and gather more labels before launch |
+      | Building the vocabulary from every message | Words from validation or test appear in the vocabulary | Build it from training messages only |
+    bridges: []
+  - id: decision-model-project.s4
+    title: The no-code path and the rubric
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decision-model-project
+    markdown: |-
+      **No code?** Everything after training works on paper. Here are 12 test messages, sorted by the confidence of a model's top pick, and whether it was right:
+
+      | Confidence | 0.97 | 0.95 | 0.92 | 0.90 | 0.86 | 0.81 | 0.77 | 0.72 | 0.66 | 0.58 | 0.51 | 0.44 |
+      | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+      | Right? | yes | yes | yes | yes | yes | no | yes | no | yes | no | yes | no |
+
+      1. For each threshold in the table, count the messages at or above it and the wrong ones among them. Choose the lowest threshold where errors are at most 10%. (It's about 0.85: 5 automated, none wrong, so 42% automated.)
+      2. Cost per message with people at \$0.50 and a wrong automation at \$5: 7 people × \$0.50 ÷ 12 ≈ \$0.292.
+      3. ECE in three bands: at or below 0.50 (1 message, confidence 0.44, accuracy 0, gap 0.44), 0.50 to 0.75 (4 messages, confidence 0.62, accuracy 0.50, gap 0.12), above 0.75 (7 messages, confidence 0.88, accuracy 0.86, gap 0.03). Weighted by message share, ECE ≈ 0.09.
+      4. Write the paragraph for the manager.
+
+      **Rubric.** Score each row 0, 1, or 2:
+
+      | Criterion | 0: missing or wrong | 1: partly there | 2: solid |
+      | --- | --- | --- | --- |
+      | Model | No held-out measurement | Test accuracy only | Accuracy and ECE on test, vocabulary from train only |
+      | Calibration | None | T fitted, not checked | T fitted on validation, ECE reported before and after |
+      | Gate | Threshold picked by feel or on test | Threshold chosen on validation, no target | Lowest threshold meeting a stated error target, chosen on validation |
+      | Final report | Numbers from tuning data | Test numbers without counts | Test split used once, with counts such as 1 of 14 |
+      | Cost | Not computed | Cost without a human baseline | Cost per message next to the all-human cost |
+      | Honesty | Claims the router is safe | Notes the small sample | Says which numbers 20 test messages can't support |
+
+      The quiz below checks the ideas. You or a teammate judge your own work with this rubric.
+    bridges: []
+  - id: decision-model-project.check
+    title: Review and check your understanding
+    type: assessment
+    depth: mechanics
+    objective_refs:
+      - objective.decision-model-project
+    markdown: Splits, temperature, small samples, a hotel router and a few costs to compute test whether you can run the same pipeline on a new set of messages.
+    takeaway: |-
+      Train on one split, fit the temperature and choose the gate on a second, and report on a third used once. Judge a router by the error rate among the messages it automates, with counts, not by overall accuracy.
+  - id: decision-model-project.recap
+    title: One idea to take with you
+    type: recap
+    depth: intuition
+    objective_refs:
+      - objective.decision-model-project
+    markdown: |-
+      Fit and choose on data the model hasn't memorized, then report once on data nobody touched. Judge the router by errors among what it automates.
+navigation:
+  routes:
+    - id: route.core
+      scene_sequence:
+        - decision-model-project.s1
+        - decision-model-project.data
+        - decision-model-project.s2
+        - decision-model-project.s3
+        - decision-model-project.mistakes
+        - decision-model-project.s4
+        - decision-model-project.check
+      gate_refs:
+        - gate.core
+  scene_aliases:
+    decision-model-project.recap: decision-model-project.check
+assessment_families:
+  - id: decision-model-project.base
+    objective_ref: objective.decision-model-project
+    task: base
+    response_type: single_choice
+    points: 1
+    hint: "Walk the pipeline in order: weights from train, temperature and threshold from validation, final numbers from test, used once. Ask which split each choice used."
+    remediation_scene: decision-model-project.s3
+    variants:
+      - id: decision-model-project.base.1
+        prompt: Why does the project fit the temperature on the validation split instead of the training split?
+        options:
+          - id: b
+            text: Validation is larger, so it gives a much steadier estimate
+          - id: a
+            text: The model already fits the training messages, so it looks too sure there
+          - id: c
+            text: Temperature can only be computed on messages that have no labels
+        answer: a
+        feedback: The weights were chosen to fit the training messages, so confidence on them looks better than it will on new ones. Fitting T on unseen messages shows the real gap. Validation is actually the smaller split here, and temperature fitting uses the labels.
+      - id: decision-model-project.base.2
+        prompt: The fitted temperature is T = 0.65, below 1, and test ECE falls from 0.186 to 0.106. What does that tell you about the raw model?
+        options:
+          - id: c
+            text: It was accurate, but its predictions were wrong 35% of the time
+          - id: b
+            text: It was overconfident, so T flattened its probabilities
+          - id: a
+            text: It was underconfident, so dividing by 0.65 sharpened them
+        answer: a
+        feedback: A T below 1 makes probabilities sharper, and it helped, so the raw model was too unsure. Overconfident models need T above 1. Temperature never changes accuracy, so it can't explain a wrong 35%.
+      - id: decision-model-project.base.3
+        prompt: The 0.75 gate showed 0 errors on 8 automated validation messages, but test shows 1 error among 14. What is the best reading?
+        options:
+          - id: b
+            text: The temperature was fitted wrongly, so refit it on the test messages
+          - id: c
+            text: Some test messages leaked into training, which raised the errors
+          - id: a
+            text: Counts this small are noisy, so neither rate promises much
+        answer: a
+        feedback: One message moves the error rate by about 7 points on 14 automated messages, and 0 of 8 is just as loose. More labelled messages would narrow this. Refitting on test would use the sealed split, and nothing here suggests leakage.
+      - id: decision-model-project.base.4
+        prompt: A teammate tries thresholds 0.60 to 0.95 on the test split and keeps the one with the best cost. What is wrong with that?
+        options:
+          - id: c
+            text: Thresholds should be picked on the training split, where the model is most sure
+          - id: a
+            text: The test split now guided a choice, so its numbers are too optimistic
+          - id: b
+            text: Test has too few messages for any cost to be computed at all
+        answer: a
+        feedback: Once the test split picks the threshold, it can no longer give an honest estimate of a gate it hasn't seen. Choose on validation and run test once. Training messages are the wrong place too, since the model is overconfident on them, and a small test can still report a cost.
+      - id: decision-model-project.base.5
+        prompt: The model gives "refund for my cancelled booking" a 48% chance of billing and 45% of bookings. Which feature of the model explains the split?
+        options:
+          - id: a
+            text: Word counts ignore order and context, so both sets of cue words count
+          - id: c
+            text: Softmax cannot give two routes nearly the same probability
+          - id: b
+            text: The vocabulary was too large for the model to separate the two routes
+        answer: a
+        feedback: A bag of words sees "refund" and "cancelled booking" as separate cues pointing in different directions, with no sense of which matters. Softmax handles near-ties easily, and a small vocabulary would make this worse.
+      - id: decision-model-project.base.6
+        prompt: A test message contains words that never appeared in the training messages. What does the bag-of-words model do with them?
+        options:
+          - id: b
+            text: It stops with an error, since the words are not in the vocabulary
+          - id: c
+            text: It sends the message to an "other" route it learned
+          - id: a
+            text: It skips them, so only known words push the probabilities
+        answer: a
+        feedback: The vocabulary came from training, so unseen words have no column and add nothing. A message with few known words ends up with weak, spread-out probabilities, which is often how the gate catches it. There is no "other" route in this project.
+  - id: decision-model-project.transfer
+    objective_ref: objective.decision-model-project
+    task: transfer
+    response_type: single_choice
+    points: 1
+    hint: Apply the same pipeline to the new setting. Ask which split each step used, what the counts behind a rate are, and whether the number you are quoting answers the manager's question.
+    remediation_scene: decision-model-project.mistakes
+    variants:
+      - id: decision-model-project.transfer.1
+        prompt: A hotel builds this pipeline for room service, housekeeping, maintenance and complaints with 200 labelled messages, and wants at most 3% errors on automated messages. Which step is riskiest?
+        options:
+          - id: b
+            text: Turning four scores into probabilities with a softmax
+          - id: a
+            text: Choosing the threshold from a few dozen messages
+          - id: c
+            text: Splitting the labelled messages into three groups
+        answer: a
+        feedback: A 3% target needs far more automated examples than a few dozen validation messages provide to be checked, since one error moves the rate by several points. Softmax and splitting are routine steps.
+      - id: decision-model-project.transfer.2
+        prompt: On another dataset, the fitted temperature comes out at T = 2.4 and test ECE drops from 0.21 to 0.05. What does that suggest?
+        options:
+          - id: c
+            text: The model was underconfident, so dividing by 2.4 sharpened it
+          - id: b
+            text: Accuracy rose, since ECE and accuracy move together
+          - id: a
+            text: The raw model was overconfident, and dividing by 2.4 flattened it
+        answer: a
+        feedback: A T above 1 flattens the probabilities, and it cut ECE, so the raw confidences were too high. Temperature leaves the top pick alone, so accuracy stays the same, and the underconfident case needs T below 1.
+      - id: decision-model-project.transfer.3
+        prompt: A product owner asks for 95% automation. What is the most useful reply from your validation table?
+        options:
+          - id: b
+            text: Lower the threshold until 95% is automated, and report that number
+          - id: c
+            text: Retrain the model until its overall accuracy reaches 95%
+          - id: a
+            text: Show the error rate and cost at that automation level, and let them choose
+        answer: a
+        feedback: Automation rate and error rate move together, so the useful answer is what 95% costs in errors, using real prices. Lowering the gate without looking at errors hides the cost, and overall accuracy is a different number.
+      - id: decision-model-project.transfer.4
+        prompt: A report says "accuracy 0.90, ECE 0.04, so we can automate everything above 0.5 confidence." Which number is missing?
+        options:
+          - id: a
+            text: The error rate among messages above 0.5, with counts
+          - id: c
+            text: A bigger vocabulary, to lift accuracy further
+          - id: b
+            text: A lower ECE, since 0.04 is still too high
+        answer: a
+        feedback: The decision is about the automated messages, and overall accuracy mixes in the ones people still handle. Selective error with counts answers the manager's question. ECE of 0.04 is already low, and vocabulary size is a separate matter.
+      - id: decision-model-project.transfer.5
+        prompt: A teammate trains on the first 40 messages by date and tests on the last 20, and gets lower accuracy than with a random split. Which number is closer to what production will show?
+        options:
+          - id: b
+            text: The random split, because it is higher and so more flattering
+          - id: c
+            text: Both, because the data and the model are the same
+          - id: a
+            text: The date split, since real messages arrive after the training ones
+        answer: a
+        feedback: A random split lets later wording and topics leak into training, and production messages come from the future. The lower number is the more honest estimate. A flattering number isn't a reason to prefer it.
+  - id: decision-model-project.calculate
+    objective_ref: objective.decision-model-project
+    task: base
+    response_type: numeric
+    points: 1
+    hint: "Cost per message = share sent to people × human cost + share automated × error rate × cost of a wrong action. Ignore the model's own tiny cost."
+    remediation_scene: decision-model-project.s3
+    absolute_tolerance: 0.005
+    variants:
+      - id: decision-model-project.calculate.1
+        prompt: A gate automates 70% of messages, with 7% errors among them. People cost $0.50 per message and a wrong automation costs $5. What is the cost per message in dollars?
+        answer: 0.395
+        feedback: People handle 30%, which costs 0.30 × 0.50 = 0.15. Errors cost 0.70 × 0.07 × 5 = 0.245. The total is 0.395.
+      - id: decision-model-project.calculate.2
+        prompt: A gate automates 60% of messages, with 2% errors among them. People cost $0.50 per message and a wrong automation costs $5. What is the cost per message in dollars?
+        answer: 0.26
+        feedback: People handle 40%, so 0.40 × 0.50 = 0.20. Errors cost 0.60 × 0.02 × 5 = 0.06. The total is 0.26.
+      - id: decision-model-project.calculate.3
+        prompt: A gate automates 80% of messages, with 10% errors among them. People cost $0.50 per message and a wrong automation costs $2. What is the cost per message in dollars?
+        answer: 0.26
+        feedback: People handle 20%, so 0.20 × 0.50 = 0.10. Errors cost 0.80 × 0.10 × 2 = 0.16. The total is 0.26.
+      - id: decision-model-project.calculate.4
+        prompt: A gate automates 50% of messages with no errors among them. People cost $0.40 per message and a wrong automation costs $10. What is the cost per message in dollars?
+        answer: 0.2
+        feedback: People handle 50%, so 0.50 × 0.40 = 0.20. With no errors, the $10 price never applies, so the total is 0.20.
+      - id: decision-model-project.calculate.5
+        prompt: A gate automates 90% of messages, with 5% errors among them. People cost $0.60 per message and a wrong automation costs $8. What is the cost per message in dollars?
+        answer: 0.42
+        feedback: People handle 10%, so 0.10 × 0.60 = 0.06. Errors cost 0.90 × 0.05 × 8 = 0.36. The total is 0.42.
