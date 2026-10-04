@@ -2,9 +2,9 @@ schema_version: 0.2-draft
 lesson:
   id: decision-model-project
   version: 0.4.0-draft
-  title: "Project: build a tiny decision model and route by confidence"
+  title: "Project: build and gate a tiny router"
   state: draft
-  summary: Train a small model on 60 invented Tally messages, fix its confidence, then choose the gate that decides which messages a machine may route alone. Report accuracy, ECE, automation and cost.
+  summary: Train a small fixed-label router on 60 invented Tally messages, fit its temperature, then choose on validation the gate that decides which messages a machine may route alone. Open the test messages once, and report accuracy, ECE, automation, cost and a failure case.
   slot: M38.7
   category: learning
   archetype: project
@@ -19,7 +19,7 @@ lesson:
 objectives:
   - id: objective.decision-model-project
     version: 1-draft
-    statement: Build and evaluate a small softmax decision model on labelled messages. Measure accuracy and ECE, fit a temperature on a validation split, choose a confidence threshold for a target error rate on automated messages, and report automation rate and cost from a test split used once.
+    statement: Build and evaluate a small softmax decision model on labelled messages. Measure accuracy and ECE, fit a temperature on a validation split, choose a confidence threshold for a target error rate on automated messages, and report automation rate, error counts, cost and one failure case from a test split used once.
     depths:
       - intuition
       - mechanics
@@ -50,13 +50,15 @@ scenes:
 
       **Done looks like:**
 
-      - a bag-of-words softmax model with test accuracy and ECE;
-      - a temperature fitted on the validation split, with ECE before and after;
-      - a threshold chosen on validation to keep errors among automated messages at or under 5%;
-      - the automation rate, error rate and cost per message on the test split, reported once;
-      - one paragraph for the manager that says what the numbers do and don't support.
+      - a bag-of-words softmax model, with accuracy on validation first and on test only at the end;
+      - a temperature fitted on the validation split, with test ECE before and after;
+      - a threshold chosen on validation to keep errors among automated messages at or under 5%, and written down before test is opened;
+      - the automation rate, error counts and cost per message on the test split, reported once;
+      - one failure case from the test messages, and one paragraph for the manager that says what the numbers do and don't support.
 
-      Everything here is invented and runs in a second or two. No real model or customer is involved.
+      **What this model is.** It is a **fixed-label classifier**: a word-counting model trained on exactly four routes. It can only answer billing, bookings, repairs or safety, and it has no way to say "other topic" or "not enough information". The decision models in this module take their list of answers at run time, so tomorrow's list can differ. An optional extension at the end shows that difference. The probabilities, temperature and gate you build here work the same way for either kind.
+
+      Everything is invented and runs in a second or two. No real model or customer is involved.
     bridges: []
   - id: decision-model-project.data
     title: Sixty invented messages and one fixed split
@@ -73,6 +75,9 @@ scenes:
       | I was charged for a booking and need to cancel it | bookings | Same, with the order reversed |
       | The brakes squeak since this morning | repairs | "Brakes" also shows up in safety messages |
       | The brakes failed and I crashed, I am hurt | safety | The words that make it urgent are shared |
+      | The pedal is loose and I nearly fell | safety | A fault that put the rider in danger, though nobody was hurt |
+
+      Labels are decisions, so they need a written policy. Tally's: a message is *safety* if someone is hurt or a fault put a rider in danger while riding (fire, failed brakes, a near fall caused by the fault). It is *repairs* if something needs fixing but nobody was in danger. Under that policy "The pedal is loose and I nearly fell" is safety, and "The pedal is loose and the crank clicks" is repairs. Another desk could write a different policy, and then the labels would change. What matters is that the policy is written down before the labelling.
 
       The split is by position inside each route, so every route appears in every part:
 
@@ -82,7 +87,7 @@ scenes:
       | validation | 16 (4 per route) | Fit the temperature and choose the threshold |
       | test | 20 (5 per route) | Report the final numbers, once |
 
-      Treat the test split like a sealed envelope. Look at it once, at the end. If you peek and then adjust, its numbers can no longer tell the manager what to expect.
+      Treat the test split like a sealed envelope. The program keeps it sealed with a switch, `REVEAL_TEST`, which stays `False` until every choice is made. If you open it and then adjust, its numbers can no longer tell the manager what to expect.
     bridges: []
   - id: decision-model-project.s2
     title: "Milestones 1 and 2: count words, then score four routes"
@@ -91,13 +96,17 @@ scenes:
     objective_refs:
       - objective.decision-model-project
     markdown: |-
-      **Milestone 1: features.** A **bag of words** turns each message into counts of the words it contains, ignoring order. The program drops a few filler words ("the," "my") and builds the vocabulary from the training messages only.
+      **Milestone 1: features.** A **bag of words** turns each message into counts of the words it contains, ignoring order. The program drops a few filler words ("the," "my") and builds the vocabulary from the training messages only. It keeps the word "not": dropping it would make "I did not pick insurance" look like "I did pick insurance", and a word that flips a meaning has to survive. Even so, a bag of words can't tell *which* thing a "not" applies to.
 
       **Milestone 2: the model.** Each route gets a weight for every word. A message's score for a route is the sum of the weights of its words plus a bias. A softmax turns the four scores into probabilities, and gradient descent nudges the weights to make the right route more probable on the training messages. It's the softmax from earlier in the course, with word counts as the inputs.
+
+      Run the program as it stands. The later milestones are explained in the next section, and the test split stays sealed because `REVEAL_TEST` is `False`.
 
       ```python run
       import re
       import numpy as np
+
+      REVEAL_TEST = False      # keep False until you have chosen the temperature and the threshold
 
       ROUTES = ["billing", "bookings", "repairs", "safety"]
       DATA = {
@@ -148,7 +157,7 @@ scenes:
         "The brakes are loose and squeak when I stop",
         "The seat post will not stay up",
         "My tyre is worn and the chain is rusty",
-        "The pedal is loose and I nearly fell"],
+        "The pedal is loose and the crank clicks"],
        "safety": [
         "The brakes failed and I crashed, I am hurt",
         "I fell off because the wheel wobbled, I am hurt",
@@ -164,11 +173,12 @@ scenes:
         "The helmet strap broke when I fell",
         "The handlebar snapped and I need an ambulance",
         "My daughter was injured when the pedal sheared off",
-        "The battery is smoking and hot, I left it charging"]}
+        "The pedal is loose and I nearly fell"]}
 
       split = {"train": range(0, 6), "val": range(6, 10), "test": range(10, 15)}
       rows = {s: [(DATA[r][i], k) for k, r in enumerate(ROUTES) for i in idx] for s, idx in split.items()}
-      STOP = set("i my me the a an to of for is it in on at and or was were be with that this when after from but not did do can you your have has had we our".split())
+      # Filler words are dropped, but "not" stays: "did not pick" and "did pick" mean different things
+      STOP = set("i my me the a an to of for is it in on at and or was were be with that this when after from but did do can you your have has had we our".split())
       def tok(t): return [w for w in re.findall(r"[a-z0-9']+", t.lower()) if w not in STOP]
       words = sorted({w for t, _ in rows["train"] for w in tok(t)})
       col = {w: j for j, w in enumerate(words)}
@@ -185,7 +195,7 @@ scenes:
           e = np.exp(z)
           return e / e.sum(axis=1, keepdims=True)
 
-      Xtr, ytr = encode("train"); Xva, yva = encode("val"); Xte, yte = encode("test")
+      Xtr, ytr = encode("train"); Xva, yva = encode("val")
       W = np.zeros((len(words), 4)); b = np.zeros(4)
       # Milestone 2: softmax regression trained by gradient descent on cross-entropy
       for _ in range(1000):
@@ -196,64 +206,80 @@ scenes:
 
       def ece(P, y, bins=3):
           conf, hit = P.max(axis=1), P.argmax(axis=1) == y
-          edges = np.linspace(0.25, 1.0, bins + 1)
-          out = 0.0
-          for lo, hi in zip(edges[:-1], edges[1:]):
-              m = (conf > lo) & (conf <= hi)
-              if m.any(): out += m.mean() * abs(conf[m].mean() - hit[m].mean())
-          return out
+          # equal-width bins over 0.25 to 1.0; each bin includes its lower edge, the last also includes 1.0
+          which = np.minimum(((conf - 0.25) / (0.75 / bins)).astype(int), bins - 1)
+          return sum((which == k).mean() * abs(conf[which == k].mean() - hit[which == k].mean())
+                     for k in range(bins) if (which == k).any())
+
+      # Uniform four-way predictions have top probability exactly 0.25: they must land in the first bin
+      print("ECE check on four uniform predictions (expect 0.500):", round(ece(np.full((4, 4), 0.25), np.array([0, 0, 0, 1])), 3))
 
       # Milestone 3: pick the temperature T that gives the validation messages the lowest log loss
       def nll(T): return -np.log(softmax((Xva @ W + b) / T)[np.arange(len(yva)), yva]).mean()
       T = min(np.arange(0.25, 3.01, 0.05), key=nll)
 
-      Pte, Pte_T = softmax(Xte @ W + b), softmax((Xte @ W + b) / T)
-      print(f"vocabulary {len(words)} words; train {len(ytr)}, val {len(yva)}, test {len(yte)}")
-      print(f"test accuracy {np.mean(Pte.argmax(1) == yte):.3f}")
-      print(f"temperature T = {T:.2f}  (val NLL {nll(1.0):.3f} -> {nll(T):.3f})")
-      print(f"test ECE before {ece(Pte, yte):.3f}, after {ece(Pte_T, yte):.3f}")
+      Pva, Pva_T = softmax(Xva @ W + b), softmax((Xva @ W + b) / T)
+      print(f"vocabulary {len(words)} words; train {len(ytr)}, validation {len(yva)}")
+      print(f"accuracy: train {np.mean(softmax(Xtr @ W + b).argmax(1) == ytr):.3f}, validation {np.mean(Pva.argmax(1) == yva):.3f}")
+      print(f"temperature T = {T:.2f}  (validation log loss {nll(1.0):.3f} -> {nll(T):.3f})")
 
       # Milestone 4: choose the lowest threshold whose automated messages meet the error target
-      Pva = softmax((Xva @ W + b) / T)
-
-      def auto_stats(P, y, t):                   # share automated, error rate among automated
+      def auto_stats(P, y, t):                  # (share automated, messages automated, wrong among them)
           auto = P.max(axis=1) >= t
-          return auto.mean(), (P.argmax(1)[auto] != y[auto]).mean() if auto.any() else 0.0
+          return auto.mean(), int(auto.sum()), int((P.argmax(1)[auto] != y[auto]).sum())
+
+      def pct(wrong, n): return "not measurable" if n == 0 else f"{wrong / n:.1%}"
 
       TARGET = 0.05                              # we accept at most 5% errors on automated messages
-      for t in np.arange(0.5, 0.96, 0.05):
-          a, e = auto_stats(Pva, yva, t)
-          print(f"val threshold {t:.2f}: automated {a:.0%}, error on automated {e:.1%}")
-      t = next(t for t in np.arange(0.5, 1.0, 0.05) if auto_stats(Pva, yva, t)[1] <= TARGET)
-      a, e = auto_stats(Pte_T, yte, t)
-      cost = (0.00001 + (1 - a) * 0.50 + a * e * 5.00)   # model + human review + cost of automated errors
-      print(f"chosen threshold {t:.2f} -> test: automated {a:.0%}, error on automated {e:.1%}, "
-            f"cost per message ${cost:.3f} (all-human: $0.500)")
+      GRID = [round(t, 2) for t in np.arange(0.50, 1.0, 0.05)]
+
+      def choose_threshold(P, y, target):
+          for t in GRID:
+              share, n, wrong = auto_stats(P, y, t)
+              if n > 0 and wrong / n <= target:
+                  return t
+          return None                            # nothing qualifies: do not automate
+
+      for t in GRID:
+          share, n, wrong = auto_stats(Pva_T, yva, t)
+          print(f"val threshold {t:.2f}: automated {share:.0%} ({n}), wrong among automated {wrong}, error {pct(wrong, n)}")
+      t = choose_threshold(Pva_T, yva, TARGET)
+      print("chosen threshold:", "none qualifies, so route everything to people" if t is None else f"{t:.2f}")
+
+      if REVEAL_TEST and t is not None:
+          # The sealed envelope: run once, after every choice above is final
+          Xte, yte = encode("test")
+          Pte, Pte_T = softmax(Xte @ W + b), softmax((Xte @ W + b) / T)
+          share, n, wrong = auto_stats(Pte_T, yte, t)
+          cost = 0.00001 + (1 - share) * 0.50 + (wrong / len(yte)) * 5.00   # model + human review + automated errors
+          print(f"TEST accuracy {np.mean(Pte.argmax(1) == yte):.3f}; ECE before {ece(Pte, yte):.3f}, after {ece(Pte_T, yte):.3f}")
+          print(f"TEST at threshold {t:.2f}: automated {share:.0%} ({n} of {len(yte)}), wrong {wrong}, "
+                f"cost per message ${cost:.3f} (all-human: $0.500)")
       ```
 
       **What you should see:**
 
       ```text
-      vocabulary 94 words; train 24, val 16, test 20
-      test accuracy 0.900
-      temperature T = 0.65  (val NLL 0.689 -> 0.642)
-      test ECE before 0.186, after 0.106
-      val threshold 0.50: automated 88%, error on automated 21.4%
-      val threshold 0.55: automated 88%, error on automated 21.4%
-      val threshold 0.60: automated 81%, error on automated 23.1%
-      val threshold 0.65: automated 69%, error on automated 18.2%
-      val threshold 0.70: automated 69%, error on automated 18.2%
-      val threshold 0.75: automated 50%, error on automated 0.0%
-      val threshold 0.80: automated 44%, error on automated 0.0%
-      val threshold 0.85: automated 38%, error on automated 0.0%
-      val threshold 0.90: automated 31%, error on automated 0.0%
-      val threshold 0.95: automated 31%, error on automated 0.0%
-      chosen threshold 0.75 -> test: automated 70%, error on automated 7.1%, cost per message $0.400 (all-human: $0.500)
+      ECE check on four uniform predictions (expect 0.500): 0.5
+      vocabulary 95 words; train 24, validation 16
+      accuracy: train 1.000, validation 0.688
+      temperature T = 0.65  (validation log loss 0.714 -> 0.672)
+      val threshold 0.50: automated 88% (14), wrong among automated 4, error 28.6%
+      val threshold 0.55: automated 81% (13), wrong among automated 3, error 23.1%
+      val threshold 0.60: automated 81% (13), wrong among automated 3, error 23.1%
+      val threshold 0.65: automated 56% (9), wrong among automated 1, error 11.1%
+      val threshold 0.70: automated 56% (9), wrong among automated 1, error 11.1%
+      val threshold 0.75: automated 50% (8), wrong among automated 0, error 0.0%
+      val threshold 0.80: automated 44% (7), wrong among automated 0, error 0.0%
+      val threshold 0.85: automated 38% (6), wrong among automated 0, error 0.0%
+      val threshold 0.90: automated 31% (5), wrong among automated 0, error 0.0%
+      val threshold 0.95: automated 31% (5), wrong among automated 0, error 0.0%
+      chosen threshold: 0.75
       ```
 
-      The first lines answer Milestone 2: 94 words in the vocabulary and 0.900 test accuracy, 18 of 20 right. ECE (expected calibration error), the average gap between confidence and accuracy, is computed here in three bands of confidence (0.25 to 0.50, 0.50 to 0.75, 0.75 to 1.00), weighting each band by its share of the messages. Before any fix it's 0.186.
+      The first lines answer Milestone 2: 95 words in the vocabulary, and accuracy of 1.000 on the training messages (24 of 24) but 0.688 on validation (11 of 16). The weights were fitted to the training messages, so they look perfect there, and validation is the first honest number. Notice that nothing about test has been printed.
 
-      Look at which messages are wrong before you move on. Bag-of-words is blind to order and context, so "refund for my cancelled booking" splits its probability between billing and bookings.
+      The program also checks its own ECE function on four uniform predictions. ECE (expected calibration error, explained below) sorts predictions into bands of top probability. A top probability of exactly 0.25 must land in the first band, and the check prints 0.500 only if it does.
     bridges: []
   - id: decision-model-project.s3
     title: "Milestones 3 and 4: fit the temperature, then choose the gate"
@@ -262,26 +288,110 @@ scenes:
     objective_refs:
       - objective.decision-model-project
     markdown: |-
-      **Milestone 3: temperature.** Dividing the scores by a number $T$ before the softmax sharpens the probabilities when $T < 1$ and flattens them when $T > 1$. It never changes which route is on top, so accuracy stays at 0.900. The program tries $T$ from 0.25 to 3 and keeps the one that gives the validation messages the lowest log loss. It lands on **T = 0.65**, which sharpens. This model was *underconfident*, and test ECE falls from 0.186 to 0.106. (The lesson on training for honest probabilities noted that Laya ships overconfident, which calls for $T > 1$. Fitting finds whichever direction your model needs.)
+      **Milestone 3: temperature.** Dividing the scores by a number $T$ (which must be above 0) before the softmax sharpens the probabilities when $T < 1$ and flattens them when $T > 1$. It never changes which route is on top, so accuracy doesn't move. The program tries $T$ from 0.25 to 3 and keeps the one that gives the validation messages the lowest log loss, the average of −log of the probability given to the right route. It lands on **T = 0.65**, which sharpens: on validation, log loss falls from 0.714 to 0.672. This model was *underconfident*. (The lesson on training for honest probabilities noted that Laya ships overconfident, which calls for $T > 1$. Fitting finds whichever direction your model needs.)
 
-      **Milestone 4: the gate.** For each threshold, the program lists the share of validation messages automated and the error rate among them. The target is 5% or less on automated messages, so it picks the lowest threshold that meets it, 0.75. On validation, that automates 8 of 16 messages (50%) with 0 errors.
+      **Milestone 4: the gate.** For each threshold on the top probability, the program lists how many validation messages are automated and how many of those are wrong. The target is 5% or less on automated messages, so it picks the lowest threshold that meets it, **0.75**: 8 of 16 messages automated (50%), 0 wrong.
 
-      Then you open the sealed envelope. On the test split, the 0.75 gate automates 14 of 20 messages, which is 70%, and one of those 14 is wrong, an error rate of 7.1%. Cost per message, using the invented prices from the lesson on building with decision models, is 6 × \$0.50 ÷ 20 for the people plus 1 × \$5 ÷ 20 for the error, about \$0.400. Sending all 20 to people costs \$0.500.
+      Two details keep that search honest. A threshold with no automated messages can't have a measurable error rate, so it never counts as meeting the target. If no threshold qualifies at all, `choose_threshold` returns `None` and the program says to route everything to people.
 
-      :::predict Validation showed 0% errors at the 0.75 gate, but test shows 7.1%. Is something broken?
+      :::try Move the target, on validation only
+      Change `TARGET = 0.05` to `0.0`, then to `0.25`, then to `-0.1`, and read only the validation lines. The chosen threshold stays 0.75, then drops to 0.55 (13 of 16 automated, 3 wrong), and then nothing qualifies, so the program refuses to automate anything. Which setting would you show the manager?
+      :::
+
+      **Lock your choices.** Write down T = 0.65 and threshold 0.75 now, before the test split is opened.
+
+      **Open the envelope once.** Set `REVEAL_TEST = True` and run the program a single time. Two lines are added:
+
+      ```text
+      TEST accuracy 0.800; ECE before 0.116, after 0.093
+      TEST at threshold 0.75: automated 70% (14 of 20), wrong 1, cost per message $0.400 (all-human: $0.500)
+      ```
+
+      Test accuracy is 0.800 (16 of 20). ECE, the average gap between confidence and accuracy, is computed in three bands of top probability (0.25 up to 0.50, 0.50 up to 0.75, and 0.75 to 1.00, each band including its lower edge and the last including 1.00), weighting each band by its share of the messages. Temperature scaling cuts test ECE from 0.116 to 0.093. At the 0.75 gate the program automates 14 of 20 messages (70%), and one of those 14 is wrong, an error rate of 7.1%. Cost per message, using the invented prices from the lesson on building with decision models, is 6 × \$0.50 ÷ 20 for the people plus 1 × \$5 ÷ 20 for the error, about \$0.400. Sending all 20 to people costs \$0.500.
+
+      :::predict Validation showed 0 errors at the 0.75 gate, but test shows 1 of 14. Is something broken?
       No. One wrong message out of 14 moves the rate by 7 points, and 0 errors out of 8 on validation is just as loose. The 5% target wasn't broken by the model, it was beyond what 16 messages can promise. Real projects use hundreds of labelled messages for exactly this reason. Report the counts (1 of 14), not only the percentage.
       :::
 
-      :::mixup "Temperature scaling makes the model more accurate."
-      It changes the confidences and leaves every top pick alone. That's why the test accuracy line says 0.900 whether or not you apply $T$.
+      :::deeper Why eight clean checks aren't much evidence
+      Suppose the true error rate were $p$. The chance of seeing 0 errors in 8 independent checks is $(1 - p)^8$. That chance stays above 5% until $p$ reaches $1 - 0.05^{1/8} \approx 0.312$, so 0 of 8 is compatible with a true error rate as high as about 31% (a one-sided 95% upper bound). It takes 59 clean independent checks to push that bound down to about 5%. The calculation doesn't cover a threshold that was chosen on those same checks, or any change in the traffic afterwards.
       :::
 
-      :::try Move the target
-      Change `TARGET = 0.05` to `0.0` and then to `0.25`. How do the chosen threshold, the automation rate and the cost move? Which setting would you show the manager?
+      :::mixup "Temperature scaling makes the model more accurate."
+      It changes the confidences and leaves every top pick alone. That's why accuracy is the same whether or not you apply $T$.
       :::
+
+      **After the reveal.** Look at which test messages were wrong, because your report needs a failure case. "Where is the refund you promised for my cancelled booking" was a billing message that the model sent to bookings at 0.76, just over the gate, so it was automated and wrong. "The pedal is loose and I nearly fell" got only 0.50 and stayed with people, which is the gate doing its job. Bag-of-words is blind to order and context, so refund words and booking words pull in different directions. This is the failure to describe to the manager. From here on, anything you try, such as a new T or a new threshold, is exploratory: the test split has been seen, and a new claim needs fresh messages.
+    bridges: []
+  - id: decision-model-project.extension
+    title: "Optional extension: score a changed list of answers"
+    type: explanation
+    depth: mechanics
+    objective_refs:
+      - objective.decision-model-project
+    markdown: |-
+      Your classifier has four routes baked into its weights. A decision model that accepts its answers at run time can score a list that differs from one request to the next, and its software has to check what comes back. The program below uses **invented scores** for one message, "My brakes failed on the hill and I want my money back," standing in for such a model's output. It does two jobs: validate a returned distribution before routing on it, and show what dropping a candidate does.
+
+      ```python run
+      import math
+      import numpy as np
+
+      CANDIDATES = ["billing", "bookings", "repairs", "safety", "other topic", "not enough information"]
+
+      def valid_distribution(p, keys):
+          """True only for a dict with exactly the expected keys, finite numbers in [0, 1], summing to 1."""
+          if not isinstance(p, dict) or set(p) != set(keys):
+              return False, "keys do not match the candidates"
+          for k, v in p.items():
+              if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not 0 <= v <= 1:
+                  return False, f"bad value for {k!r}"
+          if abs(sum(p.values()) - 1) > 1e-6:
+              return False, "probabilities do not sum to 1"
+          return True, "ok"
+
+      def softmax(z):
+          e = np.exp(np.array(z) - max(z))
+          return e / e.sum()
+
+      # Invented scores from a model that takes its candidate list at run time (not a real model's output)
+      scores = dict(zip(CANDIDATES, [2.1, 0.2, 1.0, 1.9, -1.0, -0.5]))
+      p_all = dict(zip(CANDIDATES, softmax(list(scores.values()))))
+      print("all six candidates:", {k: round(float(v), 2) for k, v in p_all.items()})
+
+      # Arithmetic on one output: drop "other topic" and renormalize the same scores
+      kept = [c for c in CANDIDATES if c != "other topic"]
+      p_drop = dict(zip(kept, softmax([scores[c] for c in kept])))
+      print("drop 'other topic', same scores:", {k: round(float(v), 2) for k, v in p_drop.items()})
+      # A real model run on the shorter list may produce different scores; that would be a new measurement.
+
+      for name, p in [("good", p_all),
+                      ("negative entry", dict(zip(CANDIDATES, [-1, 2, 0, 0, 0, 0]))),
+                      ("NaN entry", dict(zip(CANDIDATES, [float("nan"), 0, 0, 0, 0, 0]))),
+                      ("missing key", {"billing": 1.0})]:
+          print(f"{name}: {valid_distribution(p, CANDIDATES)}")
+      print("safety-first rule fires:", p_all["safety"] >= 0.20)
+      ```
+
+      **What you should see:**
+
+      ```text
+      all six candidates: {'billing': 0.41, 'bookings': 0.06, 'repairs': 0.14, 'safety': 0.34, 'other topic': 0.02, 'not enough information': 0.03}
+      drop 'other topic', same scores: {'billing': 0.42, 'bookings': 0.06, 'repairs': 0.14, 'safety': 0.34, 'not enough information': 0.03}
+      good: (True, 'ok')
+      negative entry: (False, "bad value for 'billing'")
+      NaN entry: (False, "bad value for 'billing'")
+      missing key: (False, 'keys do not match the candidates')
+      safety-first rule fires: True
+      ```
+
+      The safety-first rule fires on a safety probability of 0.34, although billing has the top probability, 0.41, and the gate would send it to a person anyway. Billing here means "this concerns a refund request", and the router tags it for review. Whether the customer gets a refund is a separate decision.
+
+      The validator rejects a payload with a negative entry even though its numbers add up to 1, rejects NaN, and rejects a missing key. Checking only that the numbers sum to 1 would let the negative one through.
+
+      Dropping "other topic" and renormalizing the same scores is arithmetic on one output: the remaining probabilities all scale up together. Running a model on the shorter list could give different scores for every candidate, which is a new measurement and not arithmetic.
     bridges: []
   - id: decision-model-project.mistakes
-    title: Six mistakes that make a router look better than it is
+    title: Mistakes that make a router look better than it is
     type: explanation
     depth: mechanics
     objective_refs:
@@ -290,11 +400,14 @@ scenes:
       | Mistake | How to spot it | Fix |
       | --- | --- | --- |
       | Choosing the threshold by looking at the test split | You tried several gates on test and kept the best | Choose on validation, then run test once |
+      | Reading test numbers before the choices are final | Test results were printed, then T or the gate changed | Keep test sealed until T and the threshold are written down |
       | Fitting the temperature on training messages | $T$ comes out near 1 and ECE looks great on train | Fit it on messages the weights never saw |
       | Reporting accuracy only | "90% accurate," yet the gate lets through 7% errors | Report the error rate among automated messages |
       | Expecting temperature to change predictions | Accuracy before and after differs | It changes confidences only, so recheck your code if accuracy moved |
       | Trusting a gate tuned on a handful of messages | "0 errors" among 8 automated messages | State the counts, and gather more labels before launch |
+      | Reading "nothing automated" as "no errors" | An error rate of 0% at a very high threshold | With no automated messages the rate is not measurable |
       | Building the vocabulary from every message | Words from validation or test appear in the vocabulary | Build it from training messages only |
+      | Stripping "not" and similar words | "did not pick" and "did pick" look identical | Keep words that flip a meaning |
     bridges: []
   - id: decision-model-project.s4
     title: The no-code path and the rubric
@@ -303,26 +416,40 @@ scenes:
     objective_refs:
       - objective.decision-model-project
     markdown: |-
-      **No code?** Everything after training works on paper. Here are 12 test messages, sorted by the confidence of a model's top pick, and whether it was right:
+      **No code?** The same discipline works on paper, with two tables. You choose the gate on the first and then evaluate once on the second.
 
-      | Confidence | 0.97 | 0.95 | 0.92 | 0.90 | 0.86 | 0.81 | 0.77 | 0.72 | 0.66 | 0.58 | 0.51 | 0.44 |
+      **Validation table**, 12 messages sorted by the model's top probability, and whether it was right:
+
+      | Top probability | 0.97 | 0.95 | 0.92 | 0.90 | 0.86 | 0.81 | 0.77 | 0.72 | 0.66 | 0.58 | 0.51 | 0.44 |
       | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
       | Right? | yes | yes | yes | yes | yes | no | yes | no | yes | no | yes | no |
 
-      1. For each threshold in the table, count the messages at or above it and the wrong ones among them. Choose the lowest threshold where errors are at most 10%. (It's about 0.85: 5 automated, none wrong, so 42% automated.)
-      2. Cost per message with people at \$0.50 and a wrong automation at \$5: 7 people × \$0.50 ÷ 12 ≈ \$0.292.
-      3. ECE in three bands: at or below 0.50 (1 message, confidence 0.44, accuracy 0, gap 0.44), 0.50 to 0.75 (4 messages, confidence 0.62, accuracy 0.50, gap 0.12), above 0.75 (7 messages, confidence 0.88, accuracy 0.86, gap 0.03). Weighted by message share, ECE ≈ 0.09.
-      4. Write the paragraph for the manager.
+      1. Use each listed value as a threshold. For each, count the messages at or above it and the wrong ones among them. Choose the lowest threshold where errors are at most 10%. (It's 0.86: 5 messages automated, none wrong, so 42% automated. At 0.81 it's 1 wrong of 6, which is 16.7%, so that fails.)
+      2. Planning cost per message with people at \$0.50 and a wrong automation at \$5: 7 people × \$0.50 ÷ 12 ≈ \$0.292.
+      3. ECE in three bands: 0.25 up to 0.50 (1 message, confidence 0.44, accuracy 0, gap 0.44), 0.50 up to 0.75 (4 messages, mean confidence 0.6175, accuracy 0.50, gap 0.1175), and 0.75 to 1.00 (7 messages, mean confidence 0.8829, accuracy 0.8571, gap 0.0257). Weighted by message share, ECE = (1 × 0.44 + 4 × 0.1175 + 7 × 0.0257) ÷ 12 ≈ 0.0908.
+      4. **Lock it.** Write down the threshold, 0.86, before turning the page.
+
+      **Test table**, 12 different messages, evaluated once with the locked threshold:
+
+      | Top probability | 0.98 | 0.94 | 0.91 | 0.89 | 0.87 | 0.83 | 0.78 | 0.73 | 0.68 | 0.62 | 0.55 | 0.40 |
+      | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+      | Right? | yes | yes | yes | no | yes | yes | no | yes | yes | no | yes | no |
+
+      5. At 0.86, five messages are automated (0.98, 0.94, 0.91, 0.89, 0.87), and one is wrong (0.89). That's 1 of 5, or 20%, with 42% automated.
+      6. Cost per message: (7 people × \$0.50 + 1 error × \$5) ÷ 12 ≈ \$0.708, against \$0.50 for sending all 12 to people. With these prices one wrong automation costs as much as ten reviews, so five automated messages can't pay for it.
+      7. Write the paragraph for the manager. Validation promised 0 wrong of 5, and test found 1 of 5. Five messages can't support any rate, and the paragraph should say so.
 
       **Rubric.** Score each row 0, 1, or 2:
 
       | Criterion | 0: missing or wrong | 1: partly there | 2: solid |
       | --- | --- | --- | --- |
-      | Model | No held-out measurement | Test accuracy only | Accuracy and ECE on test, vocabulary from train only |
-      | Calibration | None | T fitted, not checked | T fitted on validation, ECE reported before and after |
-      | Gate | Threshold picked by feel or on test | Threshold chosen on validation, no target | Lowest threshold meeting a stated error target, chosen on validation |
+      | Framing | Calls the model a general routing system | Names the four routes | States it is a fixed-label classifier and what it can't answer |
+      | Model | No held-out measurement | Test accuracy only | Validation accuracy first, vocabulary from train only |
+      | Calibration | None | T fitted, not checked | T fitted on validation, test ECE reported before and after |
+      | Gate | Threshold picked by feel or on test | Threshold chosen on validation, no target | Lowest threshold meeting a stated error target, chosen on validation and locked before test |
       | Final report | Numbers from tuning data | Test numbers without counts | Test split used once, with counts such as 1 of 14 |
       | Cost | Not computed | Cost without a human baseline | Cost per message next to the all-human cost |
+      | Failure case | None | Names a wrong message | Explains why the model got it wrong and what the gate did with it |
       | Honesty | Claims the router is safe | Notes the small sample | Says which numbers 20 test messages can't support |
 
       The quiz below checks the ideas. You or a teammate judge your own work with this rubric.
@@ -335,7 +462,7 @@ scenes:
       - objective.decision-model-project
     markdown: Splits, temperature, small samples, a hotel router and a few costs to compute test whether you can run the same pipeline on a new set of messages.
     takeaway: |-
-      Train on one split, fit the temperature and choose the gate on a second, and report on a third used once. Judge a router by the error rate among the messages it automates, with counts, not by overall accuracy.
+      Train on one split, fit the temperature and choose the gate on a second, and report on a third used once. Judge a router by the error rate among the messages it automates, with counts, and say when a rate can't be measured or a sample is too small to promise one.
   - id: decision-model-project.recap
     title: One idea to take with you
     type: recap
@@ -352,6 +479,7 @@ navigation:
         - decision-model-project.data
         - decision-model-project.s2
         - decision-model-project.s3
+        - decision-model-project.extension
         - decision-model-project.mistakes
         - decision-model-project.s4
         - decision-model-project.check
@@ -380,7 +508,7 @@ assessment_families:
         answer: a
         feedback: The weights were chosen to fit the training messages, so confidence on them looks better than it will on new ones. Fitting T on unseen messages shows the real gap. Validation is actually the smaller split here, and temperature fitting uses the labels.
       - id: decision-model-project.base.2
-        prompt: The fitted temperature is T = 0.65, below 1, and test ECE falls from 0.186 to 0.106. What does that tell you about the raw model?
+        prompt: The fitted temperature is T = 0.65, below 1, and test ECE falls from 0.116 to 0.093. What does that tell you about the raw model?
         options:
           - id: c
             text: It was accurate, but its predictions were wrong 35% of the time
@@ -413,7 +541,7 @@ assessment_families:
         answer: a
         feedback: Once the test split picks the threshold, it can no longer give an honest estimate of a gate it hasn't seen. Choose on validation and run test once. Training messages are the wrong place too, since the model is overconfident on them, and a small test can still report a cost.
       - id: decision-model-project.base.5
-        prompt: The model gives "refund for my cancelled booking" a 48% chance of billing and 45% of bookings. Which feature of the model explains the split?
+        prompt: A bag-of-words model gives a message with both "refund" and "cancelled booking" a 48% chance of billing and 45% of bookings. Which feature of the model explains the split?
         options:
           - id: a
             text: Word counts ignore order and context, so both sets of cue words count
@@ -434,6 +562,17 @@ assessment_families:
             text: It skips them, so only known words push the probabilities
         answer: a
         feedback: The vocabulary came from training, so unseen words have no column and add nothing. A message with few known words ends up with weak, spread-out probabilities, which is often how the gate catches it. There is no "other" route in this project.
+      - id: decision-model-project.base.7
+        prompt: Your threshold search finds that no threshold keeps the error among automated validation messages at or under the target. What should the code do?
+        options:
+          - id: b
+            text: Choose the highest threshold and report an error rate of 0%
+          - id: a
+            text: Report that nothing qualifies and send every message to people
+          - id: c
+            text: Choose the lowest threshold, since it automates the most messages
+        answer: a
+        feedback: If no gate meets the target, the honest policy is not to automate. A very high threshold with nothing automated has an error rate that can't be measured, not 0%, and the lowest threshold is the one most likely to break the target.
   - id: decision-model-project.transfer
     objective_ref: objective.decision-model-project
     task: transfer
@@ -487,16 +626,27 @@ assessment_families:
         answer: a
         feedback: The decision is about the automated messages, and overall accuracy mixes in the ones people still handle. Selective error with counts answers the manager's question. ECE of 0.04 is already low, and vocabulary size is a separate matter.
       - id: decision-model-project.transfer.5
-        prompt: A teammate trains on the first 40 messages by date and tests on the last 20, and gets lower accuracy than with a random split. Which number is closer to what production will show?
+        prompt: A teammate trains on the first 40 messages by date and tests on the last 20, and gets lower accuracy than with a random split. How should the team choose between the two?
         options:
           - id: b
-            text: The random split, because it is higher and so more flattering
+            text: Keep the random split, because a higher score is the better result
           - id: c
-            text: Both, because the data and the model are the same
+            text: Keep whichever is lower, since a pessimistic estimate is always safer
           - id: a
-            text: The date split, since real messages arrive after the training ones
+            text: Match the split to deployment; a date split suits a router that will see future messages
         answer: a
-        feedback: A random split lets later wording and topics leak into training, and production messages come from the future. The lower number is the more honest estimate. A flattering number isn't a reason to prefer it.
+        feedback: A test should resemble how the model will be used. A router that will read tomorrow's messages is better tested on later ones than on a shuffle. A random split isn't wrong in itself and suits messages that are interchangeable, but it can let near-duplicates or the same customer's messages sit on both sides. Neither the higher number nor the lower one is correct by default.
+      - id: decision-model-project.transfer.6
+        prompt: The router sends "Where is the refund you promised?" to billing with a top probability of 0.97. What may the system do on its own?
+        options:
+          - id: c
+            text: Nothing, since a probability below 1 is never good enough
+          - id: b
+            text: Issue the refund, because the model chose billing
+          - id: a
+            text: Route it to billing and tag it as a refund request for review
+        answer: a
+        feedback: A route says what the message is about, and a tag marks a request. Whether the customer qualifies for a refund depends on checks the model hasn't done, so a workflow reviews it. A gate set at a chosen threshold exists so that high probabilities can be acted on, and issuing money isn't the classification's job.
   - id: decision-model-project.calculate
     objective_ref: objective.decision-model-project
     task: base
@@ -526,3 +676,7 @@ assessment_families:
         prompt: A gate automates 90% of messages, with 5% errors among them. People cost $0.60 per message and a wrong automation costs $8. What is the cost per message in dollars?
         answer: 0.42
         feedback: People handle 10%, so 0.10 × 0.60 = 0.06. Errors cost 0.90 × 0.05 × 8 = 0.36. The total is 0.42.
+      - id: decision-model-project.calculate.6
+        prompt: A gate automates 5 of 12 messages, and 1 of those 5 is wrong. People cost $0.50 per message and a wrong automation costs $5. What is the cost per message in dollars?
+        answer: 0.708
+        feedback: People handle 7 of 12, which costs 7 × 0.50 = 3.50. The error costs 1 × 5 = 5. The total is 8.50 across 12 messages, or 0.708 each, more than the 0.50 of sending every message to people.
