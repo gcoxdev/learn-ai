@@ -34,6 +34,9 @@
     history: () => import("./HistoryLab.svelte"),
     evaluation: () => import("./EvaluationLab.svelte"),
     "image-noise": () => import("./ImageNoiseLab.svelte"),
+    "answer-tray": () => import("./AnswerTrayLab.svelte"),
+    "confidence-dial": () => import("./ConfidenceDialLab.svelte"),
+    "help-desk": () => import("./HelpDeskLab.svelte"),
   };
   let {
     figure,

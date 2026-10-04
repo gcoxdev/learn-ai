@@ -25,6 +25,9 @@ export const visualKindSchema = z.enum([
   "history",
   "evaluation",
   "image-noise",
+  "answer-tray",
+  "confidence-dial",
+  "help-desk",
 ]);
 export type VisualKind = z.infer<typeof visualKindSchema>;
 export const visualValuesSchema = z
