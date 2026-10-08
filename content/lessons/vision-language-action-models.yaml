@@ -4,7 +4,7 @@ lesson:
   version: 0.4.0-draft
   title: Connect visual instructions to a robot’s action interface
   state: draft
-  summary: '"Put the chipped mug in the sink." To follow that, a robot needs web-scale knowledge and millimeter-scale motor control. See how RT-2, OpenVLA, and π0 turn a language model into a robot policy.'
+  summary: '"Put the chipped mug in the sink." To follow that, a robot needs web-scale knowledge and precise motor control. See how RT-2, OpenVLA, and π0 turn a language model into a robot policy.'
   slot: M30.7
   category: learning
   sources:
@@ -121,19 +121,19 @@ scenes:
     markdown: |-
       A language model outputs tokens, one at a time. So RT-2 made actions into tokens. Each continuous action value is chopped into 256 equal **bins**, and the bin number is written out as a token. RT-2 writes each action as 8 tokens: one for a "done" flag, plus binned values for moving the gripper (three), turning it (three), and opening or closing it (one).
 
-      Take Tidy's 7-D action: move $(dx, dy, dz)$, turn (roll, pitch, yaw), and gripper opening. Say $dx$ ranges over $[-0.02, +0.02]$ m per step, and Tidy wants $dx = 0.012$:
+      Take Tidy's 7-D action: move $(dx, dy, dz)$, turn (roll, pitch, yaw), and gripper opening. Say $dx$ ranges over $[-0.02, +0.02]$ ft per step, and Tidy wants $dx = 0.012$:
 
       1. Fraction of the range: $(0.012 - (-0.02)) / 0.04 = 0.8$.
       2. Bin: $\lfloor 0.8 \times 256 \rfloor = \lfloor 204.8 \rfloor = 204$. The token is "204".
-      3. Decode to the bin's center: $-0.02 + 204.5 \times \frac{0.04}{256} = 0.011953$ m.
+      3. Decode to the bin's center: $-0.02 + 204.5 \times \frac{0.04}{256} = 0.011953$ ft.
 
-      Each bin is $0.04 / 256 = 0.156$ mm wide, so the rounding error is at most 0.078 mm. One action costs 7 tokens, and the same 256 bin tokens are reused for every dimension.
+      Each bin is $0.04 / 256 \approx 0.000156$ ft wide, so the rounding error is at most 0.000078 ft. One action costs 7 tokens, and the same 256 bin tokens are reused for every dimension.
 
       ```python run
       import numpy as np
 
       BINS = 256
-      # Tidy's 7-D action: move (dx, dy, dz) in m, turn (roll, pitch, yaw) in rad, gripper opening 0..1
+      # Tidy's 7-D action: move (dx, dy, dz) in ft, turn (roll, pitch, yaw) in rad, gripper opening 0..1
       low  = np.array([-0.02, -0.02, -0.02, -0.1, -0.1, -0.1, 0.0])
       high = np.array([ 0.02,  0.02,  0.02,  0.1,  0.1,  0.1, 1.0])
 
@@ -148,14 +148,14 @@ scenes:
       tokens = to_tokens(action)
       print("action tokens:", tokens.tolist())
       print("decoded:      ", from_tokens(tokens).round(5).tolist())
-      print(f"worst rounding error in dx: {(high[0] - low[0]) / BINS / 2 * 1000:.3f} mm")
+      print(f"worst rounding error in dx: {(high[0] - low[0]) / BINS / 2 * 1:.6f} ft")
       ```
 
       :::predict Look at dz = 0.0 in the output. Does "stay still" survive the round trip?
-      Not quite: 0.0 lands in bin 128, whose center is $+0.00008$ m. With an even number of bins, zero sits on a bin edge, so "don't move" decodes as a tiny drift of 0.08 mm per step. An odd number of bins would give zero a bin center of its own.
+      Not quite: 0.0 lands in bin 128, whose center is $+0.00008$ ft. With an even number of bins, zero sits on a bin edge, so "don't move" decodes as a tiny drift of 0.00008 ft per step. An odd number of bins would give zero a bin center of its own.
       :::
 
-      Set `BINS = 16` and rerun: the worst dx error grows to 1.25 mm on every step.
+      Set `BINS = 16` and rerun: the worst dx error grows to 0.00125 ft on every step.
     bridges: []
   - id: vision-language-action-models.s3
     title: "OpenVLA: an open 7B robot brain"
@@ -169,7 +169,7 @@ scenes:
       It follows the same token recipe as Tidy's, 7 dimensions × 256 bins, with two practical twists:
 
       - It **reuses tokens**: the 256 least-used tokens in Llama's vocabulary are reassigned to mean bins 0–255.
-      - It sets each dimension's range from the 1st to the 99th percentile of the training actions, not the min and max. One glitchy demo with a 1 m jump would otherwise stretch a $\pm$1 m range over 256 bins, making each bin 7.8 mm wide.
+      - It sets each dimension's range from the 1st to the 99th percentile of the training actions, not the min and max. One glitchy demo with a 1 ft jump would otherwise stretch a $\pm$1 ft range over 256 bins, making each bin 0.0078 ft wide.
 
       Tokens have a speed cost. The model generates them one at a time, each needing a pass through all 7 billion parameters. If one pass takes 25 ms, an action takes $7 \times 25 = 175$ ms, fewer than 6 actions per second. That's fine for slow pick-and-place, but not for catching a sliding mug.
     bridges: []
@@ -189,7 +189,7 @@ scenes:
 
       $$\mathcal{L} = \big\| v_\theta(A^\tau, o, \tau) - (A - \epsilon) \big\|^2$$
 
-      $o$ is the observation: images, instruction, and joint angles. To act, start at pure noise ($\tau = 0$) and take a few Euler steps along $v_\theta$ up to $\tau = 1$. The result is 50 continuous actions, with no bins and no 0.078 mm rounding.
+      $o$ is the observation: images, instruction, and joint angles. To act, start at pure noise ($\tau = 0$) and take a few Euler steps along $v_\theta$ up to $\tau = 1$. The result is 50 continuous actions, with no bins and no 0.000078 ft rounding.
       :::
 
       So the two designs trade off. Tokens reuse the language model unchanged and are simple to train; a continuous action head is more precise and faster, at the cost of a second network.
@@ -201,7 +201,7 @@ scenes:
     objective_refs:
       - objective.vision-language-action-models
     markdown: |-
-      Token 204 means "+12 mm along x" only for the robot whose data defined the bins. On an arm with longer links, a suction cup, or a camera mounted elsewhere, the same token means something else. This is the **embodiment** problem again, and it's why the Open X-Embodiment project pooled data from 22 different kinds of robots: a model that has seen many bodies adapts faster to a new one. Adapting still takes demonstrations on the new robot.
+      Token 204 means "+0.012 ft along x" only for the robot whose data defined the bins. On an arm with longer links, a suction cup, or a camera mounted elsewhere, the same token means something else. This is the **embodiment** problem again, and it's why the Open X-Embodiment project pooled data from 22 different kinds of robots: a model that has seen many bodies adapts faster to a new one. Adapting still takes demonstrations on the new robot.
 
       When you read a VLA result, look for the robot, the number of trials, how new the objects and scenes were, and how often a person stepped in. A single smooth video shows what's possible, not how often it happens.
     bridges: []
@@ -384,16 +384,16 @@ assessment_families:
         answer: a
         feedback: This is the kind of transfer RT-2 reported. The idea that a rock can serve as a hammer comes from web-scale image and text data; the demonstrations supply the motor skill of picking things up. The tokenizer only formats actions.
       - id: vision-language-action-models.transfer.v2.3
-        prompt: A team sets each action dimension's range from the min and max of its data. One glitchy demo recorded a 1 m jump, though typical moves are about 1 cm. With 256 bins, what goes wrong, and what is the fix?
+        prompt: A team sets each action dimension's range from the min and max of its data. One glitchy demo recorded a 1 ft jump, though typical moves are about 0.01 ft. With 256 bins, what goes wrong, and what is the fix?
         options:
           - id: c
             text: Nothing, since 256 bins are enough for any range
           - id: b
-            text: Moves get clipped at 1 cm; add more demonstrations
+            text: Moves get clipped at 0.01 ft; add more demonstrations
           - id: a
-            text: Bins become 7.8 mm wide; set ranges from percentiles
+            text: Bins become 0.0078 ft wide; set ranges from percentiles
         answer: a
-        feedback: A ±1 m range split into 256 bins gives 2 m / 256 ≈ 7.8 mm per bin, nearly as big as a typical move. OpenVLA sets ranges from the 1st to 99th percentiles so one outlier can't stretch them. More demos wouldn't shrink the stretched range.
+        feedback: A ±1 ft range split into 256 bins gives 2 ft / 256 ≈ 0.0078 ft per bin, nearly as big as a typical move. OpenVLA sets ranges from the 1st to 99th percentiles so one outlier can't stretch them. More demos wouldn't shrink the stretched range.
       - id: vision-language-action-models.transfer.v2.4
         prompt: A startup posts a smooth video of its VLA clearing a table and says it "works in any kitchen". What evidence should you ask for first?
         options:
@@ -415,7 +415,7 @@ assessment_families:
     absolute_tolerance: 0.5
     variants:
       - id: vision-language-action-models.calculate.1
-        prompt: An action value ranges over [−0.02, 0.02] m, split into 256 bins numbered 0–255 (bin = floor(fraction × 256)). Which bin does dx = 0.005 m fall in?
+        prompt: An action value ranges over [−0.02, 0.02] ft, split into 256 bins numbered 0–255 (bin = floor(fraction × 256)). Which bin does dx = 0.005 ft fall in?
         answer: 160
         feedback: "Fraction = (0.005 + 0.02) / 0.04 = 0.625, and 0.625 × 256 = 160, so bin 160."
       - id: vision-language-action-models.calculate.2
@@ -427,7 +427,7 @@ assessment_families:
         answer: 38
         feedback: "Fraction = (−0.07 + 0.1) / 0.2 = 0.15, and 0.15 × 256 = 38.4, which rounds down to bin 38."
       - id: vision-language-action-models.calculate.4
-        prompt: An action value ranges over [−0.02, 0.02] m, split into 256 bins numbered 0–255 (bin = floor(fraction × 256)). Which bin does 0.019 m fall in?
+        prompt: An action value ranges over [−0.02, 0.02] ft, split into 256 bins numbered 0–255 (bin = floor(fraction × 256)). Which bin does 0.019 ft fall in?
         answer: 249
         feedback: "Fraction = (0.019 + 0.02) / 0.04 = 0.975, and 0.975 × 256 = 249.6, which rounds down to bin 249."
       - id: vision-language-action-models.calculate.5
