@@ -306,42 +306,6 @@
           : "."}
       </p>
     </div>{/if}
-  <section id="how-it-works" class="how-it-works">
-    <span class="eyebrow">HOW LEARNING WORKS</span>
-    <h2>Small steps. Lasting understanding.</h2>
-    <div class="how-grid">
-      <article>
-        <h3>Start with a system.</h3>
-        <p>
-          Choose a system such as video, speech, robotics, or prediction. Your
-          path starts with shared foundations and builds toward modern system
-          lifecycles.
-        </p>
-      </article>
-      <article>
-        <h3>Take a math side lesson.</h3>
-        <p>
-          Open an explanation when you need it, then return to your saved place.
-          The gradient lesson also includes an optional formal mathematics view.
-        </p>
-      </article>
-      <article>
-        <h3>Carry your evidence forward.</h3>
-        <p>
-          Two varied, fresh, unassisted checks demonstrate each core objective.
-          The same compatible evidence counts across paths. Simply reading a
-          lesson does not award mastery.
-        </p>
-      </article>
-    </div>
-    <p class="draft-note">
-      These lessons have received an editorial reading pass. They remain drafts
-      while assessment revision, independent review, and learner trials
-      continue.
-      <a href="/about/#drafts">What makes a lesson ready?</a>
-      Estimates are editorial, not measured learner times.
-    </p>
-  </section>
 </div>
 
 <style>

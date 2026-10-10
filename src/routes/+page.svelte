@@ -13,7 +13,6 @@
     curriculum.objectives.filter((o) => mastered(o, learner.data.attempts))
       .length,
   );
-  const shared = ["ai-systems", "history", "learning-update"];
   const groups = ["All", "Create", "Perceive", "Act", "Predict", "Investigate"];
   let group = $state("All");
   const paths = recipes.map((recipe) => ({
@@ -25,12 +24,13 @@
   );
 </script>
 
-<svelte:head><title>Learn AI — Start with curiosity</title></svelte:head>
+<svelte:head
+  ><title>Learn AI — Your path to understanding AI</title></svelte:head
+>
 <div class="page-content home-page">
   <section class="home-hero">
     <div>
-      <div class="eyebrow hero-eyebrow"><span></span>START WITH CURIOSITY</div>
-      <h1>Big ideas.<br /><em>Made understandable.</em></h1>
+      <h1>Your path to understanding AI starts here.</h1>
       <p>
         Learn how AI really works, from the first principles to the systems
         shaping our world. One connected idea at a time.
@@ -67,23 +67,7 @@
             fill="#f7f7ee"
             stroke="#658563"
             stroke-width="2"
-          />{/each}<rect
-          x="0"
-          y="233"
-          width="144"
-          height="34"
-          rx="7"
-          fill="#fff"
-          stroke="#e0e3d9"
-        /><text x="15" y="255" fill="#486046">foundations → possibilities</text
-        ><rect
-          x="251"
-          y="34"
-          width="114"
-          height="34"
-          rx="7"
-          fill="#e4eadc"
-        /><text x="267" y="56" fill="#486046">everything connects</text></svg
+          />{/each}</svg
       >
     </div>
   </section>
@@ -106,11 +90,8 @@
   <section class="path-section">
     <div class="section-heading">
       <div>
-        <span class="eyebrow">01 / CHOOSE YOUR DIRECTION</span>
         <h2>What are you curious about?</h2>
       </div>
-      <span class="section-aside">Choose a system. We’ll connect the dots.</span
-      >
     </div>
     <div class="path-filters" role="group" aria-label="Filter learning paths">
       {#each groups as label (label)}<button
@@ -129,7 +110,12 @@
               <span class={["topic-icon", recipe.color]}
                 ><Icon name={recipe.icon} size={21} /></span
               ><span class="small-badge"
-                >≈ {Math.max(1, Math.round(plan.lessons.reduce((n, l) => n + l.minutes, 0) / 60))} HOURS</span
+                >≈ {Math.max(
+                  1,
+                  Math.round(
+                    plan.lessons.reduce((n, l) => n + l.minutes, 0) / 60,
+                  ),
+                )} HOURS</span
               >
             </div>
             <h3>{recipe.title}</h3>
@@ -139,7 +125,7 @@
             <div class="path-meta">
               <span
                 ><Icon name="book" size={15} />{plan.lessons.length} lessons</span
-              ><span><Icon name="layers" size={15} />Foundations first</span>
+              >
             </div>
             <div class="path-card-footer">
               <span>Explore this path</span><Icon name="arrow" size={20} />
@@ -154,41 +140,6 @@
       <a href="/library/?view=curriculum">full draft curriculum</a>.
     </p>
   </section>
-  <section class="foundation-section">
-    <div class="section-heading">
-      <div>
-        <span class="eyebrow">02 / A LITTLE COMMON GROUND</span>
-        <h2>Different paths. Shared foundations.</h2>
-      </div>
-      <a href="/library/" class="inline-link"
-        >Browse the library <Icon name="arrow" size={16} /></a
-      >
-    </div>
-    <div class="foundation-grid">
-      {#each shared as id, i (id)}{@const lesson = getLesson(id)!}<a
-          class="foundation-card"
-          href={lessonHref(id, { kind: "home" })}
-          ><span class="foundation-number">0{i + 1}</span>
-          <div>
-            <h3>{lesson.title}</h3>
-            <p>
-              {id === "ai-systems"
-                ? "Get a clear picture of what AI is—and the questions worth asking."
-                : id === "history"
-                  ? "Meet the research traditions that brought us here."
-                  : "Change a weight. Watch a prediction improve. See why."}
-            </p>
-            <span
-              >{lesson.minutes} min <span aria-hidden="true">·</span>
-              {id === "learning-update"
-                ? "Interactive experiment"
-                : "Shared foundation"}</span
-            >
-          </div>
-          <Icon name="arrow" size={17} /></a
-        >{/each}
-    </div>
-  </section>
   <section class="learning-promise">
     <span class="promise-symbol" aria-hidden="true">↗</span>
     <div>
@@ -198,8 +149,5 @@
         system without repeating foundations you already know.
       </p>
     </div>
-    <a class="button secondary" href="/library/#how-it-works"
-      >How it works <Icon name="arrow" size={16} /></a
-    >
   </section>
 </div>

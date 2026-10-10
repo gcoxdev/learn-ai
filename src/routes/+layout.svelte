@@ -29,9 +29,9 @@
           ? "Your progress"
           : page.url.pathname.startsWith("/review")
             ? "Daily review"
-          : page.url.pathname.startsWith("/library")
-            ? "The library"
-            : "Your learning journey",
+            : page.url.pathname.startsWith("/library")
+              ? "The library"
+              : "Your learning journey",
   );
   const nav = [
     { name: "Explore paths", href: "/", icon: "home" },
@@ -42,9 +42,7 @@
     { name: "Glossary", href: "/library/?view=glossary", icon: "layers" },
   ];
   const reviewDue = $derived(
-    learner.hydrated
-      ? reviewSchedule(curriculum, learner.data).due.length
-      : 0,
+    learner.hydrated ? reviewSchedule(curriculum, learner.data).due.length : 0,
   );
   function active(href: string) {
     return (
@@ -167,8 +165,7 @@
     aria-label="Main navigation"
   >
     <a href="/" class="brand" onclick={() => (menu = false)}
-      ><span class="brand-mark">✳</span><span
-        >Learn AI<span class="brand-sub">THE OPEN CLASSROOM</span></span
+      ><span class="brand-mark" aria-hidden="true">✳</span><span>Learn AI</span
       ></a
     >
     <p class="nav-heading">YOUR CLASSROOM</p>
@@ -185,22 +182,6 @@
             >{:else if active(item.href)}<i></i>{/if}</a
         >{/each}
     </nav>
-    <div class="sidebar-note">
-      <span class="tiny-orbit" aria-hidden="true">↗</span>
-      <h3>Every big idea starts<br />with a small question.</h3>
-      <p>You don’t need a math degree.<br />Just a place to begin.</p>
-      <a href="/library/#how-it-works"
-        >How learning works <Icon name="arrow" size={15} /></a
-      >
-    </div>
-    <div class="sidebar-bottom">
-      <span class="status-dot"></span>
-      <div>
-        <strong>Private learning preview</strong><span
-          >Draft content · personal progress</span
-        >
-      </div>
-    </div>
   </aside>
   <div class="workspace">
     <header class="topbar">
@@ -241,16 +222,5 @@
     >
       {@render children()}
     </main>
-    <footer class="app-footer">
-      <a href="/about/">About this classroom</a><a href="/progress/"
-        >{learner.saveStatus === "loading"
-          ? "Loading local progress…"
-          : learner.saveStatus === "saving"
-            ? "Saving…"
-            : learner.saveStatus === "saved"
-              ? "Progress saved in this browser"
-              : "Progress stays in this session"}</a
-      >
-    </footer>
   </div>
 </div>

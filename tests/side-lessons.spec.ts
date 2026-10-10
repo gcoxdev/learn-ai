@@ -180,14 +180,30 @@ test("another tab cannot replace this tab's side-lesson return trail", async ({
     })
     .click();
   await expect(other).toHaveURL(/\/learn\/vectors\/$/);
-  await expect(
-    other
-      .locator("footer")
-      .getByRole("link", {
-        name: "Progress saved in this browser",
-        exact: true,
+  await expect
+    .poll(() =>
+      other.evaluate(async () => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open("learn-ai", 1);
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        try {
+          return await new Promise<string | undefined>((resolve, reject) => {
+            const request = db
+              .transaction("learner")
+              .objectStore("learner")
+              .get("progress");
+            request.onsuccess = () =>
+              resolve(request.result?.detours?.at(-1)?.lesson);
+            request.onerror = () => reject(request.error);
+          });
+        } finally {
+          db.close();
+        }
       }),
-  ).toHaveText("Progress saved in this browser");
+    )
+    .toBe("softmax-attention");
   // Reload reads shared progress, but the return trail belongs to this history entry.
   await page.reload();
   await expect(page.locator("main")).toHaveAttribute("aria-busy", "false");

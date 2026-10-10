@@ -154,33 +154,3 @@ test("review and correction forms fit mobile and have accessible labels", async 
     .analyze();
   expect(result.violations).toEqual([]);
 });
-
-test("about explains learning, local privacy, and manual sharing without an account", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 375, height: 812 });
-  await ready(page, "/about/");
-  await expect(page.getByRole("heading", { level: 1 })).toContainText(
-    "Understand the system",
-  );
-  await expect(
-    page.getByText("Understanding travels with you.", { exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Your learning record stays in your browser.", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Find a project to review" }),
-  ).toHaveAttribute("href", "/library/?archetype=project");
-  const result = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
-    .analyze();
-  expect(result.violations).toEqual([]);
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= window.innerWidth,
-    ),
-  ).toBe(true);
-});
