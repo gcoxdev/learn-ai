@@ -123,9 +123,11 @@
   async function goTo(id: string) {
     patch({ scene: id, activeQuestion: undefined });
     await tick();
-    document
-      .getElementById(position.mode === "text" ? `scene-${id}` : "lesson-stage")
-      ?.focus();
+    const target = document.getElementById(
+      position.mode === "text" ? `scene-${id}` : "lesson-stage",
+    );
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: "start", behavior: "instant" });
   }
   async function bridge(
     id: string,
