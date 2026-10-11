@@ -51,7 +51,7 @@ const ALLOWED_TAGS = [
 
 export class LessonMarkdownError extends Error {}
 
-function escapeHtml(text: string) {
+export function escapeHtml(text: string) {
   return text
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")

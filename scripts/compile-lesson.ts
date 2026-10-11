@@ -6,7 +6,11 @@ import {
   type Question,
   type Scene,
 } from "../src/lib/model";
-import { markdownWords, renderLessonMarkdown } from "./lesson-markdown";
+import {
+  escapeHtml,
+  markdownWords,
+  renderLessonMarkdown,
+} from "./lesson-markdown";
 
 export const knownTypes = new Set([
   "explanation",
@@ -132,7 +136,14 @@ export function compileLesson(
       type: s.type,
       depth: s.depth,
       html: renderLessonMarkdown(s.markdown, `${id}/${s.id}`),
-      ...(s.takeaway ? { takeaway: renderLessonMarkdown(s.takeaway, `${id}/${s.id} takeaway`) } : {}),
+      ...(s.takeaway
+        ? {
+            takeaway: renderLessonMarkdown(
+              s.takeaway,
+              `${id}/${s.id} takeaway`,
+            ),
+          }
+        : {}),
       bridges:
         s.bridges ??
         (s.bridge_refs ?? []).map((b: string) => bridgeMap[b]).filter(Boolean),
@@ -159,6 +170,23 @@ export function compileLesson(
     source.navigation.routes.find(
       (r: any) => r.id === "route.prepared-mathematics",
     )?.scene_sequence ?? [];
+  const overviewId = `${id}.overview`;
+  if (scenes.some((scene) => scene.id === overviewId))
+    throw new Error(`Reserved overview scene ID: ${overviewId}`);
+  const overviewGoals = objectives
+    .map(
+      (objective) =>
+        `<li>${objective.scope === "mathematics" ? "Optional mathematics: " : ""}${escapeHtml(objective.title)}</li>`,
+    )
+    .join("\n");
+  scenes.unshift({
+    id: overviewId,
+    title: "Lesson overview",
+    type: "overview",
+    depth: "intuition",
+    html: `<p>${escapeHtml(source.lesson.summary)}</p>\n<h3>What you’ll explore</h3>\n<ul>${overviewGoals}</ul>`,
+    bridges: [],
+  });
   const entryChecks = (source.entry_check?.items ?? []).map((q: any) => ({
     id: q.id,
     objective: "objective." + source.runtime.bridge_map[q.requirement_ref],
@@ -219,7 +247,10 @@ export function compileLesson(
     scenes,
     questions,
     entryChecks,
-    routes: { core, mathematics: math },
+    routes: {
+      core: [overviewId, ...core],
+      mathematics: math.length ? [overviewId, ...math] : [],
+    },
     sceneAliases: source.navigation.scene_aliases ?? {},
   });
   // Store source-only specimen contracts separately for inspection without exposing internal planning files.

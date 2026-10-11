@@ -19,7 +19,7 @@ function sceneButton(lessonId: string, sceneId: string) {
   const scene = lesson.scenes.find((scene) => scene.id === sceneId)!;
   const index = lesson.routes.core.indexOf(sceneId);
   if (!scene || index < 0) throw new Error(`Missing core scene ${sceneId}`);
-  return `Scene ${index + 1}: ${scene.title}`;
+  return `Scene ${index}: ${scene.title}`;
 }
 async function openVisual(
   page: Page,

@@ -80,6 +80,7 @@ export const sceneSchema = z.object({
   title: z.string().min(2),
   html: z.string(),
   type: z.enum([
+    "overview",
     "explanation",
     "question",
     "equation",

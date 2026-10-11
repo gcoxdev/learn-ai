@@ -22,7 +22,7 @@ async function openLab(
   await expect(page.locator("main")).toHaveAttribute("aria-busy", "false");
   await page
     .getByRole("button", {
-      name: `Scene ${lesson.routes.core.indexOf(sceneId) + 1}: ${scene.title}`,
+      name: `Scene ${lesson.routes.core.indexOf(sceneId)}: ${scene.title}`,
       exact: true,
     })
     .click();

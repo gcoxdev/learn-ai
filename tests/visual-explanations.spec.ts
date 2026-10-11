@@ -16,7 +16,7 @@ async function open(page: Page, lessonId: string, kind: string) {
   const scene = lesson.scenes.find((s) => s.figure?.kind === kind)!;
   await page
     .getByRole("button", {
-      name: `Scene ${lesson.routes.core.indexOf(scene.id) + 1}: ${scene.title}`,
+      name: `Scene ${lesson.routes.core.indexOf(scene.id)}: ${scene.title}`,
       exact: true,
     })
     .click();

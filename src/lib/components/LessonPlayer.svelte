@@ -343,7 +343,9 @@
         <article class="lesson-stage" id="lesson-stage" tabindex="-1">
           <div class="scene-kicker">
             <span
-              >IDEA {String(index + 1).padStart(2, "0")} OF {scenes.length}</span
+              >{current.type === "overview"
+                ? "LESSON OVERVIEW"
+                : `IDEA ${String(index).padStart(2, "0")} OF ${scenes.length - 1}`}</span
             ><span
               ><Icon name="clock" size={14} />{lesson.minutes} min lesson</span
             >
@@ -361,7 +363,9 @@
           <div class="scene-dots" aria-label="Scene navigation">
             {#each scenes as scene, i (scene.id)}<button
                 class={{ active: i === index }}
-                aria-label={`Scene ${i + 1}: ${scene.title}`}
+                aria-label={scene.type === "overview"
+                  ? scene.title
+                  : `Scene ${i}: ${scene.title}`}
                 aria-current={i === index ? "step" : undefined}
                 disabled={!learner.hydrated}
                 onclick={() => goTo(scene.id)}
@@ -381,7 +385,11 @@
               id={`scene-${scene.id}`}
               tabindex="-1"
             >
-              <span class="eyebrow">IDEA {String(i + 1).padStart(2, "0")}</span>
+              <span class="eyebrow"
+                >{scene.type === "overview"
+                  ? "LESSON OVERVIEW"
+                  : `IDEA ${String(i).padStart(2, "0")}`}</span
+              >
               <h2>{scene.title}</h2>
               {@render sceneContent(scene)}
             </article>{/each}
@@ -406,7 +414,10 @@
               class={{ active: i === index }}
               disabled={!learner.hydrated}
               onclick={() => goTo(scene.id)}
-              ><span>{String(i + 1).padStart(2, "0")}</span
+              ><span
+                >{scene.type === "overview"
+                  ? "Start"
+                  : String(i).padStart(2, "0")}</span
               >{scene.title}</button
             >
           </li>{/each}
@@ -446,7 +457,9 @@
             .join(" ")
         : ""),
   )}
-  {#if vocabulary.length}<details class="lesson-vocabulary">
+  {#if scene.type !== "overview" && vocabulary.length}<details
+      class="lesson-vocabulary"
+    >
       <summary>Need a word explained? ({vocabulary.length})</summary>
       <dl>
         {#each vocabulary as term (term.id)}<dt>{term.term}</dt>
@@ -532,7 +545,7 @@
         {@html scene.html}
       </div>{/if}
     {#if scene.diagram}<Diagram diagram={scene.diagram} />{/if}
-    {#if scene.id === lesson.routes.core[0] && lesson.entryChecks.length}<details
+    {#if scene.id === lesson.routes.core[1] && lesson.entryChecks.length}<details
         class="entry-check"
       >
         <summary>Check these three starting skills</summary>

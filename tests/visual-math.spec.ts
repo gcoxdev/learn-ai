@@ -23,7 +23,7 @@ async function openScene(page: Page, lessonId: string, sceneId: string) {
   expect(index).toBeGreaterThanOrEqual(0);
   await page
     .getByRole("button", {
-      name: `Scene ${index + 1}: ${scene.title}`,
+      name: `Scene ${index}: ${scene.title}`,
       exact: true,
     })
     .click();

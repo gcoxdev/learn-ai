@@ -18,6 +18,8 @@ Keep path IDs stable because saved progress and lesson return destinations use t
 
 Write the summary as an invitation, the objective as an assessable ability, and the closing takeaway as a useful consequence. The final visible page combines takeaway, quiz, and continuation choices. Removed recap IDs remain as aliases so saved positions still open the closing page.
 
+Every lesson opens with a generated **Lesson overview** slide: its summary followed by its learning objectives under “What you’ll explore.” Keep both concise and understandable before the detailed teaching begins; mathematics-only objectives are marked optional. The overview appears in presentation and reading modes and is included at the start of each available route. Do not author a duplicate introductory scene or use the reserved `<lesson-id>.overview` scene ID. Existing teaching scene IDs and step numbers stay stable, and learners resuming a saved lesson keep their place. Overview words do not count toward teaching-depth metrics or the teaching-time estimate.
+
 ## Prose and lesson flow
 
 Write for an intelligent reader encountering the subject for the first time. Use familiar words without talking down to them. Introduce a technical name or acronym beside its meaning, before relying on it in an explanation. A prerequisite can supply the deeper mathematics; briefly identify what a symbol means in the current calculation.

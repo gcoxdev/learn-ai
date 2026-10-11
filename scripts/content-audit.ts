@@ -14,7 +14,11 @@ export function auditContent(curriculum: Curriculum) {
         throw new Error(
           `Lesson needs a combined check and takeaway: ${lesson.id}`,
         );
-      if (scenes.slice(0, -1).filter(Boolean).length < 3)
+      if (
+        scenes
+          .slice(0, -1)
+          .filter((scene) => scene && scene.type !== "overview").length < 3
+      )
         throw new Error(`Insufficient teaching scenes: ${lesson.id}`);
     }
     if (

@@ -5,6 +5,9 @@ import type { Progress } from "../src/lib/model";
 async function openNetwork(page: Page) {
   await page.goto("/learn/neural-forward-pass/");
   await expect(page.locator("main")).toHaveAttribute("aria-busy", "false");
+  await page
+    .getByRole("button", { name: /Scene \d+: One sweep from input to answer/ })
+    .click();
   const lab = page.locator('[data-visual="network-layers"]');
   await expect(lab).toBeVisible();
   return lab;

@@ -24,7 +24,7 @@ async function openVisual(
   await expect(page.locator("main")).toHaveAttribute("aria-busy", "false");
   await page
     .getByRole("button", {
-      name: `Scene ${index + 1}: ${scene.title}`,
+      name: `Scene ${index}: ${scene.title}`,
       exact: true,
     })
     .click();
