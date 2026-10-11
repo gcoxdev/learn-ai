@@ -16,21 +16,21 @@
 <div class={["objective-progress", { compact }]}>
   <div class="evidence-label">
     <strong
-      >{evidence.passed} of {evidence.total} independent checks passed</strong
+      >{evidence.passed} of {evidence.total} passed</strong
     ><span
       >{evidence.complete
-        ? "Demonstrated"
+        ? "Passed"
         : evidence.passed
-          ? "Building understanding"
+          ? "In progress"
           : evidence.tried
             ? "Practicing"
-            : "Ready to try"}</span
+            : "Not started"}</span
     >
   </div>
   <progress
     max={evidence.total}
     value={evidence.passed}
-    aria-label={`Independent checks for ${objective.title}`}
+    aria-label={`Quiz progress: ${objective.title}`}
   ></progress>
   {#if !compact}<p>{evidenceMessage(evidence)}</p>{/if}
 </div>

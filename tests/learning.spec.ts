@@ -40,7 +40,7 @@ async function firstLessonMastery(page: Page, openLesson = true) {
   await page
     .getByRole("button", { name: "Check my knowledge", exact: true })
     .click();
-  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await page.getByRole("button", { name: "Start quiz" }).click();
   const lesson = data.lessons.find((l) => l.id === "ai-systems")!;
   const questions = [...new Set(lesson.questions.map((q) => q.family))].map(
     (family) => lesson.questions.find((q) => q.family === family)!,
@@ -55,7 +55,7 @@ async function firstLessonMastery(page: Page, openLesson = true) {
       .getByRole("button", { name: /Next check|See my result/ })
       .click();
   }
-  await expect(page.getByText("One more connection made.")).toBeVisible();
+  await expect(page.getByText("Quiz passed")).toBeVisible();
   await expect
     .poll(async () => (await database(page))?.attempts.length)
     .toBe(2);
@@ -69,7 +69,7 @@ test("mastery survives refresh and is reused on either path", async ({
   await firstLessonMastery(page);
   await expect(page.getByText("Keep what you’ve learned.")).toHaveCount(0);
   await page.reload();
-  await expect(page.getByText("One more connection made.")).toBeVisible();
+  await expect(page.getByText("Quiz passed")).toBeVisible();
   await expect(page.getByText("Keep what you’ve learned.")).toHaveCount(0);
   for (const path of ["language", "images"]) {
     await ready(page, `/paths/${path}/`);
@@ -241,7 +241,7 @@ test("a hint survives reload and cannot award independent evidence", async ({
   await page
     .getByRole("button", { name: "Check my knowledge", exact: true })
     .click();
-  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await page.getByRole("button", { name: "Start quiz" }).click();
   await page.getByRole("button", { name: "Give me a hint" }).click();
   await expect
     .poll(async () => (await database(page))?.exposures.length)
@@ -300,7 +300,7 @@ test("mathematics reading checks remain uncredited practice", async ({
   await page
     .getByRole("button", { name: "Check my knowledge", exact: true })
     .click();
-  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await page.getByRole("button", { name: "Start quiz" }).click();
   const q = data.lessons.find((l) => l.id === "learning-update")!.questions[0];
   for (const field of q.fields)
     await page
@@ -745,7 +745,7 @@ test("numeric foundation checks persist in reading mode on the combined closing 
 }) => {
   await ready(page, "/learn/arithmetic/");
   await page.getByRole("button", { name: "Read as a page" }).click();
-  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await page.getByRole("button", { name: "Start quiz" }).click();
   // Answer whichever variant the planner shows, using the authored key.
   const arithmetic = (data as Curriculum).lessons.find((l) => l.id === "arithmetic")!;
   const answerShown = async () => {
@@ -772,7 +772,7 @@ test("numeric foundation checks persist in reading mode on the combined closing 
   await page.getByRole("button", { name: "Next check" }).click();
   await answerShown();
   await page.getByRole("button", { name: "See my result" }).click();
-  await expect(page.getByText("One more connection made.")).toBeVisible();
+  await expect(page.getByText("Quiz passed")).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Lesson takeaway" }),
   ).toBeVisible();
@@ -827,7 +827,7 @@ test("chain-rule checks retain intermediate answers across reload and award both
   await page
     .getByRole("button", { name: "Check my knowledge", exact: true })
     .click();
-  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await page.getByRole("button", { name: "Start quiz" }).click();
   await page.getByLabel("Prediction p", { exact: true }).fill("3");
   await page.getByLabel("Local loss rate dL/dp", { exact: true }).fill("-4");
   await expect(
@@ -872,7 +872,7 @@ test("chain-rule checks retain intermediate answers across reload and award both
   await page
     .getByRole("button", { name: "See my result", exact: true })
     .click();
-  await expect(page.getByText("One more connection made.")).toBeVisible();
+  await expect(page.getByText("Quiz passed")).toBeVisible();
   await expect(
     page.getByRole("region", { name: "Lesson takeaway", exact: true }),
   ).toBeVisible();
@@ -944,7 +944,7 @@ test("prediction checks grade the intermediate residual as well as the final los
   await page
     .getByRole("button", { name: "Check my knowledge", exact: true })
     .click();
-  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await page.getByRole("button", { name: "Start quiz" }).click();
   await page.getByLabel("Prediction", { exact: true }).fill("13");
   await page.getByLabel("Prediction minus target", { exact: true }).fill("-3");
   await page.getByLabel("Squared-error loss", { exact: true }).fill("9");
@@ -1089,7 +1089,7 @@ test("reset reaches open tabs and stale writes cannot restore cleared progress",
     Reflect.deleteProperty(window, "BroadcastChannel");
   });
   await ready(stale, "/learn/ai-systems/");
-  await expect(stale.getByText("One more connection made.")).toBeVisible();
+  await expect(stale.getByText("Quiz passed")).toBeVisible();
   await ready(page, "/progress/");
   await page
     .getByRole("button", { name: "Reset all progress", exact: true })
@@ -1108,7 +1108,7 @@ test("reset reaches open tabs and stale writes cannot restore cleared progress",
   await expect(
     stale.getByRole("button", { name: "Save lesson", exact: true }),
   ).toBeVisible();
-  await expect(stale.getByText("One more connection made.")).toHaveCount(0);
+  await expect(stale.getByText("Quiz passed")).toHaveCount(0);
   expect((await database(page)).attempts).toEqual([]);
   expect((await database(page)).bookmarks).toEqual([]);
   // New work in the current reset period can be saved normally.
@@ -1310,7 +1310,7 @@ test("new prediction puzzles preserve drafts and reveals separately from assessm
   await page
     .getByRole("button", { name: "Check my knowledge", exact: true })
     .click();
-  await page.getByRole("button", { name: "Begin knowledge check" }).click();
+  await page.getByRole("button", { name: "Start quiz" }).click();
   await expect(
     page.getByText(lesson.questions[0].prompt, { exact: true }),
   ).toBeVisible();

@@ -55,20 +55,20 @@ test("partial independent evidence survives refresh while hinted answers remain 
 }) => {
   await ready(page, "/learn/ai-systems/?check=1");
   await page
-    .getByRole("button", { name: "Begin knowledge check", exact: true })
+    .getByRole("button", { name: "Start quiz", exact: true })
     .click();
   await answer(page, first);
   const progress = page.getByLabel("Knowledge check progress");
-  await expect(progress).toContainText("1 of 2 independent checks passed");
+  await expect(progress).toContainText("1 of 2 passed");
   await page.getByRole("button", { name: "Next check", exact: true }).click();
   await page
     .getByRole("button", { name: "Give me a hint", exact: true })
     .click();
   await answer(page, second);
-  await expect(progress).toContainText("1 of 2 independent checks passed");
+  await expect(progress).toContainText("1 of 2 passed");
   await expect.poll(async () => (await saved(page)).attempts.length).toBe(2);
   await page.reload();
-  await expect(progress).toContainText("1 of 2 independent checks passed");
+  await expect(progress).toContainText("1 of 2 passed");
   await page.getByRole("link", { name: "My progress", exact: true }).click();
   await expect(page.locator(".stat-card").first().locator("strong")).toHaveText(
     "0",
@@ -93,7 +93,7 @@ test("previous questions offer repeatable practice without creating another inde
 }) => {
   await ready(page, "/learn/ai-systems/?check=1");
   await page
-    .getByRole("button", { name: "Begin knowledge check", exact: true })
+    .getByRole("button", { name: "Start quiz", exact: true })
     .click();
   await answer(page, first);
   await page.getByText("Practice a previous check", { exact: true }).click();
@@ -105,7 +105,7 @@ test("previous questions offer repeatable practice without creating another inde
     page.getByText("Practice check passed.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Knowledge check progress")).toContainText(
-    "1 of 2 independent checks passed",
+    "1 of 2 passed",
   );
   await page
     .getByRole("button", { name: "Try this practice again", exact: true })
@@ -135,7 +135,7 @@ test("test-out preserves shared evidence and continues into the next lesson", as
     .click();
   await expect(page).toHaveURL(/\/learn\/ai-systems\//);
   await page
-    .getByRole("button", { name: "Begin knowledge check", exact: true })
+    .getByRole("button", { name: "Start quiz", exact: true })
     .click();
   await answer(page, first);
   await page.getByRole("button", { name: "Next check", exact: true }).click();
@@ -162,7 +162,7 @@ test("test-out preserves shared evidence and continues into the next lesson", as
     page.getByRole("heading", { name: firstScene.title, exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "Begin knowledge check", exact: true }),
+    page.getByRole("button", { name: "Start quiz", exact: true }),
   ).toHaveCount(0);
   await ready(page, "/paths/images/");
   await expect(page.locator(".carried-evidence")).toContainText(
@@ -182,11 +182,11 @@ test("unsuccessful attempts get useful progress feedback and the new controls fi
   await page.setViewportSize({ width: 390, height: 844 });
   await ready(page, "/learn/ai-systems/?check=1");
   await page
-    .getByRole("button", { name: "Begin knowledge check", exact: true })
+    .getByRole("button", { name: "Start quiz", exact: true })
     .click();
   await answer(page, first, false);
   await expect(page.getByLabel("Knowledge check progress")).toContainText(
-    "0 of 2 independent checks passed",
+    "0 of 2 passed",
   );
   await ready(page, "/progress/");
   await expect(page.locator(".empty-state")).toContainText(

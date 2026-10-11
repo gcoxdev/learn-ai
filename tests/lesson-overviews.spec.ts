@@ -55,7 +55,7 @@ for (const width of [1280, 390]) {
       .getByRole("button", { name: "Check my knowledge", exact: true })
       .click();
     await expect(
-      page.getByRole("button", { name: "Begin knowledge check" }),
+      page.getByRole("button", { name: "Start quiz" }),
     ).toBeVisible();
   });
 }

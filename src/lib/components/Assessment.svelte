@@ -1,7 +1,7 @@
 <script lang="ts">
   import { curriculum } from "$lib/content";
   import { getLearner } from "$lib/learner.svelte";
-  import { questionsRemaining, mastered } from "$lib/engine";
+  import { questionsRemaining } from "$lib/engine";
   import type { Lesson } from "$lib/model";
   import QuestionCard from "./QuestionCard.svelte";
   import Icon from "./Icon.svelte";
@@ -43,10 +43,6 @@
       depth === "mathematics" ||
       !!active?.retired,
   );
-  const passed = $derived(
-    remaining.objectives.filter((o) => mastered(o, learner.data.attempts))
-      .length,
-  );
   function advance() {
     learner.savePosition(lesson.id, lesson.routes.core[0], {
       activeQuestion: remaining.items[0]?.id,
@@ -58,7 +54,7 @@
   {#if lesson.category !== "advanced" && depth === "core"}
     <div aria-label="Knowledge check progress" aria-live="polite">
       {#each remaining.objectives as objective (objective.id)}
-        <ObjectiveProgress {objective} attempts={learner.data.attempts} />
+        <ObjectiveProgress {objective} attempts={learner.data.attempts} compact />
       {/each}
     </div>
   {/if}
@@ -130,35 +126,22 @@
       />{/key}
   {:else if remaining.complete}
     <div class="achievement">
-      <span class="achievement-mark"><Icon name="check" size={34} /></span><span
-        class="eyebrow">PERSONAL-STUDY MASTERY</span
-      >
-      <h3>One more connection made.</h3>
-      <p>
-        You passed two different checks for each of {passed} main idea{passed ===
-        1
-          ? ""
-          : "s"}. We’ll remember this understanding when you explore another
-        learning path.
-      </p>
-      <small
-        >Draft lesson · for personal learning · not a school certificate</small
-      >
+      <span class="achievement-mark"><Icon name="check" size={34} /></span>
+      <h3>Quiz passed</h3>
     </div>
   {:else}
     <div class="assessment-intro">
-      <span class="eyebrow">TURN FAMILIARITY INTO UNDERSTANDING</span>
-      <h3>A small check. A stronger foundation.</h3>
+      <h3>{preview ? "Practice quiz" : "Lesson quiz"}</h3>
       <p>
-        Try a different example without hints to show what you understand. Each
-        main idea needs two different correct answers. We already count the
-        ideas you have demonstrated in these checks.
+        {preview
+          ? "Try the questions to review this lesson."
+          : "Answer two different questions correctly without hints for each topic."}
       </p>
       <div class="check-facts">
         <span
-          ><Icon name="check" size={16} />{remaining.items.length} new questions available</span
+          ><Icon name="check" size={16} />{remaining.items.length} questions available</span
         ><span
-          ><Icon name="clock" size={16} />Untimed · revisit whenever you need</span
+          ><Icon name="clock" size={16} />No time limit</span
         >
       </div>
       {#if remaining.exhausted.length}<p class="hint-box">
@@ -174,7 +157,7 @@
           onclick={advance}
           >{lesson.category === "advanced"
             ? "Begin practice"
-            : "Begin knowledge check"}<Icon name="arrow" size={17} /></button
+            : "Start quiz"}<Icon name="arrow" size={17} /></button
         ><button class="text-button" onclick={() => onreview()}
           >Review the lesson first</button
         >
